@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{FailureKind, Preparation, document::Document, tests::fixture},
+    editor::{FailureCase, Preparation, document::Document, tests::fixture},
     looks::Lut3D,
 };
 use std::{sync::Mutex, time::Duration};
@@ -228,16 +228,18 @@ fn device_preflight_rejects_an_unsupported_asset_without_remembering_or_recordin
                 e.history_label(crate::editor::history::Direction::Undo)
                     .is_none()
             );
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Look.title()
+            );
         });
-        // Acknowledge the failure at the feedback boundary before another choice.
-        app.update(|e| e.resolve_failure(FailureKind::Look));
+        app.update(|e| e.dialogs.answer_for_test("OK"));
         let supported = asset(0.7);
         app.enter(|e, cx| e.select_look(Source::Loaded(supported.clone()), cx));
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project.output.lut, Some(supported));
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -276,20 +278,28 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.look.loaded, vec![accepted.clone()]);
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Look.title()
+            );
         });
         std::fs::remove_file(&path).unwrap();
+        app.update(|e| e.dialogs.answer_for_test("OK"));
         app.enter(|e, access| {
             e.select_look(Source::Imported(path.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Look.title()
+            );
             assert!(Arc::ptr_eq(
                 e.document.state.project.output.lut.as_ref().unwrap(),
                 &accepted
             ));
         });
+        app.update(|e| e.dialogs.answer_for_test("OK"));
         app.enter(|e, access| {
             e.clear_look();
             e.select_look(Source::Loaded(accepted.clone()), access);
@@ -301,7 +311,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
                 &accepted
             );
             assert_eq!(e.look.loaded.len(), 1);
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -361,7 +371,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         app.read(|e| {
             assert_eq!(e.document.state.project.output.lut, Some(chosen.clone()));
             assert_eq!(e.look.loaded, vec![chosen]);
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -476,7 +486,7 @@ fn retired_running_preparation_keeps_its_owner_until_cleanup_without_blocking_a_
         }
         app.read(|e| {
             assert_eq!(e.document.project.output.lut, Some(selected));
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -496,7 +506,10 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Look.title()
+            );
         });
     });
 }
@@ -557,6 +570,65 @@ fn opening_either_oversized_colour_slot_preserves_the_current_document() {
                 assert_eq!(e.document.state.project, before);
                 assert!(e.document.path.is_none());
                 assert!(e.status.contains("limits"), "{}", e.status);
+            });
+        });
+        scheduler.close_and_wait().unwrap();
+    }
+}
+
+#[test]
+fn completing_preparation_preserves_a_notice_reported_while_it_was_running() {
+    for rendering in [false, true] {
+        let (mut editor, scheduler) = editor();
+        let selected = asset(0.7);
+
+        let before = editor.document.project.clone();
+
+        let (prepared, ready) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let resume = Mutex::new(resume);
+        editor.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, _stop| {
+            prepared.send(valid).unwrap();
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }));
+        with_application(editor, |app| {
+            app.enter(|editor, cx| editor.select_look(Source::Loaded(selected.clone()), cx));
+            app.pump();
+            assert!(ready.recv_timeout(Duration::from_secs(15)).unwrap());
+            app.update(|editor| {
+                if rendering {
+                    editor.look_render_failed("previous rendering error".into());
+                } else {
+                    editor.look_failed("previous preparation error".into());
+                }
+            });
+            let message = app.read(|editor| editor.dialogs.message().unwrap());
+            app.read(|editor| {
+                assert!(editor.document.look.is_some());
+                assert_eq!(editor.dialogs.message().unwrap().details, message.details);
+                assert_eq!(editor.document.project, before);
+            });
+            release.send(()).unwrap();
+            app.run_until(Duration::from_secs(15), |editor| {
+                editor.document.look.is_none()
+            });
+            app.read(|editor| {
+                assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
+                assert!(editor.dialogs.is_open());
+                assert_eq!(editor.dialogs.message().unwrap().details, message.details);
+                assert_eq!(
+                    editor.history_label(crate::editor::history::Direction::Undo),
+                    Some("LUT")
+                );
+            });
+            app.update(|editor| editor.dialogs.answer_for_test("OK"));
+            app.read(|editor| {
+                assert!(!editor.dialogs.is_open());
+                assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
             });
         });
         scheduler.close_and_wait().unwrap();

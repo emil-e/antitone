@@ -220,29 +220,39 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     editor.sync_document();
     let project = editor.document.state.project.clone();
     let context = egui::Context::default();
-    editor.file_action(FileAction::New, &UiContext::render_only());
-    assert_eq!(editor.transition, Some(Transition::New));
-    assert_eq!(editor.tab, 2);
-    for _ in 0..3 {
-        app_frame(&mut editor, &context, vec![]);
-    }
-    let preferences = editor.preferences.clone();
-    let labels = app_frame(&mut editor, &context, vec![]);
-    let cancel = labels
-        .iter()
-        .find(|(s, _)| s == "Cancel")
-        .unwrap()
-        .1
-        .center();
-    for pressed in [true, false] {
-        app_frame(&mut editor, &context, pointer(cancel, pressed));
-    }
-    assert!(editor.transition.is_none());
-    assert!(editor.document_pending.is_none());
-    assert_eq!(editor.tab, 2);
-    assert_eq!(editor.document.state.project, project);
-    assert_eq!(editor.preferences, preferences);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+        app.pump();
+        app.update(|editor| {
+            assert!(editor.files.pending() && editor.dialogs.is_open());
+            assert_eq!(editor.tab, 2);
+            for _ in 0..3 {
+                app_frame(editor, &context, vec![]);
+            }
+            let preferences = editor.preferences.clone();
+            let labels = app_frame(editor, &context, vec![]);
+            let cancel = labels
+                .iter()
+                .find(|(s, _)| s == "Cancel")
+                .unwrap()
+                .1
+                .center();
+            for pressed in [true, false] {
+                app_frame(editor, &context, pointer(cancel, pressed));
+            }
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.preferences, preferences);
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(!editor.files.pending());
+            assert_eq!(editor.tab, 2);
+            assert_eq!(editor.document.state.project, project);
+            assert!(
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
+            );
+        });
+    });
 }
 
 #[test]

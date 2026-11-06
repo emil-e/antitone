@@ -27,23 +27,24 @@ fn declining_a_switch_keeps_earlier_preparation_alive_even_if_it_completes_under
                 spektrafilm::Negative::from_id("kodak_portra_400").map(Into::into),
                 cx,
             );
-            assert!(e.document.material_switch.is_some());
+            assert!(e.dialogs.is_open());
             assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), activity);
             activity
         });
         app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
         let accepted = app.read(|e| {
-            assert!(e.document.material_switch.is_some());
-            assert!(e.document.confirming() && !e.interaction_blocked());
+            assert!(e.dialogs.is_open());
+            assert!(e.dialogs.is_open() && !e.interaction_blocked());
             assert_eq!(
                 e.material_selection(),
                 Some(MaterialSelection::Monochrome(paper.into()))
             );
             e.document.state.project.clone()
         });
-        app.enter(|e, cx| e.resolve_material_switch(false, cx));
+        app.update(|e| e.dialogs.answer_for_test("Cancel"));
+        app.pump();
         app.read(|e| {
-            assert!(!e.document.confirming());
+            assert!(!e.dialogs.is_open());
             assert_eq!(e.document.state.project, accepted);
             assert!(e.activities.view().is_none(), "retired look {activity:?}");
         });
@@ -66,20 +67,20 @@ fn confirmed_switch_failure_or_worker_cancel_never_replaces_either_accepted_slot
         let before = e.document.state.project.clone();
         let hold = cancel.then(crate::background::testing::pause);
         with_application(e, |app| {
-            let activity = app.enter(|e, cx| {
+            app.enter(|e, cx| {
                 e.select_negative(
                     spektrafilm::Negative::from_id("kodak_portra_400").map(Into::into),
                     cx,
                 );
-                assert!(e.document.material_switch.is_some());
+                assert!(e.dialogs.is_open());
                 assert!(e.document.look.is_none());
-                e.resolve_material_switch(true, cx);
-                assert!(e.document.material_switch.is_none());
+                e.dialogs.answer_for_test("Switch materials");
+                assert!(!e.dialogs.is_open());
                 assert_eq!(e.document.state.project, before);
-                e.document.look.as_ref().unwrap().activity.clone()
             });
+            app.pump();
             if cancel {
-                app.pump();
+                let activity = app.read(|e| e.document.look.as_ref().unwrap().activity.clone());
                 app.update(|_| activity.request_cancel());
                 app.pump();
                 drop(hold);
@@ -87,12 +88,12 @@ fn confirmed_switch_failure_or_worker_cancel_never_replaces_either_accepted_slot
             app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
-                assert!(!e.interaction_blocked() && e.document.material_switch.is_none());
+                assert!(!e.interaction_blocked());
                 assert_eq!(
                     e.history_label(crate::editor::history::Direction::Undo),
                     None
                 );
-                assert_eq!(e.failure.is_some(), !cancel);
+                assert_eq!(e.dialogs.is_open(), !cancel);
             });
         });
         scheduler.close_and_wait().unwrap();
@@ -100,7 +101,7 @@ fn confirmed_switch_failure_or_worker_cancel_never_replaces_either_accepted_slot
 }
 
 #[test]
-fn document_replacement_retires_an_unconfirmed_material_switch() {
+fn document_replacement_retires_the_continuation_but_not_the_unanswered_dialog() {
     let (mut e, scheduler) = super::tests::editor();
     accepted_bw(&mut e);
     with_application(e, |app| {
@@ -109,17 +110,102 @@ fn document_replacement_retires_an_unconfirmed_material_switch() {
                 spektrafilm::Negative::from_id("kodak_portra_400").map(Into::into),
                 cx,
             );
-            assert!(e.document.material_switch.is_some());
+            assert!(e.dialogs.is_open());
             e.start_document(Preparation::New, cx);
         });
         app.run_until(Duration::from_secs(30), |e| {
             e.document_pending.is_none() && !e.interaction_blocked()
         });
         app.read(|e| {
-            assert!(e.document.material_switch.is_none() && e.document.look.is_none());
+            assert!(e.document.dialog_action.is_none() && e.document.look.is_none());
             assert!(e.document.project.output.film_and_paper.is_none());
-            assert!(e.failure.is_none());
+            assert!(e.dialogs.is_open());
         });
+        app.update(|e| e.dialogs.answer_for_test("Switch materials"));
+        app.pump();
+        app.read(|e| {
+            assert!(!e.dialogs.is_open() && e.document.look.is_none());
+            assert!(e.document.project.output.film_and_paper.is_none());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn confirming_after_earlier_preparation_fails_keeps_the_notice_and_starts_the_captured_choice() {
+    let (mut editor, scheduler) = super::tests::editor_with_limits(wgpu::Limits {
+        max_storage_buffer_binding_size: 1024,
+        ..Default::default()
+    });
+    let (prepared, ready) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let resume = std::sync::Mutex::new(resume);
+    editor.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, _stop| {
+        prepared.send(valid).unwrap();
+        resume
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(90))
+            .unwrap();
+    }));
+    let before = editor.document.project.clone();
+    let negative = spektrafilm::Negative::from_id("kodak_portra_400").unwrap();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.select_paper(Some(crate::looks::monochrome::Paper::default().into()), cx);
+            editor.select_negative(Some(negative.into()), cx);
+            assert!(editor.dialogs.is_open() && editor.document.look.is_some());
+        });
+        app.pump();
+        assert!(!ready.recv_timeout(Duration::from_secs(90)).unwrap());
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(90), |editor| {
+            editor.document.look.is_none()
+        });
+        app.read(|editor| {
+            assert!(
+                editor.dialogs.is_open() && editor.dialogs.message().is_none(),
+                "the question remains in front of the worker's failure notice"
+            );
+            assert_eq!(editor.document.project, before);
+        });
+        app.update(|editor| editor.dialogs.answer_for_test("Switch materials"));
+        app.pump();
+        app.read(|editor| {
+            let operation = editor
+                .document
+                .look
+                .as_ref()
+                .expect("confirmation must start its continuation");
+            assert_eq!(
+                operation.selection.unwrap().negative(),
+                Some(negative.into())
+            );
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                crate::editor::FailureCase::Look.title()
+            );
+        });
+        assert!(!ready.recv_timeout(Duration::from_secs(90)).unwrap());
+        app.update(|editor| editor.dialogs.answer_for_test("OK"));
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(90), |editor| {
+            editor.document.look.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.document.project, before);
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                crate::editor::FailureCase::Look.title()
+            );
+            assert!(
+                editor
+                    .history_label(crate::editor::history::Direction::Undo)
+                    .is_none()
+            );
+        });
+        app.update(|editor| editor.dialogs.answer_for_test("OK"));
+        app.read(|editor| assert!(!editor.dialogs.is_open()));
     });
     scheduler.close_and_wait().unwrap();
 }

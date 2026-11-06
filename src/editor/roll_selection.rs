@@ -44,13 +44,11 @@ impl Editor {
             && !self.picking()
             && !self.cropping()
             && !self.masking()
-            && self.failure.is_none()
+            && !self.dialogs.is_open()
             && self.document_pending.is_none()
-            && self.transition.is_none()
-            && self.project_overwrite.is_none()
+            && !self.files.pending()
             && !self.allow_close
             && !self.export_modal()
-            && !self.document.confirming()
     }
 
     pub(super) fn select_roll_photo(
@@ -135,7 +133,7 @@ impl Editor {
     }
 
     pub(super) fn select_active_photo_only(&mut self) {
-        if !self.roll_edit_available() || self.document.confirming() {
+        if !self.roll_edit_available() || self.dialogs.is_open() {
             return;
         }
         if let Some(id) = self
@@ -150,7 +148,7 @@ impl Editor {
 
     pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
         if self.roll_edit_available()
-            && !self.document.confirming()
+            && !self.dialogs.is_open()
             && !egui::Popup::is_any_open(context)
             && context.input_mut(|input| {
                 input.consume_key(
@@ -164,8 +162,8 @@ impl Editor {
         }
     }
 
-    pub(super) fn request_removal(&mut self) {
-        if !self.roll_edit_available() || self.tool_interacting() || self.document.confirming() {
+    pub(super) fn request_removal(&mut self, cx: &UiContext<'_, Self>) {
+        if !self.roll_edit_available() || self.tool_interacting() || self.dialogs.is_open() {
             return;
         }
         self.document.roll_selection.reconcile(
@@ -180,18 +178,35 @@ impl Editor {
             .copied()
             .filter(|id| self.document.roll_selection.contains(*id))
             .collect();
-        if !ids.is_empty() {
-            self.document.removal_pending = Some(ids);
+        if ids.is_empty() {
+            return;
         }
+        let title = if ids.len() == 1 {
+            "Remove 1 photo from project?".into()
+        } else {
+            format!("Remove {} photos from project?", ids.len())
+        };
+        let response = self.dialogs.show(move |context, id, escape| {
+            presentation::DecisionDialog::new(&title,
+                "The photos will be removed from this roll. Their project data will be discarded. Your RAW files are not changed.",
+                "Remove photos").warning().show(context, id, escape)
+        });
+        self.document.dialog_action = cx.spawn(move |cx| async move {
+            if response.await == Ok(presentation::DialogChoice::Confirm) {
+                cx.update(|editor| editor.remove_selected_photos(ids, &cx));
+            }
+        });
     }
 
-    fn remove_selected_photos(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(ids) = self.document.removal_pending.take() else {
-            return;
-        };
-        // The confirmed action must not be blocked by its own decision.
-        if !self.roll_edit_available() {
-            self.document.removal_pending = Some(ids);
+    fn remove_selected_photos(&mut self, ids: Vec<SourceId>, cx: &UiContext<'_, Self>) {
+        if self.interaction_blocked()
+            || self.document.gamma_pivot.pending()
+            || self.files.pending()
+            || ids
+                .iter()
+                .any(|id| !self.document.project.order.contains(id))
+        {
+            self.status = "Photo selection changed; removal cancelled".into();
             return;
         }
         let index = self.document.selected;
@@ -246,38 +261,6 @@ impl Editor {
             self.document.visit.photo_orientation = PhotoOrientation::default();
             self.document.visit.crop = None;
             self.status = "No photos in this roll. Add scans to continue.".into();
-        }
-    }
-
-    pub(super) fn removal_dialog(
-        &mut self,
-        context: &egui::Context,
-        escape_available: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
-        let Some(ids) = &self.document.removal_pending else {
-            return;
-        };
-        let title = if ids.len() == 1 {
-            "Remove 1 photo from project?".into()
-        } else {
-            format!("Remove {} photos from project?", ids.len())
-        };
-        let choice = presentation::DecisionDialog::new(
-            &title,
-            "The photos will be removed from this roll. Their project data will be discarded. Your RAW files are not changed.",
-            "Remove photos",
-        )
-        .warning()
-        .show(
-            context,
-            egui::Id::new("remove-roll-photos"),
-            escape_available,
-        );
-        match choice {
-            Some(presentation::DialogChoice::Cancel) => self.document.removal_pending = None,
-            Some(presentation::DialogChoice::Confirm) => self.remove_selected_photos(cx),
-            _ => {}
         }
     }
 }

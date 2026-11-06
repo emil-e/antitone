@@ -57,24 +57,58 @@ fn project_save_name(path: Option<&std::path::Path>) -> String {
     name.to_string_lossy().into_owned()
 }
 
+#[derive(Default)]
+pub(super) struct State {
+    action: Option<Pending>,
+}
+
+struct Pending {
+    closing: bool,
+    task: async_executor::Task<()>,
+}
+
+impl State {
+    pub fn pending(&self) -> bool {
+        self.action
+            .as_ref()
+            .is_some_and(|action| !action.task.is_finished())
+    }
+    pub fn closing(&self) -> bool {
+        self.pending() && self.action.as_ref().unwrap().closing
+    }
+}
+
+pub(super) struct Destination {
+    pub path: PathBuf,
+    pub policy: crate::project::Save,
+    pub confirm_replace: bool,
+}
+
 impl Editor {
     pub(super) fn perform_transition(&mut self, transition: Transition, cx: &UiContext<'_, Self>) {
         match transition {
             Transition::New => self.start_document(Preparation::New, cx),
             Transition::Open(path) => self.start_document(Preparation::Open(path), cx),
-            Transition::Close => {
-                self.allow_close = true;
-            }
+            Transition::Close => self.allow_close = true,
         }
     }
 
     pub(super) fn guard_transition(&mut self, transition: Transition, cx: &UiContext<'_, Self>) {
-        self.sync_document();
-        if self.document.dirty() {
-            self.transition = Some(transition);
-        } else {
-            self.perform_transition(transition, cx);
+        if self.files.pending() {
+            return;
         }
+        self.sync_document();
+        if !self.document.dirty() {
+            self.perform_transition(transition, cx);
+            return;
+        }
+        let closing = transition == Transition::Close;
+        let id = self.id;
+        self.files.action = cx
+            .spawn(move |cx| async move {
+                guarded_transition(&cx, id, transition).await;
+            })
+            .map(|task| Pending { closing, task });
     }
 
     pub(super) fn save_project(
@@ -84,13 +118,12 @@ impl Editor {
         after: Option<Transition>,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.dust_search_pending() {
-            self.status = "Wait for donor selection before saving".into();
+        if self.files.pending() || self.dust_search_pending() {
             return;
         }
         self.sync_document();
-        self.after_save = after;
-        self.start_save(
+        let id = self.id;
+        let response = self.start_save(
             document::Write {
                 document: self.document.capture(),
                 path,
@@ -98,12 +131,28 @@ impl Editor {
             },
             cx,
         );
+        let closing = after == Some(Transition::Close);
+        self.files.action = cx
+            .spawn(move |cx| async move {
+                let Ok(success) = response.await else { return };
+                if let Some(transition) = after {
+                    if success {
+                        finish_transition(&cx, id, transition).await;
+                    } else {
+                        guarded_transition(&cx, id, transition).await;
+                    }
+                }
+            })
+            .map(|task| Pending { closing, task });
     }
 
-    fn save_dialog(&mut self, save_as: bool, after: Option<Transition>, cx: &UiContext<'_, Self>) {
+    fn save_destination(&self, save_as: bool) -> Option<Destination> {
         if !save_as && let Some(path) = self.document.path.clone() {
-            self.save_project(path, crate::project::Save::Replace, after, cx);
-            return;
+            return Some(Destination {
+                path,
+                policy: crate::project::Save::Replace,
+                confirm_replace: false,
+            });
         }
         let name = project_save_name(self.document.path.as_deref());
         let mut dialog = rfd::FileDialog::new()
@@ -113,21 +162,68 @@ impl Editor {
         if let Some(parent) = self.document.path.as_ref().and_then(|path| path.parent()) {
             dialog = dialog.set_directory(parent);
         }
-        if let Some(path) = crate::platform::menu::with_native_dialog(|| dialog.save_file()) {
-            if path.exists() && self.document.path.as_ref() != Some(&path) {
-                self.project_overwrite = Some((path, after));
+        let path = crate::platform::menu::with_native_dialog(|| dialog.save_file())?;
+        let exists = path.exists();
+        Some(Destination {
+            confirm_replace: exists && self.document.path.as_ref() != Some(&path),
+            policy: if exists {
+                crate::project::Save::Replace
             } else {
-                let policy = if path.exists() {
-                    crate::project::Save::Replace
-                } else {
-                    crate::project::Save::New
-                };
-                self.save_project(path, policy, after, cx);
-            }
+                crate::project::Save::New
+            },
+            path,
+        })
+    }
+
+    fn save_dialog(&mut self, save_as: bool, cx: &UiContext<'_, Self>) {
+        if self.files.pending() {
+            return;
         }
+        let Some(destination) = self.save_destination(save_as) else {
+            return;
+        };
+        self.save_destination_action(destination, None, cx);
+    }
+
+    pub(super) fn save_destination_action(
+        &mut self,
+        destination: Destination,
+        after: Option<Transition>,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.files.pending() {
+            return;
+        }
+        if !destination.confirm_replace {
+            self.save_project(destination.path, destination.policy, after, cx);
+            return;
+        }
+
+        let id = self.id;
+        let closing = after == Some(Transition::Close);
+        self.files.action = cx
+            .spawn(move |cx| async move {
+                match save_to(&cx, id, destination).await {
+                    Some(true) => {
+                        if let Some(transition) = after {
+                            finish_transition(&cx, id, transition).await;
+                        }
+                    }
+                    Some(false) => {
+                        if let Some(transition) = after {
+                            guarded_transition(&cx, id, transition).await;
+                        }
+                    }
+                    None => {}
+                }
+            })
+            .map(|task| Pending { closing, task });
     }
 
     pub(super) fn file_action(&mut self, action: FileAction, cx: &UiContext<'_, Self>) {
+        if self.files.pending() {
+            return;
+        }
         if self.dust_search_pending() {
             self.status = "Wait for donor selection before changing or saving the document".into();
             return;
@@ -159,76 +255,101 @@ impl Editor {
                     self.add_raws(paths, cx);
                 }
             }
-            FileAction::Remove => self.request_removal(),
-            FileAction::Save => self.save_dialog(false, None, cx),
-            FileAction::SaveAs => self.save_dialog(true, None, cx),
+            FileAction::Remove => self.request_removal(cx),
+            FileAction::Save => self.save_dialog(false, cx),
+            FileAction::SaveAs => self.save_dialog(true, cx),
         }
     }
+}
 
-    pub(super) fn document_dialogs(
-        &mut self,
-        context: &egui::Context,
-        escape_available: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if let Some(transition) = self.transition.clone() {
+async fn guarded_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Transition) {
+    loop {
+        let response = cx.update(|editor| {
+            if editor.id != id { return None; }
             let explanation = match &transition {
-                Transition::New => {
-                    "Creating a new project without saving will discard unsaved edits in this project."
-                }
-                Transition::Open(_) => {
-                    "Opening another project without saving will discard unsaved edits in this project."
-                }
-                Transition::Close => {
-                    "Closing Antitone without saving will discard unsaved edits in this project."
-                }
+                Transition::New => "Creating a new project without saving will discard unsaved edits in this project.",
+                Transition::Open(_) => "Opening another project without saving will discard unsaved edits in this project.",
+                Transition::Close => "Closing Antitone without saving will discard unsaved edits in this project.",
             };
-            let choice =
+            Some(editor.dialogs.show(move |context, dialog, escape| {
                 DecisionDialog::new("Save changes to this project?", explanation, "Save changes")
-                    .detail("Your RAW files are not changed.")
-                    .alternative("Discard changes")
-                    .show(
-                        context,
-                        egui::Id::new("Save project changes?"),
-                        escape_available,
-                    );
-            match choice {
-                Some(DialogChoice::Cancel) => self.transition = None,
-                Some(DialogChoice::Alternative) => {
-                    self.transition = None;
-                    self.perform_transition(transition, cx);
+                    .detail("Your RAW files are not changed.").alternative("Discard changes")
+                    .show(context, dialog, escape)
+            }))
+        }).flatten();
+        let Some(response) = response else { return };
+        match response.await {
+            Ok(DialogChoice::Alternative) => {}
+            Ok(DialogChoice::Confirm) => {
+                let destination = cx
+                    .update(|editor| {
+                        (editor.id == id)
+                            .then(|| editor.save_destination(false))
+                            .flatten()
+                    })
+                    .flatten();
+                let Some(destination) = destination else {
+                    return;
+                };
+                match save_to(cx, id, destination).await {
+                    Some(true) => {}
+                    Some(false) => continue,
+                    None => return,
                 }
-                Some(DialogChoice::Confirm) => {
-                    self.transition = None;
-                    self.save_dialog(false, Some(transition), cx);
-                }
-                None => {}
             }
-            // A save chooser can stage an overwrite; show that decision on the next frame.
+            _ => return,
+        }
+        finish_transition(cx, id, transition).await;
+        return;
+    }
+}
+
+async fn finish_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Transition) {
+    let changes = cx.read(|editor| editor.dialogs.changes());
+    loop {
+        let changed = changes.listen();
+        if cx.read(|editor| editor.id != id) {
             return;
         }
-        if let Some((path, after)) = self.project_overwrite.clone() {
-            let detail = path.display().to_string();
-            let choice = DecisionDialog::new(
-                "Replace this project file?",
+        if !cx.read(|editor| editor.dialogs.is_open()) {
+            break;
+        }
+        changed.await;
+    }
+    cx.update(|editor| {
+        if editor.id == id {
+            editor.perform_transition(transition, cx);
+        }
+    });
+}
+
+async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) -> Option<bool> {
+    if destination.confirm_replace {
+        let detail = destination.path.display().to_string();
+        let response = cx.update(|editor| editor.dialogs.show(move |context, dialog, escape| {
+            DecisionDialog::new("Replace this project file?",
                 "A project already exists at this location. Replacing it overwrites the saved project, not its RAW files.",
-                "Replace project",
-            )
-            .warning()
-            .detail(&detail)
-            .show(
-                context,
-                egui::Id::new("Replace existing project?"),
-                escape_available,
-            );
-            match choice {
-                Some(DialogChoice::Cancel) => self.project_overwrite = None,
-                Some(DialogChoice::Confirm) => {
-                    self.project_overwrite = None;
-                    self.save_project(path, crate::project::Save::Replace, after, cx);
-                }
-                _ => {}
-            }
+                "Replace project").warning().detail(&detail).show(context, dialog, escape)
+        }))?;
+        if response.await != Ok(DialogChoice::Confirm) {
+            return None;
         }
     }
+    let response = cx
+        .update(|editor| {
+            if editor.id != id || editor.dust_search_pending() {
+                return None;
+            }
+            editor.sync_document();
+            Some(editor.start_save(
+                document::Write {
+                    document: editor.document.capture(),
+                    path: destination.path,
+                    policy: destination.policy,
+                },
+                cx,
+            ))
+        })
+        .flatten()?;
+    response.await.ok()
 }

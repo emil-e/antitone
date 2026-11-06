@@ -233,7 +233,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 editor.document.state.project.output.lut = None;
             });
             editor.document.state.project.output.lut = Some(look.clone());
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+            acknowledge_export_summary(&mut editor);
             assert!(path.exists());
             match format {
                 OutputFormat::Tiff(_) => {
@@ -305,7 +306,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 cx,
             )
         });
-        assert!(editor.failure.is_none(), "{}", editor.status);
+        assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+        acknowledge_export_summary(&mut editor);
         assert_eq!(tiff_pixels(&cropped).len(), 32 * 32 * 3);
         editor
             .document
@@ -334,7 +336,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 cx,
             )
         });
-        assert!(editor.failure.is_none(), "{}", editor.status);
+        assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+        acknowledge_export_summary(&mut editor);
         assert_ne!(
             tiff_pixels(&plain),
             tiff_pixels(&directory.path().join("repaired.tif")),
@@ -350,7 +353,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                     cx,
                 )
             });
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+            acknowledge_export_summary(&mut editor);
             let repaired = exr_pixels(
                 &directory.path().join(format!("repaired-{name}.exr")),
                 precision,
@@ -385,11 +389,15 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 cx,
             )
         });
-        assert!(editor.failure.is_some());
+        let notice = editor
+            .dialogs
+            .message()
+            .expect("failed repair preparation must report its failure");
+        assert_eq!(notice.title, FailureCase::Export.title());
         assert!(
-            editor.status.contains("repair") && editor.status.contains("two-pixel exterior"),
+            notice.details.contains("repair") && notice.details.contains("two-pixel exterior"),
             "{}",
-            editor.status
+            notice.details
         );
         assert_eq!(std::fs::read(before).unwrap(), bytes);
     });

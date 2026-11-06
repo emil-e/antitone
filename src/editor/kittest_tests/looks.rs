@@ -888,7 +888,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     && editor.document_pending.is_none()
                     && editor.document.visit.canvas.ready.is_some()
             });
-            reopened.read(|editor| assert!(editor.failure.is_none()));
+            reopened.read(|editor| assert!(!editor.dialogs.is_open()));
             reopened.read(|editor| assert_eq!(editor.look.loaded.len(), 1));
             reopened
                 .read(|editor| assert_eq!(editor.look.loaded[0].lut().id(), assets[0].lut().id()));
@@ -899,7 +899,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     && editor.document_pending.is_none()
                     && editor.document.visit.canvas.ready.is_some()
             });
-            harness.read(|editor| assert!(editor.failure.is_none()));
+            harness.read(|editor| assert!(!editor.dialogs.is_open()));
             harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
             harness.read(|editor| assert!(!editor.document.dirty()));
         });
@@ -970,7 +970,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 wait_for(&mut harness, |editor| {
                     !editor.interaction_blocked() && editor.document_pending.is_none()
                 });
-                harness.read(|editor| assert!(editor.failure.is_none()));
+                harness.read(|editor| assert!(!editor.dialogs.is_open()));
                 harness.read(|editor| assert!(!editor.document.dirty()));
                 open_project(&mut reopened, path);
                 wait_for(&mut reopened, |editor| {
@@ -978,7 +978,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                         && editor.document_pending.is_none()
                         && editor.document.visit.canvas.ready.is_some()
                 });
-                reopened.read(|editor| assert!(editor.failure.is_none()));
+                reopened.read(|editor| assert!(!editor.dialogs.is_open()));
                 reopened.read(|editor| assert_eq!(editor.document.project.output.luts(), asset));
                 reopened.read(|editor| assert!(editor.document.look.is_none()));
                 reopened.read(|editor| assert!(!editor.document.dirty()));
@@ -1001,7 +1001,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
             wait_for(&mut harness, |editor| {
                 editor.document.export.operation.is_none()
             });
-            harness.read(|editor| assert!(editor.failure.is_none()));
+            harness.read(|editor| assert!(editor.dialogs.message().is_none()));
             harness.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
             let cleared = directory.path().join("snapshot-without-look.tif");
             harness.enter(|editor, cx| {
@@ -1015,7 +1015,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
             wait_for(&mut harness, |editor| {
                 editor.document.export.operation.is_none()
             });
-            harness.read(|editor| assert!(editor.failure.is_none()));
+            harness.read(|editor| assert!(editor.dialogs.message().is_none()));
             assert_ne!(tiff_codes(&path), tiff_codes(&cleared));
         });
     });

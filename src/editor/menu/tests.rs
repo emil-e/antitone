@@ -1,6 +1,7 @@
 use super::*;
 
 fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Context) {
+    editor.before_frame();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -12,6 +13,7 @@ fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
         |ui| editor.ui(ui),
     );
     output.textures_delta.clear();
+    editor.before_frame();
 }
 
 #[test]
@@ -128,15 +130,23 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
 #[test]
 fn native_quit_and_close_wait_for_the_document_decision() {
     for action in [Action::Quit, Action::Close] {
-        let mut editor = super::super::tests::fixture();
+        let editor = super::super::tests::fixture();
         let context = egui::Context::default();
-        frame(&mut editor, &context);
-        host::App::native_menu_installed(&mut editor);
-        host::App::menu_action(&mut editor, action);
-        frame(&mut editor, &context);
-        assert_eq!(editor.transition, Some(Transition::Close));
-        assert!(!editor.allow_close);
-        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+        crate::application::test_support::with_application(editor, |app| {
+            frame(app, &context);
+            app.update(|editor| {
+                host::App::native_menu_installed(editor);
+                host::App::menu_action(editor, action);
+            });
+            frame(app, &context);
+            app.read(|editor| {
+                assert!(editor.files.closing() && editor.dialogs.is_open());
+                assert!(!editor.allow_close);
+                assert!(
+                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
+                );
+            });
+        });
     }
 }
 
@@ -160,15 +170,15 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
         assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
-        assert!(editor.transition.is_none());
+        assert!(!editor.files.pending());
     }
     assert!(editor.cropping());
     editor.end_tool();
-    editor.transition = Some(Transition::New);
+    editor.block_with_decision();
     host::App::menu_action(&mut editor, Action::Settings);
     frame(&mut editor, &context);
     assert!(editor.menus.panel.is_none());
-    assert_eq!(editor.transition, Some(Transition::New));
+    assert!(editor.dialogs.is_open());
 }
 
 #[test]
@@ -184,17 +194,23 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     }
     assert!(editor.menus.panel.is_none());
     assert!(!editor.allow_close);
-    assert!(editor.transition.is_none());
+    assert!(!editor.files.pending());
     assert_eq!(editor.document.state.project, before);
-    host::App::menu_action(&mut editor, Action::Settings);
-    frame(&mut editor, &context);
-    host::App::menu_action(&mut editor, Action::Quit);
-    frame(&mut editor, &context);
-    frame(&mut editor, &context);
-    assert!(editor.menus.panel.is_none());
-    assert_eq!(editor.transition, Some(Transition::Close));
-    assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.update(|editor| host::App::menu_action(editor, Action::Settings));
+        frame(app, &context);
+        app.update(|editor| host::App::menu_action(editor, Action::Quit));
+        frame(app, &context);
+        frame(app, &context);
+        app.read(|editor| {
+            assert!(editor.menus.panel.is_none());
+            assert!(editor.files.closing() && editor.dialogs.is_open());
+            assert!(!editor.allow_close);
+            assert!(
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
+            );
+        });
+    });
 }
 
 #[test]

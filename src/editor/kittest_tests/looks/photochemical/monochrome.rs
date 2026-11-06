@@ -42,7 +42,7 @@ fn named_bw_paper_prepares_persists_exports_and_only_admits_supported_material_c
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        h.read(|e| assert!(e.failure.is_none() && !e.document.dirty()));
+        h.read(|e| assert!(!e.dialogs.is_open() && !e.document.dirty()));
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()
@@ -60,7 +60,7 @@ fn named_bw_paper_prepares_persists_exports_and_only_admits_supported_material_c
                 )
             });
             wait_for(h, |e| e.document.export.operation.is_none());
-            h.read(|e| assert!(e.failure.is_none()));
+            h.read(|e| assert!(e.dialogs.message().is_none()));
             h.get_by_role_and_label(egui::accesskit::Role::Button, "OK")
                 .click();
             h.step();

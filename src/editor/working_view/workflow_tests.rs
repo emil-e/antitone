@@ -990,7 +990,7 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
         app.read(|e| {
             assert!(e.document.visit.working_view.source().unwrap().spec == spec);
             assert!(e.document.visit.working.task.is_none() && !e.interaction_blocked());
-            assert!(e.failure.is_none(), "{}", e.status);
+            assert!(!e.dialogs.is_open(), "{}", e.status);
         });
         assert!(path.is_file());
     });

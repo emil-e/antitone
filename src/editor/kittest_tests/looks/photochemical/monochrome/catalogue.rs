@@ -35,7 +35,7 @@ fn bw_negative_and_paper_select_independently_and_other_families_stay_reachable(
             for negative in BwNegative::all() {
                 choose_component(&mut h, "Negative", negative.name());
                 h.read(|e| {
-                    assert!(e.failure.is_none());
+                    assert!(!e.dialogs.is_open());
                     let asset = e.document.project.output.film_and_paper.as_ref().unwrap();
                     let selection = BwSelection {
                         negative: Some(negative),
@@ -71,7 +71,7 @@ fn bw_negative_and_paper_select_independently_and_other_families_stay_reachable(
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        h.read(|e| assert!(e.failure.is_none() && !e.document.dirty()));
+        h.read(|e| assert!(!e.dialogs.is_open() && !e.document.dirty()));
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()

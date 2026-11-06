@@ -25,7 +25,7 @@ pub(super) struct AdjustmentLayerEditor {
     selected: Option<(SourceId, AdjustmentLayerId)>,
     owns_delete: bool,
     rename: Option<(SourceId, AdjustmentLayerId, String)>,
-    deletion: Option<(Source, AdjustmentLayerId)>,
+
     pub(super) show_coverage: bool,
     panel_collapsed: bool,
     pub(super) adjusting_values: bool,
@@ -43,10 +43,6 @@ impl AdjustmentLayerEditor {
             selected: self.selected,
             ..Default::default()
         }
-    }
-
-    pub(super) fn confirming(&self) -> bool {
-        self.deletion.is_some()
     }
 
     pub(super) fn dragging(&self) -> bool {
@@ -207,7 +203,6 @@ impl Editor {
         self.document.visit.adjustment_layers.owns_delete = false;
         self.document.visit.adjustment_layers.order_drag = None;
         self.document.visit.adjustment_layers.creation = None;
-        self.document.visit.adjustment_layers.deletion = None;
         self.document.visit.adjustment_layers.reveal_controls = false;
     }
 
@@ -215,7 +210,7 @@ impl Editor {
         !self.interaction_blocked()
             && self.document.input.ready()
             && !self.tool_interacting()
-            && !self.document.visit.adjustment_layers.confirming()
+            && !self.dialogs.is_open()
     }
 
     pub(super) fn edit_adjustment_layers(
@@ -273,6 +268,7 @@ impl Editor {
         start: Option<AdjustmentLayerId>,
         drop: Option<(OrderKey, usize)>,
         finish: bool,
+        cx: &UiContext<'_, Self>,
     ) {
         if let Some(id) = start {
             match self.order_drag(id) {
@@ -289,7 +285,7 @@ impl Editor {
                 .take()
                 .filter(|drag| drag.key == key)
         {
-            self.apply_adjustment_layer_action(Action::Reorder(drag, slot));
+            self.apply_adjustment_layer_action(Action::Reorder(drag, slot), cx);
         }
         if finish {
             self.document.visit.adjustment_layers.order_drag = None;
@@ -350,7 +346,11 @@ impl Editor {
         })
     }
 
-    pub(super) fn apply_adjustment_layer_action(&mut self, action: Action) {
+    pub(super) fn apply_adjustment_layer_action(
+        &mut self,
+        action: Action,
+        cx: &UiContext<'_, Self>,
+    ) {
         if !self.adjustment_layer_actions_available() || self.tab != 1 {
             return;
         }
@@ -403,15 +403,7 @@ impl Editor {
                 self.document.visit.adjustment_layers.rename = None;
                 Ok(())
             }
-            Action::Delete(id) => {
-                self.document.visit.adjustment_layers.deletion = self
-                    .document
-                    .project
-                    .source(source)
-                    .ok()
-                    .map(|source| (source.clone(), id));
-                Ok(())
-            }
+            Action::Delete(id) => self.request_adjustment_layer_deletion(source, id, cx),
             Action::Enable(id, enabled) => self.edit_adjustment_layers(|layers| {
                 record_mut(layers, id)?.adjustment.enabled = enabled;
                 Ok(())
@@ -462,11 +454,11 @@ impl Editor {
             && matches!(self.adjustment_layer_target(), Target::Layer(_))
     }
 
-    pub(super) fn delete_selected_adjustment_layer(&mut self) {
+    pub(super) fn delete_selected_adjustment_layer(&mut self, cx: &UiContext<'_, Self>) {
         if !self.document.visit.adjustment_layers.dragging()
             && let Target::Layer(id) = self.adjustment_layer_target()
         {
-            self.apply_adjustment_layer_action(Action::Delete(id));
+            self.apply_adjustment_layer_action(Action::Delete(id), cx);
         }
     }
 
@@ -842,57 +834,50 @@ impl Editor {
         pick
     }
 
-    pub(super) fn adjustment_layer_dialog(
+    fn request_adjustment_layer_deletion(
         &mut self,
-        context: &egui::Context,
-        escape_available: bool,
-    ) {
-        let Some((source, id)) = self.document.visit.adjustment_layers.deletion.clone() else {
-            return;
-        };
-        let Some(record) = source
+        source: SourceId,
+        id: AdjustmentLayerId,
+        cx: &UiContext<'_, Self>,
+    ) -> Result<(), Error> {
+        let source = self.document.project.source(source)?.clone();
+        let record = source
             .adjustment_layers
             .as_ref()
             .and_then(|layers| layers.layers.iter().find(|record| record.id == id))
-        else {
-            self.document.visit.adjustment_layers.deletion = None;
-            return;
-        };
+            .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))?;
         let title = format!("Delete {}?", record.name);
-        let choice = presentation::DecisionDialog::new(
-            &title,
-            "This removes the layer and its coverage. Other layers and the RAW file are unchanged.",
-            "Delete layer",
-        )
-        .warning()
-        .show(
-            context,
-            egui::Id::new("delete-adjustment-layer"),
-            escape_available,
-        );
-        if choice == Some(presentation::DialogChoice::Cancel) {
-            self.document.visit.adjustment_layers.deletion = None;
-        } else if choice == Some(presentation::DialogChoice::Confirm) {
-            self.document.visit.adjustment_layers.deletion = None;
-            if self.document.visit.current_source != Some(source.id)
-                || self.document.state.project.source(source.id).ok() != Some(&source)
-            {
-                self.status = "Adjustment changed; deletion cancelled".into();
+        let response = self.dialogs.show(move |context, dialog, escape| {
+            presentation::DecisionDialog::new(&title,
+                "This removes the layer and its coverage. Other layers and the RAW file are unchanged.",
+                "Delete layer").warning().show(context, dialog, escape)
+        });
+        self.document.visit.interaction_action = cx.spawn(move |cx| async move {
+            if response.await != Ok(presentation::DialogChoice::Confirm) {
                 return;
             }
-            match self.edit_adjustment_layers(|layers| layers.remove(id)) {
-                Ok(()) => {
-                    if self.adjustment_layer_target() == Target::None {
-                        self.document.visit.adjustment_layers.selected = None;
-                        if self.tab == 1 {
-                            self.reveal_adjustment_layers();
-                        }
-                    }
-                    self.document.visit.adjustment_layers.rename = None;
+            cx.update(|editor| {
+                if editor.document.visit.current_source != Some(source.id)
+                    || editor.document.project.source(source.id).ok() != Some(&source)
+                {
+                    editor.status = "Adjustment changed; deletion cancelled".into();
+                    return;
                 }
-                Err(error) => self.status = format!("Adjustment deletion rejected: {error}"),
-            }
-        }
+                match editor.edit_adjustment_layers(|layers| layers.remove(id)) {
+                    Ok(()) => {
+                        if editor.adjustment_layer_target() == Target::None {
+                            editor.document.visit.adjustment_layers.selected = None;
+                            if editor.tab == 1 {
+                                editor.reveal_adjustment_layers();
+                            }
+                        }
+                        editor.document.visit.adjustment_layers.rename = None;
+                    }
+                    Err(error) => editor.status = format!("Adjustment deletion rejected: {error}"),
+                }
+            });
+        });
+        Ok(())
     }
 }
 

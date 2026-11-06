@@ -182,8 +182,8 @@ impl Editor {
             && !self.document.gamma_pivot.pending()
             && self.document_pending.is_none()
             && !self.export_modal()
-            && !self.document.confirming()
-            && self.transition.is_none()
+            && !self.dialogs.is_open()
+            && !self.files.pending()
             && self.menus.panel.is_none()
     }
 

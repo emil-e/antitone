@@ -671,7 +671,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
         });
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| {
-            assert!(editor.transition.is_none() && editor.document.analysis_review().is_none())
+            assert!(!editor.files.pending() && editor.document.analysis_review().is_none())
         });
         let mut expected = before;
         for id in [ids[0], ids[2]] {

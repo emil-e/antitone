@@ -69,6 +69,21 @@ pub(super) struct FlatPreview {
 }
 
 impl Editor {
+    pub(super) fn start_correction(&mut self, candidate: Document, cx: &UiContext<'_, Self>) {
+        self.start_document_with(
+            document::Preparation::Correction(candidate, self.document.visit.current_source),
+            cx,
+            Self::correction_completed,
+        );
+    }
+
+    fn correction_completed(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {}
+            Err(error) => self.correction_failed(error),
+        }
+    }
+
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let editing = self
             .current_tool()
@@ -179,7 +194,7 @@ impl FlatTool {
             tool.install(editor);
         } else {
             editor.status = "Application stopped".into();
-            editor.report_failure(FailureKind::FlatReference, editor.status.clone());
+            editor.reference_failed(editor.status.clone());
         }
     }
 
@@ -395,7 +410,7 @@ impl tool::Tool for FlatTool {
                 let Some(coverage) = state.region else { return };
                 let Some(region) = coverage.exact_rectangle(reference.area) else {
                     editor.status = "Flat-field support must be an integer source rectangle".into();
-                    editor.report_failure(FailureKind::FlatSupport, editor.status.clone());
+                    editor.support_failed(editor.status.clone());
                     return;
                 };
                 let input = CorrectionInput {
@@ -449,7 +464,7 @@ fn setup<'scope>(
         let reference = match reference {
             Ok(reference) => reference,
             Err(error) => {
-                fail(&cx, FailureKind::FlatReference, error);
+                fail(&cx, error);
                 return;
             }
         };
@@ -458,7 +473,6 @@ fn setup<'scope>(
             edit.region = edit.region.or(reference.region.map(Coverage::rectangle));
             edit.view.ready = Some(reference.ready.clone());
 
-            editor.resolve_failure(FailureKind::FlatReference);
             editor.status = if edit.region.is_some() {
                 "Proposed illuminated rectangle: adjust edges, then Apply."
             } else {
@@ -482,7 +496,7 @@ fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Edito
         label: "Correction",
         photo: None,
     });
-    editor.document_failure = Some(FailureKind::FlatCorrection);
+    editor.candidate_operation.completed = Some(Editor::correction_completed);
     let activity = editor
         .activities
         .start(ActivityOptions::new("Applying correction…").modal());
@@ -514,11 +528,11 @@ fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Edito
     editor.document.flat_correction = Some(task);
 }
 
-fn fail(cx: &UiContext<'_, Editor>, kind: FailureKind, error: String) {
+fn fail(cx: &UiContext<'_, Editor>, error: String) {
     cx.update(|editor| {
         editor.end_tool();
         editor.status = error.clone();
-        editor.report_failure(kind, error);
+        editor.reference_failed(error);
     });
 }
 
@@ -614,3 +628,30 @@ mod operation_tests;
 mod testing;
 #[cfg(test)]
 mod tests;
+
+impl Editor {
+    pub(super) fn reference_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not prepare reference",
+            explanation: "Your existing correction and photographic settings are unchanged. Check the reference file and try again.",
+            details,
+        }));
+    }
+    pub(super) fn support_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Warning,
+            title: "Area not accepted",
+            explanation: "No correction has been applied. The current area and accepted settings are unchanged. Dismiss this message to adjust the rectangle.",
+            details,
+        }));
+    }
+    pub(super) fn correction_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not change correction",
+            explanation: "The correction change was not applied. Your existing correction, calibration and Photo layers are unchanged. Review the details before trying again.",
+            details,
+        }));
+    }
+}

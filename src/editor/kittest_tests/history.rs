@@ -209,7 +209,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
         let original = h.read(|editor| editor.document.state.project.clone());
         h.enter(|editor, cx| editor.select_look(look::Source::Loaded(chosen.clone()), cx));
         wait_for(&mut h, |e| !e.interaction_blocked());
-        h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
+        h.read(|editor| assert!(!editor.dialogs.is_open(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         assert!(Arc::ptr_eq(
             accepted.output.lut.as_ref().unwrap().lut(),
@@ -487,7 +487,7 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         wait_for(&mut h, |e| !e.interaction_blocked());
         h.key_press(egui::Key::Delete);
         h.step();
-        h.read(|editor| assert!(editor.document.removal_pending.is_some()));
+        h.read(|editor| assert!(editor.dialogs.is_open()));
         h.get_by_label("Remove photos").click();
         h.step();
         wait_for(&mut h, |e| !e.interaction_blocked());

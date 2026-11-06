@@ -288,9 +288,10 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         });
         let before_open = harness.read(|editor| editor.document.state.project.clone());
         open_project(&mut harness, directory.path().join("film.antitone"));
-        harness.read(|editor| assert!(editor.transition.is_some()));
+        harness.read(|editor| assert!(editor.files.pending()));
         harness.get_by_label("Cancel").click();
         harness.step();
+        wait_for(&mut harness, |editor| !editor.files.pending());
         harness.read(|editor| assert_eq!(editor.document.state.project, before_open));
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.get_by_label("Discard changes").click();
@@ -443,36 +444,37 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         std::fs::create_dir(&failed).unwrap();
         harness.update(|editor| editor.document.path = Some(failed));
         native_file_action(&mut harness, crate::platform::menu::Action::New);
-        harness.step();
-        harness.read(|editor| assert!(editor.transition.is_some()));
+        harness.try_run_realtime().unwrap();
+        harness.read(|editor| assert!(editor.files.pending()));
         let request = harness.read(|editor| editor.next_request);
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Save changes")
             .click();
         harness.step();
-        harness.read(|editor| {
-            assert!(
-                editor.next_request > request,
-                "transition Save did not dispatch"
-            )
-        });
+        wait_for(&mut harness, |editor| editor.next_request > request);
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
-        harness.read(|editor| assert_eq!(editor.transition, Some(files::Transition::New)));
+        harness.read(|editor| assert!(editor.files.pending()));
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
-        harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Save));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                FailureCase::Save.title()
+            )
+        });
         harness.get_by_label("OK").click();
         harness.step();
-        harness.step();
-        harness.read(|editor| assert!(editor.failure.is_none()));
+        wait_for(&mut harness, |editor| editor.dialogs.message().is_none());
+        harness.read(|editor| assert!(editor.dialogs.is_open() && editor.files.pending()));
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.get_by_label("Cancel").click();
         harness.step();
+        wait_for(&mut harness, |editor| !editor.files.pending());
         harness.update(|editor| editor.document.path = saved_path);
-        harness.read(|editor| assert!(editor.transition.is_none()));
+        harness.read(|editor| assert!(!editor.files.pending()));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });
 }

@@ -283,7 +283,7 @@ impl Editor {
                         .show(ui)
                         .clicked()
                     {
-                        self.report_failure(FailureKind::LookRendering, error.to_string());
+                        self.look_render_failed(error.to_string());
                     }
                 } else if let Some(error) = &self.document.visit.working_view.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable")
@@ -462,7 +462,7 @@ impl Editor {
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
         if self.menus.panel.is_some()
-            || self.document.visit.adjustment_layers.confirming()
+            || self.dialogs.is_open()
             || egui::Popup::is_any_open(ui.ctx())
         {
             return false;

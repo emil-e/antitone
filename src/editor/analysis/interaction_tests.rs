@@ -83,15 +83,14 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
             let before = app.read(|editor| editor.document.project.clone());
             app.enter(|editor, cx| {
                 editor.request_input(InputSettings::Digital, cx);
-                let target = editor
-                    .document
-                    .input_switch
-                    .take()
-                    .expect("stage-change confirmation");
+                assert!(editor.dialogs.is_open());
                 if fail {
                     editor.source_services = None;
                 }
-                editor.apply_input(target, cx);
+                editor.dialogs.answer_for_test("Switch stage");
+            });
+            app.pump();
+            app.read(|editor| {
                 assert!(editor.document.analysis_operation().is_none());
                 assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible);

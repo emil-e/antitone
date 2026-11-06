@@ -579,15 +579,17 @@ fn grain_controls_are_saved_dirty_and_undoable_rendering_state() {
 
 #[test]
 fn busy_work_and_decisions_cannot_dispatch_document_history() {
-    let mut editor = controller();
-    let before = editor.history_snapshot();
-    editor.document.roll.exposure = 1.;
-    editor.record_edit(before, "Exposure", None);
-    for blocked in 0..3 {
-        editor.set_test_busy(blocked == 0);
-        editor.document.removal_pending =
-            (blocked == 1).then_some(vec![editor.document.visit.current_source.unwrap()]);
-        editor.transition = (blocked == 2).then_some(Transition::New);
+    for busy in [false, true] {
+        let mut editor = controller();
+        let before = editor.history_snapshot();
+        editor.document.roll.exposure = 1.;
+        editor.record_edit(before, "Exposure", None);
+        assert!(editor.history_available());
+        if busy {
+            editor.set_test_busy(true);
+        } else {
+            editor.block_with_decision();
+        }
         editor.restore_history(Direction::Undo, &UiContext::render_only());
         assert!(editor.document_pending.is_none());
         assert_eq!(editor.document.history.undo.len(), 1);

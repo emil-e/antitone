@@ -72,7 +72,7 @@ impl Editor {
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if state.enabled(MenuAction::Close) {
                 menu = Some(MenuAction::Close);
-            } else if self.transition.is_none() && self.project_overwrite.is_none() {
+            } else if !self.files.pending() {
                 self.status =
                     "Finish the current operation or cancel the pick before closing".into();
             }
@@ -130,7 +130,7 @@ impl Editor {
     ) {
         if self.document.spatial_preparing.is_some()
             && self.document_pending.is_none()
-            && self.failure.is_none()
+            && !self.dialogs.is_open()
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
@@ -169,12 +169,10 @@ impl Editor {
             && self.menus.panel.is_none()
             && self.fullscreen.is_none()
             && !fullscreen_was_active
-            && self.failure.is_none()
-            && !self.document.confirming()
+            && !self.dialogs.is_open()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && !self.export_modal()
-            && self.transition.is_none()
-            && self.project_overwrite.is_none()
+            && !self.files.pending()
             && !ui.ctx().egui_wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx())
         {
@@ -227,7 +225,7 @@ impl Editor {
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
             })
         {
-            self.delete_selected_adjustment_layer();
+            self.delete_selected_adjustment_layer(cx);
         }
         if !self.dusting()
             && !adjustment_delete
@@ -266,12 +264,10 @@ impl Editor {
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
         if self.menus.panel.is_some()
             || self.activities.blocks_workspace()
-            || self.failure.is_some()
+            || self.dialogs.is_open()
             || self.export_modal()
             || self.document_pending.is_some()
-            || self.transition.is_some()
-            || self.project_overwrite.is_some()
-            || self.document.confirming()
+            || self.files.pending()
         {
             ui.disable();
         }
@@ -313,7 +309,7 @@ impl Editor {
         } else {
             self.filmstrip(ui, cx);
         }
-        if self.document.confirming() {
+        if self.dialogs.is_open() {
             ui.disable();
         }
     }
@@ -485,22 +481,18 @@ impl Editor {
         cx: &UiContext<'_, Self>,
         dialog_escape_available: bool,
     ) {
-        if self.failure.is_some() {
-            self.feedback_dialog(ui.ctx(), dialog_escape_available);
+        if self.dialogs.is_open() {
+            self.dialogs.paint(ui.ctx(), dialog_escape_available);
             return;
         }
-        self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
-        self.input_stage_dialog(ui.ctx(), dialog_escape_available, cx);
-        self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
-        self.material_switch_dialog(ui.ctx(), dialog_escape_available, cx);
-        self.adjustment_layer_dialog(ui.ctx(), dialog_escape_available);
+
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
-        if self.failure.is_none() && !self.document.confirming() {
+        if !self.dialogs.is_open() {
             self.activities
                 .modal(ui.ctx(), egui::Id::new("working-document"));
         }
-        if self.failure.is_some() {
-            // A decision action can fail after this frame's feedback check.
+        if self.dialogs.is_open() {
+            // The export form can submit a dialog after this pass's dialog check.
             ui.ctx().request_repaint();
         }
     }

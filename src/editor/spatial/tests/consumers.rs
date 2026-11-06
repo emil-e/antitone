@@ -373,14 +373,14 @@ fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui
             .unwrap()
         });
         app.enter(|editor, cx| {
-            editor.start_save(
+            drop(editor.start_save(
                 crate::editor::document::Write {
                     document: editor.document.capture(),
                     path: path.clone(),
                     policy: Save::Replace,
                 },
                 cx,
-            );
+            ));
             assert!(editor.document_pending.is_some());
         });
         let context = egui::Context::default();

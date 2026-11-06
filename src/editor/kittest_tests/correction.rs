@@ -853,7 +853,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             assert_eq!(editor.document.state.project, cleared);
             assert!(editor.document.correction.is_none());
             assert!(editor.active_canvas().ready.is_some());
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(!editor.dialogs.is_open(), "{}", editor.status);
         });
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });

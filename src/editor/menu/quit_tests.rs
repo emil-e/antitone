@@ -5,6 +5,7 @@ fn frame(
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
+    editor.before_frame();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -17,6 +18,7 @@ fn frame(
         |ui| editor.ui(ui),
     );
     output.textures_delta.clear();
+    editor.before_frame();
     output
 }
 
@@ -80,7 +82,7 @@ fn system_quit_joins_a_document_owned_command_awaiting_admission() {
 #[test]
 fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation() {
     let (mut editor, context) = initialized();
-    let before = editor.document.state.project.clone();
+    let before = editor.document.project.clone();
     assert!(editor.document.dirty());
     for _ in 0..3 {
         host::App::request_quit(&mut editor);
@@ -90,7 +92,7 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
             .menus
             .pending
             .iter()
-            .filter(|&&action| action == Action::Quit)
+            .filter(|&&a| a == Action::Quit)
             .count(),
         1
     );
@@ -98,21 +100,29 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
         host::App::quit_state(&editor),
         Some(host::QuitState::Pending)
     );
-    frame(&mut editor, &context, vec![]);
-    assert_eq!(editor.transition, Some(Transition::Close));
-    host::App::request_quit(&mut editor);
-    assert!(
-        editor.menus.pending.is_empty(),
-        "join the existing decision, not another request"
-    );
-    click(&mut editor, &context, "Cancel");
-    assert_eq!(
-        host::App::quit_state(&editor),
-        Some(host::QuitState::Running)
-    );
-    assert!(!editor.allow_close);
-    assert_eq!(editor.document.state.project, before);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        frame(app, &context, vec![]);
+        app.update(|editor| {
+            assert!(editor.files.closing());
+            host::App::request_quit(editor);
+            assert!(
+                editor.menus.pending.is_empty(),
+                "join the existing decision"
+            );
+        });
+        click(app, &context, "Cancel");
+        app.read(|editor| {
+            assert_eq!(
+                host::App::quit_state(editor),
+                Some(host::QuitState::Running)
+            );
+            assert!(!editor.allow_close);
+            assert_eq!(editor.document.project, before);
+            assert!(
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
+            );
+        });
+    });
 }
 
 #[test]
@@ -147,8 +157,8 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
                 editor.begin_crop();
                 assert!(editor.cropping());
             }
-            2 => editor.transition = Some(Transition::New),
-            3 => editor.report_failure(FailureKind::Save, "fixture failure".into()),
+            2 => editor.block_with_decision(),
+            3 => editor.report_failure(FailureCase::Save, "fixture failure".into()),
             _ => unreachable!(),
         }
         let before = editor.document.state.project.clone();
@@ -161,7 +171,7 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         assert!(!editor.allow_close && editor.menus.pending.is_empty());
         assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.cropping(), gate == 1);
-        assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));
+        assert_eq!(editor.dialogs.is_open(), gate == 2 || gate == 3);
         assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
     }
 }
@@ -202,7 +212,7 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             if success {
                 app.read(|e| {
                     assert_eq!(host::App::quit_state(e), Some(host::QuitState::Approved));
-                    assert!(!e.document.dirty() && e.failure.is_none());
+                    assert!(!e.document.dirty() && !e.dialogs.is_open());
                 });
                 assert_eq!(crate::project::Project::load(&path).unwrap(), before);
                 let presented = frame(app, &context, vec![]);
@@ -214,10 +224,10 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
                 }));
             } else {
                 app.read(|e| {
-                    assert_eq!(host::App::quit_state(e), Some(host::QuitState::Running));
+                    assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
                     assert!(!e.allow_close && e.document.dirty());
                     assert_eq!(e.document.state.project, before);
-                    assert!(e.failure.is_some());
+                    assert!(e.dialogs.is_open());
                 });
                 assert!(path.is_dir());
             }
@@ -227,21 +237,37 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
 
 #[test]
 fn cancelling_project_replacement_retires_the_native_close_continuation() {
-    let (mut editor, context) = initialized();
+    let (editor, context) = initialized();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("existing.antitone");
     std::fs::write(&destination, b"existing project").unwrap();
-    editor.project_overwrite = Some((destination.clone(), Some(Transition::Close)));
-    assert_eq!(
-        host::App::quit_state(&editor),
-        Some(host::QuitState::Pending)
-    );
-    click(&mut editor, &context, "Cancel");
-    assert_eq!(
-        host::App::quit_state(&editor),
-        Some(host::QuitState::Running)
-    );
-    assert!(!editor.allow_close);
-    assert_eq!(std::fs::read(destination).unwrap(), b"existing project");
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.save_destination_action(
+                super::super::files::Destination {
+                    path: destination.clone(),
+                    policy: crate::project::Save::Replace,
+                    confirm_replace: true,
+                },
+                Some(Transition::Close),
+                cx,
+            )
+        });
+        assert_eq!(
+            app.read(host::App::quit_state),
+            Some(host::QuitState::Pending)
+        );
+        click(app, &context, "Cancel");
+        app.read(|editor| {
+            assert_eq!(
+                host::App::quit_state(editor),
+                Some(host::QuitState::Running)
+            );
+            assert!(!editor.allow_close);
+            assert!(
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
+            );
+        });
+        assert_eq!(std::fs::read(&destination).unwrap(), b"existing project");
+    });
 }

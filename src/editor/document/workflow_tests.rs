@@ -463,8 +463,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.enter(|e, cx| {
             e.request_input(InputSettings::Digital, cx);
             assert_eq!(e.document.input, negative);
-            assert_eq!(e.document.input_switch.take(), Some(InputSettings::Digital));
-            e.apply_input(InputSettings::Digital, cx);
+            assert!(e.dialogs.is_open());
+            e.dialogs.answer_for_test("Switch stage");
+        });
+        app.pump();
+        app.read(|e| {
             assert!(e.interaction_blocked() && e.document.correction.is_some());
             assert_eq!(
                 e.document.input, negative,

@@ -5,7 +5,7 @@ fn request_removal(harness: &mut Harness<'_, Editor>, photo: &str) {
     harness.step();
     harness.step();
     harness.get_by_label("Remove selected photos…").click();
-    harness.step();
+    harness.try_run_realtime().unwrap();
 }
 
 #[test]
@@ -158,13 +158,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.step();
         harness.step();
         request_removal(&mut harness, "photo-2.dng");
-        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
+        harness.read(|editor| assert!(editor.dialogs.is_open()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.step();
         save_capture(&harness.render().unwrap(), "roll-remove-confirm-offscreen");
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        harness.read(|editor| assert!(!editor.dialogs.is_open()));
         harness.read(|editor| assert!(!editor.document.dirty()));
         request_removal(&mut harness, "photo-2.dng");
         harness.get_by_label("Remove photos").click();
@@ -215,6 +215,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         request_removal(&mut harness, "photo-1.dng");
         harness.get_by_label("Remove photos").click();
         harness.step();
+        wait_for(&mut harness, |editor| {
+            editor.document.project.order.is_empty()
+        });
         expected.order.clear();
         let reference = before.flat_field().unwrap().reference;
         expected.sources.retain(|source| source.id == reference);
@@ -319,7 +322,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         assert!(harness.ctx.text_edit_focused());
         harness.key_press(egui::Key::Backspace);
         harness.step();
-        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        harness.read(|editor| assert!(!editor.dialogs.is_open()));
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
@@ -338,14 +341,20 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         let before = harness.read(|editor| editor.document.state.project.clone());
         harness.key_press(egui::Key::Backspace);
         harness.step();
-        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
-        let pending = harness.read(|editor| editor.document.removal_pending.clone());
+        harness.read(|editor| assert!(editor.dialogs.is_open()));
+        let pending =
+            harness.read(|editor| editor.export_ids(crate::editor::export::Scope::Selected));
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
         );
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.removal_pending, pending));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.export_ids(crate::editor::export::Scope::Selected),
+                pending
+            )
+        });
         assert_eq!(
             harness.get_by_label("other.dng").accesskit_node().toggled(),
             Some(egui::accesskit::Toggled::True)
@@ -354,7 +363,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert!(
-                editor.document.removal_pending.is_none(),
+                !editor.dialogs.is_open(),
                 "Cancel is the safe initial action"
             )
         });
@@ -379,11 +388,12 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert!(
-                editor.document.removal_pending.is_some(),
+                editor.dialogs.is_open(),
                 "Delete reopens removal after a cancelled one"
             )
         });
-        let reopened = harness.read(|editor| editor.document.removal_pending.clone());
+        let reopened =
+            harness.read(|editor| editor.export_ids(crate::editor::export::Scope::Selected));
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
@@ -391,7 +401,8 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert_eq!(
-                editor.document.removal_pending, reopened,
+                editor.export_ids(crate::editor::export::Scope::Selected),
+                reopened,
                 "the dialog owns the shortcut"
             )
         });
@@ -401,7 +412,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         );
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert!(editor.document.removal_pending.is_none(), "Escape cancels"));
+        harness.read(|editor| assert!(!editor.dialogs.is_open(), "Escape cancels"));
         harness.get_by_label("patches.dng").click_secondary();
         harness.step();
         harness.step();
@@ -413,8 +424,8 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         );
         save_capture(&harness.render().unwrap(), "roll-remove-context-offscreen");
         harness.get_by_label("Remove selected photos…").click();
-        harness.step();
-        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
+        harness.try_run_realtime().unwrap();
+        harness.read(|editor| assert!(editor.dialogs.is_open()));
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.update(|editor| editor.begin_crop());
@@ -432,7 +443,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
             Some(egui::accesskit::Toggled::True),
             "crop draft retains selection"
         );
-        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        harness.read(|editor| assert!(!editor.dialogs.is_open()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.get_by_label("Cancel").click();
         harness.step();

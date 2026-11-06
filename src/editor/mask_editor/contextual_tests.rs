@@ -142,7 +142,7 @@ fn file_and_export_admission_wait_for_the_gesture_not_for_a_mask_mode() {
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(editor.document_pending.is_none());
-                assert!(editor.transition.is_none());
+                assert!(!editor.files.pending());
                 assert!(editor.document.export.draft.is_none());
                 assert_eq!(editor.document.state.project, before);
             });

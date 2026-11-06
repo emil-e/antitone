@@ -222,7 +222,7 @@ impl Editor {
         let commands = !self.interaction_blocked()
             && self.selected_area().is_some()
             && !self.tool_interacting()
-            && !self.document.confirming();
+            && !self.dialogs.is_open();
         let mut analyze = false;
 
         ToolShelf::show(ui, |ui| {

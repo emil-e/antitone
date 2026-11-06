@@ -46,7 +46,7 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                     }
             });
             app.read(|editor| {
-                assert!(editor.failure.is_none(), "{}", editor.status);
+                assert!(!editor.dialogs.is_open(), "{}", editor.status);
                 assert_eq!(*editor.document.spatial.ready(), metadata);
                 assert!(
                     editor
@@ -89,7 +89,7 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
         drop(write);
         app.run_until(LIMIT, |editor| editor.document_pending.is_none());
         app.read(|editor| {
-            assert!(editor.failure.is_some());
+            assert!(editor.dialogs.is_open());
             assert!(editor.document.auto_crop.active());
             assert!(!editor.document.auto_crop.reviewing());
         });
@@ -108,7 +108,7 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
         );
         app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.read(|editor| {
-            assert!(editor.failure.is_none());
+            assert!(!editor.dialogs.is_open());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(*editor.document.spatial.ready(), metadata);
         });

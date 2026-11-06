@@ -572,7 +572,7 @@ fn deletion_confirmation_can_cancel_and_text_input_owns_delete() {
         pending_exposure(&mut harness, "1.25");
         harness.key_press(egui::Key::Delete);
         harness.step();
-        harness.read(|editor| assert!(!editor.document.visit.adjustment_layers.confirming()));
+        harness.read(|editor| assert!(!editor.dialogs.is_open()));
         harness.key_press(egui::Key::Escape);
         harness.step();
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
@@ -683,7 +683,7 @@ fn stale_deletion_confirmation_cannot_remove_a_changed_layer() {
         click(&mut harness, "Delete layer");
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, changed);
-            assert!(!editor.document.visit.adjustment_layers.confirming());
+            assert!(!editor.dialogs.is_open());
             assert!(editor.status.contains("deletion cancelled"));
         });
     });

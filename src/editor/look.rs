@@ -73,12 +73,6 @@ pub(super) struct Session {
     pub loaded: Vec<Arc<LookAsset>>,
 }
 
-/// A decision outlives any preparation it was opened over; declining keeps that work alive.
-pub(super) struct MaterialSwitch {
-    previous: MaterialSelection,
-    selection: MaterialSelection,
-}
-
 pub(super) struct Operation {
     #[cfg(test)]
     pub activity: ActivityReporter,
@@ -243,7 +237,7 @@ impl Editor {
             })
     }
     fn look_request_allowed(&self, slot: Slot) -> bool {
-        !self.document.confirming()
+        !self.dialogs.is_open()
             && (!self.interaction_blocked()
                 || self
                     .document
@@ -262,11 +256,12 @@ impl Editor {
         if let Some(selection) = paper.and_then(|paper| MaterialSelection::new(negative, paper)) {
             self.select_look(Source::Photochemical(selection), cx);
         } else if let (Some(previous), Some(negative)) = (current, negative) {
-            self.document.material_switch = Some(MaterialSwitch {
+            self.request_material_switch(
                 previous,
-                selection: MaterialSelection::new(Some(negative), negative.default_paper())
+                MaterialSelection::new(Some(negative), negative.default_paper())
                     .expect("negative's default paper is supported"),
-            });
+                cx,
+            );
         }
     }
     #[cfg(test)]
@@ -287,31 +282,30 @@ impl Editor {
                 if let Some(selection) = MaterialSelection::new(negative, paper) {
                     self.select_look(Source::Photochemical(selection), cx);
                 } else if let Some(previous) = current {
-                    self.document.material_switch = Some(MaterialSwitch {
+                    self.request_material_switch(
                         previous,
-                        selection: MaterialSelection::new(None, paper)
+                        MaterialSelection::new(None, paper)
                             .expect("paper-only treatment is supported"),
-                    });
+                        cx,
+                    );
                 }
             }
             None if current.is_some() && negative.is_none() => self.clear_slot(Slot::FilmAndPaper),
             _ => {}
         }
     }
-    fn resolve_material_switch(&mut self, confirm: bool, cx: &UiContext<'_, Self>) {
-        let Some(proposal) = self.document.material_switch.take() else {
-            return;
-        };
-        if confirm {
-            self.select_look(Source::Photochemical(proposal.selection), cx);
-        }
-    }
+
     pub(super) fn select_look(&mut self, source: Source, cx: &UiContext<'_, Self>) {
         let slot = source.slot();
         // One preparation owns the busy interaction; the other stage keeps its accepted asset.
         if !self.look_request_allowed(slot) {
             return;
         }
+        self.prepare_look(source, cx);
+    }
+
+    fn prepare_look(&mut self, source: Source, cx: &UiContext<'_, Self>) {
+        let slot = source.slot();
         self.retire_look_selection();
         let cancelled = crate::cancellation::Cancellation::default();
         let activity = self
@@ -355,11 +349,9 @@ impl Editor {
                         editor.remember_imported_look();
                         editor.invalidate_original();
                         editor.record_edit(before, slot.label(), None);
-                        editor.resolve_failure(FailureKind::Look);
-                        editor.resolve_failure(FailureKind::LookRendering);
                     }
                     Ok(None) => editor.status = "LUT preparation cancelled".into(),
-                    Err(message) => editor.report_failure(FailureKind::Look, message),
+                    Err(message) => editor.look_failed(message),
                 }
             });
         });
@@ -367,7 +359,7 @@ impl Editor {
             self.document.look.as_mut().unwrap().task = Some(task);
         } else {
             self.retire_look_selection();
-            self.report_failure(FailureKind::Look, "Application stopped".into());
+            self.look_failed("Application stopped".into());
         }
     }
 
@@ -375,7 +367,7 @@ impl Editor {
         self.document.look = None;
     }
     fn clear_slot(&mut self, slot: Slot) {
-        if self.document.confirming() {
+        if self.dialogs.is_open() {
             return;
         }
         if self
@@ -392,8 +384,6 @@ impl Editor {
             self.invalidate_original();
             self.record_edit(before, slot.label(), None);
         }
-        self.resolve_failure(FailureKind::Look);
-        self.resolve_failure(FailureKind::LookRendering);
     }
     pub(super) fn clear_film_and_paper(&mut self) {
         self.clear_slot(Slot::FilmAndPaper);
@@ -443,48 +433,42 @@ fn loaded_lut_labels(assets: &[Arc<LookAsset>]) -> Vec<String> {
 }
 
 impl Editor {
-    pub(super) fn material_switch_dialog(
+    fn request_material_switch(
         &mut self,
-        context: &egui::Context,
-        escape_available: bool,
+        previous: MaterialSelection,
+        selection: MaterialSelection,
         cx: &UiContext<'_, Self>,
     ) {
-        let Some(proposal) = &self.document.material_switch else {
-            return;
-        };
-        let explanation = if let Some(negative) = proposal.selection.negative() {
+        let explanation = if let Some(negative) = selection.negative() {
             format!(
                 "{} with {} is not supported. Switch the paper to {}?",
                 negative.name(),
-                proposal.previous.paper().name(),
-                proposal.selection.paper().name()
+                previous.paper().name(),
+                selection.paper().name()
             )
         } else {
             format!(
                 "{} with {} is not supported. Set Negative to None to use this paper?",
-                proposal
-                    .previous
+                previous
                     .negative()
                     .expect("switch clears a selected negative")
                     .name(),
-                proposal.selection.paper().name()
+                selection.paper().name()
             )
         };
-        let choice = presentation::DecisionDialog::new(
-            "Switch Film & paper?",
-            &explanation,
-            "Switch materials",
-        )
-        .show(
-            context,
-            egui::Id::new("switch-film-and-paper"),
-            escape_available,
-        );
-        match choice {
-            Some(presentation::DialogChoice::Confirm) => self.resolve_material_switch(true, cx),
-            Some(presentation::DialogChoice::Cancel) => self.resolve_material_switch(false, cx),
-            _ => {}
-        }
+        let response = self.dialogs.show(move |context, id, escape| {
+            presentation::DecisionDialog::new(
+                "Switch Film & paper?",
+                &explanation,
+                "Switch materials",
+            )
+            .show(context, id, escape)
+        });
+        self.document.dialog_action = cx.spawn(move |cx| async move {
+            if response.await == Ok(presentation::DialogChoice::Confirm) {
+                cx.update(|editor| editor.prepare_look(Source::Photochemical(selection), &cx));
+            }
+        });
     }
     pub(super) fn look_rendering_error(&self) -> Option<Error> {
         let view = &self.canvas_frame.displayed.as_ref()?.view;
@@ -699,5 +683,24 @@ impl Editor {
         } else if let Some(paper) = paper_choice {
             self.select_paper(paper, cx);
         }
+    }
+}
+
+impl Editor {
+    pub(super) fn look_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not prepare look",
+            explanation: "Your existing look and layers are unchanged. Review the details, then choose another look or LUT file.",
+            details,
+        }));
+    }
+    pub(super) fn look_render_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not render look",
+            explanation: "The look could not be rendered. Your selection and photographic layers are unchanged. Review the details before trying again.",
+            details,
+        }));
     }
 }

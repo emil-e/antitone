@@ -456,20 +456,20 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
     harness.get_by_label("Viewer help").click();
     harness.run();
     assert!(egui::Popup::is_any_open(&harness.ctx));
-    harness.update(|editor| editor.transition = Some(Transition::New));
+    harness.enter(|editor, cx| editor.guard_transition(Transition::New, cx));
     harness.run();
     harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
     harness.step();
     assert!(!egui::Popup::is_any_open(&harness.ctx));
     harness.read(|editor| {
         assert!(
-            editor.transition.is_some(),
+            editor.files.pending(),
             "popover Escape also cancelled the decision"
         )
     });
     harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
     harness.step();
-    harness.read(|editor| assert!(editor.transition.is_none()));
+    wait_for(&mut harness, |editor| !editor.files.pending());
     for (layout, size) in [
         ("normal", egui::vec2(1100., 800.)),
         ("narrow", egui::vec2(800., 600.)),
@@ -480,22 +480,24 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             (1, "project-replace", "Replace project"),
             (2, "output-replace", "Replace and export"),
         ] {
-            harness.update(|editor| match decision {
-                0 => editor.transition = Some(Transition::New),
-                1 => {
-                    editor.project_overwrite = Some((
-                        PathBuf::from("/projects/Scans/照片-long-project-name.antitone.json"),
-                        Some(Transition::New),
-                    ))
-                }
+            harness.enter(|editor, cx| match decision {
+                0 => editor.guard_transition(Transition::New, cx),
+                1 => editor.save_destination_action(
+                    files::Destination {
+                        path: PathBuf::from("/projects/Scans/照片-long-project-name.antitone.json"),
+                        policy: crate::project::Save::Replace,
+                        confirm_replace: true,
+                    },
+                    Some(Transition::New),
+                    cx,
+                ),
                 2 => {
                     let mut draft = crate::editor::export::Draft::new(
                         OutputTarget::Srgb,
                         PathBuf::from("/exports/Scans/照片-long-export-folder"),
                     );
                     draft.collision = crate::editor::export::Collision::Replace;
-                    draft.confirming_replace = true;
-                    editor.document.export.draft = Some(draft);
+                    editor.request_export_replacement(draft, cx);
                 }
                 _ => unreachable!(),
             });
@@ -525,23 +527,15 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             harness.run();
             if decision == 2 {
                 harness.read(|editor| {
-                    assert!(
-                        !editor
-                            .document
-                            .export
-                            .draft
-                            .as_ref()
-                            .unwrap()
-                            .confirming_replace
-                    )
+                    assert!(editor.document.export.draft.is_some() && !editor.dialogs.is_open())
                 });
                 harness.get_by_label("Cancel").click();
                 harness.run();
             }
             harness.read(|editor| {
                 assert!(
-                    editor.transition.is_none()
-                        && editor.project_overwrite.is_none()
+                    !editor.files.pending()
+                        && !editor.dialogs.is_open()
                         && editor.document.export.draft.is_none()
                 )
             });
@@ -607,26 +601,26 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     ] {
         harness.set_size(size);
         for kind in [
-            FailureKind::FlatReference,
-            FailureKind::FlatSupport,
-            FailureKind::FlatCorrection,
-            FailureKind::Save,
-            FailureKind::Export,
-            FailureKind::Look,
-            FailureKind::LookRendering,
+            FailureCase::FlatReference,
+            FailureCase::FlatSupport,
+            FailureCase::FlatCorrection,
+            FailureCase::Save,
+            FailureCase::Export,
+            FailureCase::Look,
+            FailureCase::LookRendering,
         ] {
             match kind {
-                FailureKind::FlatReference => harness.enter(|editor, cx| {
+                FailureCase::FlatReference => harness.enter(|editor, cx| {
                     editor.begin_flat_edit(directory.path().join("missing-reference.dng"), None, cx)
                 }),
-                FailureKind::FlatSupport | FailureKind::FlatCorrection => {
+                FailureCase::FlatSupport | FailureCase::FlatCorrection => {
                     harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
                     wait_for(&mut harness, |editor| !editor.interaction_blocked());
                     harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
                     let area = harness
                         .read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
                     harness.update(|editor| {
-                        editor.set_test_pick_region(Some(if kind == FailureKind::FlatSupport {
+                        editor.set_test_pick_region(Some(if kind == FailureCase::FlatSupport {
                             let x = f64::from(area.x) + 0.25;
                             let y = f64::from(area.y);
                             Coverage::new(
@@ -645,19 +639,19 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     });
                     harness.enter(|editor, cx| editor.apply_flat_edit(cx));
                 }
-                FailureKind::Look => harness.enter(|editor, cx| {
+                FailureCase::Look => harness.enter(|editor, cx| {
                     editor.select_look(
                         look::Source::Imported(directory.path().join("missing-look.cube")),
                         cx,
                     )
                 }),
-                FailureKind::LookRendering => harness.update(|editor| {
+                FailureCase::LookRendering => harness.update(|editor| {
                     editor.report_failure(
-                        FailureKind::LookRendering,
+                        FailureCase::LookRendering,
                         "The selected look encountered a nonfinite scene-linear value.".into(),
                     )
                 }),
-                FailureKind::Save => harness.enter(|editor, cx| {
+                FailureCase::Save => harness.enter(|editor, cx| {
                     editor.save_project(
                         directory.path().join("missing-parent/project.json"),
                         crate::project::Save::New,
@@ -665,7 +659,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                         cx,
                     )
                 }),
-                FailureKind::Export => {
+                FailureCase::Export => {
                     let path = harness.read(|editor| editor.document.path.clone().unwrap());
                     harness.enter(|editor, cx| {
                         editor.export(
@@ -678,21 +672,22 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 }
             }
             wait_for(&mut harness, |editor| {
-                !editor.interaction_blocked() && editor.failure.is_some()
+                !editor.interaction_blocked() && editor.dialogs.is_open()
             });
-            harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, kind));
+            harness
+                .read(|editor| assert_eq!(editor.dialogs.message().unwrap().title, kind.title()));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.hover_at(egui::pos2(10., size.y - 10.));
             harness.run();
             assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
             let name = match kind {
-                FailureKind::FlatReference => "reference",
-                FailureKind::FlatSupport => "support",
-                FailureKind::FlatCorrection => "correction",
-                FailureKind::Save => "save",
-                FailureKind::Export => "export",
-                FailureKind::Look => "look",
-                FailureKind::LookRendering => "look-rendering",
+                FailureCase::FlatReference => "reference",
+                FailureCase::FlatSupport => "support",
+                FailureCase::FlatCorrection => "correction",
+                FailureCase::Save => "save",
+                FailureCase::Export => "export",
+                FailureCase::Look => "look",
+                FailureCase::LookRendering => "look-rendering",
             };
             let png = harness.render().unwrap();
             if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
@@ -701,7 +696,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 png.save(output.join(format!("feedback-{name}-{layout}-offscreen.png")))
                     .unwrap();
             }
-            if kind == FailureKind::Save {
+            if kind == FailureCase::Save {
                 assert!(harness.query_by_label("Save changes").is_none());
                 if harness
                     .get_by_label("Details")
@@ -734,14 +729,14 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             }
             harness.get_by_label("OK").click();
             harness.run();
-            harness.read(|editor| assert!(editor.failure.is_none()));
-            if kind == FailureKind::Save {
-                harness.read(|editor| assert_eq!(editor.transition, Some(Transition::Close)));
+            harness.read(|editor| assert!(editor.dialogs.message().is_none()));
+            if kind == FailureCase::Save {
+                harness.read(|editor| assert!(editor.files.closing()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
                 harness.read(|editor| assert!(!editor.allow_close));
             }
-            if kind == FailureKind::FlatSupport {
+            if kind == FailureCase::FlatSupport {
                 harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
@@ -786,6 +781,8 @@ fn wait_for_with_timeout(
     let deadline = Instant::now() + timeout;
     let caller = std::panic::Location::caller();
     loop {
+        // A user response can be ready before its continuation has admitted the next operation.
+        harness.application.pump();
         harness.read(|editor| {
             assert!(
                 Instant::now() < deadline,
@@ -803,7 +800,12 @@ fn wait_for_with_timeout(
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    harness.step();
+    if harness.read(|editor| editor.dialogs.is_open()) {
+        // Newly submitted dialogs need their measured layout before control discovery.
+        harness.try_run_realtime().unwrap();
+    } else {
+        harness.step();
+    }
 }
 
 fn editor_harness<R>(test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>) -> R) -> R {
@@ -1089,8 +1091,7 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
 // Supply the native chooser's result; exercise the real transition guard and worker.
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
     harness.enter(|editor, cx| editor.guard_transition(files::Transition::Open(path), cx));
-    harness.step();
-    harness.step();
+    harness.try_run_realtime().unwrap();
 }
 
 fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {

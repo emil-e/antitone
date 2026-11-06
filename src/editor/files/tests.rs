@@ -61,6 +61,7 @@ fn ui_frame(
     context: &egui::Context,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
+    editor.before_frame();
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -75,6 +76,7 @@ fn ui_frame(
         },
     );
     output.textures_delta.clear();
+    editor.before_frame();
     output
         .shapes
         .into_iter()
@@ -131,7 +133,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .center();
         click(app, &context, cancel);
         app.read(|e| {
-            assert!(e.transition.is_none() && e.document_pending.is_none());
+            assert!(!e.files.pending() && e.document_pending.is_none());
             assert_eq!(e.document.state.project, before);
         });
         app.enter(|e, cx| e.guard_transition(Transition::New, cx));
@@ -148,7 +150,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
-            assert!(e.failure.is_none() && !e.document.dirty());
+            assert!(!e.dialogs.is_open() && !e.document.dirty());
         });
     });
 }
@@ -169,22 +171,25 @@ fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_sav
             "Closing Antitone without saving will discard unsaved edits in this project.",
         ),
     ] {
-        let mut editor = fixture();
+        let editor = fixture();
         let context = egui::Context::default();
-        editor.transition = Some(transition);
-        ui_frame(&mut editor, &context, vec![]);
-        let labels = ui_frame(&mut editor, &context, vec![]);
-        assert!(
-            labels
-                .iter()
-                .any(|(label, _)| label == "Save changes to this project?")
-        );
-        assert!(labels.iter().any(|(label, _)| label == explanation));
-        assert!(
-            !labels
-                .iter()
-                .any(|(label, _)| matches!(label.as_str(), "Warning" | "Information" | "Error"))
-        );
+        with_application(editor, |app| {
+            app.enter(|e, cx| e.guard_transition(transition, cx));
+            ui_frame(app, &context, vec![]);
+            let labels = ui_frame(app, &context, vec![]);
+            assert!(
+                labels
+                    .iter()
+                    .any(|(label, _)| label == "Save changes to this project?")
+            );
+            assert!(labels.iter().any(|(label, _)| label == explanation));
+            assert!(
+                !labels.iter().any(|(label, _)| matches!(
+                    label.as_str(),
+                    "Warning" | "Information" | "Error"
+                ))
+            );
+        });
     }
 }
 
@@ -309,17 +314,21 @@ fn numeric_save(route: SaveInput) {
         }
         if matches!(route, SaveInput::PasteThenSystemQuit) {
             app.read(|e| {
-                assert_eq!(e.transition, Some(Transition::Close));
+                assert!(e.files.closing());
                 assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
                 assert!(!e.allow_close);
             });
-            let shapes = ui_frame(app, &context, vec![]);
-            let save = shapes
-                .iter()
-                .find(|(label, _)| label == "Save changes")
-                .unwrap()
-                .1
-                .center();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let save = loop {
+                let shapes = ui_frame(app, &context, vec![]);
+                if let Some((_, rect)) = shapes.iter().find(|(label, _)| label == "Save changes") {
+                    break rect.center();
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Save decision did not become visible: {shapes:?}"
+                );
+            };
             click(app, &context, save);
         }
         assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
@@ -339,7 +348,7 @@ fn numeric_save(route: SaveInput) {
             7.123456789
         );
         app.read(|e| {
-            assert!(e.failure.is_none() && !e.document.dirty(), "{}", e.status);
+            assert!(!e.dialogs.is_open() && !e.document.dirty(), "{}", e.status);
             assert_eq!(
                 e.allow_close,
                 matches!(route, SaveInput::PasteThenSystemQuit)
@@ -350,50 +359,44 @@ fn numeric_save(route: SaveInput) {
 
 #[test]
 fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
-    let mut editor = fixture();
     let context = egui::Context::default();
-    ui_frame(&mut editor, &context, vec![]);
-    let mut input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(1100., 800.),
-        )),
-        ..Default::default()
-    };
-    input
-        .viewports
-        .get_mut(&egui::ViewportId::ROOT)
-        .unwrap()
-        .events
-        .push(egui::ViewportEvent::Close);
-    let mut output = context.run_ui(input.clone(), |ui| {
-        egui::CentralPanel::default().show(ui, |ui| {
-            crate::editor::tests::paint_controller(&mut editor, ui)
-        });
+    with_application(fixture(), |app| {
+        ui_frame(app, &context, vec![]);
+        for _ in 0..2 {
+            app.pump();
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100., 800.),
+                )),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .events
+                .push(egui::ViewportEvent::Close);
+            let mut output = context.run_ui(input, |ui| {
+                egui::CentralPanel::default()
+                    .show(ui, |ui| crate::editor::tests::paint_controller(app, ui));
+            });
+            output.textures_delta.clear();
+            app.pump();
+            assert!(
+                output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .contains(&egui::ViewportCommand::CancelClose)
+            );
+            app.read(|editor| {
+                assert!(editor.files.closing());
+                assert!(!editor.allow_close);
+                assert!(
+                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
+                );
+            });
+        }
     });
-    output.textures_delta.clear();
-    assert!(
-        output.viewport_output[&egui::ViewportId::ROOT]
-            .commands
-            .contains(&egui::ViewportCommand::CancelClose)
-    );
-    assert_eq!(editor.transition, Some(Transition::Close));
-    assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
-    let mut output = context.run_ui(input, |ui| {
-        egui::CentralPanel::default().show(ui, |ui| {
-            crate::editor::tests::paint_controller(&mut editor, ui)
-        });
-    });
-    output.textures_delta.clear();
-    assert!(
-        output.viewport_output[&egui::ViewportId::ROOT]
-            .commands
-            .contains(&egui::ViewportCommand::CancelClose)
-    );
-    assert_eq!(editor.transition, Some(Transition::Close));
-    assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }
 
 #[test]
@@ -415,7 +418,10 @@ fn export_cannot_replace_the_open_project_document() {
     assert!(editor.document.export.operation.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(!editor.interaction_blocked());
-    assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+    assert_eq!(
+        editor.dialogs.message().unwrap().title,
+        FailureCase::Export.title()
+    );
 }
 
 #[test]
@@ -423,45 +429,52 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
     use super::super::presentation::tests::key;
     for decision in 0..3 {
         for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
-            let mut editor = fixture();
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("existing-file");
             std::fs::write(&path, b"unchanged destination").unwrap();
-            let before = editor.document.state.project.clone();
-            match decision {
-                0 => editor.transition = Some(Transition::Close),
-                1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
-                _ => {
-                    editor.document.export.draft = Some(export::Draft::new(
-                        OutputTarget::Srgb,
-                        directory.path().to_owned(),
-                    ))
-                }
-            }
-            let context = egui::Context::default();
-            ui_frame(&mut editor, &context, vec![]);
-            ui_frame(&mut editor, &context, vec![]);
-            click(&mut editor, &context, egui::pos2(30., 15.));
-            assert!(
-                editor.transition.is_some()
-                    || editor.project_overwrite.is_some()
-                    || editor.document.export.draft.is_some()
-            );
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
-            ui_frame(&mut editor, &context, key(cancel_key));
-            assert!(
-                editor.transition.is_none()
-                    && editor.project_overwrite.is_none()
-                    && editor.document.export.draft.is_none()
-            );
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
-            assert!(!editor.allow_close && !editor.interaction_blocked());
-            assert_eq!(editor.document.state.project, before);
-            assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
+            let editor = fixture();
+            let before = editor.document.project.clone();
+            with_application(editor, |app| {
+                app.enter(|editor, cx| match decision {
+                    0 => editor.guard_transition(Transition::Close, cx),
+                    1 => editor.save_destination_action(
+                        Destination {
+                            path: path.clone(),
+                            policy: crate::project::Save::Replace,
+                            confirm_replace: true,
+                        },
+                        Some(Transition::New),
+                        cx,
+                    ),
+                    _ => editor.open_export_dialog(),
+                });
+                let context = egui::Context::default();
+                ui_frame(app, &context, vec![]);
+                ui_frame(app, &context, vec![]);
+                click(app, &context, egui::pos2(30., 15.));
+                app.read(|editor| {
+                    assert!(editor.files.pending() || editor.document.export.draft.is_some());
+                    assert!(
+                        editor.document_pending.is_none()
+                            && editor.document.export.operation.is_none()
+                    );
+                });
+                ui_frame(app, &context, key(cancel_key));
+                app.read(|editor| {
+                    assert!(
+                        !editor.dialogs.is_open()
+                            && !editor.files.pending()
+                            && editor.document.export.draft.is_none()
+                    );
+                    assert!(
+                        editor.document_pending.is_none()
+                            && editor.document.export.operation.is_none()
+                    );
+                    assert!(!editor.allow_close && !editor.interaction_blocked());
+                    assert_eq!(editor.document.project, before);
+                });
+                assert_eq!(std::fs::read(&path).unwrap(), b"unchanged destination");
+            });
         }
     }
 }
@@ -490,8 +503,8 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
             .center();
         click(app, &context, point);
         app.read(|e| {
-            assert!(e.transition.is_none() && !e.allow_close);
-            assert_eq!(e.after_save, Some(Transition::Close));
+            assert!(!e.dialogs.is_open() && !e.allow_close);
+            assert!(e.files.closing());
             assert!(e.document_pending.is_some());
         });
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
@@ -510,8 +523,8 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
             1.25
         );
         app.read(|e| {
-            assert!(e.allow_close && !e.document.dirty() && e.failure.is_none());
-            assert!(e.after_save.is_none());
+            assert!(e.allow_close && !e.document.dirty() && !e.dialogs.is_open());
+            assert!(!e.files.pending());
         });
     });
 }
@@ -524,9 +537,19 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
     std::fs::write(&path, b"existing destination").unwrap();
     let id = editor.document.visit.current_source.unwrap();
     editor.document.visit.adjustment_layer_settings.exposure = 1.25;
-    editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
     let context = egui::Context::default();
     with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.save_destination_action(
+                Destination {
+                    path: path.clone(),
+                    policy: crate::project::Save::Replace,
+                    confirm_replace: true,
+                },
+                Some(Transition::New),
+                cx,
+            )
+        });
         ui_frame(app, &context, vec![]);
         let labels = ui_frame(app, &context, vec![]);
         let point = labels
@@ -537,8 +560,8 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
             .center();
         click(app, &context, point);
         app.read(|e| {
-            assert!(e.project_overwrite.is_none() && e.document_pending.is_some());
-            assert_eq!(e.after_save, Some(Transition::New));
+            assert!(!e.dialogs.is_open() && e.document_pending.is_some());
+            assert!(e.files.pending());
         });
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         assert_eq!(
@@ -557,7 +580,7 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
         );
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
-            assert!(e.failure.is_none() && e.after_save.is_none());
+            assert!(!e.dialogs.is_open() && !e.files.pending());
         });
     });
 }
@@ -630,11 +653,11 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             }
         }
         draft.collision = export::Collision::Replace;
-        draft.confirming_replace = true;
-        editor.document.export.draft = Some(draft);
+
         let before = editor.document.state.project.clone();
         let context = egui::Context::default();
         with_application(editor, |app| {
+            app.enter(|e, cx| e.request_export_replacement(draft, cx));
             ui_frame(app, &context, vec![]);
             let labels = ui_frame(app, &context, vec![]);
             let point = labels
@@ -652,7 +675,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             });
             app.read(|e| {
                 assert!(
-                    e.failure.is_none() && !e.interaction_blocked(),
+                    e.dialogs.is_open() && !e.interaction_blocked(),
                     "{}",
                     e.status
                 );
@@ -914,12 +937,15 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.document.dirty() && !e.interaction_blocked());
-            assert_eq!(e.transition, Some(Transition::New));
+            assert!(e.files.pending());
             assert_eq!(
                 e.source_epoch.load(std::sync::atomic::Ordering::Relaxed),
                 e.id
             );
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Save);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Save.title()
+            );
         });
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
     });
@@ -1046,17 +1072,23 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
 
 #[test]
 fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() {
-    let mut editor = fixture();
     for transition in [
         Transition::New,
         Transition::Open("candidate.json".into()),
         Transition::Close,
     ] {
-        editor.guard_transition(transition.clone(), &UiContext::render_only());
-        assert_eq!(editor.transition, Some(transition));
-        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
-        assert!(!editor.allow_close);
-        editor.transition = None;
+        with_application(fixture(), |app| {
+            app.enter(|editor, cx| editor.guard_transition(transition.clone(), cx));
+            app.pump();
+            app.read(|editor| {
+                assert!(editor.files.pending() && editor.dialogs.is_open());
+                assert_eq!(editor.files.closing(), transition == Transition::Close);
+                assert!(
+                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
+                );
+                assert!(!editor.allow_close);
+            });
+        });
     }
 }
 

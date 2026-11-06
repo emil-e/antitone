@@ -9,6 +9,18 @@ fn wait(editor: Editor, start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>))
     crate::editor::tests::complete_export_operation(editor, Duration::from_secs(30), start)
 }
 
+fn acknowledge_export_summary(editor: &mut Editor) {
+    assert!(
+        editor.dialogs.message().is_none(),
+        "expected an export summary, not a failure"
+    );
+    editor.dialogs.answer_for_test("OK");
+    assert!(
+        !editor.dialogs.is_open(),
+        "each operation must account for all its dialogs"
+    );
+}
+
 fn tiff_pixels(path: &std::path::Path) -> Vec<u16> {
     let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let DecodingResult::U16(values) = decoder.read_image().unwrap() else {
@@ -78,7 +90,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             |editor, cx| editor.start_document(Preparation::Open(project_path), cx),
         );
         assert!(
-            editor.document.visit.canvas.ready.is_some() && editor.failure.is_none(),
+            editor.document.visit.canvas.ready.is_some() && editor.dialogs.message().is_none(),
             "{}",
             editor.status
         );
@@ -91,7 +103,8 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             editor = wait(editor, |editor, cx| {
                 editor.export(output.clone(), format, Overwrite::Refuse, cx)
             });
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+            acknowledge_export_summary(&mut editor);
             match format {
                 OutputFormat::Tiff(_) => {
                     let mut decoder = Decoder::new(std::fs::File::open(output).unwrap()).unwrap();
@@ -161,7 +174,8 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
                 assert!(editor.interaction_blocked() && editor.document.export.operation.is_some());
             });
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+            acknowledge_export_summary(&mut editor);
             assert!(
                 editor.document.export.operation.is_none() && editor.activities.view().is_none()
             );
@@ -214,7 +228,8 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             editor.sync_document();
             editor.id += 7;
         });
-        assert!(editor.failure.is_none(), "{}", editor.status);
+        assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+        acknowledge_export_summary(&mut editor);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.state.project, edited);
         assert_eq!(
@@ -231,7 +246,12 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 cx,
             )
         });
-        assert!(editor.failure.is_some());
+        let notice = editor
+            .dialogs
+            .message()
+            .expect("refused destination must report its failure");
+        assert_eq!(notice.title, FailureCase::Export.title());
+        assert!(notice.details.contains("exist"), "{}", notice.details);
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(editor.document.state.project, edited);
     });

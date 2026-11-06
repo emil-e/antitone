@@ -487,7 +487,7 @@ fn unavailable_images_and_blocking_transactions_cannot_enter_fullscreen() {
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     assert!(editor.fullscreen.is_none());
     super::super::tests::add_ready_fixture(&mut editor);
-    editor.transition = Some(Transition::New);
+    editor.block_with_decision();
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     assert!(editor.fullscreen.is_none());
 }

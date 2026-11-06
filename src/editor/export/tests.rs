@@ -70,7 +70,7 @@ impl Editor {
             .is_some_and(|project| super::document::same_path(project, &path))
         {
             self.status = "Export destination is the current project document".into();
-            self.report_failure(FailureKind::Export, self.status.clone());
+            self.report_failure(FailureCase::Export, self.status.clone());
             return;
         }
         self.sync_document();
@@ -92,7 +92,7 @@ impl Editor {
         protected.extend(self.document.path.clone());
         if let Err(error) = require_safe(&request.path, &protected) {
             self.status = error.to_string();
-            self.report_failure(FailureKind::Export, self.status.clone());
+            self.report_failure(FailureCase::Export, self.status.clone());
             return;
         }
         self.export_photos(
@@ -222,7 +222,7 @@ fn captured_export_completes_without_paint_without_rereading_live_document_data(
             });
             app.read(|editor| {
                 assert!(
-                    !editor.interaction_blocked() && editor.failure.is_none(),
+                    !editor.interaction_blocked() && editor.dialogs.message().is_none(),
                     "{}",
                     editor.status
                 );
@@ -316,7 +316,7 @@ fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_rep
         });
         app.read(|editor| {
             assert!(
-                !editor.interaction_blocked() && editor.failure.is_none(),
+                !editor.interaction_blocked() && editor.dialogs.message().is_none(),
                 "{}",
                 editor.status
             )
@@ -423,7 +423,7 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
         });
         app.read(|editor| {
             assert!(
-                !editor.interaction_blocked() && editor.failure.is_none(),
+                !editor.interaction_blocked() && editor.dialogs.message().is_none(),
                 "{}",
                 editor.status
             );
@@ -479,7 +479,7 @@ fn running_cancel_waits_for_acknowledgement_and_preserves_the_destination() {
             assert!(
                 !editor.interaction_blocked()
                     && editor.activities.view().is_none()
-                    && editor.failure.is_none()
+                    && editor.dialogs.message().is_none()
             );
             assert!(editor.status.contains("cancel"));
             assert_eq!(editor.document.state.project, accepted);
@@ -490,7 +490,7 @@ fn running_cancel_waits_for_acknowledgement_and_preserves_the_destination() {
 }
 
 #[test]
-fn failed_export_survives_status_updates_until_a_successful_retry() {
+fn successful_export_does_not_dismiss_the_unread_failure_and_summary() {
     let editor = fixture();
     let accepted = editor.document.state.project.clone();
     let directory = tempfile::tempdir().unwrap();
@@ -509,9 +509,12 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
             editor.document.export.operation.is_none()
         });
         let details = app.read(|editor| {
-            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                FailureCase::Export.title()
+            );
             assert!(!editor.interaction_blocked() && editor.activities.view().is_none());
-            editor.failure.as_ref().unwrap().details.clone()
+            editor.dialogs.message().unwrap().details.clone()
         });
         assert!(!path.exists());
         app.update(|editor| editor.status = "Unrelated status".into());
@@ -528,7 +531,7 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
         app.pump();
         app.read(|editor| {
             assert!(editor.interaction_blocked() && editor.document.export.operation.is_some());
-            assert_eq!(editor.failure.as_ref().unwrap().details, details);
+            assert_eq!(editor.dialogs.message().unwrap().details, details);
         });
         drop(paused);
         app.run_until(Duration::from_secs(30), |editor| {
@@ -536,7 +539,7 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
         });
         app.read(|editor| {
             assert!(
-                editor.failure.is_none()
+                editor.dialogs.is_open()
                     && !editor.interaction_blocked()
                     && editor.activities.view().is_none()
             );
@@ -545,6 +548,16 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
                 editor.document.export.summary.as_ref().unwrap().exported(),
                 1
             );
+        });
+        app.update(|editor| {
+            assert_eq!(editor.dialogs.message().unwrap().details, details);
+            editor.dialogs.answer_for_test("OK");
+            assert!(
+                editor.dialogs.is_open() && editor.dialogs.message().is_none(),
+                "successful export summary needs its own acknowledgement"
+            );
+            editor.dialogs.answer_for_test("OK");
+            assert!(!editor.dialogs.is_open());
         });
         verify_tiff(&path);
     });

@@ -326,7 +326,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), Some(RepairId(1))));
         key(&mut h, egui::Key::Delete);
-        h.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        h.read(|editor| assert!(!editor.dialogs.is_open()));
         h.read(|editor| assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1));
         ready(&mut h, 1);
         let remaining = h.read(|editor| editor.dust_evaluations(sig)[0].clone());

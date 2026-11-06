@@ -158,14 +158,14 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
             let request = captured_request(e);
             let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             let captured = e.document.capture();
-            e.start_save(
+            drop(e.start_save(
                 crate::editor::document::Write {
                     document: captured.clone(),
                     path: path.clone(),
                     policy: crate::project::Save::New,
                 },
                 cx,
-            );
+            ));
             let save_request = e.document_pending.unwrap();
             assert!(e.interaction_blocked() && e.document_pending.is_some());
             let saved = captured.save(&path, crate::project::Save::New).unwrap();
@@ -224,14 +224,14 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
             let source = e.document.visit.current_source.unwrap();
             let path = directory.path().join("save-as.antitone");
             let captured = e.document.capture();
-            e.start_save(
+            drop(e.start_save(
                 crate::editor::document::Write {
                     document: captured.clone(),
                     path: path.clone(),
                     policy: crate::project::Save::New,
                 },
                 cx,
-            );
+            ));
             let request = e.document_pending.unwrap();
             assert!(e.interaction_blocked() && e.document_pending.is_some());
             let saved = captured.save(&path, crate::project::Save::New).unwrap();
@@ -251,14 +251,14 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
 
             e.reset_dust_repairs(source);
             let before = e.document.state.project.clone();
-            e.start_save(
+            drop(e.start_save(
                 crate::editor::document::Write {
                     document: e.document.capture(),
                     path: path.clone(),
                     policy: crate::project::Save::New,
                 },
                 cx,
-            );
+            ));
             let request = e.document_pending.unwrap();
             assert!(e.interaction_blocked() && e.document_pending.is_some());
             assert!(e.document.save(&path, crate::project::Save::New).is_err());

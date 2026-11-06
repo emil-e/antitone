@@ -83,7 +83,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         let id = editor.document.visit.current_source.unwrap();
         let order = ids(&editor);
         editor.reveal_adjustment_layers();
-        editor.apply_adjustment_layer_action(Action::Select(Target::Layer(order[0])));
+        editor.apply_adjustment_layer_action(
+            Action::Select(Target::Layer(order[0])),
+            &UiContext::render_only(),
+        );
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         let accepted = editor
             .positive_processing(
@@ -93,7 +96,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             )
             .unwrap();
         let revision = editor.document.visit.canvas.original.continuation();
-        editor.apply_adjustment_layer_action(Action::Rename(order[0], "Sky".into()));
+        editor.apply_adjustment_layer_action(
+            Action::Rename(order[0], "Sky".into()),
+            &UiContext::render_only(),
+        );
         assert_eq!(
             editor.document.visit.canvas.original.continuation(),
             revision,
@@ -107,10 +113,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             )
             .unwrap();
         assert_eq!(accepted.clone(), renamed.clone());
-        editor.apply_adjustment_layer_action(Action::Reorder(
-            editor.order_drag(order[0]).unwrap(),
-            2,
-        ));
+        editor.apply_adjustment_layer_action(
+            Action::Reorder(editor.order_drag(order[0]).unwrap(), 2),
+            &UiContext::render_only(),
+        );
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_ne!(
@@ -124,7 +130,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 .clone(),
             accepted.clone()
         );
-        editor.apply_adjustment_layer_action(Action::Enable(order[0], false));
+        editor.apply_adjustment_layer_action(
+            Action::Enable(order[0], false),
+            &UiContext::render_only(),
+        );
         let source = editor.document.state.project.source(id).unwrap();
         assert!(
             !source.adjustment_layers.as_ref().unwrap().layers[1]
@@ -146,16 +155,23 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             editor.document.visit.canvas.original.continuation(),
             revision
         );
-        editor.apply_adjustment_layer_action(Action::Rename(order[0], "  ".into()));
+        editor.apply_adjustment_layer_action(
+            Action::Rename(order[0], "  ".into()),
+            &UiContext::render_only(),
+        );
         assert_eq!(editor.document.state.project, before);
-        editor.apply_adjustment_layer_action(Action::Reorder(
-            editor.order_drag(order[0]).unwrap(),
-            3,
-        ));
+        editor.apply_adjustment_layer_action(
+            Action::Reorder(editor.order_drag(order[0]).unwrap(), 3),
+            &UiContext::render_only(),
+        );
         assert_eq!(editor.document.state.project, before);
         editor.set_test_busy(true);
-        editor.apply_adjustment_layer_action(Action::Select(Target::None));
-        editor.apply_adjustment_layer_action(Action::Enable(order[0], true));
+        editor
+            .apply_adjustment_layer_action(Action::Select(Target::None), &UiContext::render_only());
+        editor.apply_adjustment_layer_action(
+            Action::Enable(order[0], true),
+            &UiContext::render_only(),
+        );
         assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         editor.document.visit.current_source = None;
@@ -391,11 +407,14 @@ fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage(
         editor.tab = 0;
         editor.finish_adjustment_layer_interaction();
         let before = editor.document.state.project.clone();
-        editor.apply_adjustment_layer_action(Action::Enable(id, false));
-        editor.apply_adjustment_layer_action(Action::Reorder(drag, 2));
-        editor.apply_adjustment_layer_action(Action::Delete(id));
-        editor.apply_adjustment_layer_action(Action::Select(Target::Layer(id)));
-        assert!(!editor.document.visit.adjustment_layers.confirming());
+        editor.apply_adjustment_layer_action(Action::Enable(id, false), &UiContext::render_only());
+        editor.apply_adjustment_layer_action(Action::Reorder(drag, 2), &UiContext::render_only());
+        editor.apply_adjustment_layer_action(Action::Delete(id), &UiContext::render_only());
+        editor.apply_adjustment_layer_action(
+            Action::Select(Target::Layer(id)),
+            &UiContext::render_only(),
+        );
+        assert!(!editor.dialogs.is_open());
         assert!(!(editor.tab == 1));
         assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
@@ -557,11 +576,14 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             let before = editor.document.state.project.clone();
             let revision = editor.document.visit.canvas.original.continuation();
             let viewport = editor.document.visit.canvas.viewport;
-            editor.apply_adjustment_layer_action(if reorder {
-                Action::Reorder(editor.order_drag(subject).unwrap(), 0)
-            } else {
-                Action::Enable(subject, true)
-            });
+            editor.apply_adjustment_layer_action(
+                if reorder {
+                    Action::Reorder(editor.order_drag(subject).unwrap(), 0)
+                } else {
+                    Action::Enable(subject, true)
+                },
+                &UiContext::render_only(),
+            );
             assert!(
                 editor.status.contains("f32 intermediate working range"),
                 "reorder={reorder}: {}",
@@ -630,7 +652,10 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
             )
             .unwrap();
         let viewport = editor.document.visit.canvas.viewport;
-        editor.apply_adjustment_layer_action(Action::Enable(subject, true));
+        editor.apply_adjustment_layer_action(
+            Action::Enable(subject, true),
+            &UiContext::render_only(),
+        );
         let layers = editor
             .document
             .state
@@ -679,7 +704,7 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
             .adjustment
             .mask;
         editor.reveal_adjustment_layers();
-        editor.apply_adjustment_layer_action(Action::Enable(id, false));
+        editor.apply_adjustment_layer_action(Action::Enable(id, false), &UiContext::render_only());
         editor
             .edit_adjustment_layers(|layers| {
                 record_mut(layers, id)?.adjustment.photo.exposure = 1.25;
@@ -701,7 +726,7 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
         assert_eq!(adjustment.photo.exposure, 1.25);
         assert!(!adjustment.enabled);
         assert!(matches!(mask, AdjustmentLayerCoverage::Linear { .. }));
-        editor.apply_adjustment_layer_action(Action::Enable(id, true));
+        editor.apply_adjustment_layer_action(Action::Enable(id, true), &UiContext::render_only());
         assert!(
             editor
                 .document

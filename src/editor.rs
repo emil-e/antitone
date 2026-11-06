@@ -48,9 +48,11 @@ mod tool;
 use crate::project::{Source, SourceId};
 use document::Document;
 mod files;
-use files::{FileAction, Transition};
-mod feedback;
-use feedback::{Failure, FailureKind};
+use files::FileAction;
+#[cfg(test)]
+use files::Transition;
+mod dialogs;
+
 mod activity;
 #[cfg(test)]
 use activity::Reporter as ActivityReporter;
@@ -117,7 +119,7 @@ mod viewer_ui;
 use roll_selection::RollSelection;
 
 #[cfg(test)]
-use tests::PickerCase;
+use tests::{FailureCase, PickerCase};
 
 #[derive(Clone)]
 struct Ready {
@@ -235,8 +237,7 @@ pub struct Editor {
     activities: Activities,
     #[cfg(test)]
     fixture_activity: Option<Activity>,
-    failure: Option<Failure>,
-    document_failure: Option<FailureKind>,
+    dialogs: dialogs::Dialogs,
 
     auto_crop_margin: f64,
 
@@ -256,9 +257,7 @@ pub struct Editor {
     next_request: u64,
     document_pending: Option<u64>,
     export_services: Option<export::Services>,
-    transition: Option<Transition>,
-    after_save: Option<Transition>,
-    project_overwrite: Option<(PathBuf, Option<Transition>)>,
+    files: files::State,
     allow_close: bool,
     developments: Option<source_loading::SourceLoader>,
     source_services: Option<source::Services>,
@@ -364,8 +363,7 @@ impl Editor {
             activities: Activities::default(),
             #[cfg(test)]
             fixture_activity: None,
-            failure: None,
-            document_failure: None,
+            dialogs: Default::default(),
 
             auto_crop_margin: crate::auto_crop::DEFAULT_MARGIN_PERCENT,
 
@@ -385,9 +383,7 @@ impl Editor {
             next_request: 0,
             document_pending: None,
             export_services: None,
-            transition: None,
-            after_save: None,
-            project_overwrite: None,
+            files: Default::default(),
             allow_close: false,
         }
     }
@@ -762,7 +758,18 @@ impl Editor {
             return;
         }
         if self.document.input.has_stage_settings() && !target.is_negative() {
-            self.document.input_switch = Some(target);
+            let response = self.dialogs.show(move |context, id, escape| {
+                presentation::DecisionDialog::new(
+                    "Switch input stage?",
+                    "Switching stages discards the current stage's settings: calibration, gamma, balance, response and flat-field correction. Your source files are not changed.",
+                    "Switch stage",
+                ).warning().show(context, id, escape)
+            });
+            self.document.dialog_action = cx.spawn(move |cx| async move {
+                if response.await == Ok(presentation::DialogChoice::Confirm) {
+                    cx.update(|editor| editor.apply_input(target, &cx));
+                }
+            });
         } else {
             self.apply_input(target, cx);
         }
@@ -798,39 +805,6 @@ impl Editor {
         self.document.input = target;
         self.document.source = !target.ready();
         self.record_edit(before, "Input stage", None);
-    }
-
-    fn input_stage_dialog(
-        &mut self,
-        context: &egui::Context,
-        escape_available: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
-        let Some(target) = self.document.input_switch else {
-            return;
-        };
-        let choice = presentation::DecisionDialog::new(
-            "Switch input stage?",
-            "Switching stages discards the current stage's settings: calibration, gamma, balance, response and flat-field correction. Your source files are not changed.",
-            "Switch stage",
-        )
-        .warning()
-        .show(
-            context,
-            egui::Id::new("Switch input stage?"),
-            escape_available,
-        );
-        match choice {
-            Some(presentation::DialogChoice::Confirm) => {
-                self.document.input_switch = None;
-                self.apply_input(target, cx);
-            }
-            Some(presentation::DialogChoice::Cancel)
-            | Some(presentation::DialogChoice::Alternative) => {
-                self.document.input_switch = None;
-            }
-            None => {}
-        }
     }
 
     fn sync_document(&mut self) {
