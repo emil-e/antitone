@@ -154,7 +154,6 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         let timing = h.update(|e| {
             e.seed_thumbnail();
             let source = e.document.visit.current_source.unwrap();
-            let composition = e.active_canvas().last_layout.unwrap().0.composition;
             e.document.visit.pending_preview = Some(
                 e.document
                     .thumbnails
@@ -162,7 +161,6 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                         e.id,
                         &e.document.state,
                         source,
-                        composition,
                         e.document.correction.as_ref(),
                     )
                     .unwrap()
