@@ -9,15 +9,14 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
     editor.load_input(InputSettings::Digital);
-    editor.document.roll.wb = Balance {
+    editor.document.project.roll.wb = Balance {
         warmth: 0.3,
         tint: -0.2,
     };
-    editor.document.visit.adjustment_layer_settings.wb = Balance {
+    editor.photo_settings_mut().wb = Balance {
         warmth: -0.4,
         tint: 0.2,
     };
-    editor.sync_document();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let region = crate::coverage::Coverage::rectangle(Rect {
         x: area.x + 8,
@@ -32,7 +31,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
             &editor.input(),
             RollSettings {
                 wb: Balance::default(),
-                ..editor.document.roll
+                ..editor.document.project.roll
             },
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             None,
@@ -49,9 +48,9 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
     // The independent f64 path checks the captured prefix; production evaluates f32 pixels.
     assert!((expected.warmth - reference.warmth).abs() < 1e-6);
     assert!((expected.tint - reference.tint).abs() < 1e-6);
-    let input = editor.document.input;
-    let photo = editor.document.visit.adjustment_layer_settings;
-    assert_ne!(expected, editor.document.roll.wb);
+    let input = editor.document.project.input;
+    let photo = editor.photo_settings();
+    assert_ne!(expected, editor.document.project.roll.wb);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| editor.begin_test_picker(PickerCase::RollWb, cx));
         app.pump();
@@ -63,9 +62,9 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
             !editor.interaction_blocked()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.roll.wb, expected);
-            assert_eq!(editor.document.input, input);
-            assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+            assert_eq!(editor.document.project.roll.wb, expected);
+            assert_eq!(editor.document.project.input, input);
+            assert_eq!(editor.photo_settings(), photo);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
                 Some("Calibration pick")
@@ -79,8 +78,8 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
 fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacement() {
     use crate::{adjustment_layers::AdjustmentLayer, project::AdjustmentLayers};
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.document.input = crate::processing::InputSettings::Digital;
-    editor.document.roll = RollSettings::default();
+    editor.document.project.input = crate::processing::InputSettings::Digital;
+    editor.document.project.roll = RollSettings::default();
     let source = editor.document.visit.current_source.unwrap();
     let upstream = Balance {
         warmth: 0.2,
@@ -137,8 +136,8 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
     let baseline = scan
         .white_balance_coverage(
             region,
-            &editor.document.input,
-            editor.document.roll,
+            &editor.document.project.input,
+            editor.document.project.roll,
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             None,
         )
@@ -180,8 +179,8 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         project::AdjustmentLayers,
     };
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.document.input = InputSettings::Digital;
-    editor.document.roll = RollSettings::default();
+    editor.document.project.input = InputSettings::Digital;
+    editor.document.project.roll = RollSettings::default();
     let source = editor.document.visit.current_source.unwrap();
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let developed = ready.developed.clone();
@@ -269,7 +268,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         measured.photo.saturation = 1.;
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             InputSettings::Digital,
-            editor.document.roll,
+            editor.document.project.roll,
             AdjustmentLayerSnapshot::new(vec![measured]).unwrap(),
             developed.camera_to_ap1(),
         )
@@ -328,7 +327,6 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
     assert_ne!(first, second);
     let first_adjustment = layers[0].adjustment;
     editor.select_adjustment_layer(Target::Layer(first));
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     let undo = editor
         .history_label(crate::editor::history::Direction::Undo)
@@ -373,10 +371,7 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
                 )
                 .unwrap()
         });
-        assert_ne!(
-            expected,
-            app.read(|editor| editor.document.visit.adjustment_layer_settings.wb)
-        );
+        assert_ne!(expected, app.read(|editor| editor.photo_settings().wb));
         app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Wb, cx));
         app.pump();
         app.enter(|editor, cx| {
@@ -388,7 +383,7 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
         });
         app.read(|editor| {
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
-            assert_eq!(editor.document.visit.adjustment_layer_settings.wb, expected);
+            assert_eq!(editor.photo_settings().wb, expected);
             assert_eq!(
                 editor
                     .document
@@ -457,7 +452,7 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
     });
     let input = LayerInput::capture(&editor).unwrap();
     let services = editor.source_services.clone().unwrap();
-    let before = editor.document.visit.adjustment_layer_settings.wb;
+    let before = editor.photo_settings().wb;
     crate::application::test_support::with_application(editor, |app| {
         let reading = app
             .access()
@@ -490,7 +485,7 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
         app.update(|editor| set_layer(editor, value, target).unwrap());
         app.read(|editor| {
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
-            assert_eq!(editor.document.visit.adjustment_layer_settings, other);
+            assert_eq!(editor.photo_settings(), other);
             let layers = &editor
                 .document
                 .project
@@ -533,7 +528,6 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
     editor.tab = 1;
     editor.load_input(InputSettings::Digital);
-    editor.sync_document();
     let source = editor.document.visit.current_source.unwrap();
     let first = editor
         .document
@@ -576,7 +570,7 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
             &|| false,
         )
         .unwrap();
-    assert_ne!(balance, editor.document.visit.adjustment_layer_settings.wb);
+    assert_ne!(balance, editor.photo_settings().wb);
     let gate = testing::Gate::install(&mut editor);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Wb, cx));
@@ -587,11 +581,9 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
         });
         let call = gate.next(app);
         app.enter(|editor, cx| {
-            editor.control_command(
-                crate::editor::editing::Command::Adjustment(
-                    crate::editor::adjustment_layers::Action::Select(
-                        crate::editor::adjustment_layers::Target::Layer(second),
-                    ),
+            editor.apply_adjustment_layer_action(
+                crate::editor::adjustment_layers::Action::Select(
+                    crate::editor::adjustment_layers::Target::Layer(second),
                 ),
                 cx,
             );
@@ -643,11 +635,9 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
             );
         });
         app.enter(|editor, cx| {
-            editor.control_command(
-                crate::editor::editing::Command::Adjustment(
-                    crate::editor::adjustment_layers::Action::Select(
-                        crate::editor::adjustment_layers::Target::Layer(second),
-                    ),
+            editor.apply_adjustment_layer_action(
+                crate::editor::adjustment_layers::Action::Select(
+                    crate::editor::adjustment_layers::Target::Layer(second),
                 ),
                 cx,
             );
@@ -675,7 +665,7 @@ fn completed_wb_measurement_cannot_publish_after_cancellation_photo_or_document_
             second.path().to_str().unwrap(),
         ]);
         editor.load_input(InputSettings::Digital);
-        editor.sync_document();
+
         let area = editor.selected_area().unwrap();
         let region = Coverage::rectangle(Rect {
             x: area.x + 8,
@@ -692,10 +682,7 @@ fn completed_wb_measurement_cannot_publish_after_cancellation_photo_or_document_
                 &|| false,
             )
             .unwrap();
-        assert_ne!(
-            would_apply,
-            editor.document.visit.adjustment_layer_settings.wb
-        );
+        assert_ne!(would_apply, editor.photo_settings().wb);
         let gate = testing::Gate::after_work();
         editor.document.visit.measurement_gate = Some(gate.clone());
         crate::application::test_support::with_application(editor, |app| {
@@ -758,9 +745,9 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     use crate::exposure_reference::{ReferenceExposure, StartingExposure};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.document.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
     editor.document.state.project.input = InputSettings::Digital;
-    editor.document.roll = RollSettings::default();
+    editor.document.project.roll = RollSettings::default();
     let id = editor.document.visit.current_source.unwrap();
     let baseline = ReferenceExposure::Matched(StartingExposure {
         ev: 2.75,

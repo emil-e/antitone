@@ -22,7 +22,7 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     e.set_dmin(None);
     e.set_dmax(None);
     e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
-    e.sync_document();
+
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -924,12 +924,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 )
             });
             // Supply the chooser's path through the real admitted control action.
-            app.enter(|e, cx| {
-                e.control_command(
-                    crate::editor::editing::Command::FlatEdit(path("bare-light.dng"), None),
-                    cx,
-                )
-            });
+            app.enter(|e, cx| FlatTool::open(e, path("bare-light.dng"), None, cx));
             wait(app);
             let region = app.update(|e| {
                 let region = e.test_pick_region().expect("proposed reference support");

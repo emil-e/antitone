@@ -2,7 +2,7 @@ use super::*;
 
 fn saved_editor() -> (Editor, tempfile::TempDir) {
     let mut e = editor();
-    e.sync_document();
+
     let directory = tempfile::tempdir().unwrap();
     *e.document = e
         .document
@@ -108,7 +108,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
                 .unwrap();
             let path = directory.path().join("margins.antitone");
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
-            e.document.state.project = crate::project::Project::load(&path).unwrap();
+            e.document.state.project = crate::project::Project::load(&path).unwrap().into();
 
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);

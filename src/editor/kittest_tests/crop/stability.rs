@@ -40,8 +40,7 @@ fn moving_crop_keeps_the_painted_frame_fixed_on_motion_hold_and_release_passes()
                 .unwrap()
                 .native_pixels_per_point = Some(density);
             h.update(|editor| {
-                editor.document.input = crate::processing::InputSettings::Digital;
-                editor.sync_document();
+                editor.document.project.input = crate::processing::InputSettings::Digital;
             });
             h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut h, |editor| {
@@ -49,9 +48,8 @@ fn moving_crop_keeps_the_painted_frame_fixed_on_motion_hold_and_release_passes()
             });
             h.update(|editor| {
                 editor.document.source = false;
-                editor.document.visit.photo_orientation.turns = turns;
-                editor.document.roll_orientation.horizontal = reflected;
-                editor.sync_document();
+                editor.photo_orientation_mut().turns = turns;
+                editor.document.project.orientation.horizontal = reflected;
             });
             stage(&mut h, "Photo");
             h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")

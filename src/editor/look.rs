@@ -329,10 +329,11 @@ impl Editor {
         let services = self.look.services.clone();
         let task = cx.spawn(move |cx| async move {
             let work = async {
-                match services {
-                    Some(services) => services.prepare(source).await,
-                    None => Err("LUT services unavailable".into()),
-                }
+                let asset = match services {
+                    Some(services) => services.prepare(source).await?,
+                    None => return Err("LUT services unavailable".into()),
+                };
+                Ok(asset)
             };
             let cancel = async {
                 activity.cancelled().await;
@@ -344,11 +345,17 @@ impl Editor {
                 editor.retire_look_selection();
                 match result {
                     Ok(Some(asset)) => {
-                        let before = editor.history_snapshot();
-                        slot.set(&mut editor.document.state.project, Some(asset));
-                        editor.remember_imported_look();
-                        editor.invalidate_original();
-                        editor.record_edit(before, slot.label(), None);
+                        let result = (|| -> Result<(), Error> {
+                            let mut draft = editor.edit_project(slot.label())?;
+                            draft.update(|project| slot.set(project, Some(asset)));
+                            editor.commit_project(draft)
+                        })();
+                        if let Err(error) = result {
+                            editor.look_failed(error.to_string());
+                        } else {
+                            editor.remember_imported_look();
+                            editor.invalidate_original();
+                        }
                     }
                     Ok(None) => editor.status = "LUT preparation cancelled".into(),
                     Err(message) => editor.look_failed(message),
@@ -379,10 +386,16 @@ impl Editor {
             self.retire_look_selection();
         }
         if slot.asset(&self.document.state.project).is_some() {
-            let before = self.history_snapshot();
-            slot.set(&mut self.document.state.project, None);
-            self.invalidate_original();
-            self.record_edit(before, slot.label(), None);
+            let result = (|| -> Result<(), Error> {
+                let mut draft = self.edit_project(slot.label())?;
+                draft.update(|project| slot.set(project, None));
+                self.commit_project(draft)
+            })();
+            if let Err(error) = result {
+                self.look_failed(error.to_string());
+            } else {
+                self.invalidate_original();
+            }
         }
     }
     pub(super) fn clear_film_and_paper(&mut self) {

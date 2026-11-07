@@ -231,7 +231,7 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
             editor
                 .document
                 .thumbnails
-                .ready_count(&editor.document, editor.document.target)
+                .ready_count(&editor.document, editor.document.target())
                 == 1
         });
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
@@ -349,7 +349,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         stage(&mut h, "Photo");
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("dust.antitone");
-        h.update(|editor| editor.sync_document());
+
         let saved = h.read(|editor| {
             editor
                 .document
@@ -450,7 +450,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         wait_for(&mut h, |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 == 1
         });
         let restored = h.read(|editor| editor.dust_evaluations(signature));
@@ -489,7 +489,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .is_some_and(|view| {
                         Some(&view.processing())
                             == e.document.visit.working_view.processing().as_ref()
-                            && view.target == e.document.target
+                            && view.target == e.document.target()
                     })
         });
         h.render().unwrap();

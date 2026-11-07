@@ -625,12 +625,11 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
 fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exposure() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let project = editor.document.state.project.clone();
     let expected_dmin = editor.dmin();
     let expected_dmax = editor.dmax();
-    let expected_roll = editor.document.roll;
-    let expected_photo = editor.document.visit.adjustment_layer_settings;
+    let expected_roll = editor.document.project.roll;
+    let expected_photo = editor.photo_settings();
     let baseline = measurement::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
@@ -639,7 +638,6 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     editor.source_exposure = 2.3456789;
     editor.document.source = true;
-    editor.sync_document();
     assert_eq!(editor.document.state.project, project);
 
     editor.preview_picker(PickerCase::Dmin);
@@ -653,25 +651,23 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.dmin(), expected_dmin);
     assert_eq!(editor.dmax(), expected_dmax);
-    assert_eq!(editor.document.roll, expected_roll);
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
-        expected_photo
-    );
+    assert_eq!(editor.document.project.roll, expected_roll);
+    assert_eq!(editor.photo_settings(), expected_photo);
     assert_eq!(editor.source_exposure, 2.3456789);
     assert_eq!(
         editor.source_white_balance,
         crate::raw::SourceWhiteBalance::AsShot
     );
-    editor.sync_document();
     assert_eq!(editor.document.state.project, project);
 }
 
 #[test]
 fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     let mut editor = fixture();
-    editor.document.roll_orientation.horizontal = true;
-    editor.document.visit.photo_orientation.turn_clockwise();
+    with_camera_basis(&mut editor);
+    editor.document.visit.current_source = editor.document.project.order.first().copied();
+    editor.document.project.orientation.horizontal = true;
+    editor.photo_orientation_mut().turn_clockwise();
     let area = Rect {
         x: 12,
         y: 7,
@@ -680,8 +676,8 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     };
     let composition = Composition::new(
         area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
     )
     .unwrap();
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
@@ -705,13 +701,10 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
         .layout_composition(canvas, composition, 2.);
     let precise = editor.document.visit.canvas.viewport;
     let geometry = (
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
     );
-    let grade = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
-    );
+    let grade = (editor.document.project.roll, editor.photo_settings());
     for kind in [
         PickerCase::Dmin,
         PickerCase::Dmax,
@@ -722,16 +715,13 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
         assert_eq!(editor.document.visit.canvas.viewport, precise);
         assert_eq!(
             (
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation
+                editor.document.project.orientation,
+                editor.photo_orientation()
             ),
             geometry
         );
         assert_eq!(
-            (
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings
-            ),
+            (editor.document.project.roll, editor.photo_settings()),
             grade
         );
         editor.finish_pick(&crate::application::UiContext::render_only());
@@ -746,8 +736,8 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     let original = (
         editor.dmin(),
         editor.dmax(),
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.document.project.roll,
+        editor.photo_settings(),
     );
     for (kind, invalid) in [(PickerCase::Dmin, 0.001), (PickerCase::Dmax, 1.)] {
         editor.preview_picker(kind);
@@ -770,8 +760,8 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
             (
                 editor.dmin(),
                 editor.dmax(),
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings
+                editor.document.project.roll,
+                editor.photo_settings()
             ),
             original
         );
@@ -783,8 +773,8 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
             (
                 editor.dmin(),
                 editor.dmax(),
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings
+                editor.document.project.roll,
+                editor.photo_settings()
             ),
             original
         );
@@ -809,10 +799,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                 editor.set_dmax(None);
             }
             editor.document.source = initial_source.unwrap_or(true);
-            let settings = (
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
-            );
+            let settings = (editor.document.project.roll, editor.photo_settings());
             for (index, kind) in order.into_iter().enumerate() {
                 editor.preview_picker(kind);
                 assert!(editor.canvas_inspection());
@@ -842,10 +829,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                     editor.status
                 );
                 assert_eq!(
-                    (
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings
-                    ),
+                    (editor.document.project.roll, editor.photo_settings()),
                     settings
                 );
             }
@@ -866,8 +850,8 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
         let before = (
             editor.dmin(),
             editor.dmax(),
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.document.visit.canvas.viewport,
         );
         editor.preview_picker(kind);
@@ -909,8 +893,8 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
                 (
                     editor.dmin(),
                     editor.dmax(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                     editor.document.visit.canvas.viewport
                 ),
                 before
@@ -950,7 +934,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         .unwrap();
     editor.document.visit.current_source = Some(id);
     editor.document.source = false;
-    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
+    *editor.photo_settings_mut() = AdjustmentLayerSettings {
         exposure: 0.5,
         wb: Balance {
             warmth: 0.2,
@@ -962,10 +946,10 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         saturation: 1.3,
         saturation_density: 0.25,
     };
-    editor.document.roll.exposure = -0.5;
-    let photo = editor.document.visit.adjustment_layer_settings;
+    editor.document.project.roll.exposure = -0.5;
+    let photo = editor.photo_settings();
     let gamma = editor.gamma();
-    let exposure = editor.document.roll.exposure;
+    let exposure = editor.document.project.roll.exposure;
     let balance = Balance {
         warmth: 0.1,
         tint: -0.1,
@@ -975,17 +959,17 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.balance(), balance);
     assert_eq!(editor.gamma(), gamma);
-    assert_eq!(editor.document.roll.exposure, exposure);
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+    assert_eq!(editor.document.project.roll.exposure, exposure);
+    assert_eq!(editor.photo_settings(), photo);
     editor.preview_picker(PickerCase::RollWb);
     (white_balance::set_roll(&mut editor, balance)).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.roll.wb, balance);
+    assert_eq!(editor.document.project.roll.wb, balance);
     assert_eq!(editor.balance(), balance);
     assert_eq!(editor.gamma(), gamma);
-    assert_eq!(editor.document.roll.exposure, exposure);
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
-    let roll = editor.document.roll;
+    assert_eq!(editor.document.project.roll.exposure, exposure);
+    assert_eq!(editor.photo_settings(), photo);
+    let roll = editor.document.project.roll;
     editor.preview_picker(PickerCase::Wb);
     let target = (
         editor.document.visit.current_source.unwrap(),
@@ -993,9 +977,9 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     );
     (white_balance::set_layer(&mut editor, balance, target)).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.roll, roll);
+    assert_eq!(editor.document.project.roll, roll);
     assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_settings(),
         AdjustmentLayerSettings {
             wb: balance,
             ..photo
@@ -1170,11 +1154,11 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         },
         reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_settings(),
         )),
         repairs: Default::default(),
-        orientation: editor.document.visit.photo_orientation,
-        crop: editor.document.visit.crop,
+        orientation: editor.photo_orientation(),
+        crop: editor.photo_crop(),
     };
     editor.document.visit.current_source = Some(
         editor
@@ -1292,11 +1276,11 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let saved = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
-        editor.document.visit.crop,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
+        editor.document.project.roll,
+        editor.photo_settings(),
+        editor.photo_crop(),
+        editor.document.project.orientation,
+        editor.photo_orientation(),
     );
     editor.begin_crop();
     let draft = editor.document.crop_edit().unwrap().draft;
@@ -1381,11 +1365,11 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
-            editor.document.visit.crop,
-            editor.document.roll_orientation,
-            editor.document.visit.photo_orientation
+            editor.document.project.roll,
+            editor.photo_settings(),
+            editor.photo_crop(),
+            editor.document.project.orientation,
+            editor.photo_orientation()
         ),
         saved
     );
@@ -1397,14 +1381,14 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
     add_ready_fixture(&mut editor);
     editor.started = true;
     editor.tab = 1;
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 200,
         y: 140,
         width: 127,
         height: 79,
     }));
-    editor.document.visit.photo_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
+    editor.photo_orientation_mut().turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
     editor.document.visit.canvas.viewport.zoom = Some(2.);
     let context = egui::Context::default();
     for editing in [false, true] {
@@ -1415,15 +1399,15 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             app_frame(&mut editor, &context, vec![]);
         }
         let state = (
-            editor.document.roll_orientation,
-            editor.document.visit.photo_orientation,
-            editor.document.visit.crop,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.orientation,
+            editor.photo_orientation(),
+            editor.photo_crop(),
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax(),
             editor.document.source,
-            editor.document.target,
+            editor.document.target(),
         );
         let viewport = editor.document.visit.canvas.viewport;
         let signature = editor.document.visit.canvas.original.wanted.clone();
@@ -1461,15 +1445,15 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             assert!(!labels.iter().any(|(s, _)| s == hidden));
             assert_eq!(
                 (
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation,
-                    editor.document.visit.crop,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.orientation,
+                    editor.photo_orientation(),
+                    editor.photo_crop(),
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                     editor.dmin(),
                     editor.dmax(),
                     editor.document.source,
-                    editor.document.target
+                    editor.document.target()
                 ),
                 state
             );
@@ -1492,13 +1476,14 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
 #[test]
 fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinement() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 20,
         y: 15,
         width: 20,
         height: 15,
     }));
-    add_ready_fixture(&mut editor);
+
     editor.started = true;
     editor.begin_crop();
     let context = egui::Context::default();
@@ -1609,7 +1594,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
             .1
             .center();
         let viewport = editor.document.visit.canvas.viewport;
-        let crop = editor.document.visit.crop;
+        let crop = editor.photo_crop();
         for pressed in [true, false] {
             app_frame(
                 &mut editor,
@@ -1650,14 +1635,14 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
         );
         assert!(editor.document.crop_edit().is_none());
         if apply {
-            assert_eq!(editor.document.visit.crop, Some(draft));
+            assert_eq!(editor.photo_crop(), Some(draft));
             assert!(editor.document.visit.canvas.viewport.zoom.is_none());
             let (layout, ppp) = editor.document.visit.canvas.last_layout.unwrap();
             let expected =
                 Viewport::default().layout_composition(layout.canvas, layout.composition, ppp);
             assert_eq!(layout.image, expected.image);
         } else {
-            assert_eq!(editor.document.visit.crop, crop);
+            assert_eq!(editor.photo_crop(), crop);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
         }
     }
@@ -1666,14 +1651,15 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
 #[test]
 fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
         width: 500,
         height: 300,
     }));
-    editor.document.visit.photo_orientation.turn_clockwise();
-    add_ready_fixture(&mut editor);
+    editor.photo_orientation_mut().turn_clockwise();
+
     editor.started = true;
     editor.document.source = false;
     let context = egui::Context::default();
@@ -1713,13 +1699,14 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
 #[test]
 fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
         width: 500,
         height: 300,
     }));
-    add_ready_fixture(&mut editor);
+
     editor.started = true;
     let context = egui::Context::default();
     for kind in [PickerCase::Gamma, PickerCase::Wb] {
@@ -1751,14 +1738,14 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
 #[test]
 fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 150,
         y: 100,
         width: 500,
         height: 300,
     }));
-    add_ready_fixture(&mut editor);
-    editor.sync_document();
+
     let directory = tempfile::tempdir().unwrap();
     *editor.document = editor
         .document
@@ -1768,10 +1755,10 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         )
         .unwrap();
     let project = editor.document.state.project.clone();
-    let crop = editor.document.visit.crop;
+    let crop = editor.photo_crop();
     let grade = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
@@ -1785,22 +1772,19 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         height: 220,
     });
     editor.document.crop_edit_mut().unwrap().draft = draft;
-    editor.sync_document();
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
     editor.file_action(files::FileAction::Save, &UiContext::render_only());
     assert!(editor.document_pending.is_none());
     editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
-    assert_eq!(editor.document.visit.crop, crop);
-    editor.sync_document();
+    assert_eq!(editor.photo_crop(), crop);
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft = draft;
     editor.hosted_action(tool::Action::Primary);
-    editor.sync_document();
-    assert_eq!(editor.document.visit.crop, Some(draft));
+    assert_eq!(editor.photo_crop(), Some(draft));
     assert_eq!(
         editor
             .document
@@ -1813,8 +1797,8 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert!(editor.document.dirty());
     assert_eq!(
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax()
         ),
@@ -1824,24 +1808,25 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.document.crop_edit_mut().unwrap().draft =
         Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area);
     editor.hosted_action(tool::Action::Primary);
-    assert!(editor.document.visit.crop.is_none());
+    assert!(editor.photo_crop().is_none());
 }
 
 #[test]
 fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage() {
     let mut editor = fixture();
+    add_ready_fixture(&mut editor);
     let crop = Crop {
         center: [230.25, 170.75],
         size: [127, 79],
         angle: 0.271,
     };
-    editor.document.visit.crop = Some(crop);
-    editor.document.roll_orientation.turn_clockwise();
-    editor.document.visit.photo_orientation.flips.horizontal = true;
-    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(crop);
+    editor.document.project.orientation.turn_clockwise();
+    editor.photo_orientation_mut().flips.horizontal = true;
+
     let grade = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
@@ -1849,13 +1834,12 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     editor.document.crop_edit_mut().unwrap().draft = crop.straightened(area, -0.19).unwrap();
     editor.hosted_action(tool::Action::Dismiss);
-    assert_eq!(editor.document.visit.crop, Some(crop));
+    assert_eq!(editor.photo_crop(), Some(crop));
     editor.begin_crop();
     let draft = crop.straightened(area, -0.19).unwrap();
     editor.document.crop_edit_mut().unwrap().draft = draft;
     editor.hosted_action(tool::Action::Primary);
-    assert_eq!(editor.document.visit.crop, Some(draft));
-    editor.sync_document();
+    assert_eq!(editor.photo_crop(), Some(draft));
     assert_eq!(
         editor
             .document
@@ -1868,17 +1852,17 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     assert_eq!(
         grade,
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax()
         )
     );
     let composition = Composition::with_crop(
         area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
-        editor.document.visit.crop,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
+        editor.photo_crop(),
     )
     .unwrap();
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
@@ -1894,8 +1878,8 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.preview_picker(PickerCase::Dmin);
     let full = Composition::new(
         area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
     )
     .unwrap();
     let uncropped =
@@ -1917,32 +1901,30 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let input = white_balance::LayerInput::capture(&editor).unwrap();
     assert_eq!(
         (input.roll, input.layer.photo),
-        (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings
-        )
+        (editor.document.project.roll, editor.photo_settings())
     );
 }
 
 #[test]
 fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 12,
         y: 7,
         width: 120,
         height: 90,
     }));
-    editor.document.visit.photo_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
-    add_ready_fixture(&mut editor);
+    editor.photo_orientation_mut().turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
+
     editor.document.source = false;
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let composition = Composition::with_crop(
         area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
-        editor.document.visit.crop,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
+        editor.photo_crop(),
     )
     .unwrap();
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
@@ -1957,9 +1939,9 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
     let viewport = editor.document.visit.canvas.viewport;
     let source_anchor = original.source_point(canvas.center());
     let state = (
-        editor.document.visit.crop,
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_crop(),
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
@@ -1974,8 +1956,8 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         let measuring = if matches!(kind, PickerCase::Dmin | PickerCase::Dmax) {
             Composition::new(
                 area,
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
             )
             .unwrap()
         } else {
@@ -1996,9 +1978,9 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(
             (
-                editor.document.visit.crop,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.photo_crop(),
+                editor.document.project.roll,
+                editor.photo_settings(),
                 editor.dmin(),
                 editor.dmax()
             ),
@@ -2010,16 +1992,16 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
 #[test]
 fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 200,
         y: 140,
         width: 127,
         height: 79,
     }));
-    editor.document.visit.photo_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
-    add_ready_fixture(&mut editor);
-    editor.sync_document();
+    editor.photo_orientation_mut().turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
+
     let recipe = editor
         .export_input(
             "crop.tif".into(),
@@ -2034,13 +2016,10 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
     assert_eq!(
         (roll, photo.layers()[0].photo),
-        (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings
-        )
+        (editor.document.project.roll, editor.photo_settings())
     );
-    editor.document.visit.crop = None;
-    editor.document.visit.photo_orientation = PhotoOrientation::default();
+    *editor.photo_crop_mut() = None;
+    *editor.photo_orientation_mut() = PhotoOrientation::default();
     assert_eq!(composition.size(), [79, 127]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [326, 218]);
 }
@@ -2050,15 +2029,15 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.visit.photo_orientation.turn_clockwise();
-            editor.document.roll_orientation.horizontal = true;
-            editor.document.roll_orientation.turn_clockwise();
             add_ready_fixture(editor);
-            let roll_orientation = editor.document.roll_orientation;
+            editor.photo_orientation_mut().turn_clockwise();
+            editor.document.project.orientation.horizontal = true;
+            editor.document.project.orientation.turn_clockwise();
+            let roll_orientation = editor.document.project.orientation;
             let composition = Composition::new(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
             )
             .unwrap();
             let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.));
@@ -2082,7 +2061,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
                 .viewport
                 .layout_composition(canvas, composition, 2.);
             let viewport = editor.document.visit.canvas.viewport;
-            let photo_orientation = editor.document.visit.photo_orientation;
+            let photo_orientation = editor.photo_orientation();
             let source_id = editor.document.visit.current_source;
             editor.preview_picker(PickerCase::Dmin);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -2092,8 +2071,8 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             assert_eq!(editor.document.visit.current_source, source_id);
             assert_eq!(editor.document.selected, 0);
             assert!(editor.test_pick().is_none());
-            assert_eq!(editor.document.roll_orientation, roll_orientation);
-            assert_eq!(editor.document.visit.photo_orientation, photo_orientation);
+            assert_eq!(editor.document.project.orientation, roll_orientation);
+            assert_eq!(editor.photo_orientation(), photo_orientation);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
         });
     });
@@ -2107,9 +2086,9 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         project::AdjustmentLayers,
     };
     let mut editor = fixture();
-    editor.document.visit.adjustment_layer_settings.exposure = 1.25;
     add_ready_fixture(&mut editor);
-    editor.sync_document();
+    editor.photo_settings_mut().exposure = 1.25;
+
     let recipe = editor
         .export_input(
             "snapshot.tif".into(),
@@ -2120,8 +2099,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         .unwrap()
         .recipe;
     let grade = recipe.grade;
-    editor.document.visit.adjustment_layer_settings.exposure = 7.;
-    editor.sync_document();
+    editor.photo_settings_mut().exposure = 7.;
     assert_eq!(grade.layers()[0].photo.exposure, 1.25);
     assert_eq!(
         grade.layers(),
@@ -2186,10 +2164,10 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
 #[test]
 fn export_holds_the_accepted_orientation_snapshot() {
     let mut editor = fixture();
-    editor.document.visit.photo_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
-    editor.sync_document();
+    editor.photo_orientation_mut().turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
+
     let recipe = editor
         .export_input(
             "output.tif".into(),
@@ -2204,13 +2182,10 @@ fn export_holds_the_accepted_orientation_snapshot() {
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
     assert_eq!(
         (roll, photo.layers()[0].photo),
-        (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings
-        )
+        (editor.document.project.roll, editor.photo_settings())
     );
-    editor.document.visit.photo_orientation = PhotoOrientation::default();
-    editor.document.roll_orientation = RollOrientation::default();
+    *editor.photo_orientation_mut() = PhotoOrientation::default();
+    editor.document.project.orientation = RollOrientation::default();
     assert_eq!(composition.size(), [576, 864]);
     assert_eq!(composition.source_pixel([0, 0]).unwrap(), [875, 582]);
 }
@@ -2219,19 +2194,19 @@ fn export_holds_the_accepted_orientation_snapshot() {
 fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_scopes() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 200,
         y: 140,
         width: 127,
         height: 79,
     }));
-    editor.document.roll_orientation.turn_counterclockwise();
+    editor.document.project.orientation.turn_counterclockwise();
     editor.tab = 1;
     let unchanged = (
-        editor.document.visit.crop,
-        editor.document.roll_orientation,
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_crop(),
+        editor.document.project.orientation,
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
@@ -2244,9 +2219,9 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
     ] {
         let before = Composition::with_crop(
             editor.document.visit.canvas.ready.as_ref().unwrap().area,
-            editor.document.roll_orientation,
-            editor.document.visit.photo_orientation,
-            editor.document.visit.crop,
+            editor.document.project.orientation,
+            editor.photo_orientation(),
+            editor.photo_crop(),
         )
         .unwrap();
         editor.document.visit.canvas.viewport.zoom = Some(2.);
@@ -2254,9 +2229,9 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         assert!(editor.document.visit.canvas.viewport.zoom.is_none());
         let after = Composition::with_crop(
             editor.document.visit.canvas.ready.as_ref().unwrap().area,
-            editor.document.roll_orientation,
-            editor.document.visit.photo_orientation,
-            editor.document.visit.crop,
+            editor.document.project.orientation,
+            editor.photo_orientation(),
+            editor.photo_crop(),
         )
         .unwrap();
         let size = before.size();
@@ -2281,16 +2256,15 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         }
         assert_eq!(
             (
-                editor.document.visit.crop,
-                editor.document.roll_orientation,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.photo_crop(),
+                editor.document.project.orientation,
+                editor.document.project.roll,
+                editor.photo_settings(),
                 editor.dmin(),
                 editor.dmax()
             ),
             unchanged
         );
-        editor.sync_document();
         assert_eq!(
             editor
                 .document
@@ -2298,10 +2272,10 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
                 .source(editor.document.visit.current_source.unwrap())
                 .unwrap()
                 .orientation,
-            editor.document.visit.photo_orientation
+            editor.photo_orientation()
         );
     }
-    assert!(editor.document.visit.photo_orientation.is_identity());
+    assert!(editor.photo_orientation().is_identity());
 }
 
 #[test]
@@ -2310,7 +2284,7 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
         editor.tab = if section == "Composition" { 1 } else { 0 };
-        editor.document.visit.crop = Some(Crop::from_region(Rect {
+        *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
             x: 200,
             y: 140,
             width: 127,
@@ -2318,16 +2292,16 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
         }));
         let context = egui::Context::default();
         let unchanged = (
-            editor.document.visit.crop,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_crop(),
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax(),
         );
         for label in ["Flip horizontal", "Flip vertical"] {
             let before = (
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
             );
             click_section_button(&mut editor, &context, section, label);
             let mut expected = before;
@@ -2339,8 +2313,8 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             }
             assert_eq!(
                 (
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation
+                    editor.document.project.orientation,
+                    editor.photo_orientation()
                 ),
                 expected
             );
@@ -2348,8 +2322,8 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation
+                    editor.document.project.orientation,
+                    editor.photo_orientation()
                 ),
                 expected
             );
@@ -2358,8 +2332,8 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation
+                    editor.document.project.orientation,
+                    editor.photo_orientation()
                 ),
                 expected
             );
@@ -2367,8 +2341,8 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation
+                    editor.document.project.orientation,
+                    editor.photo_orientation()
                 ),
                 before
             );
@@ -2383,13 +2357,13 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
         );
         editor.tab = 0;
         click_section_button(&mut editor, &context, "Scan orientation", "Flip horizontal");
-        assert!(editor.document.roll_orientation.is_identity());
-        assert!(editor.document.visit.photo_orientation.is_identity());
+        assert!(editor.document.project.orientation.is_identity());
+        assert!(editor.photo_orientation().is_identity());
         assert_eq!(
             (
-                editor.document.visit.crop,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.photo_crop(),
+                editor.document.project.roll,
+                editor.photo_settings(),
                 editor.dmin(),
                 editor.dmax()
             ),
@@ -2402,25 +2376,22 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
 fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_picking() {
     use crate::geometry::QuarterTurns;
     let mut editor = fixture();
-    editor.document.roll_orientation.horizontal = true;
-    editor
-        .document
-        .visit
-        .photo_orientation
-        .turn_counterclockwise();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    editor.document.project.orientation.horizontal = true;
+    editor.photo_orientation_mut().turn_counterclockwise();
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 200,
         y: 140,
         width: 127,
         height: 79,
     }));
-    add_ready_fixture(&mut editor);
+
     editor.started = true;
     let unchanged = (
-        editor.document.visit.photo_orientation,
-        editor.document.visit.crop,
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_orientation(),
+        editor.photo_crop(),
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
@@ -2455,14 +2426,14 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         horizontal: false,
         vertical: true,
     };
-    assert_eq!(editor.document.roll_orientation, turned);
+    assert_eq!(editor.document.project.orientation, turned);
     assert_eq!(editor.document.state.project.orientation, turned);
     assert_eq!(
         (
-            editor.document.visit.photo_orientation,
-            editor.document.visit.crop,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_orientation(),
+            editor.photo_crop(),
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax()
         ),
@@ -2484,7 +2455,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
             ],
         );
     }
-    assert_eq!(editor.document.roll_orientation, turned);
+    assert_eq!(editor.document.project.orientation, turned);
     editor.finish_pick(&crate::application::UiContext::render_only());
     let labels = app_frame(&mut editor, &context, vec![]);
     let reset = labels
@@ -2508,13 +2479,13 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
             ],
         );
     }
-    assert!(editor.document.roll_orientation.is_identity());
+    assert!(editor.document.project.orientation.is_identity());
     assert_eq!(
         (
-            editor.document.visit.photo_orientation,
-            editor.document.visit.crop,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_orientation(),
+            editor.photo_crop(),
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax()
         ),
@@ -2527,7 +2498,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.roll_orientation.turn_clockwise();
+            editor.document.project.orientation.turn_clockwise();
             add_ready_fixture(editor);
             let ready = editor.document.visit.canvas.ready.take().unwrap();
             editor.load("new.ARW".into(), cx);
@@ -2550,12 +2521,12 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
                 })),
             );
             assert_eq!(editor.document.state.project.sources.len(), 2);
-            assert!(editor.document.visit.photo_orientation.is_identity());
+            assert!(editor.photo_orientation().is_identity());
             assert_eq!(
-                editor.document.roll_orientation.turns,
+                editor.document.project.orientation.turns,
                 crate::geometry::QuarterTurns::One
             );
-            editor.sync_document();
+
             let recipe = editor
                 .export_input(
                     "turned.tif".into(),
@@ -2568,7 +2539,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             let composition = recipe.composition;
             assert_eq!(composition.size(), [576, 864]);
             assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
-            editor.document.roll_orientation.turn_counterclockwise();
+            editor.document.project.orientation.turn_counterclockwise();
             assert_eq!(composition.size(), [576, 864]);
             assert_eq!(composition.source_pixel([0, 0]).unwrap(), [12, 582]);
         });
@@ -2578,37 +2549,38 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
 #[test]
 fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_apply() {
     let mut editor = fixture();
-    editor.document.visit.crop = Some(Crop::from_region(Rect {
+    add_ready_fixture(&mut editor);
+    *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
         x: 100,
         y: 70,
         width: 301,
         height: 203,
     }));
-    editor.document.visit.photo_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
-    add_ready_fixture(&mut editor);
+    editor.photo_orientation_mut().turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
+
     editor.tab = 1;
     let grade = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
     );
     let context = egui::Context::default();
-    let orientation = editor.document.visit.photo_orientation;
-    let crop = editor.document.visit.crop;
+    let orientation = editor.photo_orientation();
+    let crop = editor.photo_crop();
     editor.begin_crop();
     click_control(&mut editor, &context, "Reset draft");
-    assert_eq!(editor.document.visit.crop, crop);
-    assert_eq!(editor.document.visit.photo_orientation, orientation);
+    assert_eq!(editor.photo_crop(), crop);
+    assert_eq!(editor.photo_orientation(), orientation);
     editor.hosted_action(tool::Action::Primary);
-    assert_eq!(editor.document.visit.photo_orientation, orientation);
-    assert!(editor.document.visit.crop.is_none());
-    assert!(editor.document.roll_orientation.horizontal);
+    assert_eq!(editor.photo_orientation(), orientation);
+    assert!(editor.photo_crop().is_none());
+    assert!(editor.document.project.orientation.horizontal);
     assert_eq!(
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax()
         ),
@@ -2747,7 +2719,6 @@ fn controls_frame_sized(
     height: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
-    editor.sync_document();
     presentation::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
@@ -3011,9 +2982,8 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.refresh_adjustment_layer_selection();
-    editor.document.roll.exposure = 1.23456789;
-    editor.document.visit.adjustment_layer_settings.exposure = -2.3456789;
-    editor.sync_document();
+    editor.document.project.roll.exposure = 1.23456789;
+    editor.photo_settings_mut().exposure = -2.3456789;
     let before = editor.document.state.project.clone();
     let dirty = editor.document.dirty();
     let first = controls_frame(&mut editor, &context, 315., vec![]);
@@ -3039,14 +3009,10 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
             .iter()
             .any(|(label, _)| label == "EV")
     );
-    editor.sync_document();
     assert_eq!(editor.document.state.project, before);
     assert_eq!(editor.document.dirty(), dirty);
-    assert_eq!(editor.document.roll.exposure, 1.23456789);
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings.exposure,
-        -2.3456789
-    );
+    assert_eq!(editor.document.project.roll.exposure, 1.23456789);
+    assert_eq!(editor.photo_settings().exposure, -2.3456789);
 }
 
 #[test]
@@ -3080,10 +3046,10 @@ fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
             .any(|(label, _)| label == "Crop & straighten")
     );
     let before = (
-        editor.document.visit.crop,
-        editor.document.visit.photo_orientation,
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_crop(),
+        editor.photo_orientation(),
+        editor.document.project.roll,
+        editor.photo_settings(),
     );
     editor.begin_crop();
     for _ in 0..3 {
@@ -3104,10 +3070,10 @@ fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
     );
     assert_eq!(
         (
-            editor.document.visit.crop,
-            editor.document.visit.photo_orientation,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings
+            editor.photo_crop(),
+            editor.photo_orientation(),
+            editor.document.project.roll,
+            editor.photo_settings()
         ),
         before
     );
@@ -3125,8 +3091,8 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
         warmth: 0.3,
         tint: 0.2,
     });
-    editor.document.roll.exposure = 2.;
-    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
+    editor.document.project.roll.exposure = 2.;
+    *editor.photo_settings_mut() = AdjustmentLayerSettings {
         exposure: -1.,
         wb: Balance {
             warmth: -0.2,
@@ -3135,7 +3101,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
         ..AdjustmentLayerSettings::default()
     };
     let calibration = (editor.dmin(), editor.dmax());
-    let photo = editor.document.visit.adjustment_layer_settings;
+    let photo = editor.photo_settings();
     let shape = crate::processing::Response {
         toe: 3.,
         shoulder: 0.01,
@@ -3145,8 +3111,8 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     assert_eq!(editor.response(), shape);
     assert_eq!(editor.gamma(), crate::processing::DEFAULT_GAMMA);
     assert_eq!(editor.balance(), Balance::default());
-    assert_eq!(editor.document.roll.exposure, 2.);
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+    assert_eq!(editor.document.project.roll.exposure, 2.);
+    assert_eq!(editor.photo_settings(), photo);
 
     editor.set_gamma(0.9);
     editor.set_balance(Balance {
@@ -3162,29 +3128,23 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     click_section_reset(&mut editor, &context, "Toe & shoulder");
     assert_eq!(editor.response(), crate::processing::Response::film());
     assert_eq!(editor.balance(), Balance::default());
-    assert_eq!(editor.document.roll.exposure, 2.);
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+    assert_eq!(editor.document.project.roll.exposure, 2.);
+    assert_eq!(editor.photo_settings(), photo);
 
     click_section_reset(&mut editor, &context, "Exposure");
-    assert_eq!(editor.document.roll.exposure, 0.);
+    assert_eq!(editor.document.project.roll.exposure, 0.);
 
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+    assert_eq!(editor.photo_settings(), photo);
 
-    let roll = editor.document.roll;
+    let roll = editor.document.project.roll;
     editor.tab = 1;
     click_section_reset(&mut editor, &context, "White balance");
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings.wb,
-        Balance::default()
-    );
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings.exposure,
-        -1.
-    );
+    assert_eq!(editor.photo_settings().wb, Balance::default());
+    assert_eq!(editor.photo_settings().exposure, -1.);
 
     click_section_reset(&mut editor, &context, "Exposure");
-    assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
-    assert_eq!(editor.document.roll, roll);
+    assert_eq!(editor.photo_settings().exposure, 0.);
+    assert_eq!(editor.document.project.roll, roll);
     assert_eq!((editor.dmin(), editor.dmax()), calibration);
 }
 
@@ -3199,7 +3159,7 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     for section in ["photo-composition", "photo-white-balance", "photo-exposure"] {
         editor.preferences.sections.insert(section.into(), false);
     }
-    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
+    *editor.photo_settings_mut() = AdjustmentLayerSettings {
         exposure: 1.25,
         wb: Balance {
             warmth: 0.2,
@@ -3211,17 +3171,17 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
         saturation: 1.3,
         saturation_density: 1.,
     };
-    let photo = editor.document.visit.adjustment_layer_settings;
-    let roll = editor.document.roll;
+    let photo = editor.photo_settings();
+    let roll = editor.document.project.roll;
     let calibration = (editor.dmin(), editor.dmax());
     editor.set_test_busy(true);
     click_section_reset(&mut editor, &context, "Contrast");
-    assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
+    assert_eq!(editor.photo_settings(), photo);
     editor.set_test_busy(false);
     click_section_reset(&mut editor, &context, "Contrast");
     let defaults = AdjustmentLayerSettings::default();
     assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_settings(),
         AdjustmentLayerSettings {
             contrast: defaults.contrast,
             pivot: defaults.pivot,
@@ -3231,14 +3191,14 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     );
     click_section_reset(&mut editor, &context, "Saturation");
     assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_settings(),
         AdjustmentLayerSettings {
             exposure: photo.exposure,
             wb: photo.wb,
             ..defaults
         }
     );
-    assert_eq!(editor.document.roll, roll);
+    assert_eq!(editor.document.project.roll, roll);
     assert_eq!((editor.dmin(), editor.dmax()), calibration);
 }
 
@@ -3305,19 +3265,19 @@ fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
 fn input_stage_switch_requires_confirmation_before_discarding_negative_settings() {
     let mut editor = fixture();
     with_camera_basis(&mut editor);
-    let negative = editor.document.input;
+    let negative = editor.document.project.input;
     assert!(negative.is_negative() && negative.ready());
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.request_input(crate::processing::InputSettings::Digital, cx);
-            assert_eq!(editor.document.input, negative);
+            assert_eq!(editor.document.project.input, negative);
             assert!(editor.dialogs.is_open());
             editor.dialogs.answer_for_test("Cancel");
         });
         app.pump();
         app.read(|editor| {
             assert!(!editor.dialogs.is_open());
-            assert_eq!(editor.document.input, negative);
+            assert_eq!(editor.document.project.input, negative);
         });
     });
 }
@@ -3339,7 +3299,7 @@ fn digital_can_be_selected_after_an_empty_negative_import_failure() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.request_input(InputSettings::Digital, cx);
-            assert_eq!(editor.document.input, InputSettings::Digital);
+            assert_eq!(editor.document.project.input, InputSettings::Digital);
             assert_eq!(editor.document.state.project.input, InputSettings::Digital);
         });
     });

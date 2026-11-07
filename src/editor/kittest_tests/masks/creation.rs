@@ -114,7 +114,7 @@ fn creation_blocks_captured_roll_inputs_but_cancel_restores_live_grading() {
             workflow::enter_numeric(&mut h, "Exposure", exposure);
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.roll.exposure,
+                    editor.document.project.roll.exposure,
                     exposure.parse::<f64>().unwrap()
                 )
             });

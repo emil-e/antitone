@@ -205,16 +205,16 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.read(|editor| assert_ne!(editor.document.state.project, project));
         h.read(|editor| assert!(editor.document.dirty()));
         h.read(|editor| assert!(editor.test_pick().is_none()));
-        h.update(|editor| editor.document.roll.exposure = 0.3);
+        h.update(|editor| editor.document.project.roll.exposure = 0.3);
         h.update(|editor| {
-            editor.document.roll.wb = Balance {
+            editor.document.project.roll.wb = Balance {
                 warmth: 0.03,
                 tint: -0.02,
             }
         });
-        h.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 0.7);
-        h.update(|editor| editor.document.visit.adjustment_layer_settings.contrast = 1.1);
-        h.update(|editor| editor.document.visit.adjustment_layer_settings.saturation = 0.8);
+        h.update(|editor| editor.photo_settings_mut().exposure = 0.7);
+        h.update(|editor| editor.photo_settings_mut().contrast = 1.1);
+        h.update(|editor| editor.photo_settings_mut().saturation = 0.8);
         h.step();
         ready(&mut h, 1);
         h.read(|editor| assert_eq!(editor.dust_signature(), Some(sig)));

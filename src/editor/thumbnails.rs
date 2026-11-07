@@ -935,7 +935,7 @@ impl Editor {
             source: SourceKey::new(source, self.document.file_key(path)),
             recipe,
             projection,
-            target: self.document.target,
+            target: self.document.target(),
             field: self
                 .document
                 .correction
@@ -946,7 +946,7 @@ impl Editor {
 
     fn thumbnail_composition(&self, source: &Source) -> Composition {
         let photo_orientation = if self.document.visit.current_source == Some(source.id) {
-            self.document.visit.photo_orientation
+            self.photo_orientation()
         } else {
             source.orientation
         };
@@ -961,14 +961,14 @@ impl Editor {
             return *composition;
         }
         let crop = if self.document.visit.current_source == Some(source.id) {
-            self.document.visit.crop
+            self.photo_crop()
         } else {
             source.crop
         };
         if crop.is_some() {
             Composition::with_crop(
                 source.development.active_area.into(),
-                self.document.roll_orientation,
+                self.document.project.orientation,
                 photo_orientation,
                 crop,
             )
@@ -989,14 +989,17 @@ impl Editor {
             .sources
             .iter()
             .any(|(source, _)| *source == id)
-            || !self.document.state.project.input.ready()
+            || !self.input().ready()
         {
             Ok(None)
         } else {
-            self.document
-                .image_recipe(id)
-                .map(|recipe| Some(Arc::new(recipe)))
-                .map_err(|error| error.to_string())
+            let source = self
+                .document
+                .project
+                .source(id)
+                .map_err(|error| error.to_string())?;
+            self.thumbnail_request(source)
+                .map(|request| request.recipe().cloned())
         }
     }
 
@@ -1028,9 +1031,9 @@ impl Editor {
         }
         self.positive_recipe_for_source(
             self.input(),
-            self.document.roll,
+            self.document.project_snapshot().roll,
             source,
-            self.document.visit.adjustment_layer_settings,
+            self.photo_settings(),
         )
         .map(|recipe| PhotographRequest::Recipe(Arc::new(recipe)))
         .map_err(|error| error.to_string())
@@ -1445,17 +1448,16 @@ impl Editor {
                             )
                             .clicked()
                         {
-                            self.document.auto_crop_requested = Some(auto_crop::Action::Batch {
-                                photos: self
-                                    .document
-                                    .project
-                                    .order
-                                    .iter()
-                                    .copied()
-                                    .filter(|id| self.document.roll_selection.contains(*id))
-                                    .collect(),
-                                scope: "Entry selection",
-                            });
+                            let photos = self
+                                .document
+                                .project
+                                .order
+                                .iter()
+                                .copied()
+                                .filter(|id| self.document.roll_selection.contains(*id))
+                                .collect();
+                            self.cancel_control_edit();
+                            self.review_crop_proposals(photos, "Entry selection", cx);
                             ui.close();
                         }
                         if ui
@@ -1665,7 +1667,8 @@ impl Editor {
                             {
                                 log::warn!(error = error.to_string().as_str(); "thumbnail_proxy_publication_failed");
                             }
-                            editor.document.thumbnails.complete(outcome, &editor.document.state);
+                            let current = editor.document.effective_document();
+                            editor.document.thumbnails.complete(outcome, &current);
                         }
                         Err(_) => editor.document.thumbnails.stopped(ticket, key),
                     }

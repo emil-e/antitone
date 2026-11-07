@@ -73,32 +73,30 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
         tools::calibrated_harness(|mut harness| {
             harness.update(|editor| {
                 if digital {
-                    editor.document.input = crate::processing::InputSettings::Digital;
+                    editor.document.project.input = crate::processing::InputSettings::Digital;
                 }
-                editor.document.roll.wb = Balance {
+                editor.document.project.roll.wb = Balance {
                     warmth: 0.2,
                     tint: -0.15,
                 };
-                editor.sync_document();
             });
-            let input = harness.read(|editor| editor.document.input);
+            let input = harness.read(|editor| editor.document.project.input);
             stage(&mut harness, "Roll");
             reset_shared_balance_component(&mut harness, "Warmth", 0.2);
             harness.read(|editor| {
                 assert_eq!(
-                    editor.document.roll.wb,
+                    editor.document.project.roll.wb,
                     Balance {
                         warmth: 0.,
                         tint: -0.15
                     }
                 );
-                assert_eq!(editor.document.input, input);
-                assert_eq!(editor.document.state.project.roll, editor.document.roll);
+                assert_eq!(editor.document.project.input, input);
             });
             reset_shared_balance_component(&mut harness, "Tint", -0.15);
             harness.read(|editor| {
-                assert_eq!(editor.document.roll.wb, Balance::default());
-                assert_eq!(editor.document.input, input);
+                assert_eq!(editor.document.project.roll.wb, Balance::default());
+                assert_eq!(editor.document.project.input, input);
             });
         });
     }
@@ -109,7 +107,7 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
     tools::calibrated_harness(|mut harness| {
         harness.update(|editor| {
             let crate::processing::InputSettings::Negative { response, .. } =
-                &mut editor.document.input
+                &mut editor.document.project.input
             else {
                 panic!("calibrated negative fixture");
             };
@@ -117,12 +115,11 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
                 toe: 2.5,
                 shoulder: 0.02,
             };
-            editor.sync_document();
             editor
                 .validate_processing(
-                    editor.document.input,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                 )
                 .unwrap();
         });
@@ -136,12 +133,11 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
                 editor.status
             );
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.document.input, before.input);
+            assert_eq!(editor.document.project.input, before.input);
         });
         enter_numeric(&mut harness, "Gamma", "0.7");
         harness.read(|editor| {
-            assert_eq!(editor.document.input.gamma(), 0.7);
-            assert_eq!(editor.document.state.project.input, editor.document.input);
+            assert_eq!(editor.document.project.input.gamma(), 0.7);
         });
     });
 }
@@ -198,7 +194,6 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 .unwrap(),
             ));
             e.document.source = false;
-            e.sync_document();
         });
         let ids = harness.read(|editor| editor.document.state.project.order.clone());
         harness.step();
@@ -208,12 +203,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "7.123456789012345");
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                7.123456789012345
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.photo_settings().exposure, 7.123456789012345));
         stage(&mut harness, "Roll");
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Toe & shoulder")
@@ -238,7 +228,6 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.update(|e| {
             e.document.state.project.order.swap(0, 1);
             e.document.selected = 0;
-            e.sync_document();
             let path = directory.path().join("film.antitone");
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
         });
@@ -432,7 +421,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         wait_for(&mut harness, |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 >= e.document.state.project.order.len().min(16)
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));

@@ -160,7 +160,8 @@ impl Editor {
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
-        let mut input = self.input();
+        let base_input = self.input();
+        let mut input = base_input;
         if let Some(base) = input.calibration() {
             input = input.with_calibration(
                 source.development.processing_calibration(
@@ -175,12 +176,16 @@ impl Editor {
         validate_source_with_matrix(
             self.document.visit.working_view.device(),
             input,
-            self.document.roll,
+            self.document.project_snapshot().roll,
             source,
             self.document.positive_matrix(source, input)?,
         )?;
         if self.document.visit.current_source == Some(source.id) {
-            self.dust_validate_snapshot(input, self.document.roll, &source.grade_snapshot()?)?;
+            self.dust_validate_snapshot(
+                base_input,
+                self.document.project_snapshot().roll,
+                &source.grade_snapshot()?,
+            )?;
         }
         Ok(())
     }
@@ -199,8 +204,8 @@ impl Editor {
             recipe.neutral.input = input;
             recipe.roll = roll;
             recipe.neutral.reference = self.document.exposure_value(source);
-            recipe.grain = self.document.grain;
-            recipe.halation = self.document.halation;
+            recipe.grain = self.document.project_snapshot().output.grain;
+            recipe.halation = self.document.project_snapshot().output.halation;
             if let Some(repairs) = self.dust_recipe_repairs(&candidate) {
                 recipe.repairs = repairs
                     .into_iter()

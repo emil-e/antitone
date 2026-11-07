@@ -27,10 +27,10 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             e.set_dmax(Some(DVec3::splat(128. / 4031.)));
             e.set_gamma(0.75);
-            e.document.visit.adjustment_layer_settings.exposure = 0.5;
+            e.photo_settings_mut().exposure = 0.5;
             e.document.source = false;
-            e.document.roll_orientation.turn_clockwise();
-            e.document.visit.photo_orientation.flips.horizontal = true;
+            e.document.project.orientation.turn_clockwise();
+            e.photo_orientation_mut().flips.horizontal = true;
             e.document.state.project.analysis_regions = e
                 .document
                 .project
@@ -62,7 +62,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                     }
                 })
                 .collect();
-            e.sync_document();
+
             // UI controls consume declared hypotheses; actual discovery/acquisition is
             // exercised by the authored spatial workflow cases, not this fixture.
             let sources: Vec<_> = e
@@ -172,8 +172,7 @@ fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
             width: a.width / 2,
             height: a.height / 2,
         });
-        e.document.visit.crop = Some(crop);
-        e.sync_document();
+        *e.photo_crop_mut() = Some(crop);
         crop
     });
     h.step();
@@ -476,7 +475,7 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             h.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, proposed));
             h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
             h.read(|editor| assert_eq!(editor.document.state.project, before));
-            h.read(|editor| assert_eq!(editor.document.visit.crop, Some(old)));
+            h.read(|editor| assert_eq!(editor.photo_crop(), Some(old)));
             h.read(|editor| assert!(!editor.document.dirty()));
             assert_eq!(
                 h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
@@ -495,7 +494,7 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             let mut expected = before;
             expected.source_mut(source).unwrap().crop = Some(proposed);
             h.read(|editor| assert_eq!(editor.document.state.project, expected));
-            h.read(|editor| assert_eq!(editor.document.visit.crop, Some(proposed)));
+            h.read(|editor| assert_eq!(editor.photo_crop(), Some(proposed)));
             wait_crop(&mut h, proposed);
             click_action(&mut h, "Dust repair");
             h.read(|editor| assert!(editor.dusting()));
@@ -721,7 +720,7 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
             editor.document.thumbnails.projection_ready(
                 &editor.document,
                 source,
-                editor.document.target,
+                editor.document.target(),
                 projection,
             )
         });
@@ -737,7 +736,7 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
             editor
                 .document
                 .thumbnails
-                .ready_count(&editor.document, editor.document.target)
+                .ready_count(&editor.document, editor.document.target())
                 == 3
         });
         h.read(|editor| assert_eq!(editor.document.state.project, before));

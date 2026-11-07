@@ -1,6 +1,5 @@
+use super::editing::ProjectVersion as Project;
 use super::*;
-use crate::processing::InputSettings;
-use crate::project::Project;
 
 const HISTORY_LIMIT: usize = 100;
 
@@ -33,62 +32,6 @@ pub(super) struct History {
     group: Option<egui::Id>,
     // A gesture with no net change must preserve the redo branch it started from.
     group_redo: Option<Vec<Entry>>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-struct ControlState {
-    input: InputSettings,
-    roll: RollSettings,
-    photo: AdjustmentLayerSettings,
-    target: OutputTarget,
-    grain: GrainSettings,
-    halation: crate::halation::HalationSettings,
-    source: Option<SourceId>,
-    layer: adjustment_layers::Target,
-}
-
-impl ControlState {
-    fn capture(editor: &Editor) -> Self {
-        Self {
-            input: editor.input(),
-            roll: editor.document.roll,
-            photo: editor.document.visit.adjustment_layer_settings,
-            target: editor.document.target,
-            grain: editor.document.grain,
-            halation: editor.document.halation,
-            source: editor.document.visit.current_source,
-            layer: editor.adjustment_layer_target(),
-        }
-    }
-
-    fn restore(self, project: &mut Project) {
-        project.input = self.input;
-        project.roll = self.roll;
-        project.processing_model = self.input.processing_model();
-        project.output.grain = self.grain;
-        project.output.halation = self.halation;
-        project.output.tiff = match self.target {
-            OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
-            OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
-        };
-        if let Some(source) = self.source
-            && let adjustment_layers::Target::Layer(layer) = self.layer
-            && let Some(record) = project
-                .source_mut(source)
-                .expect("control source belongs to document")
-                .adjustment_layers
-                .as_mut()
-                .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
-        {
-            record.adjustment.photo = self.photo;
-        }
-    }
-}
-
-pub(super) struct Controls {
-    state: ControlState,
-    before: Option<Project>,
-    label: &'static str,
 }
 
 pub(super) enum Pending {
@@ -195,26 +138,9 @@ impl History {
 }
 
 impl Editor {
-    fn clone_history_project(&mut self) -> Project {
-        #[cfg(test)]
-        {
-            self.history_snapshot_clones += 1;
-        }
-        self.document.state.project.clone()
-    }
-
+    #[cfg(test)]
     pub(super) fn history_snapshot(&mut self) -> Project {
-        self.sync_document();
-        self.clone_history_project()
-    }
-
-    pub(super) fn begin_control_history(&mut self, label: &'static str) {
-        self.sync_document();
-        self.history_controls = Some(Controls {
-            state: ControlState::capture(self),
-            before: None,
-            label,
-        });
+        self.document.state.project.clone()
     }
 
     pub(super) fn record_edit(
@@ -223,18 +149,10 @@ impl Editor {
         label: &'static str,
         photo: Option<SourceId>,
     ) {
-        self.sync_document();
         if before == self.document.state.project {
             return;
         }
-        if let Some(controls) = &mut self.history_controls {
-            controls.label = label;
-            // Layer controls replace accepted records during the pass. Keep their
-            // first before-project; scalar mirrors can be compared without cloning.
-            controls.before.get_or_insert(before);
-            return;
-        }
-        let after = self.clone_history_project();
+        let after = self.document.state.project.clone();
         self.document
             .history
             .record(before, after, label, photo, None);
@@ -242,7 +160,7 @@ impl Editor {
 
     pub(super) fn history_available(&self) -> bool {
         !self.interaction_blocked()
-            && !self.document.gamma_pivot.pending()
+            && !self.controls_pending()
             && !self.dialogs.is_open()
             && self.menus.panel.is_none()
             && self.document.look.is_none()
@@ -258,7 +176,6 @@ impl Editor {
         if !self.history_available() {
             return;
         }
-        self.sync_document();
         self.document.history.finish_group();
         let Some(entry) = self.document.history.entry(direction) else {
             return;
@@ -307,7 +224,7 @@ impl Editor {
                     .label;
                 self.document.history.complete(direction);
                 self.document.visit.working_view.clear();
-                self.document.source = !self.document.input.ready();
+                self.document.source = !self.document.project.input.ready();
                 if let Some(show_masks) = cleanup
                     && !self.document.source
                     && self.document.visit.canvas.ready.is_some()
@@ -337,41 +254,6 @@ impl Editor {
             .history
             .entry(direction)
             .map(|entry| entry.label)
-    }
-
-    pub(super) fn record_gamma_edit(&mut self, before: Project, group: Option<egui::Id>) {
-        self.sync_document();
-        let after = self.clone_history_project();
-        self.document
-            .history
-            .record(before, after, "Gamma & balance", None, group);
-    }
-
-    pub(super) fn record_controls(&mut self, photo: Option<SourceId>, ui: &egui::Ui) {
-        let controls = self.history_controls.take().expect("control transaction");
-        let changed = controls.before.is_some() || controls.state != ControlState::capture(self);
-        let group = ui.ctx().data_mut(|data| {
-            let id = egui::Id::new("project-control-gesture");
-            let group = data.get_temp::<egui::Id>(id);
-            data.remove::<egui::Id>(id);
-            group
-        });
-        if changed {
-            let mut before = controls
-                .before
-                .unwrap_or_else(|| self.clone_history_project());
-            controls.state.restore(&mut before);
-            self.sync_document();
-            if before != self.document.state.project {
-                let after = self.clone_history_project();
-                self.document
-                    .history
-                    .record(before, after, controls.label, photo, group);
-            }
-        }
-        if !ui.input(|input| input.pointer.any_down()) && !self.document.gamma_pivot.pending() {
-            self.document.history.finish_group();
-        }
     }
 }
 

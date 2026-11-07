@@ -37,7 +37,7 @@ fn visit_retirement_and_layer_selection_discard_only_the_unfinished_refinement()
     pollster::block_on(async {
         for depart in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
-            editor.sync_document();
+
             let before = editor.document.state.project.clone();
             let history = editor.history_label(history::Direction::Undo);
             start(&mut editor);

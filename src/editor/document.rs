@@ -1,7 +1,7 @@
 //! Document snapshots, candidate preparation and transactional editor installation.
 use super::{
-    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, OutputTarget, Ready, RollSelection,
-    dust, history, source,
+    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, RollSelection, dust,
+    history, source,
 };
 use crate::{
     Error,
@@ -27,11 +27,11 @@ fn failure(error: impl std::fmt::Display) -> Error {
 #[derive(Clone)]
 
 pub(super) struct Document {
-    pub project: Project,
+    pub project: super::editing::ProjectVersion,
     pub path: Option<PathBuf>,
     pub spatial_metadata: Arc<crate::spatial_metadata::Metadata>,
     pub exposure_metadata: Arc<crate::exposure_metadata::Metadata>,
-    saved: Project,
+    saved: super::editing::ProjectVersion,
 
     source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
 
@@ -43,7 +43,7 @@ pub(super) struct Document {
 
 impl Default for Document {
     fn default() -> Self {
-        let project = Project::default();
+        let project = super::editing::ProjectVersion::from(Project::default());
         Self {
             saved: project.clone(),
             project,
@@ -429,6 +429,7 @@ impl Document {
             .take()
             .unwrap_or_default()
             .for_project(&project);
+        let project = super::editing::ProjectVersion::from(project);
         let mut document = Self {
             saved: project.clone(),
             project,
@@ -1020,8 +1021,8 @@ impl Editor {
         }
 
         self.cancel_spatial();
-        self.finish_gamma_edit();
-        self.control_commands.clear();
+        self.cancel_control_edit();
+
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
             Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
@@ -1123,7 +1124,7 @@ impl Editor {
 
         match result {
             Ok(prepared) => {
-                let input_changed = self.document.input.is_negative()
+                let input_changed = self.document.project.input.is_negative()
                     != prepared.document.project.input.is_negative();
 
                 if self.reset_repairs_pending {
@@ -1183,47 +1184,24 @@ impl Editor {
                             .position(|candidate| *candidate == id)
                     })
                     .unwrap_or(0);
-                self.document.roll = self.document.state.project.roll;
-                self.document.roll_orientation = self.document.state.project.orientation;
-                self.load_input(self.document.state.project.input);
-                if let InputSettings::Negative { input_floor, .. } = &mut self.document.input
+
+                if let InputSettings::Negative { input_floor, .. } =
+                    &mut self.document.project.input
                     && *input_floor == 0.
                 {
                     *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-                    self.document.state.project.input = self.document.input;
+                    self.document.state.project.input = self.document.project.input;
                 }
-                self.document.visit.adjustment_layer_settings = prepared
-                    .selected
-                    .and_then(|id| self.document.state.project.source(id).ok())
-                    .and_then(|source| source.adjustment_layers.as_ref())
-                    .and_then(|layers| layers.layers.last())
-                    .map(|record| record.adjustment.photo)
-                    .unwrap_or_default();
                 self.refresh_adjustment_layer_selection();
-                self.document.visit.photo_orientation = prepared
-                    .selected
-                    .and_then(|id| self.document.state.project.source(id).ok())
-                    .map(|source| source.orientation)
-                    .unwrap_or_default();
-                self.document.visit.crop = prepared
-                    .selected
-                    .and_then(|id| self.document.state.project.source(id).ok())
-                    .and_then(|source| source.crop);
                 self.document.clear_crop_edit();
                 self.document.visit.canvas.last_layout = None;
-                self.document.grain = self.document.state.project.output.grain;
-                self.document.halation = self.document.state.project.output.halation;
-                self.document.target = match self.document.state.project.output.tiff {
-                    crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
-                    crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,
-                };
                 self.document.visit.canvas.ready = prepared.ready;
                 if !prepared.reuse_ready && !prepared.preserve_view {
                     self.document.visit.canvas.viewport.fit();
-                    self.document.source = !self.document.input.ready();
+                    self.document.source = !self.document.project.input.ready();
                 }
                 if input_changed {
-                    self.document.source = !self.document.input.ready();
+                    self.document.source = !self.document.project.input.ready();
                 }
                 self.document.visit.return_notice = None;
                 self.document.export.draft = None;

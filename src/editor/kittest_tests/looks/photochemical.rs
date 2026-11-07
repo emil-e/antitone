@@ -23,7 +23,7 @@ pub(super) fn choose_component(harness: &mut Harness<'_, Editor>, label: &str, v
 #[test]
 fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass_admission() {
     fixture_editor(|mut h, _| {
-        let input = h.read(|e| e.document.input);
+        let input = h.read(|e| e.document.project.input);
         let texture = h.read(|e| e.document.project.output.grain);
         let original = h.read(|e| e.document.state.project.clone());
         assert!(original.output.film_and_paper.is_none());
@@ -41,7 +41,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
             .unwrap();
             assert_eq!(selected.negative, Negative::from_id("kodak_portra_400"));
             assert_eq!(selected.paper, Paper::default());
-            assert_eq!(e.document.input, input);
+            assert_eq!(e.document.project.input, input);
         });
         h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Paper")
             .scroll_to_me();
@@ -150,7 +150,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
         h.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
         wait_for(&mut h, |e| {
             !e.interaction_blocked()
-                && e.document.input == crate::processing::InputSettings::Digital
+                && e.document.project.input == crate::processing::InputSettings::Digital
         });
         paint_until(&mut h, positive_ready);
         choose_component(&mut h, "Paper", Paper::default().name());

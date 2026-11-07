@@ -237,7 +237,7 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 overlay::wait_context(&mut h);
                 h.read(|e| {
                     assert!(Arc::ptr_eq(&regions, &e.document.spatial.ready()));
-                    assert_eq!(e.document.visit.adjustment_layer_settings.exposure, 1.25);
+                    assert_eq!(e.photo_settings().exposure, 1.25);
                     for id in &original.order {
                         assert_eq!(
                             graded.source(*id).unwrap().crop,

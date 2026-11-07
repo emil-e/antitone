@@ -33,9 +33,7 @@ impl RollSelection {
 
 impl Editor {
     pub(super) fn roll_edit_available(&self) -> bool {
-        !self.interaction_blocked()
-            && !self.document.gamma_pivot.pending()
-            && self.roll_navigation_available()
+        !self.interaction_blocked() && !self.controls_pending() && self.roll_navigation_available()
     }
 
     pub(super) fn roll_navigation_available(&self) -> bool {
@@ -200,7 +198,7 @@ impl Editor {
 
     fn remove_selected_photos(&mut self, ids: Vec<SourceId>, cx: &UiContext<'_, Self>) {
         if self.interaction_blocked()
-            || self.document.gamma_pivot.pending()
+            || self.controls_pending()
             || self.files.pending()
             || ids
                 .iter()
@@ -209,26 +207,35 @@ impl Editor {
             self.status = "Photo selection changed; removal cancelled".into();
             return;
         }
+        let mut draft = match self.edit_project("Remove photos") {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
         let index = self.document.selected;
         let active_removed = self
             .document
             .visit
             .current_source
             .is_some_and(|id| ids.contains(&id));
-        let before = self.history_snapshot();
-        for id in ids {
-            self.document
-                .state
-                .project
-                .remove_from_filmstrip(id)
-                .expect("confirmed ordered source");
+        draft.update(|project| {
+            for id in ids {
+                project
+                    .remove_from_filmstrip(id)
+                    .expect("confirmed ordered source");
+            }
+        });
+        if let Err(error) = self.commit_project(draft) {
+            self.status = error.to_string();
+            return;
         }
         let scope = &mut self.document;
         scope.sampling_inputs.retain(&scope.state);
         if active_removed {
             self.document.visit.current_source = None;
         }
-        self.record_edit(before, "Remove photos", None);
         self.document.thumbnails.cancel();
         self.document.roll_selection = RollSelection::default();
         if !self.document.state.project.order.is_empty() {
@@ -257,9 +264,6 @@ impl Editor {
             self.document.visit.canvas.selection_timing = None;
             self.document.visit.canvas.last_layout = None;
             self.document.visit.canvas.viewport.fit();
-            self.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
-            self.document.visit.photo_orientation = PhotoOrientation::default();
-            self.document.visit.crop = None;
             self.status = "No photos in this roll. Add scans to continue.".into();
         }
     }

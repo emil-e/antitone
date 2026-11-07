@@ -33,7 +33,7 @@ fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     );
     editor.document.cache.set_budget(0);
     original.close_and_wait().unwrap();
-    editor.sync_document();
+
     editor
 }
 

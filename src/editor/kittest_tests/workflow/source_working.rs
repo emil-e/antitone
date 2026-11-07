@@ -8,8 +8,7 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
     let directory = tempfile::tempdir().unwrap();
     editor_harness_with_thumbnails(true, |mut h, _| {
         h.update(|editor| {
-            editor.document.input = crate::processing::InputSettings::Digital;
-            editor.sync_document();
+            editor.document.project.input = crate::processing::InputSettings::Digital;
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
@@ -18,14 +17,14 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
                 && e.document.visit.working_view.support_ready()
                 && e.document
                     .thumbnails
-                    .ready_count(&e.document, e.document.target)
+                    .ready_count(&e.document, e.document.target())
                     == 1
         });
         h.render().unwrap();
         let accepted = h.read(|editor| {
             assert!(!editor.document.source);
-            assert_eq!(editor.document.roll.exposure, 0.);
-            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.document.project.roll.exposure, 0.);
+            assert_eq!(editor.photo_settings().exposure, 0.);
             let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(ready.record.development.decode.fixed_wb, [4., 1., 2., 1.]);
             assert_eq!(
@@ -105,7 +104,7 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
                 && e.document.visit.working_view.support_ready()
                 && e.document
                     .thumbnails
-                    .ready_count(&e.document, e.document.target)
+                    .ready_count(&e.document, e.document.target())
                     == 1
         });
         let accepted = h.read(|editor| editor.document.state.project.clone());
@@ -270,14 +269,13 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         }
         harness.update(|editor| {
             if film {
-                editor.document.grain = GrainPreset::ThirtyFiveMm.settings();
+                editor.document.project.output.grain = GrainPreset::ThirtyFiveMm.settings();
                 editor.scopes.visible = true;
             } else {
                 editor.set_dmin(Some(DVec3::splat(0.7)));
                 editor.set_dmax(Some(DVec3::splat(0.01)));
             }
             editor.document.source = false;
-            editor.sync_document();
         });
         wait_for(&mut harness, |e| {
             e.document.visit.working_view.support_ready()
@@ -293,20 +291,20 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             assert!(editor.document.visit.canvas.ready.is_some());
             if film {
                 assert_eq!(
-                    editor.document.input,
+                    editor.document.project.input,
                     crate::processing::InputSettings::Digital
                 );
-                assert!(editor.document.grain.enabled);
+                assert!(editor.document.project.output.grain.enabled);
                 let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
-                let proxy = ready.proxy.image(editor.document.target).unwrap();
+                let proxy = ready.proxy.image(editor.document.target()).unwrap();
                 assert!(
                     proxy.linear.width() < ready.area.width,
                     "fixture must exercise a reduced camera proxy"
                 );
             } else {
                 assert!(
-                    editor.document.input.is_negative()
-                        && editor.document.input.calibration().is_some()
+                    editor.document.project.input.is_negative()
+                        && editor.document.project.input.calibration().is_some()
                 );
             }
             assert!(
@@ -427,9 +425,9 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                     view.processing(),
                     editor
                         .positive_processing(
-                            editor.document.input,
-                            editor.document.roll,
-                            editor.document.visit.adjustment_layer_settings
+                            editor.document.project.input,
+                            editor.document.project.roll,
+                            editor.photo_settings()
                         )
                         .unwrap()
                         .clone()
@@ -508,7 +506,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
 
         h.update(|editor| editor.set_dmin(Some(DVec3::splat(0.7))));
         h.update(|editor| editor.set_dmax(Some(DVec3::splat(0.01))));
-        h.update(|editor| editor.sync_document());
+
         let calibrated = h.read(|editor| editor.document.state.project.clone());
         for source in [false, true] {
             h.get_by_label("View source").click();
@@ -624,7 +622,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                         v.spec.frame() == e.document.visit.working_view.current_frame().unwrap()
                             && Some(&v.processing())
                                 == e.document.visit.working_view.processing().as_ref()
-                            && v.target == e.document.target
+                            && v.target == e.document.target()
                     })
             });
             harness.render().unwrap();

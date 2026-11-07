@@ -5,7 +5,6 @@ fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_the
     let (scheduler, starts, release) = paused();
     let mut editor = editor(scheduler.clone());
     editor.load_input(InputSettings::Digital);
-    editor.sync_document();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -33,16 +32,11 @@ fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_the
             editor.begin_dust_cleanup();
             assert!(editor.dusting());
             editor.end_tool();
-            let previous = editor.document.visit.photo_orientation;
-            editor.control_command(
-                crate::editor::editing::Command::Photo(
-                    crate::editor::editing::PhotoAction::TurnRight,
-                ),
-                cx,
-            );
-            assert_ne!(editor.document.visit.photo_orientation, previous);
+            let previous = editor.photo_orientation();
+            editor.apply_photo_action(crate::editor::editing::PhotoAction::TurnRight, cx);
+            assert_ne!(editor.photo_orientation(), previous);
             let before = editor.history_snapshot();
-            editor.document.visit.adjustment_layer_settings.exposure = 0.75;
+            editor.photo_settings_mut().exposure = 0.75;
             editor.record_edit(before, "Exposure", Some(selected));
             editor.begin_crop();
             let area = editor.selected_area().unwrap();
@@ -51,8 +45,8 @@ fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_the
             editor.document.crop_edit_mut().unwrap().draft = crop;
             editor.dispatch_tool(crate::editor::tool::Action::Primary, cx);
             assert!(!editor.cropping());
-            assert_eq!(editor.document.visit.crop, Some(crop));
-            (selected, editor.document.visit.photo_orientation, crop)
+            assert_eq!(editor.photo_crop(), Some(crop));
+            (selected, editor.photo_orientation(), crop)
         });
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
@@ -61,12 +55,9 @@ fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_the
         app.read(|editor| {
             assert!(editor.document.visit.canvas.ready.is_some());
             assert_eq!(editor.document.visit.current_source, Some(selected));
-            assert_eq!(editor.document.visit.photo_orientation, orientation);
-            assert_eq!(editor.document.visit.crop, Some(crop));
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.75
-            );
+            assert_eq!(editor.photo_orientation(), orientation);
+            assert_eq!(editor.photo_crop(), Some(crop));
+            assert_eq!(editor.photo_settings().exposure, 0.75);
             let source = editor.document.project.source(selected).unwrap();
             assert_eq!(source.orientation, orientation);
             assert_eq!(source.crop, Some(crop));
@@ -91,7 +82,6 @@ fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input
         dmax: glam::DVec3::splat(0.01),
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }));
-    editor.sync_document();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -147,7 +137,6 @@ fn cancelling_measurement_waiting_for_source_withdraws_only_its_acquisition() {
         dmax: glam::DVec3::splat(0.01),
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }));
-    editor.sync_document();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -640,8 +629,8 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                 e.save_project(path.clone(), crate::project::Save::New, None, cx);
                 let operation = e.document_pending.unwrap();
                 let saved = snapshot.save(&path, crate::project::Save::New).unwrap();
-                e.document.roll.exposure = 0.5;
-                e.sync_document();
+                e.document.project.roll.exposure = 0.5;
+
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.source.completion.is_some());

@@ -37,10 +37,7 @@ impl Editor {
             return host::QuitState::Approved;
         }
 
-        if self.menus.pending.contains(&Action::Quit)
-            || self.document.deferred_menu.contains(&Action::Quit)
-            || self.files.closing()
-        {
+        if self.menus.pending.contains(&Action::Quit) || self.files.closing() {
             host::QuitState::Pending
         } else {
             host::QuitState::Running
@@ -77,6 +74,7 @@ impl Editor {
 
     fn file_context_available(&self) -> bool {
         !self.dust_search_pending()
+            && !self.editing()
             && !self.application_modal()
             && !self.tool_interacting()
             && !self.document.visit.masks.editing()
@@ -141,7 +139,7 @@ impl Editor {
         }
         if self.file_available() {
             state.enabled.extend([New, Open, AddScans, Close]);
-            if self.document.input.ready() && self.selected_area().is_some() {
+            if self.document.project.input.ready() && self.selected_area().is_some() {
                 state.enabled.insert(Export);
             }
         }

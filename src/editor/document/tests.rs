@@ -366,12 +366,11 @@ fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
     );
     assert!(!document.project.order.contains(&new_reference_id));
 
-    document
-        .project
-        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-            document.project.source(new_reference_id).unwrap(),
-            map,
-        )));
+    let settings = crate::project::FlatFieldSettings::new(
+        document.project.source(new_reference_id).unwrap(),
+        map,
+    );
+    document.project.set_flat_field(Some(settings));
     document
         .redevelop_for_input(crate::processing::InputSettings::Negative {
             dmin: None,
@@ -708,12 +707,9 @@ fn explicit_import_captures_a_restored_reference_when_promoting_it_to_a_photo() 
         )
         .unwrap(),
     );
-    document
-        .project
-        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-            document.project.source(id).unwrap(),
-            map,
-        )));
+    let settings =
+        crate::project::FlatFieldSettings::new(document.project.source(id).unwrap(), map);
+    document.project.set_flat_field(Some(settings));
     let destination = directory.path().join("reference.antitone");
     document.save(&destination, Save::New).unwrap();
     std::fs::remove_file(&reference).unwrap();

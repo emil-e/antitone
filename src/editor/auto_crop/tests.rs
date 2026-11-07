@@ -84,7 +84,7 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
         })
         .collect();
     editor.document.capture_source_files().unwrap();
-    editor.sync_document();
+
     (editor, directory)
 }
 
@@ -304,8 +304,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
             let ids = e.document.state.project.order.clone();
-            e.document.visit.crop = Some(small());
-            e.sync_document();
+            *e.photo_crop_mut() = Some(small());
             let mut expected = e.document.state.project.clone();
             let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             let proposed = default_crop(active, &measured_areas());
@@ -313,14 +312,13 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             e.begin_crop();
             e.auto_crop_photo(e.document.visit.current_source.unwrap());
             assert_eq!(e.document.state.project, expected);
-            assert_eq!(e.document.visit.crop, Some(small()));
+            assert_eq!(e.photo_crop(), Some(small()));
             assert_eq!(e.document.crop_edit().unwrap().draft, proposed);
             assert!(!e.document.auto_crop.reviewing());
             e.hosted_action(tool::Action::Primary);
-            e.sync_document();
             expected.source_mut(ids[0]).unwrap().crop = Some(proposed);
             assert_eq!(e.document.state.project, expected);
-            assert_eq!(e.document.visit.crop, Some(proposed));
+            assert_eq!(e.photo_crop(), Some(proposed));
             assert!(!e.document.auto_crop.reviewing());
             e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
             e.begin_auto_crop_review(
@@ -375,7 +373,7 @@ fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
     for &id in &ids {
         e.document.state.project.source_mut(id).unwrap().crop = Some(small());
     }
-    e.document.visit.crop = Some(small());
+    *e.photo_crop_mut() = Some(small());
     e.document.state.project.analysis_regions[1]
         .areas
         .picture_observed[0] = false;
@@ -484,8 +482,7 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
 #[test]
 fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     let (mut e, _directory) = fixture();
-    e.document.visit.crop = Some(small());
-    e.sync_document();
+    *e.photo_crop_mut() = Some(small());
     e.document.visit.canvas.viewport.zoom = Some(1.5);
     let viewport = e.document.visit.canvas.viewport;
     let before = e.document.state.project.clone();
@@ -496,13 +493,13 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
         serde_json::to_string(&e.document.state.project).unwrap(),
         serialized
     );
-    assert_eq!(e.document.visit.crop, Some(small()));
-    assert_ne!(preview(&e, before.order[0]), e.document.visit.crop);
+    assert_eq!(e.photo_crop(), Some(small()));
+    assert_ne!(preview(&e, before.order[0]), e.photo_crop());
     let composition = Composition::with_crop(
         e.document.visit.canvas.ready.as_ref().unwrap().area,
-        e.document.roll_orientation,
-        e.document.visit.photo_orientation,
-        e.document.visit.crop,
+        e.document.project.orientation,
+        e.photo_orientation(),
+        e.photo_crop(),
     )
     .unwrap();
     assert_eq!(
@@ -512,7 +509,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     );
     e.finish_auto_crop(false);
     assert_eq!(e.document.state.project, before);
-    assert_eq!(e.document.visit.crop, Some(small()));
+    assert_eq!(e.photo_crop(), Some(small()));
     assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert!(!e.document.auto_crop.reviewing() && !e.auto_crop_context());
 }
@@ -614,8 +611,7 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
         sides: [Some(0.), Some(768.), Some(0.), Some(512.)],
     });
     areas.picture = Some(Coverage::rectangle(active).corners().map(|p| p.0));
-    e.document.visit.crop = Some(small());
-    e.sync_document();
+    *e.photo_crop_mut() = Some(small());
     e.auto_crop_margin = 0.;
     let before = e.document.state.project.clone();
     e.select_active_photo_only();
@@ -630,13 +626,10 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
         "Entry selection",
     );
     assert_eq!(e.auto_crop_preview(id), Some(None));
-    assert_eq!(
-        e.auto_crop_preview(id).unwrap_or(e.document.visit.crop),
-        None
-    );
+    assert_eq!(e.auto_crop_preview(id).unwrap_or(e.photo_crop()), None);
     assert_eq!(e.document.state.project, before);
     apply(&mut e);
-    assert_eq!(e.document.visit.crop, None);
+    assert_eq!(e.photo_crop(), None);
     assert_eq!(e.document.state.project.source(id).unwrap().crop, None);
 }
 
@@ -689,8 +682,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
 #[test]
 fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     let (mut e, _directory) = fixture();
-    e.document.visit.crop = Some(small());
-    e.sync_document();
+    *e.photo_crop_mut() = Some(small());
     e.document.visit.canvas.viewport.zoom = Some(1.5);
     let viewport = e.document.visit.canvas.viewport;
     let before = e.document.state.project.clone();
@@ -701,7 +693,7 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     e.auto_crop_photo(e.document.visit.current_source.unwrap());
     assert!(!e.document.auto_crop.reviewing());
     assert_eq!(e.document.crop_edit().unwrap().draft, expected);
-    assert_eq!(e.document.visit.crop, Some(small()));
+    assert_eq!(e.photo_crop(), Some(small()));
     assert_eq!(e.document.state.project, before);
     e.hosted_action(tool::Action::Dismiss);
     assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -709,7 +701,6 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     e.begin_crop();
     e.auto_crop_photo(e.document.visit.current_source.unwrap());
     e.hosted_action(tool::Action::Primary);
-    e.sync_document();
     let mut accepted = before;
     accepted
         .source_mut(e.document.visit.current_source.unwrap())

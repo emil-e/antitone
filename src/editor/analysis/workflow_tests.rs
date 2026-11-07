@@ -36,6 +36,7 @@ pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Edi
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths = [root.join("roll-0.dng"), root.join("roll-1.dng")];
     let mut document = Document::default();
+    document.project.input = editor.input();
     document.import(&paths).unwrap();
     editor.document.cache.set_budget(0);
     editor.document.install(document);

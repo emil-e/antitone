@@ -8,6 +8,8 @@ mod tests;
 #[derive(Default)]
 pub(super) struct PhotoScope {
     pub view: u64,
+    pub project_preview: super::editing::Preview<crate::project::Project>,
+    pub controls_edit: Option<super::editing::ControlEdit>,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
     pub masks: super::mask_editor::MaskEditor,
@@ -15,9 +17,6 @@ pub(super) struct PhotoScope {
     pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
     pub return_notice: Option<String>,
-    pub adjustment_layer_settings: super::AdjustmentLayerSettings,
-    pub photo_orientation: super::PhotoOrientation,
-    pub crop: Option<super::Crop>,
     pub picker: super::picking::State,
     #[cfg(test)]
     pub measurement_gate: Option<super::measurement::testing::Gate>,
@@ -51,9 +50,6 @@ impl Editor {
                 ..Default::default()
             },
             current_source: self.document.visit.current_source,
-            crop: self.document.visit.crop,
-            photo_orientation: self.document.visit.photo_orientation,
-            adjustment_layer_settings: self.document.visit.adjustment_layer_settings,
             ..PhotoScope::new(view)
         };
         // Temporary reference views retire gestures, not the selected layer's identity.

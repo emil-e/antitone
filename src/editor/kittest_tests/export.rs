@@ -14,16 +14,15 @@ fn fixture_editor(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir)) {
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
-            editor.document.target = OutputTarget::DisplayP3;
-            editor.document.visit.crop = Some(Crop {
+            editor.document.set_target(OutputTarget::DisplayP3);
+            *editor.photo_crop_mut() = Some(Crop {
                 center: [120., 100.],
                 size: [16, 16],
                 angle: 0.,
             });
-            editor.sync_document();
+
             for id in editor.document.state.project.order.clone() {
-                editor.document.state.project.source_mut(id).unwrap().crop =
-                    editor.document.visit.crop;
+                editor.document.state.project.source_mut(id).unwrap().crop = editor.photo_crop();
             }
             let (store, _) =
                 preferences::Store::open(directory.path().join("preferences.json")).unwrap();
@@ -87,7 +86,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         harness.try_run_realtime().unwrap();
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, accepted);
-            assert_eq!(editor.document.target, OutputTarget::DisplayP3);
+            assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
         });
         let png = harness.render().unwrap();
         save_capture(&png, "export-dialog-tiff-offscreen");
@@ -105,7 +104,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
             );
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.visit.current_source, active);
-            assert_eq!(editor.document.target, OutputTarget::DisplayP3);
+            assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
         });
         for name in ["patches.tif", "roll-0.tif"] {
             let mut decoder = tiff::decoder::Decoder::new(
@@ -250,7 +249,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
 }
 
 #[test]
-fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspace() {
+fn export_blocks_unfinished_numeric_input_and_uses_the_explicitly_committed_value() {
     fixture_editor(|mut harness, _| {
         stage(&mut harness, "Photo");
         let role = egui::accesskit::Role::SpinButton;
@@ -264,10 +263,16 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                1.25
-            );
+            assert!(editor.editing());
+            assert!(editor.document.export.draft.is_none());
+            assert_eq!(editor.photo_settings().exposure, 0.);
+        });
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        wait_for(&mut harness, |editor| !editor.editing());
+        open(&mut harness);
+        harness.read(|editor| {
+            assert_eq!(editor.photo_settings().exposure, 1.25);
             assert_eq!(
                 editor
                     .document
@@ -286,12 +291,7 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         });
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                1.25
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.photo_settings().exposure, 1.25));
     });
 }
 

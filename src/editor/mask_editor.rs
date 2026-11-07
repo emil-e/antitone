@@ -283,12 +283,9 @@ impl Editor {
                     .ok_or(Error::InvalidParameter("no selected source"))?,
             )?
             .clone();
-        self.overlay_adjustment_layer_settings(
-            &mut source,
-            self.document.visit.adjustment_layer_settings,
-        );
-        source.orientation = self.document.visit.photo_orientation;
-        source.crop = self.document.visit.crop;
+        self.overlay_adjustment_layer_settings(&mut source, self.photo_settings());
+        source.orientation = self.photo_orientation();
+        source.crop = self.photo_crop();
         Ok(source)
     }
 
@@ -335,7 +332,7 @@ impl Editor {
             && self.tab == 1
             && !self.interaction_blocked()
             && self.selected_area().is_some()
-            && self.document.input.ready()
+            && self.document.project.input.ready()
             && !self.document.source
             && !self.picking()
             && !self.dialogs.is_open()
@@ -363,7 +360,7 @@ impl Editor {
         if !self.tool_start_available()
             || id.is_some() && self.has_hosted_tool()
             || self.selected_area().is_none()
-            || !self.document.input.ready()
+            || !self.document.project.input.ready()
             || self.fullscreen.is_some()
         {
             return;
@@ -403,8 +400,8 @@ impl Editor {
                 let edit = MaskEdit {
                     loaded: self.id,
                     source,
-                    roll: self.document.roll,
-                    input: self.document.input,
+                    roll: self.document.project.roll,
+                    input: self.document.project.input,
                     id,
                     above: match self.adjustment_layer_target() {
                         adjustment_layers::Target::Layer(id) => Some(id),
@@ -437,8 +434,8 @@ impl Editor {
     fn mask_is_current(&self, edit: &MaskEdit) -> bool {
         edit.loaded == self.id
             && self.mask_source().ok().as_ref() == Some(&edit.source)
-            && self.document.roll == edit.roll
-            && self.document.input == edit.input
+            && self.document.project.roll == edit.roll
+            && self.document.project.input == edit.input
             && edit.id.is_none_or(|id| {
                 self.adjustment_layer_target() == adjustment_layers::Target::Layer(id)
             })

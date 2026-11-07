@@ -70,7 +70,7 @@ fn assert_source_corners(uv: TextureMapping, frame: FrameRaster, crop: Crop) {
 }
 
 fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
-    let crop = app.read(|editor| editor.document.visit.crop.unwrap());
+    let crop = app.read(|editor| editor.photo_crop().unwrap());
     let admission = crate::background::testing::pause();
     let (uv, frame, physical) = mapping(app);
     assert!(
@@ -161,7 +161,7 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             app.run_until(Duration::from_secs(20), |editor| {
                 !editor.document.auto_crop.reviewing()
             });
-            app.read(|editor| assert!(editor.document.visit.crop.is_some()));
+            app.read(|editor| assert!(editor.photo_crop().is_some()));
             provisional_then_physical(app);
             app.enter(|editor, cx| editor.load(second, cx));
             app.run_until(Duration::from_secs(20), |editor| {

@@ -5,7 +5,7 @@ use crate::looks::monochrome::{Negative as BwNegative, Selection as BwSelection}
 fn bw_negative_and_paper_select_independently_and_other_families_stay_reachable() {
     fixture_editor(|mut h, _| {
         let before = h.read(|e| e.document.project.clone());
-        let input = h.read(|e| e.document.input);
+        let input = h.read(|e| e.document.project.input);
         let first = BwNegative::from_id("kodak_tmax_100_d76_7m30s").unwrap();
         choose_component(&mut h, "Negative", first.name());
         h.read(|e| {
@@ -43,7 +43,7 @@ fn bw_negative_and_paper_select_independently_and_other_families_stay_reachable(
                     };
                     assert_eq!(BwSelection::from_origin(asset.origin()), Some(selection));
                     assert_eq!(asset.origin(), &selection.origin());
-                    assert_eq!(e.document.input, input);
+                    assert_eq!(e.document.project.input, input);
                     assert_eq!(e.document.project.output.lut, before.output.lut);
                     assert_eq!(e.document.project.output.grain, before.output.grain);
                     selections.push(selection);

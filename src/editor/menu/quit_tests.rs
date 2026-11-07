@@ -62,17 +62,16 @@ fn click(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 }
 
 #[test]
-fn system_quit_joins_a_document_owned_command_awaiting_admission() {
+fn system_quit_coalesces_an_already_pending_host_action() {
     let (mut editor, _) = initialized();
-    editor.document.deferred_menu.push_back(Action::Quit);
+    editor.menus.pending.push_back(Action::Quit);
     assert_eq!(
         host::App::quit_state(&editor),
         Some(host::QuitState::Pending)
     );
     host::App::request_quit(&mut editor);
-    assert!(editor.menus.pending.is_empty());
-    assert_eq!(editor.document.deferred_menu.len(), 1);
-    editor.document.deferred_menu.clear();
+    assert_eq!(editor.menus.pending.len(), 1);
+    editor.menus.pending.clear();
     assert_eq!(
         host::App::quit_state(&editor),
         Some(host::QuitState::Running)
@@ -191,8 +190,8 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             std::fs::remove_file(&path).unwrap();
             std::fs::create_dir(&path).unwrap();
         }
-        editor.document.roll.exposure = 0.25;
-        editor.sync_document();
+        editor.document.project.roll.exposure = 0.25;
+
         let before = editor.document.state.project.clone();
         crate::application::test_support::with_application(editor, |app| {
             app.update(host::App::request_quit);

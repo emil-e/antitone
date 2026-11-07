@@ -449,8 +449,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             editor.status
         )
     });
-    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
-    harness.update(|editor| editor.sync_document());
+    harness.update(|editor| editor.photo_settings_mut().exposure = 1.25);
     let before = harness.read(|editor| editor.document.state.project.clone());
     let selected = harness.read(|editor| editor.document.visit.current_source);
     harness.get_by_label("Viewer help").click();
@@ -579,8 +578,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             editor.status
         )
     });
-    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
-    harness.update(|editor| editor.sync_document());
+    harness.update(|editor| editor.photo_settings_mut().exposure = 1.25);
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("project.json");
     let saved = harness.read(|editor| {
@@ -591,8 +589,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     });
     harness.update(|editor| *editor.document = saved);
     let saved_bytes = std::fs::read(&project_path).unwrap();
-    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 2.);
-    harness.update(|editor| editor.sync_document());
+    harness.update(|editor| editor.photo_settings_mut().exposure = 2.);
     let before = harness.read(|editor| editor.document.state.project.clone());
     let selected = harness.read(|editor| editor.document.visit.current_source);
     for (layout, size) in [
@@ -926,7 +923,10 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         });
         let measured = harness.read(|editor| editor.dmin().unwrap());
         assert!((measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
-        assert_eq!(harness.read(|editor| editor.document.roll), project.roll);
+        assert_eq!(
+            harness.read(|editor| editor.document.project.roll),
+            project.roll
+        );
         let mut expected_project = project;
         expected_project.set_dmin(Some(measured.to_array()));
         harness.read(|editor| {
@@ -953,7 +953,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             assert_eq!(editor.source_exposure, 0.);
         });
         let metadata = crate::raw::RawFile::open(&fixture).unwrap().metadata;
-        let target = harness.read(|editor| editor.document.target);
+        let target = harness.read(|editor| editor.document.target());
         let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
         for (source, code) in [(egui::pos2(32., 32.), 3000.), (egui::pos2(96., 32.), 128.)] {
             let position = geometry.screen_point(source);
@@ -1004,7 +1004,7 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
 }
 
 fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
-    let current = if harness.read(|editor| editor.document.target == OutputTarget::DisplayP3) {
+    let current = if harness.read(|editor| editor.document.target() == OutputTarget::DisplayP3) {
         "Display P3"
     } else {
         "sRGB"
@@ -1025,7 +1025,7 @@ fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
         })
         .click();
     harness.step();
-    harness.read(|editor| assert_eq!(editor.document.target, target));
+    harness.read(|editor| assert_eq!(editor.document.target(), target));
 }
 
 fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
@@ -1155,13 +1155,12 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.document.visit.adjustment_layer_settings.exposure = 0.5;
-            editor.document.visit.adjustment_layer_settings.wb = Balance {
+            editor.photo_settings_mut().exposure = 0.5;
+            editor.photo_settings_mut().wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };
             editor.document.source = false;
-            editor.sync_document();
         });
         let project = harness.read(|editor| editor.document.state.project.clone());
         let source = harness.read(|editor| editor.document.visit.current_source);
@@ -1210,7 +1209,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                     let input = e.scope_request().unwrap();
                     let frame = input.frame();
                     let settings = crate::scopes::Settings {
-                        target: e.document.target,
+                        target: e.document.target(),
                         plot: crate::scopes::Plot::Vector,
                         amplification: 1,
                     };

@@ -352,18 +352,18 @@ impl Editor {
     /// The accepted source framing before any active crop draft, picker or review override.
     pub(super) fn source_composition(&self, source: &Source) -> Composition {
         let photo_orientation = if self.document.visit.current_source == Some(source.id) {
-            self.document.visit.photo_orientation
+            self.photo_orientation()
         } else {
             source.orientation
         };
         let crop = if self.document.visit.current_source == Some(source.id) {
-            self.document.visit.crop
+            self.photo_crop()
         } else {
             source.crop
         };
         Composition::with_crop(
             source.development.active_area.into(),
-            self.document.roll_orientation,
+            self.document.project.orientation,
             photo_orientation,
             crop,
         )
@@ -373,9 +373,9 @@ impl Editor {
     pub(super) fn normal_canvas_composition(&self, area: Rect) -> Composition {
         Composition::with_crop(
             area,
-            self.document.roll_orientation,
-            self.document.visit.photo_orientation,
-            self.document.visit.crop,
+            self.document.project.orientation,
+            self.photo_orientation(),
+            self.photo_crop(),
         )
         .expect("accepted crop belongs to the loaded source")
     }
@@ -466,8 +466,8 @@ impl Editor {
             let captured = self
                 .view_recipe(
                     self.input(),
-                    self.document.roll,
-                    self.document.visit.adjustment_layer_settings,
+                    self.document.project_snapshot().roll,
+                    self.photo_settings(),
                 )
                 .map(|recipe| {
                     let recipe = Arc::new(recipe);
@@ -555,7 +555,7 @@ impl Editor {
             && self.document.visit.working_view.observe(
                 physical_frame,
                 capture.clone(),
-                self.document.target,
+                self.document.target(),
             )
         {
             self.discard_original();
@@ -572,7 +572,7 @@ impl Editor {
             self.source_context().map(|source| original_view::Demand {
                 capture: capture.clone(),
                 repairs: repairs.clone(),
-                target: self.document.target,
+                target: self.document.target(),
                 view,
                 composition,
                 source,
@@ -592,7 +592,7 @@ impl Editor {
                     self.document
                         .visit
                         .working_view
-                        .hold(self.document.target, compare)
+                        .hold(self.document.target(), compare)
                 }
             };
         if purpose.is_some()
@@ -742,7 +742,7 @@ impl Editor {
                     .map(|correction| &correction.gpu),
             )
             && *requested_frame == frame
-            && rendered.target == self.document.target
+            && rendered.target == self.document.target()
         {
             return Some(ImagePaint::rendered(
                 rendered.clone(),
@@ -774,7 +774,7 @@ impl Editor {
             device,
             source,
             capture,
-            self.document.target,
+            self.document.target(),
             processed,
             previous,
         )
@@ -955,7 +955,7 @@ impl SourceView {
             original_view::Demand {
                 capture: capture.clone(),
                 repairs: Default::default(),
-                target: editor.document.target,
+                target: editor.document.target(),
                 view: Some(view),
                 composition,
                 source: self.source().expect("prepared source"),
@@ -1005,7 +1005,7 @@ impl SourceView {
                         && *previous == frame
                         && rendered.capture == capture
                         && rendered.has_correction(None)
-                        && rendered.target == editor.document.target
+                        && rendered.target == editor.document.target()
                 })
                 .map(|entry| entry.2.clone());
             let rendered = reused.or_else(|| {
@@ -1019,7 +1019,7 @@ impl SourceView {
                     &device,
                     source,
                     capture,
-                    editor.document.target,
+                    editor.document.target(),
                     processed,
                     self.preview.as_ref().map(|entry| &entry.2),
                 )

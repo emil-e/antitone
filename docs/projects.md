@@ -56,7 +56,7 @@ Antitone does not hash the RAW file to establish photograph identity. Selected d
 
 Preparing a candidate never changes worker-global source state — there is no active-source slot. Successful replacement retires the old owner/visit; failure preserves them, including the previous document and display even if the user had agreed to discard its unsaved edits. Open validates the candidate, checks sources and prepares the first photo before replacing the live document. Unresolved Digital sources defer numerical range admission until lazy preparation; the selected source must pass before replacement; the workflow/admission model behind this is [the architecture's](architecture.md).
 
-Save captures accepted choices, validates them, writes a same-directory temporary and installs it with no-clobber or explicit replacement semantics. Its document-owned continuation accepts the written baseline without waiting for another paint. New/Open/Close use Save/Discard/Cancel protection, and pending numeric edits are processed before file actions. This protects an existing file from ordinary operation failures, not every crash or power-loss scenario.
+Save captures accepted choices, validates them, writes a same-directory temporary and installs it with no-clobber or explicit replacement semantics. Its document-owned continuation accepts the written baseline without waiting for another paint. New/Open/Close use Save/Discard/Cancel protection. File actions are unavailable during unfinished control edits; [edit completion](editor.md#numeric-edits-own-their-input) accepts the intended values before a subsequent Save captures them. This protects an existing file from ordinary operation failures, not every crash or power-loss scenario.
 
 ## Working on this area
 

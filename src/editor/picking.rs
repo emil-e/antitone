@@ -146,12 +146,12 @@ impl PickTool {
 
         let mut tool = Self {
             state,
-            crop: editor.document.visit.crop,
+            crop: editor.photo_crop(),
             initial_view: temporary_view.then_some(editor.document.visit.canvas.viewport),
             viewport: editor.document.visit.canvas.viewport,
             orientation: (
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
             ),
         };
         if let Some((previous, ppp)) = previous {

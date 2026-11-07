@@ -1,6 +1,445 @@
 use super::workflow::enter_numeric;
 use super::*;
 
+#[test]
+fn numeric_text_stays_private_and_opening_crop_can_retire_it_without_corrupting_the_project() {
+    for complete in [false, true] {
+        setup(|mut h| {
+            let original = h.read(|editor| editor.document.project.clone());
+            let source = h.read(|editor| editor.document.visit.current_source.unwrap());
+            let number = egui::accesskit::Role::SpinButton;
+            h.get_by_role_and_label(number, "Exposure").scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(number, "Exposure").click();
+            h.step();
+            h.event(egui::Event::Text("1.25".into()));
+            h.step();
+            h.read(|editor| {
+                assert_eq!(editor.document.project, original);
+                assert_eq!(
+                    editor.photo_settings().exposure,
+                    0.,
+                    "numeric text is private until completion"
+                );
+            });
+            if complete {
+                h.key_press(egui::Key::Enter);
+                h.step();
+                h.read(|editor| assert_eq!(editor.photo_settings().exposure, 1.25));
+            }
+            h.get_by_label("Crop & straighten").scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_label("Crop & straighten").click();
+            h.try_run_realtime().unwrap();
+            let accepted = h.read(|editor| {
+                assert!(editor.document.crop_edit().is_some(), "{}", editor.status);
+                let mut expected = original.clone();
+                let exposure = editor.photo_settings().exposure;
+                if complete {
+                    assert_eq!(exposure, 1.25);
+                } else {
+                    assert!(exposure == 0. || exposure == 1.25);
+                }
+                expected
+                    .source_mut(source)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_mut()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo
+                    .exposure = exposure;
+                assert_eq!(
+                    editor.document.project, expected,
+                    "no unrelated state changes on tool activation"
+                );
+                editor.document.project.clone()
+            });
+            h.get_by_label("Cancel").click();
+            h.try_run_realtime().unwrap();
+            h.read(|editor| assert_eq!(editor.document.project, accepted));
+            if accepted != original {
+                shortcut(&mut h, false);
+                h.read(|editor| assert_eq!(editor.document.project, original));
+            }
+        });
+    }
+}
+
+#[test]
+fn a_wheel_previews_and_accepts_from_a_completed_numeric_baseline_with_separate_undo() {
+    setup(|mut h| {
+        let original = h.read(|editor| editor.document.project.clone());
+        enter_numeric(&mut h, "Warmth", "0.25");
+        let first_accepted = h.read(|editor| {
+            assert_eq!(
+                editor.photo_settings().wb,
+                Balance {
+                    warmth: 0.25,
+                    tint: 0.
+                }
+            );
+            editor.document.project.clone()
+        });
+        h.get_by_label("White balance wheel").scroll_to_me();
+        h.try_run_realtime().unwrap();
+        let start = h.get_by_label("White balance wheel").rect().center();
+        let end = start + egui::vec2(12., -7.);
+        h.input_mut().events.extend([
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(end),
+        ]);
+        h.step();
+        h.step();
+        h.read(|editor| {
+            assert_eq!(editor.document.project, first_accepted);
+            assert_ne!(
+                editor.photo_settings().wb,
+                Balance {
+                    warmth: 0.25,
+                    tint: 0.
+                },
+                "the wheel must actually preview a change"
+            );
+        });
+        h.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        h.read(|editor| assert_ne!(editor.document.project, first_accepted));
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, original));
+    });
+}
+
+#[test]
+fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
+    setup(|mut h| {
+        let original = h.read(|editor| editor.document.project.clone());
+        let numeric = egui::accesskit::Role::SpinButton;
+        h.get_by_role_and_label(numeric, "Exposure").scroll_to_me();
+        h.try_run_realtime().unwrap();
+        let start = h.get_by_role_and_label(numeric, "Exposure").rect().center();
+        h.event(egui::Event::PointerMoved(start));
+        h.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        let middle = start + egui::vec2(18., 0.);
+        h.event(egui::Event::PointerMoved(middle));
+        h.step();
+        let preview = h.read(|editor| {
+            assert_ne!(
+                editor.photo_settings().exposure,
+                0.,
+                "the numeric drag actually changes the preview"
+            );
+            assert_eq!(editor.document.project, original);
+            assert!(editor.editing());
+            assert!(!editor.file_available());
+            editor.photo_settings().exposure
+        });
+        for _ in 0..3 {
+            h.step();
+        }
+        h.read(|editor| {
+            assert_eq!(editor.photo_settings().exposure, preview);
+            assert_eq!(editor.document.project, original);
+            assert!(
+                editor.editing(),
+                "stationary pointer still owns the same edit"
+            );
+        });
+        let end = middle + egui::vec2(12., 0.);
+        h.event(egui::Event::PointerMoved(end));
+        h.step();
+        let preview = h.read(|editor| {
+            assert!(editor.photo_settings().exposure > preview);
+            assert_eq!(editor.document.project, original);
+            editor.photo_settings().exposure
+        });
+        h.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        let accepted = h.read(|editor| {
+            assert_eq!(editor.photo_settings().exposure, preview);
+            assert!(
+                !editor.editing(),
+                "release completes the numeric-owned edit"
+            );
+            assert!(editor.file_available());
+            editor.document.project.clone()
+        });
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, original));
+        shortcut(&mut h, true);
+        h.read(|editor| assert_eq!(editor.document.project, accepted));
+    });
+}
+
+#[test]
+fn a_precision_track_preserves_a_completed_numeric_baseline_and_has_its_own_undo() {
+    setup(|mut h| {
+        let original = h.read(|editor| editor.document.project.clone());
+        enter_numeric(&mut h, "Exposure", "1.25");
+        let first_accepted = h.read(|editor| {
+            assert_eq!(editor.photo_settings().exposure, 1.25);
+            editor.document.project.clone()
+        });
+        let track = h
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+            .rect();
+        let start = track.center();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+        h.event(egui::Event::PointerMoved(start));
+        h.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        h.step();
+        h.read(|editor| {
+            assert_eq!(
+                editor.photo_settings().exposure,
+                1.25,
+                "a precision press holds the baseline"
+            )
+        });
+        let end = start + egui::vec2(20., 0.);
+        h.event(egui::Event::PointerMoved(end));
+        h.step();
+        h.read(|editor| {
+            assert!(
+                editor.photo_settings().exposure > 1.25,
+                "rightward fine travel increases the baseline"
+            );
+            assert_eq!(editor.document.project, first_accepted);
+        });
+        h.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        h.step();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.step();
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, original));
+    });
+}
+
+#[test]
+fn document_fields_accept_each_value_before_starting_the_next_in_both_paint_orders() {
+    for (first, text, second, next) in [
+        ("Gamma", "1.1", "Exposure", "0.75"),
+        ("Exposure", "0.75", "Gamma", "1.1"),
+    ] {
+        setup(|mut h| {
+            stage(&mut h, "Roll");
+            let role = egui::accesskit::Role::SpinButton;
+            if h.query_by_role_and_label(role, "Exposure").is_none() {
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
+                    .scroll_to_me();
+                h.try_run_realtime().unwrap();
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
+                    .click();
+                h.try_run_realtime().unwrap();
+            }
+            let original = h.read(|editor| editor.document.project.clone());
+            h.get_by_role_and_label(role, first).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, first).click();
+            h.step();
+            h.event(egui::Event::Text(text.into()));
+            h.step();
+            h.read(|editor| assert_eq!(editor.document.project, original));
+            h.get_by_role_and_label(role, second).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, second).click();
+            h.step();
+            let first_accepted = h.read(|editor| {
+                if first == "Gamma" {
+                    assert_eq!(editor.document.project.input.gamma(), 1.1);
+                    assert_eq!(
+                        editor.document.project.roll.exposure,
+                        original.roll.exposure
+                    );
+                } else {
+                    assert_eq!(editor.document.project.roll.exposure, 0.75);
+                    assert_eq!(editor.document.project.input, original.input);
+                }
+                assert_eq!(editor.document.project.sources, original.sources);
+                editor.document.project.clone()
+            });
+            h.event(egui::Event::Text(next.into()));
+            h.step();
+            h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+            h.key_press(egui::Key::Enter);
+            h.step();
+            h.read(|editor| {
+                assert_eq!(editor.document.project.input.gamma(), 1.1);
+                assert_eq!(editor.document.project.roll.exposure, 0.75);
+                assert_eq!(editor.document.project.sources, original.sources);
+            });
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, original));
+        });
+    }
+}
+
+#[test]
+fn numeric_focus_transfer_accepts_each_field_with_independent_undo_in_both_paint_orders() {
+    for (first, text, second, next) in [
+        ("Exposure", "1.25", "Contrast", "1.4"),
+        ("Contrast", "1.4", "Exposure", "1.25"),
+    ] {
+        setup(|mut h| {
+            let original = h.read(|editor| editor.document.project.clone());
+            let role = egui::accesskit::Role::SpinButton;
+            h.get_by_role_and_label(role, first).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, first).click();
+            h.step();
+            h.event(egui::Event::Text(text.into()));
+            h.step();
+            h.read(|editor| assert_eq!(editor.document.project, original));
+            h.get_by_role_and_label(role, second).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, second).click();
+            h.step();
+            let first_accepted = h.read(|editor| {
+                let id = editor.document.visit.current_source.unwrap();
+                let values = editor
+                    .document
+                    .project
+                    .source(id)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo;
+                if first == "Exposure" {
+                    assert_eq!(values.exposure, 1.25);
+                    assert_eq!(values.contrast, 1.);
+                } else {
+                    assert_eq!(values.contrast, 1.4);
+                    assert_eq!(values.exposure, 0.);
+                }
+                editor.document.project.clone()
+            });
+            h.event(egui::Event::Text(next.into()));
+            h.step();
+            h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+            h.key_press(egui::Key::Enter);
+            h.step();
+            h.read(|editor| {
+                assert_eq!(editor.photo_settings().exposure, 1.25);
+                assert_eq!(editor.photo_settings().contrast, 1.4);
+                assert_ne!(editor.document.project, first_accepted);
+            });
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, original));
+        });
+    }
+}
+
+#[test]
+fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_undo() {
+    for (label, fraction) in [("Contrast", 0.8), ("Exposure", 0.8), ("Exposure", 0.5)] {
+        setup(|mut h| {
+            let original = h.read(|editor| editor.document.project.clone());
+            let role = egui::accesskit::Role::SpinButton;
+            h.get_by_role_and_label(role, "Exposure").scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, "Exposure").click();
+            h.step();
+            enter_numeric(&mut h, "Exposure", "1.25");
+            h.get_by_role_and_label(egui::accesskit::Role::Slider, label)
+                .scroll_to_me();
+            h.try_run_realtime().unwrap();
+            let track = h
+                .get_by_role_and_label(egui::accesskit::Role::Slider, label)
+                .rect();
+            let point = egui::pos2(track.left() + track.width() * fraction, track.center().y);
+            h.event(egui::Event::PointerMoved(point));
+            h.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            let first_accepted = h.read(|editor| {
+                let id = editor.document.visit.current_source.unwrap();
+                let values = editor
+                    .document
+                    .project
+                    .source(id)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo;
+                assert_eq!(values.exposure, 1.25);
+                assert_eq!(values.contrast, 1.);
+                assert!(editor.editing());
+                assert_ne!(
+                    editor.photo_settings(),
+                    values,
+                    "the admitted track must supply a distinct preview"
+                );
+                editor.document.project.clone()
+            });
+            h.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            h.read(|editor| {
+                assert!(!editor.editing());
+                assert_ne!(editor.document.project, first_accepted);
+            });
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, first_accepted));
+            shortcut(&mut h, false);
+            h.read(|editor| assert_eq!(editor.document.project, original));
+        });
+    }
+}
+
 fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| {
@@ -18,7 +457,6 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
             e.set_dmin(Some(DVec3::splat(0.2)));
             e.set_dmax(Some(DVec3::splat(0.005)));
             e.document.source = false;
-            e.sync_document();
         });
         stage(&mut h, "Photo");
         test(h)
@@ -67,7 +505,8 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         h.try_run_realtime().unwrap();
         h.read(|editor| {
             assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure, 0.,
+                editor.photo_settings().exposure,
+                0.,
                 "native Undo must change the pending text, not merely leave the project alone"
             )
         });
@@ -81,12 +520,7 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         native_action(&mut h, Action::Redo);
         h.key_press(egui::Key::Enter);
         h.try_run_realtime().unwrap();
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                1.5
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 1.5));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| {
             assert_eq!(
@@ -136,12 +570,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.hover_at(end);
         h.step();
         let held = h.read(|editor| editor.document.state.project.clone());
-        h.read(|editor| {
-            assert_ne!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.75
-            )
-        });
+        h.read(|editor| assert_ne!(editor.photo_settings().exposure, 0.75));
         h.read(|editor| assert!(!editor.application_menu_state().enabled(Action::Undo)));
         native_action(&mut h, Action::Undo);
         h.read(|editor| assert_eq!(editor.document.state.project, held));
@@ -154,12 +583,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         });
         h.step();
         native_action(&mut h, Action::Undo);
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.75
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.75));
 
         stage(&mut h, "Rendering");
         h.get_by(|node| {
@@ -178,7 +602,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.key_press(egui::Key::Escape);
         h.step();
         native_action(&mut h, Action::Undo);
-        h.read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.));
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
     });
 }
 
@@ -249,7 +673,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
 }
 
 #[test]
-fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_projects() {
+fn history_idle_navigation_and_cancelled_input_preserve_repair_bearing_versions() {
     setup(|mut h| {
         h.update(|e| {
             let source = e.document.visit.current_source.unwrap();
@@ -264,9 +688,10 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
                 .insert(support, crate::dust_repair::RepairOrigin::Manual, [84, 0])
                 .unwrap();
             repairs.set_enabled(repair, false).unwrap();
-            e.history_snapshot_clones = 0;
         });
         let original = h.read(|editor| editor.document.state.project.clone());
+        let original_undo =
+            h.read(|editor| editor.history_label(super::super::history::Direction::Undo));
         for _ in 0..3 {
             h.step();
         }
@@ -274,16 +699,16 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
         stage(&mut h, "Photo");
         h.render().unwrap();
         h.read(|editor| {
+            assert_eq!(editor.document.project, original);
             assert_eq!(
-                editor.history_snapshot_clones, 0,
-                "idle and navigation passes must not copy the project"
-            )
+                editor.history_label(super::super::history::Direction::Undo),
+                original_undo
+            );
         });
 
         h.get_by_label("Crop & straighten").click();
         h.step();
         h.read(|editor| assert!(editor.document.crop_edit().is_some()));
-        h.update(|editor| editor.history_snapshot_clones = 0);
         for _ in 0..3 {
             h.step();
         }
@@ -303,22 +728,17 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
         h.read(|editor| assert_eq!(editor.document.state.project, original));
         h.read(|editor| {
             assert_eq!(
-                editor.history_snapshot_clones, 0,
-                "draft and cancelled numeric passes must not copy the project"
+                editor.history_label(super::super::history::Direction::Undo),
+                original_undo
             )
         });
 
         enter_numeric(&mut h, "Exposure", "0.75");
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.75));
         h.read(|editor| {
             assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.75
-            )
-        });
-        h.read(|editor| {
-            assert_eq!(
-                editor.history_snapshot_clones, 2,
-                "a scalar edit retains one before/after pair"
+                editor.history_label(super::super::history::Direction::Undo),
+                Some("Photo settings")
             )
         });
         shortcut(&mut h, false);
@@ -373,7 +793,7 @@ fn history_slider_drag_is_one_edit_and_redo_restores_the_exact_accepted_grade() 
 }
 
 #[test]
-fn history_focus_loss_commits_numeric_text_separately_from_an_orientation_command() {
+fn completed_numeric_and_orientation_edits_have_independent_undo() {
     setup(|mut h| {
         let initial = h.read(|editor| editor.document.state.project.clone());
         h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
@@ -386,44 +806,34 @@ fn history_focus_loss_commits_numeric_text_separately_from_an_orientation_comman
         h.step();
         h.read(|editor| {
             assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure, 0.,
+                editor.photo_settings().exposure,
+                0.,
                 "text is still pending"
             )
         });
+        h.key_press(egui::Key::Enter);
+        h.step();
+        wait_for(&mut h, |editor| !editor.editing());
         h.get_by_label("Turn right").click();
         h.step();
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                1.25
-            )
-        });
-        h.read(|editor| {
-            assert_ne!(
-                editor.document.visit.photo_orientation,
-                PhotoOrientation::default()
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 1.25));
+        h.read(|editor| assert_ne!(editor.photo_orientation(), PhotoOrientation::default()));
         shortcut(&mut h, false);
         h.read(|editor| {
             assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure, 1.25,
+                editor.photo_settings().exposure,
+                1.25,
                 "undo rotation must retain the committed numeric edit"
             )
         });
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.photo_orientation,
-                PhotoOrientation::default()
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_orientation(), PhotoOrientation::default()));
         shortcut(&mut h, false);
         h.read(|editor| assert_eq!(editor.document.state.project, initial));
     });
 }
 
 #[test]
-fn history_focus_loss_numeric_commit_is_separate_from_section_resets() {
+fn completed_numeric_edits_and_section_resets_have_independent_undo() {
     setup(|mut h| {
         enter_numeric(&mut h, "Exposure", "0.5");
         {
@@ -432,29 +842,26 @@ fn history_focus_loss_numeric_commit_is_separate_from_section_resets() {
             h.step();
             h.event(egui::Event::Text("1.25".into()));
             h.step();
+            h.key_press(egui::Key::Enter);
+            h.step();
+            wait_for(&mut h, |editor| !editor.editing());
             let reset = h
                 .get_all_by_role_and_label(egui::accesskit::Role::Button, "Reset Exposure")
                 .last()
                 .unwrap();
             reset.click();
             h.step();
-            h.read(|editor| {
-                assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.)
-            });
+            h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
             shortcut(&mut h, false);
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure, 1.25,
+                    editor.photo_settings().exposure,
+                    1.25,
                     "reset undo must retain the preceding numeric commit"
                 )
             });
             shortcut(&mut h, false);
-            h.read(|editor| {
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    0.5
-                )
-            });
+            h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.5));
         }
     });
 }
@@ -469,7 +876,6 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
                 .adjustment
                 .photo
                 .exposure = 0.75;
-            editor.document.visit.adjustment_layer_settings.exposure = 0.75;
             source
                 .repairs
                 .insert(
@@ -510,12 +916,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
     setup(|mut h| {
         let edited_photo = h.read(|editor| editor.document.visit.current_source);
         enter_numeric(&mut h, "Exposure", "7.123456789012345");
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                7.123456789012345
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 7.123456789012345));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         h.get_by_label("roll-1.dng").click();
         h.step();
@@ -532,7 +933,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         });
         native_action(&mut h, crate::platform::menu::Action::Undo);
         h.read(|editor| assert_eq!(editor.document.visit.current_source, edited_photo));
-        h.read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.));
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
         shortcut(&mut h, true);
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.get_by_label("Crop & straighten").click();
@@ -540,7 +941,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         shortcut(&mut h, false);
         h.read(|editor| assert!(editor.document.crop_edit().is_none()));
-        h.read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.));
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
         shortcut(&mut h, true);
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         stage(&mut h, "Photo");

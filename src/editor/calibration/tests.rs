@@ -18,7 +18,6 @@ fn setup(path: &str) -> Editor {
         .into(),
     );
     editor.document.source = false;
-    editor.sync_document();
     editor
 }
 
@@ -72,7 +71,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
                 !editor.interaction_blocked()
             });
             app.read(|editor| {
-                let calibration = editor.document.input.calibration().unwrap();
+                let calibration = editor.document.project.input.calibration().unwrap();
                 assert_eq!(
                     calibration.dmin,
                     if kind == PickerCase::Dmin {
@@ -120,15 +119,14 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
         }
         .into(),
     );
-    editor.document.roll.wb = Balance {
+    editor.document.project.roll.wb = Balance {
         warmth: 0.2,
         tint: -0.1,
     };
-    editor.document.visit.adjustment_layer_settings.wb = Balance {
+    editor.photo_settings_mut().wb = Balance {
         warmth: -0.1,
         tint: 0.2,
     };
-    editor.sync_document();
     let region = crate::coverage::Coverage::rectangle(patch_at(144));
     let input = editor.input();
     let reference = measurement::capture_scan(&editor)
@@ -145,10 +143,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     .unwrap();
     assert!((expected.warmth - reference.warmth).abs() < 1e-6);
     assert!((expected.tint - reference.tint).abs() < 1e-6);
-    let before = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
-    );
+    let before = (editor.document.project.roll, editor.photo_settings());
     assert_ne!(expected, editor.balance());
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
@@ -163,10 +158,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
         app.read(|editor| {
             assert_eq!(editor.balance(), expected);
             assert_eq!(
-                (
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
-                ),
+                (editor.document.project.roll, editor.photo_settings()),
                 before
             );
             assert_eq!(
@@ -197,7 +189,6 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         }
         .into(),
     );
-    editor.sync_document();
     let region = patch(&editor);
     let expected = measured_reference(&editor, region);
     assert!(expected.min_element() > 0.005 && expected.max_element() < 1.);
@@ -220,7 +211,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         });
         app.enter(|editor, cx| {
             editor.set_dmax(Some(DVec3::splat(0.005)));
-            editor.sync_document();
+
             editor.begin_test_picker(PickerCase::Dmin, cx);
         });
         app.pump();

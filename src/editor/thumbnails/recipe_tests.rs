@@ -393,7 +393,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
             .adjustment
             .photo
             .exposure = exposure;
-        editor.document.visit.adjustment_layer_settings.exposure = exposure;
+        editor.photo_settings_mut().exposure = exposure;
         let output = frame(&mut editor);
         assert!(
             output
@@ -666,7 +666,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         crate::gpu::photograph::request::PhotographRequest::Fixture(AuthoredPhotograph::from(
             ProcessingParameters::source(),
         )),
-        editor.document.target,
+        editor.document.target(),
     );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -682,7 +682,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
                 editor
                     .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.document.target),
+                    .ready_count(&editor.document, editor.document.target()),
                 1,
                 "the selected positive completes while offscreen cards are CPU-only"
             );
@@ -704,7 +704,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
             editor
                 .document
                 .thumbnails
-                .ready_count(&editor.document, editor.document.target)
+                .ready_count(&editor.document, editor.document.target())
                 == 3
                 && editor.document.thumbnails.pending.is_none()
         });

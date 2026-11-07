@@ -46,27 +46,14 @@ impl Editor {
                     )
                 })
             });
-        let deferred_ready = !self.document.gamma_pivot.pending()
-            && self.document.deferred_menu.front().is_some_and(|&action| {
-                state.enabled(action) && self.history_menu_input_available(action, ui.ctx())
-            });
-        let requested = if deferred_ready && !text_input_pending {
-            self.document.deferred_menu.pop_front()
-        } else {
-            self.menus
-                .pending
-                .pop_front()
-                .or_else(|| self.menu_shortcut(ui))
-        };
+        let requested = self
+            .menus
+            .pending
+            .pop_front()
+            .or_else(|| self.menu_shortcut(ui));
         let mut menu = requested.filter(|&action| {
             state.enabled(action) && self.history_menu_input_available(action, ui.ctx())
         });
-        if self.document.gamma_pivot.pending()
-            && let Some(action) = menu.filter(|&action| !self.menu_targets_text(action))
-        {
-            self.document.deferred_menu.push_back(action);
-            menu = None;
-        }
         if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -82,7 +69,7 @@ impl Editor {
         if text_input_pending && let Some(action) = menu.take() {
             self.menus.pending.push_front(action);
         }
-        if !self.menus.pending.is_empty() || deferred_ready && text_input_pending {
+        if !self.menus.pending.is_empty() {
             ui.ctx().request_repaint();
         }
         if self.interaction_blocked() {
@@ -345,56 +332,21 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-    ) -> (Option<ScopeSlot>, bool) {
-        // Filmstrip navigation has already installed the controls' actual source/layer.
-        let previous = editing::ControlSettings::capture(self);
-        self.begin_control_history(match self.tab {
-            0 => "Roll settings",
-            1 => "Photo settings",
-            _ => "Rendering settings",
-        });
-        let reset_scope = match (self.tab, self.document.visit.current_source) {
-            (0, _) => editing::Scope::Roll,
-            (1, Some(source)) => editing::Scope::Photo(source, self.adjustment_layer_target()),
-            _ => editing::Scope::Rendering,
-        };
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(egui::Id::new("defer-control-resets"), true));
-        let controls_photo = (self.tab == 1)
-            .then_some(self.document.visit.current_source)
-            .flatten();
-        let (scope_slot, analyze, gamma_edited) = self.workspace_controls(ui, cx);
-        self.validate_frame_edits(previous, gamma_edited, ui, cx);
-        self.record_controls(controls_photo, ui);
-        let resets = ui.ctx().data_mut(|data| {
-            data.remove::<bool>(egui::Id::new("defer-control-resets"));
-            data.remove_temp::<Vec<controls::Reset>>(egui::Id::new("control-resets"))
-                .unwrap_or_default()
-        });
-        self.control_commands.extend(
-            resets
-                .into_iter()
-                .map(|reset| editing::Command::Reset(reset_scope, reset)),
-        );
-        while !self.document.gamma_pivot.pending() && !self.control_commands.is_empty() {
-            let command = self.control_commands.remove(0);
-            self.apply_control_command(command, cx);
-            ui.ctx().request_repaint();
-        }
-        self.gamma_gesture_frame(ui.input(|input| input.pointer.any_down()));
+    ) -> Option<ScopeSlot> {
+        let scope_slot = self.workspace_controls(ui, cx);
         let adjusting = controls::values_are_being_adjusted(ui.ctx());
         if self.document.visit.adjustment_layers.adjusting_values != adjusting {
             self.document.visit.adjustment_layers.adjusting_values = adjusting;
             ui.ctx().request_repaint();
         }
-        (scope_slot, analyze)
+        scope_slot
     }
 
     fn workspace_controls(
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-    ) -> (Option<ScopeSlot>, bool, bool) {
+    ) -> Option<ScopeSlot> {
         if self.fullscreen.is_none() {
             // The fixed name column and the balance wheel set the useful width; narrower than
             // this leaves the axis tracks too short to drag comfortably.
@@ -404,27 +356,9 @@ impl Editor {
                 .show(ui, |ui| self.controls(ui, cx))
                 .inner
         } else {
+            self.retire_control_input();
             self.hidden_filmstrip(ui, cx);
-            (None, false, false)
-        }
-    }
-
-    pub(super) fn validate_frame_edits(
-        &mut self,
-        previous: editing::ControlSettings,
-        gamma_edited: bool,
-        ui: &egui::Ui,
-        cx: &UiContext<'_, Self>,
-    ) {
-        let candidate = editing::ControlSettings::capture(self);
-        let group = ui
-            .ctx()
-            .data(|data| data.get_temp::<egui::Id>(egui::Id::new("project-control-gesture")));
-        if let Err(error) =
-            self.accept_manual_controls(previous, candidate, gamma_edited, group, cx)
-        {
-            previous.apply(self);
-            self.status = format!("Edit rejected: {error}");
+            None
         }
     }
 
@@ -433,26 +367,12 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
         actions: Actions,
-        analyze: bool,
     ) {
-        // Numeric gamma admission can still be running after focus committed in this pass.
-        // Keep admitted commands ordered after that complete gamma/WB transaction.
-        let command = actions
-            .menu
-            .filter(|&action| !self.menu_targets_text(action))
-            .or_else(|| (actions.file == Some(FileAction::Close)).then_some(MenuAction::Close));
-        let command_unavailable =
-            command.is_some_and(|action| !self.application_menu_state().enabled(action));
-        if self.document.gamma_pivot.pending() || command_unavailable {
-            if let Some(action) = command {
-                self.document.deferred_menu.push_front(action);
-            }
-            if analyze {
-                self.control_commands.push(editing::Command::Analyze);
-            }
+        if actions.menu.is_some_and(|action| {
+            !self.menu_targets_text(action) && !self.application_menu_state().enabled(action)
+        }) {
             return;
         }
-        let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
             self.file_action(action, cx);
         } else if actions.export {
@@ -465,13 +385,6 @@ impl Editor {
             } else {
                 self.apply_menu_action(action, ui.ctx(), cx);
             }
-        } else if analyze {
-            // Inspect the validated, focus-committed Photo state before confirming a reset.
-            self.control_command(editing::Command::Analyze, cx);
-        } else if let Some(action) = auto_crop {
-            let auto_crop::Action::Batch { photos, scope } = action;
-            self.review_crop_proposals(photos, scope, cx);
-            ui.ctx().request_repaint();
         }
     }
 

@@ -12,7 +12,6 @@ use crate::{
 fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result() {
     let mut editor = with_document_services(fixture());
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let before = editor.document.project.clone();
     let gate = crate::editor::measurement::testing::Gate::install(&mut editor);
     with_application(editor, |app| {
@@ -68,7 +67,6 @@ fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result(
 fn regions_preparation_owns_modal_feedback_even_after_its_requesting_tool_retires() {
     let mut editor = with_document_services(fixture());
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let (reply, receive) = futures_channel::oneshot::channel();
     editor.document.spatial_reply = Some(receive);
     let metadata = editor.document.capture().ready_spatial_metadata();
@@ -107,7 +105,7 @@ fn regions_sampling_and_fitting_block_unrelated_controls_but_expose_cancellation
     for phase in 0..3 {
         let mut editor = with_document_services(fixture());
         add_ready_fixture(&mut editor);
-        editor.sync_document();
+
         let before = editor.document.project.clone();
         let admission = crate::background::testing::pause();
         with_application(editor, |app| {

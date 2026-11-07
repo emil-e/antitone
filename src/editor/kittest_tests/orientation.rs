@@ -99,7 +99,7 @@ fn pending_preview_pixels_follow_turn_and_flip_buttons_before_source_completion(
         drop(admission);
         wait_for(&mut h, |editor| !editor.document.visit.source.pending());
         h.read(|editor| {
-            let orientation = editor.document.visit.photo_orientation;
+            let orientation = editor.photo_orientation();
             assert!(orientation.flips.horizontal && orientation.flips.vertical);
             assert_eq!(
                 editor

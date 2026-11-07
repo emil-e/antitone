@@ -17,7 +17,6 @@ use std::{
 fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let accepted = editor.document.state.project.clone();
     let before = editor
         .history_label(crate::editor::history::Direction::Undo)
@@ -179,7 +178,6 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
             app.read(Editor::measurement_pending),
             "the departing visit must have a pending measurement"
         );
-        app.update(Editor::sync_document);
         let (view, path, project) = app.read(|editor| {
             (
                 editor.document.visit.view,
@@ -256,7 +254,6 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
                 "control: an actual measurement must be waiting before departure"
             )
         });
-        app.update(Editor::sync_document);
         let (view, path, project) = app.read(|editor| {
             (
                 editor.document.visit.view,
@@ -322,7 +319,6 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
 fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs_early() {
     let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     editor.document.cache.set_budget(0);
     let before = editor.document.state.project.clone();
     let source = Arc::downgrade(
@@ -366,8 +362,9 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
             );
             std::thread::sleep(Duration::from_millis(1));
         }
+        // Workspace availability does not acknowledge nonmodal source acquisition.
         app.run_until(Duration::from_secs(5), |editor| {
-            !editor.interaction_blocked()
+            !editor.interaction_blocked() && !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert!(!editor.measurement_pending());

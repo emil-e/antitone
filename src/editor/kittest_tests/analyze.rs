@@ -201,16 +201,16 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.update(|editor| {
         editor.set_gamma(0.7);
         let crate::processing::InputSettings::Negative { dmin, dmax, .. } =
-            &mut editor.document.input
+            &mut editor.document.project.input
         else {
             panic!("Analyze fixture must use Negative");
         };
         dmin.get_or_insert(DVec3::new(0.2, 0.15, 0.1));
         dmax.get_or_insert(DVec3::new(0.008, 0.005, 0.002));
         editor.document.source = false;
-        editor.document.roll_orientation.turn_clockwise();
-        editor.document.visit.photo_orientation.flips.horizontal = true;
-        editor.document.visit.crop = Some(
+        editor.document.project.orientation.turn_clockwise();
+        editor.photo_orientation_mut().flips.horizontal = true;
+        *editor.photo_crop_mut() = Some(
             Crop::from_region(picture)
                 .straightened(
                     editor.document.visit.canvas.ready.as_ref().unwrap().area,
@@ -218,12 +218,12 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 )
                 .unwrap(),
         );
-        editor.document.visit.adjustment_layer_settings.exposure = 0.5;
-        editor.document.visit.adjustment_layer_settings.wb = Balance {
+        editor.photo_settings_mut().exposure = 0.5;
+        editor.photo_settings_mut().wb = Balance {
             warmth: 0.1,
             tint: -0.05,
         };
-        editor.document.visit.adjustment_layer_settings.contrast = 1.2;
+        editor.photo_settings_mut().contrast = 1.2;
         let ids = adjustment_layers::install_layers(editor);
         let mut layers = editor
             .document
@@ -258,7 +258,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .adjustment_layers = Some(layers);
         }
         editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(ids[0]));
-        editor.sync_document();
+
         editor
             .validate_document_candidate(&editor.document)
             .unwrap();
@@ -537,8 +537,8 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
-        harness.update(|editor| editor.sync_document());
+        harness.update(|editor| editor.photo_settings_mut().exposure = 1.25);
+
         let before = harness.read(|editor| editor.document.state.project.clone());
         let first = harness.read(|editor| editor.document.visit.current_source);
         let scopes_visible = harness.read(|editor| editor.scopes.visible);
@@ -546,7 +546,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         wait_for(&mut harness, |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 == 2
         });
         for (layout, size) in [

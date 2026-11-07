@@ -23,7 +23,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     frame(&mut editor, &context);
     frame(&mut editor, &context);
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.5;
+    editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before.clone(), "Roll exposure", None);
     let state = editor.application_menu_state();
     assert_eq!(state.label(Action::Undo), "Undo Roll exposure");
@@ -36,7 +36,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
         app.read(|e| {
             assert!(e.document_pending.is_some());
             assert_eq!(
-                e.document.roll.exposure, 0.5,
+                e.document.project.roll.exposure, 0.5,
                 "preparation must not replace accepted state"
             );
             assert!(!e.application_menu_state().enabled(Action::Undo));
@@ -44,7 +44,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, before, "{}", e.status);
-            assert_eq!(e.document.roll.exposure, 0.);
+            assert_eq!(e.document.project.roll.exposure, 0.);
             let state = e.application_menu_state();
             assert_eq!(state.label(Action::Undo), "Undo");
             assert_eq!(state.label(Action::Redo), "Redo Roll exposure");
@@ -64,10 +64,10 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
                 "the ordinary restoration boundary admits history and retires the tool"
             );
             assert!(!e.cropping());
-            assert_eq!(e.document.roll.exposure, 0.);
+            assert_eq!(e.document.project.roll.exposure, 0.);
         });
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
-        app.read(|e| assert_eq!(e.document.roll.exposure, 0.5));
+        app.read(|e| assert_eq!(e.document.project.roll.exposure, 0.5));
     });
 }
 
@@ -78,7 +78,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
     frame(&mut editor, &context);
     frame(&mut editor, &context);
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.5;
+    editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
     host::App::native_menu_installed(&mut editor);
     assert!(editor.application_menu_state().enabled(Action::Undo));
@@ -94,7 +94,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
         }],
     );
     assert!(editor.document_pending.is_none());
-    assert_eq!(editor.document.roll.exposure, 0.5);
+    assert_eq!(editor.document.project.roll.exposure, 0.5);
     assert!(!editor.application_menu_state().enabled(Action::Undo));
 }
 
@@ -102,7 +102,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
 fn native_undo_and_redo_target_text_without_surrendering_document_history() {
     let mut editor = super::super::tests::fixture();
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.5;
+    editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
     let accepted = editor.document.state.project.clone();
     editor.menus.text_focused = true;

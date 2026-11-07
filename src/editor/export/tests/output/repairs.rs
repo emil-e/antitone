@@ -67,12 +67,11 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         .repairs
         .insert(edge_border(area), RepairOrigin::Manual, [30, 0])
         .unwrap();
-    editor.document.visit.crop = Some(crate::crop::Crop {
+    *editor.photo_crop_mut() = Some(crate::crop::Crop {
         center: [area.x as f64 + 25., area.y as f64 + 32.],
         size: [32, 32],
         angle: 0.,
     });
-    editor.sync_document();
     let clean = editor.document.state.project.image_recipe(id).unwrap();
     let scan = Scan::open(
         &editor.document.source_path(id).unwrap(),
@@ -88,14 +87,13 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
             .unwrap()
             .is_empty()
     );
-    editor.document.grain = GrainSettings {
+    editor.document.project.output.grain = GrainSettings {
         enabled: true,
         amount: 0.,
         size: crate::grain::MAX_SIZE,
         image_sigma: crate::grain::MAX_SIZE,
         ..Default::default()
     };
-    editor.sync_document();
     let film = editor.document.state.project.image_recipe(id).unwrap();
     let error = crate::repair_source::resolve_output(&scan, &film).unwrap_err();
     assert!(error.to_string().contains("repair"), "{error}");
@@ -126,7 +124,6 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         );
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.sync_document();
         let nodes = (0..8)
             .map(|i| {
                 [
@@ -275,12 +272,11 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .repairs
             .insert(edge_border(area), RepairOrigin::Manual, [64, 0])
             .unwrap();
-        editor.document.visit.crop = Some(crate::crop::Crop {
+        *editor.photo_crop_mut() = Some(crate::crop::Crop {
             center: [48., 48.],
             size: [32, 32],
             angle: 0.2,
         });
-        editor.sync_document();
         let recipe = editor.document.state.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
@@ -317,8 +313,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .repairs
             .remove(border)
             .unwrap();
-        editor.document.visit.crop = None;
-        editor.sync_document();
+        *editor.photo_crop_mut() = None;
         editor
             .document
             .project

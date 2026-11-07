@@ -31,7 +31,7 @@ impl Editor {
         let Some(ready) = &self.document.visit.canvas.ready else {
             return Ok(None);
         };
-        if !self.document.input.ready() {
+        if !self.document.project.input.ready() {
             return Ok(None);
         }
         self.validate_document_candidate(&self.document)?;
@@ -73,7 +73,7 @@ impl Editor {
             self.report_failure(FailureCase::Export, self.status.clone());
             return;
         }
-        self.sync_document();
+
         let request = match self.export_input(path, format, overwrite) {
             Ok(Some(request)) => request,
             Ok(None) => return,
@@ -175,7 +175,7 @@ fn fixture() -> Editor {
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
         let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-        editor.document.visit.crop = Some(Crop {
+        *editor.photo_crop_mut() = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,
                 f64::from(area.y) + f64::from(area.height) / 2.,
@@ -183,7 +183,6 @@ fn fixture() -> Editor {
             size: [16, 16],
             angle: 0.,
         });
-        editor.sync_document();
         editor
     })
 }
@@ -627,7 +626,6 @@ fn captured_service_writes_after_ui_ownership_ends_and_preserves_destinations_on
         if stopped {
             std::fs::write(&path, b"existing destination").unwrap();
         }
-        editor.sync_document();
         let request = editor
             .export_input(
                 path.clone(),

@@ -699,12 +699,12 @@ impl Editor {
     }
 
     pub(super) fn capture_export(&mut self, draft: &Draft) -> Result<Request, Error> {
-        if self.dust_search_pending() {
+        if self.dust_search_pending() || self.editing() {
             return Err(Error::InvalidParameter(
-                "wait for donor selection before exporting",
+                "finish or cancel the current edit before exporting",
             ));
         }
-        self.sync_document();
+
         self.validate_document_candidate(&self.document)?;
         if !draft.folder.is_absolute() || !draft.folder.is_dir() {
             return Err(Error::InvalidParameter(
@@ -1001,7 +1001,7 @@ impl Editor {
             return;
         }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();
-        self.document.export.draft = Some(Draft::new(self.document.target, folder));
+        self.document.export.draft = Some(Draft::new(self.document.target(), folder));
     }
 
     pub(super) fn export_dialogs(

@@ -10,7 +10,7 @@ use crate::looks::{
 pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, prefix: &str) {
     std::fs::create_dir_all(directory).unwrap();
     tab(harness, "Rendering");
-    let input = harness.read(|e| e.document.input);
+    let input = harness.read(|e| e.document.project.input);
     let grain = harness.read(|e| e.document.project.output.grain);
     let mut routes = vec![
         ("bypass".to_owned(), None),
@@ -65,11 +65,11 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 == e.document.project.order.len()
         });
         harness.read(|e| {
-            assert_eq!(e.document.input, input);
+            assert_eq!(e.document.project.input, input);
             assert_eq!(e.document.project.output.grain, grain);
             assert_eq!(
                 e.document
@@ -189,7 +189,7 @@ fn supplied_digital_photograph_renders_and_saves_the_same_component_routes() {
             .click();
         harness.step();
         settle_view(&mut harness);
-        harness.read(|e| assert!(e.document.grain.enabled));
+        harness.read(|e| assert!(e.document.project.output.grain.enabled));
         capture(&mut harness, "digital-film-paper-texture");
     });
 }

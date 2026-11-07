@@ -1,12 +1,9 @@
 use super::{
-    Editor, InputSettings, UiContext,
-    editing::ControlSettings,
-    measurement,
+    Editor, InputSettings, UiContext, measurement,
     picking::{self, Display, View},
 };
 use crate::{Error, color::Balance, image_recipe::NeutralRecipe, processing::NegativeInput};
-use async_executor::Task;
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 mod query;
 #[cfg(test)]
@@ -22,36 +19,17 @@ struct Anchor {
     evidence: query::Evidence,
 }
 
-/// The document retains accepted evidence independently of the photo visit and picker.
+/// Accepted evidence is document-owned; unfinished manual values belong to their edit.
 #[derive(Default)]
 pub(super) struct State {
     anchor: Option<Arc<Anchor>>,
-    edit: Option<Edit>,
     #[cfg(test)]
     pub(super) edit_gate: Option<measurement::testing::Gate>,
-}
-
-struct Target {
-    anchor: Arc<Anchor>,
-    input: InputSettings,
-    wb: Balance,
-    group: Option<egui::Id>,
-}
-
-struct Edit {
-    target: Rc<Target>,
-    requested: InputSettings,
-    task: Option<Task<()>>,
-    released: bool,
 }
 
 impl State {
     pub(super) fn locked(&self) -> bool {
         self.anchor.is_some()
-    }
-
-    pub(super) fn pending(&self) -> bool {
-        self.edit.as_ref().is_some_and(|edit| edit.task.is_some())
     }
 }
 
@@ -74,10 +52,10 @@ impl Editor {
     fn pivot_recipe(&self, source: crate::project::SourceId) -> Result<NeutralRecipe, Error> {
         Ok(self
             .positive_recipe_for_source(
-                self.document.input,
-                self.document.roll,
+                self.document.state.project.input,
+                self.document.project.roll,
                 self.document.project.source(source)?,
-                self.document.visit.adjustment_layer_settings,
+                self.photo_settings(),
             )?
             .neutral
             .clone())
@@ -91,7 +69,8 @@ impl Editor {
                 .source(anchor.recipe.source)
                 .is_ok_and(|source| {
                     source.development == anchor.recipe.source_development
-                        && basis_input(self.document.input) == basis_input(anchor.recipe.input)
+                        && basis_input(self.document.state.project.input)
+                            == basis_input(anchor.recipe.input)
                         && self
                             .document
                             .correction
@@ -110,7 +89,7 @@ impl Editor {
             .is_some_and(|anchor| !self.pivot_compatible(anchor))
         {
             self.document.gamma_pivot = State::default();
-            self.document.history.finish_group();
+            self.cancel_control_edit();
             self.status = "Gamma pivot released because its measurement basis changed".into();
         }
     }
@@ -139,134 +118,53 @@ impl Editor {
     }
 
     pub(super) fn toggle_gamma_pivot(&mut self, cx: &UiContext<'_, Self>) {
+        self.cancel_control_edit();
         if self.document.visit.picker.display() == Some(DISPLAY) {
             self.finish_pick(cx);
         } else if self.document.gamma_pivot.anchor.take().is_some() {
-            self.finish_gamma_edit();
             self.status = "Gamma pivot released".into();
-        } else {
-            if let Err(error) = self.start_interaction(cx, pick) {
-                self.status = error;
-            }
+        } else if let Err(error) = self.start_interaction(cx, pick) {
+            self.status = error;
         }
     }
 
-    pub(super) fn gamma_pivot_input(&self) -> InputSettings {
-        self.document
-            .gamma_pivot
-            .edit
-            .as_ref()
-            .map_or(self.document.input, |edit| edit.requested)
-    }
-
-    pub(super) fn finish_gamma_edit(&mut self) {
-        self.document.gamma_pivot.edit = None;
-        self.document.history.finish_group();
-    }
-
-    pub(super) fn gamma_gesture_frame(&mut self, down: bool) {
-        if let Some(edit) = &mut self.document.gamma_pivot.edit {
-            edit.released |= !down;
-            if edit.released && edit.task.is_none() {
-                self.finish_gamma_edit();
-            }
-        }
-    }
-
-    /// All manual controls, including deferred resets, enter here before history or rendering.
-    pub(super) fn accept_manual_controls(
-        &mut self,
-        previous: ControlSettings,
-        candidate: ControlSettings,
-        gamma_edited: bool,
-        group: Option<egui::Id>,
-        cx: &UiContext<'_, Self>,
-    ) -> Result<(), Error> {
-        if !gamma_edited {
-            self.validate_control_edit(previous, candidate)?;
-            candidate.apply(self);
-            if previous.roll.wb != candidate.roll.wb {
-                self.finish_gamma_edit();
-            }
-            self.observe_gamma_pivot();
-            return Ok(());
-        }
-        let Some(anchor) = self.document.gamma_pivot.anchor.clone() else {
-            self.validate_control_edit(previous, candidate)?;
-            candidate.apply(self);
-            return Ok(());
-        };
-        if !self.pivot_compatible(&anchor)
-            || basis_input(previous.input) != basis_input(candidate.input)
-        {
-            self.validate_control_edit(previous, candidate)?;
-            candidate.apply(self);
-            self.observe_gamma_pivot();
-            return Ok(());
-        }
-        if same_gamma(previous.input, candidate.input) {
-            if let Some(edit) = &mut self.document.gamma_pivot.edit
-                && edit.requested != candidate.input
-            {
-                edit.task = None;
-                edit.requested = candidate.input;
-            }
-            if previous.roll.wb != candidate.roll.wb {
-                self.finish_gamma_edit();
-            }
-            self.validate_control_edit(previous, candidate)?;
-            candidate.apply(self);
-            return Ok(());
-        }
-        // Keep accepted controls coherent while the shared f32 forward model runs off-thread.
-        previous.apply(self);
-        if self
-            .document
-            .gamma_pivot
-            .edit
-            .as_ref()
-            .is_some_and(|edit| edit.requested == candidate.input && edit.task.is_some())
-        {
-            return Ok(());
-        }
-        let extend = group.is_some()
+    pub(super) fn gamma_compensation_required(
+        &self,
+        starting: InputSettings,
+        proposed: InputSettings,
+    ) -> bool {
+        !same_gamma(starting, proposed)
+            && basis_input(starting) == basis_input(proposed)
             && self
                 .document
                 .gamma_pivot
-                .edit
+                .anchor
                 .as_ref()
-                .is_some_and(|edit| edit.target.group == group && !edit.released);
-        if !extend {
-            self.finish_gamma_edit();
-            self.document.gamma_pivot.edit = Some(Edit {
-                target: Rc::new(Target {
-                    anchor: anchor.clone(),
-                    input: previous.input,
-                    wb: previous.roll.wb,
-                    group,
-                }),
-                requested: candidate.input,
-                task: None,
-                released: group.is_none(),
-            });
-        }
-        let edit = self
+                .is_some_and(|anchor| self.pivot_compatible(anchor))
+    }
+
+    pub(super) fn compensate_control_edit(&mut self, cx: &UiContext<'_, Self>) {
+        let anchor = self
             .document
             .gamma_pivot
-            .edit
+            .anchor
+            .clone()
+            .expect("compatible gamma pivot");
+        let edit = self
+            .document
+            .controls_edit
             .as_mut()
-            .expect("manual gamma edit");
-        edit.requested = candidate.input;
-        edit.task = None;
-        let target = edit.target.clone();
+            .expect("owned document edit");
+        edit.calculation = None;
+        edit.values.rename("Gamma & balance");
+        let preview = edit.values.preview();
+        let starting = edit.values.initial();
+        let candidate = edit.gamma_request.expect("requested gamma");
         let services = self.source_services.clone();
         #[cfg(test)]
         let gate = self.document.gamma_pivot.edit_gate.clone();
-        let to = candidate.input;
         let task = cx.spawn(move |cx| async move {
-            let anchor = target.anchor.clone();
-            let from = target.input;
-            let wb = target.wb;
+            let captured = anchor.clone();
             let result = crate::background::run(move |cancelled| {
                 #[cfg(test)]
                 if let Some(gate) = &gate
@@ -276,21 +174,21 @@ impl Editor {
                 }
                 let services = measurement::query_services(services.as_ref())?;
                 let negative = |input: InputSettings| -> Result<NegativeInput, Error> {
-                    let mut recipe = anchor.recipe.clone();
+                    let mut recipe = captured.recipe.clone();
                     recipe.input = input;
                     recipe
                         .processing_input()?
                         .negative_input()
                         .ok_or(Error::UnusableSample("gamma pivot basis changed"))
                 };
-                let result = anchor.evidence.compensate(
+                let result = captured.evidence.compensate(
                     services,
-                    negative(from)?,
-                    negative(to)?,
+                    negative(starting.input)?,
+                    negative(candidate)?,
                     glam::DMat3::from_cols_array_2d(
-                        &anchor.recipe.source_development.camera_to_ap1,
+                        &captured.recipe.source_development.camera_to_ap1,
                     ),
-                    wb,
+                    starting.roll.wb,
                     &|| cancelled.is_cancelled(),
                 );
                 #[cfg(test)]
@@ -304,55 +202,46 @@ impl Editor {
             .await
             .map_err(|_| "Gamma pivot worker panicked".to_owned())
             .and_then(|result| result.map_err(|error| error.to_string()));
-            cx.update(|editor| editor.accept_gamma_result(&target, candidate, result));
+            cx.update(|editor| {
+                if !preview.active() || !editor.document.project_preview.same_edit(&preview) {
+                    return;
+                }
+                if !editor.pivot_compatible(&anchor) {
+                    editor.observe_gamma_pivot();
+                    return;
+                }
+                let result = result.and_then(|wb| {
+                    crate::color::wb_matrix(wb).map_err(|error| error.to_string())?;
+                    let mut edit = editor
+                        .document
+                        .controls_edit
+                        .take()
+                        .expect("live edit owner");
+                    if edit.gamma_request != Some(candidate) {
+                        editor.document.controls_edit = Some(edit);
+                        return Ok(());
+                    }
+                    edit.values.update(|project| {
+                        project.input = candidate;
+                        project.roll.wb = wb;
+                    });
+                    editor
+                        .validate_roll_values(&edit.values.preview().snapshot().unwrap())
+                        .map_err(|error| error.to_string())?;
+                    edit.gamma_request = None;
+                    edit.calculation = None;
+                    editor.document.controls_edit = Some(edit);
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    editor.document.controls_edit = None;
+                    editor.status = format!("Edit rejected: {error}");
+                } else {
+                    editor.finish_document_controls();
+                }
+            });
         });
-        self.document.gamma_pivot.edit.as_mut().unwrap().task = task;
-        Ok(())
-    }
-
-    fn accept_gamma_result(
-        &mut self,
-        target: &Rc<Target>,
-        mut candidate: ControlSettings,
-        result: Result<Balance, String>,
-    ) {
-        if !self
-            .document
-            .gamma_pivot
-            .edit
-            .as_ref()
-            .is_some_and(|edit| Rc::ptr_eq(&edit.target, target))
-        {
-            return;
-        }
-        if !self.pivot_compatible(&target.anchor) {
-            self.observe_gamma_pivot();
-            self.finish_gamma_edit();
-            return;
-        }
-        // Browsing and independent downstream edits may have advanced while the worker ran.
-        // Only the proposed gamma and its compensating WB belong to this acceptance.
-        let input = candidate.input;
-        candidate = ControlSettings::capture(self);
-        candidate.input = input;
-        let result = result.and_then(|wb| {
-            candidate.roll.wb = wb;
-            self.validate_control_edit(ControlSettings::capture(self), candidate)
-                .map_err(|error| error.to_string())?;
-            let before = self.history_snapshot();
-            candidate.apply(self);
-            self.record_gamma_edit(before, target.group);
-            Ok(())
-        });
-        let edit = self.document.gamma_pivot.edit.as_mut().unwrap();
-        edit.task = None;
-        if let Err(error) = result {
-            edit.requested = self.document.input;
-            self.status = format!("Edit rejected: {error}");
-        }
-        if edit.released {
-            self.finish_gamma_edit();
-        }
+        self.document.controls_edit.as_mut().unwrap().calculation = task;
     }
 }
 
@@ -414,7 +303,7 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
         let anchor = Arc::new(Anchor { recipe, evidence });
         if editor.document.visit.current_source == Some(source) {
             if editor.pivot_compatible(&anchor) {
-                editor.finish_gamma_edit();
+                editor.cancel_control_edit();
                 editor.document.gamma_pivot.anchor = Some(anchor);
                 editor.status = "Gamma pivot set".into();
             } else {

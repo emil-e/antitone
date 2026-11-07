@@ -18,13 +18,13 @@ fn named_bw_paper_prepares_persists_exports_and_only_admits_supported_material_c
     fixture_editor(|mut h, _| {
         let paper = MonochromePaper::default();
         let before = h.read(|e| e.document.project.clone());
-        let input = h.read(|e| e.document.input);
+        let input = h.read(|e| e.document.project.input);
         choose_component(&mut h, "Paper", paper.name());
         let selected = h.read(|e| {
             let asset = e.document.project.output.film_and_paper.as_ref().unwrap();
             assert_eq!(MonochromePaper::from_origin(asset.origin()), Some(paper));
             assert_eq!(e.document.project.output.grain, before.output.grain);
-            assert_eq!(e.document.input, input);
+            assert_eq!(e.document.project.input, input);
             assert_eq!(e.document.project.output.lut, before.output.lut);
             asset.clone()
         });

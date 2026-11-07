@@ -8,8 +8,8 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                 let mut editor = fixture();
                 editor.set_test_busy(busy);
                 let before = (
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                     editor.document.dirty(),
                 );
                 let context = egui::Context::default();
@@ -58,8 +58,8 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                 assert!(!availability.enabled(crate::platform::menu::Action::Export));
                 assert_eq!(
                     (
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                         editor.document.dirty()
                     ),
                     before
@@ -217,7 +217,6 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
 fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences() {
     let mut editor = fixture();
     editor.tab = 2;
-    editor.sync_document();
     let project = editor.document.state.project.clone();
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
@@ -297,8 +296,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.refresh_adjustment_layer_selection();
-    editor.document.roll.exposure = 1.23456789;
-    editor.sync_document();
+    editor.document.project.roll.exposure = 1.23456789;
     *editor.document = editor
         .document
         .save(
@@ -318,7 +316,6 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     editor.preferences.filmstrip_height = 210.;
     editor.source_exposure = 2.5;
     app_frame(&mut editor, &context, vec![]);
-    editor.sync_document();
     assert_eq!(
         serde_json::to_value(&editor.document.state.project).unwrap(),
         project
@@ -485,11 +482,11 @@ fn rendering_target_and_reset_preserve_grading_and_wait_for_crop_to_end() {
     let mut editor = fixture();
     editor.tab = 2;
     let grade = (
-        editor.document.roll,
-        editor.document.visit.adjustment_layer_settings,
+        editor.document.project.roll,
+        editor.photo_settings(),
         editor.dmin(),
         editor.dmax(),
-        editor.document.visit.crop,
+        editor.photo_crop(),
     );
     let context = egui::Context::default();
     let labels = controls_frame(&mut editor, &context, 315., vec![]);
@@ -507,44 +504,43 @@ fn rendering_target_and_reset_preserve_grading_and_wait_for_crop_to_end() {
     for pressed in [true, false] {
         controls_frame(&mut editor, &context, 315., pointer(srgb, pressed));
     }
-    assert_eq!(editor.document.target, OutputTarget::Srgb);
-    editor.sync_document();
+    assert_eq!(editor.document.target(), OutputTarget::Srgb);
     assert_eq!(
         editor.document.state.project.output.tiff,
         crate::project::TiffTarget::Srgb
     );
     assert_eq!(
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax(),
-            editor.document.visit.crop
+            editor.photo_crop()
         ),
         grade
     );
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.document.target, OutputTarget::DisplayP3);
-    editor.document.target = OutputTarget::Srgb;
+    assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
+    editor.document.set_target(OutputTarget::Srgb);
     add_ready_fixture(&mut editor);
     editor.begin_crop();
     let draft = editor.document.crop_edit().unwrap().draft;
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.document.target, OutputTarget::Srgb);
+    assert_eq!(editor.document.target(), OutputTarget::Srgb);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(
         (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax(),
-            editor.document.visit.crop,
+            editor.photo_crop(),
         ),
         grade
     );
     editor.hosted_action(tool::Action::Dismiss);
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.document.target, OutputTarget::DisplayP3);
+    assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
     editor.tab = 1;
     let context = egui::Context::default();
     let photo = controls_frame(&mut editor, &context, 315., vec![]);

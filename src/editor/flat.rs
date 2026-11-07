@@ -69,6 +69,21 @@ pub(super) struct FlatPreview {
 }
 
 impl Editor {
+    fn change_correction(&mut self, enabled: Option<bool>, cx: &UiContext<'_, Self>) {
+        self.cancel_control_edit();
+        let mut candidate = self.document.capture();
+        if let Some(enabled) = enabled {
+            candidate
+                .project
+                .flat_field_mut()
+                .expect("accepted correction")
+                .enabled = enabled;
+        } else {
+            candidate.project.set_flat_field(None);
+        }
+        self.start_correction(candidate, cx);
+    }
+
     pub(super) fn start_correction(&mut self, candidate: Document, cx: &UiContext<'_, Self>) {
         self.start_document_with(
             document::Preparation::Correction(candidate, self.document.visit.current_source),
@@ -116,7 +131,7 @@ impl Editor {
                         let path = self.document.source_path(settings.reference).ok();
                         let mut enabled = settings.enabled;
                         if ui.add_enabled(!self.tool_interacting(), egui::Checkbox::new(&mut enabled, "Enabled")).changed() {
-                            self.control_command(editing::Command::Correction(Some(enabled)), cx);
+                            self.change_correction(Some(enabled), cx);
                         }
                         let name = path
                             .as_ref()
@@ -138,13 +153,14 @@ impl Editor {
                                 .pick_file()
                         })
                     {
-                        self.control_command(editing::Command::FlatEdit(path, None), cx);
+                        self.cancel_control_edit();
+                        FlatTool::open(self, path, None, cx);
                     }
                 });
             },
         );
         if action.reset {
-            self.control_command(editing::Command::Correction(None), cx);
+            self.change_correction(None, cx);
         }
     }
 }
@@ -166,7 +182,6 @@ impl FlatTool {
         if !editor.prepare_tool() {
             return;
         }
-        editor.sync_document();
         editor.document.thumbnails.cancel();
         let activity = editor
             .activities
@@ -402,7 +417,6 @@ impl tool::Tool for FlatTool {
             tool::Action::Primary
                 if !editor.interaction_blocked() && editor.document_pending.is_none() =>
             {
-                editor.sync_document();
                 let state = self.state.borrow();
                 let Some(reference) = &state.view.ready else {
                     return;
@@ -488,8 +502,8 @@ fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Edito
 
     editor.end_tool();
     editor.cancel_spatial();
-    editor.finish_gamma_edit();
-    editor.control_commands.clear();
+    editor.cancel_control_edit();
+
     let id = editor.begin_document_operation(false);
     editor.history_pending = Some(crate::editor::history::Pending::Edit {
         before: Box::new(before),

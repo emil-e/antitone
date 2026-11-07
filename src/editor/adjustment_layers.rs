@@ -73,11 +73,9 @@ impl Editor {
             Target::None => None,
         };
         self.document.visit.adjustment_layers.selected = selected;
-        self.document.visit.adjustment_layer_settings = self
-            .selected_adjustment_layer_settings()
-            .unwrap_or_default();
     }
 
+    #[cfg(test)]
     pub(super) fn selected_adjustment_layer_settings(&self) -> Option<AdjustmentLayerSettings> {
         let Target::Layer(id) = self.adjustment_layer_target() else {
             return None;
@@ -107,6 +105,16 @@ impl Editor {
                 .as_mut()
                 .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == id))
         {
+            let project = self.document.project_snapshot();
+            if self.editing()
+                && let Ok(source) = project.source(source.id)
+                && let Some(draft) = source
+                    .adjustment_layers
+                    .as_ref()
+                    .and_then(|layers| layers.layers.iter().find(|record| record.id == id))
+            {
+                record.adjustment = draft.adjustment;
+            }
             record.adjustment.photo = photo;
         }
     }
@@ -150,6 +158,7 @@ impl Editor {
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
         if target != self.adjustment_layer_target() {
+            self.document.visit.controls_edit = None;
             self.finish_mask(false);
         }
         if self
@@ -161,7 +170,7 @@ impl Editor {
         {
             return;
         }
-        self.sync_document();
+
         self.document.visit.adjustment_layers.owns_delete = true;
         self.document.visit.adjustment_layers.selected = match target {
             Target::None => None,
@@ -182,9 +191,6 @@ impl Editor {
                 })
                 .map(|source| (source, id)),
         };
-        self.document.visit.adjustment_layer_settings = self
-            .selected_adjustment_layer_settings()
-            .unwrap_or_default();
         self.document.visit.adjustment_layers.rename = None;
     }
 
@@ -208,7 +214,8 @@ impl Editor {
 
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.interaction_blocked()
-            && self.document.input.ready()
+            && !self.controls_pending()
+            && self.document.project.input.ready()
             && !self.tool_interacting()
             && !self.dialogs.is_open()
     }
@@ -225,7 +232,7 @@ impl Editor {
         label: &'static str,
         edit: impl FnOnce(&mut AdjustmentLayers) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let project_before = self.history_snapshot();
+        let mut draft = self.edit_photo(label)?;
         let id = self
             .document
             .visit
@@ -235,10 +242,7 @@ impl Editor {
         let before = source.grade_snapshot()?;
         let target = self.adjustment_layer_target();
         let mut candidate = source.clone();
-        self.overlay_adjustment_layer_settings(
-            &mut candidate,
-            self.document.visit.adjustment_layer_settings,
-        );
+        self.overlay_adjustment_layer_settings(&mut candidate, self.photo_settings());
         edit(
             candidate
                 .adjustment_layers
@@ -246,11 +250,13 @@ impl Editor {
         )?;
         let after = candidate.grade_snapshot()?;
         self.validate_source_candidate(&candidate)?;
-        self.document
-            .state
-            .project
-            .source_mut(id)?
-            .adjustment_layers = candidate.adjustment_layers;
+        draft.update(|project| {
+            project
+                .source_mut(id)
+                .expect("current edit source")
+                .adjustment_layers = candidate.adjustment_layers;
+        });
+        self.commit_project(draft)?;
         self.document.visit.adjustment_layers.selected = match target {
             Target::Layer(layer) => Some((id, layer)),
             Target::None => None,
@@ -259,7 +265,6 @@ impl Editor {
         if before != after {
             self.invalidate_original();
         }
-        self.record_edit(project_before, label, Some(id));
         Ok(())
     }
 
@@ -468,6 +473,194 @@ impl Editor {
                 && !self.document.visit.adjustment_layers.adjusting_values)
     }
 
+    pub(super) fn photo_control(
+        &mut self,
+        response: controls::ControlResponse,
+        write: impl FnOnce(&mut crate::adjustment_layers::AdjustmentLayer),
+    ) {
+        let Some(source) = self.document.visit.current_source else {
+            return;
+        };
+        let adjustment_layers::Target::Layer(layer) = self.adjustment_layer_target() else {
+            return;
+        };
+        let Some(mut edit) = self.begin_control(response, true) else {
+            return;
+        };
+        if response.changed {
+            let candidate = edit.values.update(|project| -> Result<Source, Error> {
+                let source = project.source_mut(source)?;
+                let record = source
+                    .adjustment_layers
+                    .as_mut()
+                    .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
+                    .ok_or(Error::InvalidParameter("selected layer is unavailable"))?;
+                write(&mut record.adjustment);
+                Ok(source.clone())
+            });
+            if let Err(error) = candidate.and_then(|source| self.validate_source_candidate(&source))
+            {
+                self.status = format!("Edit rejected: {error}");
+                return;
+            }
+        }
+        self.retain_control(edit, response, true);
+    }
+
+    fn photographic_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        mut photo: AdjustmentLayerSettings,
+        editable: bool,
+        can_pick: bool,
+        reveal: bool,
+    ) -> bool {
+        ui.add_enabled_ui(editable, |ui| {
+            if reveal {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
+            }
+            let (_, action) = presentation::section(
+                ui,
+                "photo-exposure",
+                "Exposure",
+                presentation::SectionHeader {
+                    summary: &format!("{:+.2} EV", photo.exposure),
+                    changed: photo.exposure != 0.,
+                    reset: Some(photo.exposure != 0.),
+                    tool: None,
+                    default_open: Some(true),
+                },
+                |ui| {
+                    let response = controls::parameter_edit(
+                        ui,
+                        controls::Parameter::Exposure,
+                        &mut photo.exposure,
+                    );
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.exposure = photo.exposure
+                    });
+                },
+            );
+            if action.reset {
+                self.photo_control(
+                    controls::ControlResponse::action(
+                        ui.make_persistent_id("reset-photo-exposure"),
+                        true,
+                    ),
+                    |adjustment| adjustment.photo.exposure = 0.,
+                );
+            }
+        });
+        let (responses, pick) =
+            controls::white_balance(ui, "photo-white-balance", &mut photo.wb, editable, can_pick);
+        for response in responses {
+            self.photo_control(response, |adjustment| adjustment.photo.wb = photo.wb);
+        }
+        ui.add_enabled_ui(editable, |ui| {
+            let defaults = AdjustmentLayerSettings::default();
+            let changed = photo.contrast != defaults.contrast
+                || photo.pivot != defaults.pivot
+                || photo.contrast_colour_mix != defaults.contrast_colour_mix;
+            let (_, action) = presentation::section(
+                ui,
+                "photo-contrast",
+                "Contrast",
+                presentation::SectionHeader {
+                    summary: &format!(
+                        "{:.2} · Pivot {:.3} · Preserve {:.2}",
+                        photo.contrast, photo.pivot, photo.contrast_colour_mix
+                    ),
+                    changed,
+                    reset: Some(changed),
+                    tool: None,
+                    default_open: Some(true),
+                },
+                |ui| {
+                    let response = controls::parameter_edit(
+                        ui,
+                        controls::Parameter::Contrast,
+                        &mut photo.contrast,
+                    );
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.contrast = photo.contrast
+                    });
+                    let response =
+                        controls::parameter_edit(ui, controls::Parameter::Pivot, &mut photo.pivot);
+                    self.photo_control(response, |adjustment| adjustment.photo.pivot = photo.pivot);
+                    let response = controls::parameter_edit(
+                        ui,
+                        controls::Parameter::ColourMix,
+                        &mut photo.contrast_colour_mix,
+                    );
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.contrast_colour_mix = photo.contrast_colour_mix
+                    });
+                },
+            );
+            if action.reset {
+                self.photo_control(
+                    controls::ControlResponse::action(
+                        ui.make_persistent_id("reset-photo-contrast"),
+                        true,
+                    ),
+                    |adjustment| {
+                        adjustment.photo.contrast = defaults.contrast;
+                        adjustment.photo.pivot = defaults.pivot;
+                        adjustment.photo.contrast_colour_mix = defaults.contrast_colour_mix;
+                    },
+                );
+            }
+            let changed = photo.saturation != defaults.saturation
+                || photo.saturation_density != defaults.saturation_density;
+            let (_, action) = presentation::section(
+                ui,
+                "photo-saturation",
+                "Saturation",
+                presentation::SectionHeader {
+                    summary: &format!(
+                        "{:.2} · Density {:.2}",
+                        photo.saturation, photo.saturation_density
+                    ),
+                    changed,
+                    reset: Some(changed),
+                    tool: None,
+                    default_open: Some(true),
+                },
+                |ui| {
+                    let response = controls::parameter_edit(
+                        ui,
+                        controls::Parameter::Saturation,
+                        &mut photo.saturation,
+                    );
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.saturation = photo.saturation
+                    });
+                    let response = controls::parameter_edit(
+                        ui,
+                        controls::Parameter::Density,
+                        &mut photo.saturation_density,
+                    );
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.saturation_density = photo.saturation_density
+                    });
+                },
+            );
+            if action.reset {
+                self.photo_control(
+                    controls::ControlResponse::action(
+                        ui.make_persistent_id("reset-photo-saturation"),
+                        true,
+                    ),
+                    |adjustment| {
+                        adjustment.photo.saturation = defaults.saturation;
+                        adjustment.photo.saturation_density = defaults.saturation_density;
+                    },
+                );
+            }
+        });
+        pick
+    }
+
     pub(super) fn adjustment_layer_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -480,19 +673,20 @@ impl Editor {
             .document
             .visit
             .current_source
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .and_then(|source| source.adjustment_layers.as_ref())
-            .map(|layers| layers.layers.clone())
+            .and_then(|id| {
+                self.document
+                    .project_snapshot()
+                    .source(id)
+                    .ok()
+                    .and_then(|source| source.adjustment_layers.as_ref())
+                    .map(|layers| layers.layers.clone())
+            })
             .unwrap_or_default();
         let selected = match target {
             Target::None => None,
             Target::Layer(id) => records.iter().find(|record| record.id == id),
         };
-        let mut adjustment = selected.map(|record| record.adjustment);
-        let mut photo = selected.map_or(self.document.visit.adjustment_layer_settings, |record| {
-            record.adjustment.photo
-        });
-        let before = (photo, adjustment);
+        let adjustment = selected.map(|record| record.adjustment);
         let available = self.adjustment_layer_actions_available() && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
@@ -565,7 +759,7 @@ impl Editor {
                                     "Add linear gradient",
                                 ),
                             ] {
-                                if icons::button(ui, icon, self.tool_start_available() && self.document.input.ready(), name, help)
+                                if icons::button(ui, icon, self.tool_start_available() && self.document.project.input.ready(), name, help)
                                     .clicked()
                                 {
                                     creation = Some(radial);
@@ -692,7 +886,7 @@ impl Editor {
                                 }
                             });
                         }
-                        if let Some(adjustment) = &mut adjustment {
+                        if let Some(adjustment) = adjustment {
                             ui.add_space(6.);
                             ui.add_enabled_ui(adjustment.enabled, |ui| {
                                 ui.push_id(("mask-input", self.document.visit.current_source, target), |ui| {
@@ -703,23 +897,22 @@ impl Editor {
                                             && ui.checkbox(&mut invert, "Invert mask").changed()
                                             && let Target::Layer(id) = target
                                         {
-                                            invert_action = Some(
-                                                editing::Command::InvertAdjustmentLayer(id, invert),
-                                            );
+                                            invert_action = Some((id, invert));
                                         }
                                     });
-                                    controls::parameter(
-                                        ui,
-                                        controls::Parameter::Strength,
-                                        &mut adjustment.strength,
-                                    );
+                                    let mut strength = adjustment.strength;
+                                    let response = controls::parameter_edit(ui, controls::Parameter::Strength, &mut strength);
+                                    self.photo_control(response, |adjustment| adjustment.strength = strength);
                                     ui.add_enabled_ui(adjustment.strength > 0., |ui| {
                                         if let crate::adjustment_layers::AdjustmentLayerCoverage::Radial {
-                                            feather,
+                                            mut feather,
                                             ..
-                                        } = &mut adjustment.mask
+                                        } = adjustment.mask
                                         {
-                                            controls::parameter(ui, controls::Parameter::Feather, feather);
+                                            let response = controls::parameter_edit(ui, controls::Parameter::Feather, &mut feather);
+                                            self.photo_control(response, |adjustment| {
+                                                if let crate::adjustment_layers::AdjustmentLayerCoverage::Radial { feather: value, .. } = &mut adjustment.mask { *value = feather; }
+                                            });
                                         }
                                     });
                                 });
@@ -764,49 +957,35 @@ impl Editor {
             .push_id(
                 ("photo-input", self.document.visit.current_source, target),
                 |ui| {
-                    ui.add_enabled_ui(editable, |ui| {
-                        if reveal {
-                            ui.scroll_to_cursor(Some(egui::Align::Min));
-                        }
-                        controls::photographic_exposure(ui, &mut photo);
-                    });
-                    controls::photographic_colour(
+                    self.photographic_controls(
                         ui,
-                        &mut photo,
+                        adjustment
+                            .map(|adjustment| adjustment.photo)
+                            .unwrap_or_default(),
+                        editable,
                         can_pick
                             && selected.is_some_and(|record| {
                                 record.adjustment.enabled && record.adjustment.strength > 0.
                             }),
-                        editable,
+                        reveal,
                     )
                 },
             )
             .inner;
-        if (photo, adjustment) != before {
-            match target {
-                Target::None => {}
-                Target::Layer(id) => {
-                    let mut adjustment = adjustment.expect("selected adjustment layer");
-                    adjustment.photo = photo;
-                    if let Err(error) =
-                        self.edit_adjustment_layers_named("Photo settings", |layers| {
-                            record_mut(layers, id)?.adjustment = adjustment;
-                            Ok(())
-                        })
-                    {
-                        self.status = format!("Adjustment edit rejected: {error}");
-                    }
-                }
+        if let Some((id, invert)) = invert_action {
+            self.cancel_control_edit();
+            if let Err(error) = self.edit_adjustment_layers(|layers| {
+                record_mut(layers, id)?.adjustment.invert = invert;
+                Ok(())
+            }) {
+                self.status = format!("Adjustment edit rejected: {error}");
             }
         }
-        if let Some(command) = invert_action {
-            self.control_command(command, cx);
-        }
         if let Some(rename) = rename_finish {
-            self.control_command(editing::Command::Adjustment(rename), cx);
+            self.apply_adjustment_layer_action(rename, cx);
         }
         if let Some(action) = action {
-            self.control_command(editing::Command::Adjustment(action), cx);
+            self.apply_adjustment_layer_action(action, cx);
             ui.ctx().request_repaint();
         }
 
@@ -816,19 +995,17 @@ impl Editor {
             || drop.is_some()
             || finish && self.document.visit.adjustment_layers.dragging()
         {
-            self.control_command(
-                editing::Command::OrderInput {
-                    start: start_drag,
-                    drop,
-                    finish,
-                },
-                cx,
-            );
+            self.adjustment_layer_order_input(start_drag, drop, finish, cx);
             ui.ctx().request_repaint();
         }
 
         if let Some(radial) = self.document.visit.adjustment_layers.creation.take() {
-            self.control_command(editing::Command::CreateMask(radial), cx);
+            self.cancel_control_edit();
+            if radial {
+                self.begin_radial_mask(None);
+            } else {
+                self.begin_linear_mask(None);
+            }
             ui.ctx().request_repaint();
         }
         pick

@@ -207,12 +207,8 @@ fn document_device_preflight_uses_the_effective_correction_floor_and_runtime_bas
             )
             .unwrap(),
         );
-        document
-            .project
-            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                source,
-                field.clone(),
-            )));
+        let settings = crate::project::FlatFieldSettings::new(source, field.clone());
+        document.project.set_flat_field(Some(settings));
         let calibration = document.project.processing_calibration().unwrap().unwrap();
         assert_eq!(calibration.input_floor, field.precision_floor().unwrap());
         document.validate_for_device(&device).unwrap();
@@ -320,15 +316,15 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
 {
     pollster::block_on(async {
         let (mut editor, _, _) = crate::editor::processing::tests::fixture().await;
-        editor.sync_document();
+
         editor
             .validate_document_candidate(&editor.document)
             .unwrap();
         let accepted = editor
             .positive_processing(
-                editor.document.input,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.input,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .unwrap();
         let mut retired = editor
@@ -412,9 +408,9 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         assert_eq!(editor.document.state.project, before);
         let current = editor
             .positive_processing(
-                editor.document.input,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.input,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .unwrap();
         assert_eq!(accepted.clone(), current.clone());

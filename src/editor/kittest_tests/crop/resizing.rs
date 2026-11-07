@@ -4,8 +4,7 @@ use super::*;
 fn resize_modifiers_and_continuous_camera_compose_with_navigation_and_apply() {
     editor_harness(|mut h, capture| {
         h.update(|editor| {
-            editor.document.input = crate::processing::InputSettings::Digital;
-            editor.sync_document();
+            editor.document.project.input = crate::processing::InputSettings::Digital;
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {
@@ -146,7 +145,7 @@ fn resize_modifiers_and_continuous_camera_compose_with_navigation_and_apply() {
             h.get_by_label("Apply").click();
             h.step();
             h.read(|editor| {
-                assert_eq!(editor.document.visit.crop, Some(draft));
+                assert_eq!(editor.photo_crop(), Some(draft));
                 assert!(editor.document.crop_edit().is_none());
             });
         }

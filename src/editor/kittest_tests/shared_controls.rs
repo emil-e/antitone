@@ -27,7 +27,7 @@ fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
     ] {
         stage(h, tab);
         if tab == "Roll" {
-            let orientation = h.read(|editor| editor.document.roll_orientation);
+            let orientation = h.read(|editor| editor.document.project.orientation);
             assert!(
                 !orientation.is_identity(),
                 "fixture must make Reset meaningful"
@@ -134,8 +134,7 @@ fn click(h: &mut Harness<'_, Editor>, label: &str) {
 fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
     editor_harness(|mut h, _| {
         h.update(|editor| {
-            editor.document.input = InputSettings::Digital;
-            editor.sync_document();
+            editor.document.project.input = InputSettings::Digital;
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {
@@ -155,10 +154,10 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
                     .accesskit_node()
                     .is_disabled()
             );
-            let enabled = h.read(|editor| editor.document.grain.enabled);
+            let enabled = h.read(|editor| editor.document.project.output.grain.enabled);
             h.get_by_role_and_label(role, "Enable").click();
             h.step();
-            h.read(|editor| assert_eq!(editor.document.grain.enabled, !enabled));
+            h.read(|editor| assert_eq!(editor.document.project.output.grain.enabled, !enabled));
             for tool in [
                 "Crop & straighten",
                 "Dust repair",
@@ -212,7 +211,7 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         click(&mut h, "Turn left");
-        h.read(|editor| assert!(!editor.document.roll_orientation.is_identity()));
+        h.read(|editor| assert!(!editor.document.project.orientation.is_identity()));
         stage(&mut h, "Photo");
         click(&mut h, "Add linear");
         let image = h.read(|editor| editor.canvas_frame.layout.unwrap().0.image);
@@ -331,14 +330,9 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
         control_state(&mut h, false);
         stage(&mut h, "Roll");
         click(&mut h, "Reset scan orientation");
-        h.read(|editor| assert!(editor.document.roll_orientation.is_identity()));
+        h.read(|editor| assert!(editor.document.project.orientation.is_identity()));
         stage(&mut h, "Photo");
         workflow::enter_numeric(&mut h, "Exposure", "0.625");
-        h.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.625
-            )
-        });
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.625));
     });
 }

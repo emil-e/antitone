@@ -244,7 +244,7 @@ impl Editor {
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
             .inner_margin(4)
-            .show(ui, |ui| self.scopes.panel(ui, self.document.target, 180.))
+            .show(ui, |ui| self.scopes.panel(ui, self.document.target(), 180.))
             .inner
     }
 
@@ -278,7 +278,7 @@ impl Editor {
             .canvas_frame
             .displayed
             .as_ref()
-            .map_or(self.document.target, |image| image.view.target);
+            .map_or(self.document.target(), |image| image.view.target);
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
         if let Some(error) = self

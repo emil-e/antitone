@@ -58,7 +58,7 @@ impl Editor {
         if self.interaction_blocked() && self.document.spatial_preparing.is_none() {
             return None;
         }
-        self.sync_document();
+
         let (send, receive) = oneshot::channel();
         let document = Arc::new(self.document.capture());
         let ready = document.ready_spatial_metadata();

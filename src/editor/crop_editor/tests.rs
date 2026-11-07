@@ -220,7 +220,7 @@ fn construction_seeds_the_draft_and_projection_keeps_the_draft_and_navigation_un
 fn crop_can_accept_its_draft_before_any_projection_query_or_paint() {
     let mut editor = Editor::state();
     crate::editor::tests::add_ready_fixture(&mut editor);
-    editor.sync_document();
+
     let source = editor.document.visit.current_source.unwrap();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let draft = Crop {
@@ -253,7 +253,7 @@ fn photo_scope_drop_discards_crop_navigation_without_copying_it_into_the_next_vi
     h.editor.replace_photo_scope(1);
     assert!(h.editor.document.crop_edit().is_none());
     assert_eq!(h.editor.document.visit.canvas.viewport, normal);
-    assert!(h.editor.document.visit.crop.is_none());
+    assert!(h.editor.photo_crop().is_none());
     assert_eq!(h.editor.document.state.project, project);
     assert_eq!(
         h.editor.status, status,
@@ -294,7 +294,7 @@ fn outside_drag_straightens_about_crop_centre_through_reflections_and_turns() {
             assert_eq!(draft.size, [PATCH.width, PATCH.height]);
             assert_eq!(after.image, before.image);
             draft.coverage().unwrap().bounds(AREA).unwrap();
-            assert!(h.editor.document.visit.crop.is_none());
+            assert!(h.editor.photo_crop().is_none());
             h.press(end, false);
             assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
         }
@@ -405,8 +405,8 @@ fn angle_control_reframing_keeps_magnification_and_screen_pivot() {
     let crop = before.composition.crop().straightened(AREA, 0.23).unwrap();
     let next = Composition::with_crop(
         AREA,
-        h.editor.document.roll_orientation,
-        h.editor.document.visit.photo_orientation,
+        h.editor.document.project.orientation,
+        h.editor.photo_orientation(),
         Some(crop),
     )
     .unwrap();
@@ -575,7 +575,7 @@ fn rotation_hover_follows_edges_and_corners_without_changing_geometry() {
         assert_eq!(after.scale, before.scale);
         assert_eq!(h.editor.document.crop_edit().unwrap().draft, draft);
         assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
-        assert!(h.editor.document.visit.crop.is_none());
+        assert!(h.editor.photo_crop().is_none());
     }
     // Nearby bearings rotate smoothly instead of using edge/quadrant buckets.
     let point = before.image.right_center() + egui::vec2(18., 3.);
@@ -616,7 +616,7 @@ fn rotation_drag_uses_original_pivot_inside_the_frame_and_releases_to_move_hover
             assert!((draft.angle + turn * before.composition.handedness()).abs() < 2e-7);
             assert_eq!(draft.center, Crop::from_region(PATCH).center);
             assert_eq!(after.image.center(), before.image.center());
-            assert!(h.editor.document.visit.crop.is_none());
+            assert!(h.editor.photo_crop().is_none());
             h.frame(vec![egui::Event::PointerMoved(
                 before.canvas.max + egui::vec2(30., 30.),
             )]);
@@ -785,8 +785,10 @@ impl Harness {
         ratio: Option<f64>,
     ) -> Self {
         let mut editor = Editor::state();
-        editor.document.roll_orientation = roll;
-        editor.document.visit.photo_orientation = PhotoOrientation {
+        crate::editor::tests::with_camera_basis(&mut editor);
+        editor.document.visit.current_source = editor.document.project.order.first().copied();
+        editor.document.project.orientation = roll;
+        *editor.photo_orientation_mut() = PhotoOrientation {
             turns,
             flips: Flips {
                 horizontal: true,
@@ -795,7 +797,7 @@ impl Harness {
         };
         editor.document.set_crop_edit(Some(CropEdit {
             draft: Crop::from_region(PATCH),
-            base: Composition::new(AREA, roll, editor.document.visit.photo_orientation).unwrap(),
+            base: Composition::new(AREA, roll, editor.photo_orientation()).unwrap(),
             ratio,
             drag: None,
             layout: None,
@@ -843,8 +845,8 @@ impl Harness {
                         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                     let composition = Composition::with_crop(
                         AREA,
-                        self.editor.document.roll_orientation,
-                        self.editor.document.visit.photo_orientation,
+                        self.editor.document.project.orientation,
+                        self.editor.photo_orientation(),
                         Some(self.editor.document.crop_edit().unwrap().draft),
                     )
                     .unwrap();
@@ -931,7 +933,7 @@ fn dragging_image_moves_content_not_the_frame_through_exact_orientations() {
                 .constrained(AREA)
                 .unwrap();
                 assert_eq!(h.editor.document.crop_edit().unwrap().draft, wanted);
-                assert!(h.editor.document.visit.crop.is_none());
+                assert!(h.editor.photo_crop().is_none());
                 h.press(end, false);
             }
         }
@@ -993,7 +995,7 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
                     );
                     assert!(AREA.contains_region(after.area));
                     assert_ne!(after.area, PATCH);
-                    assert!(h.editor.document.visit.crop.is_none());
+                    assert!(h.editor.photo_crop().is_none());
                     h.press(end, false);
                     assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
                     let released = h.frame(vec![]);

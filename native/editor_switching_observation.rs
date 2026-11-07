@@ -206,7 +206,7 @@ fn workload(
         });
     editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
-    editor.sync_document();
+
     editor.initialize_viewer(device, queue);
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
@@ -366,7 +366,7 @@ fn workload(
                     app.read(|e| e
                         .document
                         .thumbnails
-                        .ready_count(&e.document, e.document.target))
+                        .ready_count(&e.document, e.document.target()))
                 );
             }
             if count.load(Ordering::Relaxed) != 2 {

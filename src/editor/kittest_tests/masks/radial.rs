@@ -138,11 +138,10 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
         harness.update(seed);
         harness.update(|editor| {
             let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            editor.document.roll_orientation.turn_clockwise();
-            editor.document.visit.photo_orientation.flips.horizontal = true;
-            editor.document.visit.crop =
+            editor.document.project.orientation.turn_clockwise();
+            editor.photo_orientation_mut().flips.horizontal = true;
+            *editor.photo_crop_mut() =
                 Some(Crop::from_region(area).straightened(area, 0.13).unwrap());
-            editor.sync_document();
         });
         harness.step();
         for (name, size, width) in [

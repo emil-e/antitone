@@ -33,7 +33,7 @@ fn fixture() -> Editor {
         );
         editor.set_dmin(Some(glam::DVec3::splat(0.8)));
         editor.set_dmax(Some(glam::DVec3::splat(0.02)));
-        editor.sync_document();
+
         for (index, id) in editor
             .document
             .state
@@ -54,18 +54,6 @@ fn fixture() -> Editor {
                 angle: 0.,
             });
         }
-        // Keep the active control mirror consistent with the accepted first source.
-        let active = editor
-            .document
-            .state
-            .project
-            .source(editor.document.visit.current_source.unwrap())
-            .unwrap();
-        editor.document.visit.adjustment_layer_settings =
-            active.adjustment_layers.as_ref().unwrap().layers[0]
-                .adjustment
-                .photo;
-        editor.document.visit.crop = active.crop;
         editor
     })
 }

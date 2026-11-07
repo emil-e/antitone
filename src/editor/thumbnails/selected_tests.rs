@@ -12,7 +12,7 @@ fn preview_image(editor: &Editor, input: &AuthoredPhotograph) -> Arc<GpuImage> {
         .as_ref()
         .expect("shared provisional renderer");
     assert_eq!(view.processing(), input.clone());
-    assert_eq!(view.target, editor.document.target);
+    assert_eq!(view.target, editor.document.target());
     assert_eq!(
         frame.composition,
         editor
@@ -196,8 +196,7 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                         width: 600,
                         height: 400,
                     }));
-                editor.document.roll.exposure = 1.25;
-                editor.document.visit.adjustment_layer_settings.exposure = 0.75;
+                editor.document.project.roll.exposure = 1.25;
                 editor
                     .document
                     .project
@@ -208,8 +207,8 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                     .unwrap()
                     .layers[0]
                     .adjustment
-                    .photo = editor.document.visit.adjustment_layer_settings;
-                editor.sync_document();
+                    .photo
+                    .exposure = 0.75;
                 let before = editor.document.state.project.clone();
 
                 editor.load(path, cx);
@@ -236,7 +235,7 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                     Default::default(),
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    editor.document.target = target;
+                    editor.document.set_target(target);
                     for source in [false, true] {
                         editor.document.source = source;
                         editor.source_exposure = 2.;
@@ -279,9 +278,9 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                         } else {
                             editor
                                 .positive_processing(
-                                    editor.document.input,
-                                    editor.document.roll,
-                                    editor.document.visit.adjustment_layer_settings,
+                                    editor.document.project.input,
+                                    editor.document.project.roll,
+                                    editor.photo_settings(),
                                 )
                                 .unwrap()
                         };
@@ -303,8 +302,7 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                     }
                 }
 
-                editor.document.target = OutputTarget::DisplayP3;
-                editor.sync_document();
+                editor.document.set_target(OutputTarget::DisplayP3);
                 assert_eq!(editor.document.state.project, before);
             });
         });
@@ -341,7 +339,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                     .selected_view()
                     .unwrap()
                     .1
-                    .image(editor.document.target)
+                    .image(editor.document.target())
                     .unwrap();
                 assert!(!Arc::ptr_eq(&image, &selected));
 
@@ -349,9 +347,9 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                 let source = editor.source_parameters(2.).unwrap();
                 let positive = editor
                     .positive_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 assert!(selected.prepare(&device, &mut encoder, source));
@@ -476,7 +474,6 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                         .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("corrected.ARW");
                 let id = add_source(editor, path.clone());
-                editor.sync_document();
                 let source = editor.document.state.project.source(id).unwrap().clone();
                 editor.document.state.project.set_flat_field(Some(
                     crate::project::FlatFieldSettings::new(
@@ -584,8 +581,8 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                 editor
                     .view_processing(
                         editor.input(),
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
@@ -683,9 +680,9 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                 assert!(editor.document.visit.canvas.ready.is_none());
                 let captured = editor
                     .positive_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 let context = egui::Context::default();
@@ -695,12 +692,12 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     Default::default(),
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    editor.document.target = target;
+                    editor.document.set_target(target);
                     let selected = editor
                         .selected_view()
                         .unwrap()
                         .1
-                        .image(editor.document.target)
+                        .image(editor.document.target())
                         .unwrap();
                     let mut positive_pixels = None;
 

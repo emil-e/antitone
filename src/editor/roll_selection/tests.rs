@@ -103,7 +103,6 @@ fn plain_command_and_shift_keep_active_selected_and_last_plain_anchor() {
     let editor = fixture(2);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.sync_document();
             let before = editor.document.state.project.clone();
             let ids = editor.document.state.project.order.clone();
             editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
@@ -159,7 +158,6 @@ fn plain_command_and_shift_keep_active_selected_and_last_plain_anchor() {
                 vec![ids[0]],
                 "an unselected photo starts a new selection"
             );
-            editor.sync_document();
             assert_eq!(
                 editor.document.state.project, before,
                 "selection is not photographic state"
@@ -239,7 +237,7 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
                 let ids = editor.document.project.order.clone();
                 editor.document.roll_selection.ids =
                     removed.iter().map(|index| ids[*index]).collect();
-                editor.sync_document();
+
                 let before = editor.document.project.clone();
                 let selection = editor.document.roll_selection.ids.clone();
                 editor.request_removal(cx);
@@ -305,7 +303,6 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
         app.enter(|editor, cx| {
             crate::editor::tests::add_ready_fixture(editor);
             editor.document.roll_selection.ids = editor.document.state.project.order.clone();
-            editor.sync_document();
             let mut expected = editor.document.state.project.clone();
             expected.order.clear();
             expected.sources.clear();
@@ -342,7 +339,6 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
                 source.upgrade().is_none(),
                 "the retired source must be released after stale delivery"
             );
-            editor.sync_document();
             assert_eq!(editor.document.state.project, expected);
             editor.document.validate().unwrap();
             let path = std::env::temp_dir().join(format!(

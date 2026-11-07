@@ -30,7 +30,7 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         },
         reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_settings(),
         )),
         repairs: Default::default(),
         orientation: Default::default(),
@@ -104,10 +104,9 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         ),
         1.,
     ));
-    editor.document.visit.adjustment_layer_settings = editor
+    *editor.photo_settings_mut() = editor
         .selected_adjustment_layer_settings()
         .unwrap_or_default();
-    editor.sync_document();
     (editor, device, queue)
 }
 
@@ -130,9 +129,9 @@ fn local(exposure: f64) -> AdjustmentLayer {
 fn positive(editor: &Editor) -> AuthoredPhotograph {
     editor
         .positive_processing(
-            editor.document.input,
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.input,
+            editor.document.project.roll,
+            editor.photo_settings(),
         )
         .unwrap()
 }
@@ -180,7 +179,7 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
         layers.next_id += 1;
         editor.source_exposure = 2.;
         editor.document.visit.canvas.viewport.zoom = Some(3.);
-        editor.document.target = OutputTarget::Srgb;
+        editor.document.set_target(OutputTarget::Srgb);
         let renamed = positive(&editor);
         assert_eq!(first.clone(), renamed.clone());
         let old_snapshot = first.grade().unwrap().snapshot().clone();
@@ -197,7 +196,7 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
         let reordered = positive(&editor);
         assert_ne!(first.clone(), reordered.clone());
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
-        editor.document.visit.adjustment_layer_settings.exposure = 1.;
+        editor.photo_settings_mut().exposure = 1.;
         let graded = positive(&editor);
         assert_eq!(
             graded
@@ -208,10 +207,10 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
                 .last()
                 .unwrap()
                 .photo,
-            editor.document.visit.adjustment_layer_settings
+            editor.photo_settings()
         );
         assert_ne!(reordered.clone(), graded.clone());
-        editor.document.roll.wb = crate::color::Balance {
+        editor.document.project.roll.wb = crate::color::Balance {
             warmth: 0.017,
             tint: -0.013,
         };
@@ -252,7 +251,7 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
         let input = editor
             .positive_processing_for_source(
                 base,
-                editor.document.roll,
+                editor.document.project.roll,
                 source,
                 AdjustmentLayerSettings::default(),
             )
@@ -262,7 +261,7 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
                 input_floor: base.input_floor * 4.,
                 ..base
             },
-            editor.document.roll,
+            editor.document.project.roll,
             glam::DMat3::IDENTITY,
         )
         .unwrap();
@@ -276,15 +275,15 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
         };
         assert!(
             editor
-                .positive_parameters(near_floor, editor.document.roll)
+                .positive_parameters(near_floor, editor.document.project.roll)
                 .is_ok()
         );
         assert!(
             editor
                 .validate_processing(
                     near_floor,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
+                    editor.document.project.roll,
+                    editor.photo_settings()
                 )
                 .is_err()
         );
@@ -300,7 +299,6 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
             base.input_floor * 4.
         );
         editor.set_dmax(Some(base.dmax));
-        editor.sync_document();
         editor.document.state.project.order = vec![second];
         let record = editor
             .document
@@ -342,7 +340,6 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
         let (mut editor, device, _) = fixture().await;
         let first = positive(&editor);
         let id = editor.document.visit.current_source.unwrap();
-        editor.sync_document();
         let mut candidate = editor.document.capture();
         candidate.project.source_mut(id).unwrap().adjustment_layers = None;
         let source = candidate.project.source(id).unwrap();
@@ -354,12 +351,8 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
             )
             .unwrap(),
         );
-        candidate
-            .project
-            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                source,
-                field.clone(),
-            )));
+        let settings = crate::project::FlatFieldSettings::new(source, field.clone());
+        candidate.project.set_flat_field(Some(settings));
         editor.document.correction = Correction::prepare(&device, &candidate, None).unwrap();
         let corrected = positive(&editor);
         assert_ne!(first.clone(), corrected.clone());
@@ -370,7 +363,7 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
             crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 calibration,
-                editor.document.roll,
+                editor.document.project.roll,
                 first.grade().unwrap().snapshot().clone(),
                 glam::DMat3::IDENTITY,
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
@@ -383,7 +376,7 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
         );
         let global = ProcessingParameters::positive(
             calibration,
-            editor.document.roll,
+            editor.document.project.roll,
             glam::DMat3::IDENTITY,
         )
         .unwrap();
@@ -442,19 +435,25 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         validate_source(
             Some(&device),
             editor.input(),
-            editor.document.roll,
+            editor.document.project.roll,
             &disabled,
         )
         .unwrap();
         assert!(
-            validate_source(Some(&device), editor.input(), editor.document.roll, &other).is_err()
+            validate_source(
+                Some(&device),
+                editor.input(),
+                editor.document.project.roll,
+                &other
+            )
+            .is_err()
         );
         editor.document.state.project.sources.push(other.clone());
         editor.document.state.project.order.push(other.id);
         editor.document.state.project.next_source_id += 1;
         let before = (
-            editor.document.roll,
-            editor.document.visit.adjustment_layer_settings,
+            editor.document.project.roll,
+            editor.photo_settings(),
             editor.dmin(),
             editor.dmax(),
             editor.document.state.project.clone(),
@@ -463,12 +462,12 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         assert!(
             editor
                 .validate_processing(
-                    editor.document.input,
+                    editor.document.project.input,
                     RollSettings {
                         exposure: 1.,
-                        ..editor.document.roll
+                        ..editor.document.project.roll
                     },
-                    editor.document.visit.adjustment_layer_settings
+                    editor.photo_settings()
                 )
                 .is_err()
         );
@@ -486,8 +485,8 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(
             (
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.roll,
+                editor.photo_settings(),
                 editor.dmin(),
                 editor.dmax(),
                 editor.document.state.project.clone()
@@ -507,8 +506,8 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             editor
                 .validate_processing(
                     proposed_cal,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
+                    editor.document.project.roll,
+                    editor.photo_settings()
                 )
                 .is_err()
         );
@@ -532,7 +531,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             std::time::Instant::now() - Duration::from_secs(1);
         let request = editor.document.visit.canvas.original.request().unwrap();
         let retired = request.begin().unwrap();
-        assert_eq!(request.demand.target, editor.document.target);
+        assert_eq!(request.demand.target, editor.document.target());
         assert!(matches!(
             request.demand.capture,
             crate::gpu::photograph::request::PhotographRequest::Recipe(_)
@@ -574,7 +573,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                 .as_ref()
                 .unwrap()
                 .proxy
-                .image(editor.document.target)
+                .image(editor.document.target())
                 .unwrap(),
         )));
         assert!(editor.document.visit.canvas.original.settled().is_none());
@@ -619,8 +618,8 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             editor
                 .positive_recipe(
                     editor.input(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                 )
                 .unwrap(),
         );
@@ -652,7 +651,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         assert!(bytes > 0, "the fixture must capture photographic arguments");
         let context = egui::Context::default();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
-        let index = editor.document.target as usize;
+        let index = editor.document.target() as usize;
         let source = editor
             .document
             .project
@@ -673,7 +672,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             (roots[index].clone(), recipe.luts.clone()),
             scope_frame,
             crate::scopes::Settings {
-                target: editor.document.target,
+                target: editor.document.target(),
                 plot: crate::scopes::Plot::Rgb,
                 amplification: 1,
             },
@@ -704,8 +703,8 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             let recipe = editor
                 .positive_recipe(
                     editor.input(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                 )
                 .unwrap();
             editor.document.visit.canvas.original.observe(
@@ -713,7 +712,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                 original_view::Demand {
                     capture: PhotographRequest::Recipe(Arc::new(recipe)),
                     repairs: Default::default(),
-                    target: editor.document.target,
+                    target: editor.document.target(),
                     view: Some(ViewRequest {
                         area: frame.bounds().unwrap(),
                         output: frame.output,
@@ -744,15 +743,15 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         let held_recipe = track_recipe(&held);
         let mut requested = vec![held_recipe.clone()];
         for i in 1..=40 {
-            editor.document.visit.adjustment_layer_settings.exposure = f64::from(i) / 100.;
+            editor.photo_settings_mut().exposure = f64::from(i) / 100.;
             observe(&mut editor);
             let latest = editor.document.visit.canvas.original.request().unwrap();
             let latest_recipe = track_recipe(&latest);
             let expected = editor
                 .positive_recipe(
                     editor.input(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                 )
                 .unwrap();
             assert_eq!(*latest_recipe.upgrade().unwrap(), expected);
@@ -840,9 +839,9 @@ fn capturing_other_photos_does_not_retain_unreferenced_recipes() {
                 editor
                     .positive_recipe_for_source(
                         calibration,
-                        editor.document.roll,
+                        editor.document.project.roll,
                         &source,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.photo_settings(),
                     )
                     .unwrap(),
             );
@@ -872,8 +871,8 @@ fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_
             editor
                 .positive_recipe(
                     editor.input(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
                 )
                 .unwrap(),
         );
@@ -886,11 +885,10 @@ fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_
             .as_ref()
             .unwrap()
             .proxy
-            .image(editor.document.target)
+            .image(editor.document.target())
             .unwrap();
         let calculation = image.recipe_calculation(&recipe, None).unwrap();
         let arguments = Arc::downgrade(&calculation);
-        editor.sync_document();
         let captured = editor.document.capture();
         let id = editor.document.visit.current_source;
         editor.document = editor.document.replacement(captured);
@@ -915,8 +913,8 @@ fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_
             editor
                 .positive_recipe(
                     editor.input(),
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
+                    editor.document.project.roll,
+                    editor.photo_settings()
                 )
                 .is_ok()
         );

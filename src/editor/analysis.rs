@@ -201,29 +201,34 @@ impl Editor {
     }
 
     pub(super) fn apply_roll_orientation(&mut self, action: Orientation) {
-        let before = self.history_snapshot();
-        match action {
-            Orientation::Left => self.document.roll_orientation.turn_counterclockwise(),
-            Orientation::Right => self.document.roll_orientation.turn_clockwise(),
-            Orientation::Horizontal => self.document.roll_orientation.horizontal ^= true,
-            Orientation::Vertical => self.document.roll_orientation.vertical ^= true,
-            Orientation::Reset => self.document.roll_orientation = RollOrientation::default(),
+        let result = (|| -> Result<(), Error> {
+            let mut draft = self.edit_project("Roll orientation")?;
+            draft.update(|project| match action {
+                Orientation::Left => project.orientation.turn_counterclockwise(),
+                Orientation::Right => project.orientation.turn_clockwise(),
+                Orientation::Horizontal => project.orientation.horizontal ^= true,
+                Orientation::Vertical => project.orientation.vertical ^= true,
+                Orientation::Reset => project.orientation = RollOrientation::default(),
+            });
+            self.commit_project(draft)
+        })();
+        if let Err(error) = result {
+            self.status = format!("Orientation rejected: {error}");
+            return;
         }
         self.document.visit.canvas.viewport.fit();
-        self.record_edit(before, "Roll orientation", None);
     }
 
-    pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> bool {
+    pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
         let reviewing = self.document.analysis_review().is_some();
         let analyzing = self.document.analysis_operation().is_some();
-        let capabilities = self.document.input.capabilities();
+        let capabilities = self.document.project.input.capabilities();
         let commands = !self.interaction_blocked()
             && self.selected_area().is_some()
             && !self.tool_interacting()
             && !self.dialogs.is_open();
-        let mut analyze = false;
 
         ToolShelf::show(ui, |ui| {
             for (icon, name, help, action) in [
@@ -262,12 +267,12 @@ impl Editor {
                     .enabled(
                         commands
                             && (!matches!(action, Orientation::Reset)
-                                || !self.document.roll_orientation.is_identity()),
+                                || !self.document.project.orientation.is_identity()),
                     )
                     .show(ui)
                     .clicked()
                 {
-                    self.control_command(editing::Command::Roll(action), cx);
+                    self.apply_roll_orientation(action);
                 }
             }
             if capabilities.roll_analysis || reviewing {
@@ -285,7 +290,7 @@ impl Editor {
                     if analyzing {
                         self.cancel_active_tool();
                     } else {
-                        analyze = true;
+                        self.request_analysis(cx);
                     }
                 }
             }
@@ -306,15 +311,15 @@ impl Editor {
                     if cropping {
                         self.cancel_active_tool();
                     } else {
-                        self.document.auto_crop_requested = Some(auto_crop::Action::Batch {
-                            photos: self.document.project.order.clone(),
-                            scope: "Whole roll",
-                        });
+                        self.review_crop_proposals(
+                            self.document.project.order.clone(),
+                            "Whole roll",
+                            cx,
+                        );
                     }
                 }
             }
         });
-        analyze
     }
 
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
@@ -324,7 +329,6 @@ impl Editor {
         {
             return None;
         }
-        self.sync_document();
         Some(Request {
             document: self.document.capture(),
             selected: self.document.visit.current_source?,
@@ -356,7 +360,6 @@ impl Editor {
         cancelled: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        self.sync_document();
         if cancelled {
             self.status = "Analysis cancelled".into();
             self.end_analysis_review(cx);
@@ -369,39 +372,44 @@ impl Editor {
                     self.end_analysis_review(cx);
                     return;
                 }
-                let photo = match self
-                    .validate_document_candidate(&outcome.document)
-                    .and_then(|_| {
-                        outcome.document.project.source(snapshot.selected).map(|s| {
-                            s.adjustment_layers
-                                .as_ref()
-                                .and_then(|layers| layers.layers.last())
-                                .map(|record| record.adjustment.photo)
-                                .unwrap_or_default()
-                        })
-                    }) {
-                    Ok(photo) => photo,
+                let mut transaction = match self.edit_project("Analyze roll") {
+                    Ok(edit) => edit,
                     Err(error) => {
                         self.status = format!("Analysis rejected: {error}");
                         self.end_analysis_review(cx);
                         return;
                     }
                 };
+                if let Err(error) = self
+                    .validate_document_candidate(&outcome.document)
+                    .and_then(|_| {
+                        outcome
+                            .document
+                            .project
+                            .source(snapshot.selected)
+                            .map(|_| ())
+                    })
+                {
+                    self.status = format!("Analysis rejected: {error}");
+                    self.end_analysis_review(cx);
+                    return;
+                }
                 if snapshot.areas.is_none()
                     && let Some(ready) = &mut self.document.visit.canvas.ready
                 {
                     ready.analysis_support = Some(Some(outcome.support));
                 }
-                let before = self.history_snapshot();
+                transaction.replace_snapshot(outcome.document.project.snapshot());
+                if let Err(error) = self.commit_project(transaction) {
+                    self.status = format!("Analysis rejected: {error}");
+                    self.end_analysis_review(cx);
+                    return;
+                }
                 self.document.install(outcome.document);
                 self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
-                self.load_input(self.document.state.project.input);
-                self.document.roll = self.document.state.project.roll;
-                self.document.visit.adjustment_layer_settings = photo;
                 self.document.source = false;
                 self.document.visit.working_view.clear();
                 self.invalidate_original();
-                self.record_edit(before, "Analyze roll", None);
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
                     outcome.frames
@@ -886,7 +894,6 @@ impl AnalyzeTool {
         request: &analysis::Request,
         result: Result<Option<Approved>, String>,
     ) -> Option<futures_channel::oneshot::Receiver<Confirmation>> {
-        editor.sync_document();
         match result {
             Ok(Some(approved)) => {
                 let replaces_photos = request.document.project.order.iter().any(|id| {
@@ -993,7 +1000,6 @@ impl AnalyzeTool {
         if editor.interaction_blocked() || editor.selected_area().is_none() || self.fitting() {
             return;
         }
-        editor.sync_document();
         let Some(review) = &self.review.as_ref() else {
             return;
         };

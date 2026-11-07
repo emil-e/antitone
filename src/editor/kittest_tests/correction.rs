@@ -207,7 +207,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
 }
 
 #[test]
-fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() {
+fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_another_paint() {
     editor_harness(|mut harness, _| {
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.interaction_blocked());
@@ -232,7 +232,6 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
                 .unwrap(),
             ));
             e.scopes.visible = false;
-            e.sync_document();
         });
         // Native chooser interaction is not part of this offscreen case.
         harness.enter(|e, cx| e.begin_flat_edit(fixture("bare-light.dng"), None, cx));
@@ -270,8 +269,10 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
             old_gamma,
             "typing is still an uncommitted draft"
         );
-        // This action is drawn above Gamma. Starting it immediately while drawing
-        // would disable the outgoing input before its focus loss can commit.
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        wait_for(&mut harness, |e| !e.editing());
+        harness.read(|e| assert!((e.gamma() - desired).abs() < 1e-12));
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Reset Flat-field correction")
             .click();
@@ -517,7 +518,8 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             let actual = editor.dmax().expect("measured corrected camera RGB");
             assert!((actual - dmax.1).abs().max_element() / dmax.1.abs().max_element() < 2e-6);
         });
-        let (editor_input, _roll) = harness.read(|editor| (editor.input(), editor.document.roll));
+        let (editor_input, _roll) =
+            harness.read(|editor| (editor.input(), editor.document.project.roll));
         let (region, balance) = patches
             .iter()
             .find_map(|(r, _)| scan.roll_neutral(*r, &editor_input).ok().map(|b| (*r, b)))
@@ -546,17 +548,16 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         // Give the layer pick a real upstream cast, independent of gamma-fit rounding residuals.
         harness.update(|editor| {
-            editor.document.roll.wb = Balance {
+            editor.document.project.roll.wb = Balance {
                 warmth: 0.15,
                 tint: -0.1,
             };
-            editor.sync_document();
         });
         let (editor_input, roll, photo) = harness.read(|editor| {
             (
                 editor.input(),
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
         });
         let (region, balance) = patches
@@ -577,7 +578,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         stage(&mut harness, "Photo");
         pick_patch(&mut harness, "Pick neutral for white balance", region);
         harness.read(|editor| {
-            let actual = editor.document.visit.adjustment_layer_settings.wb;
+            let actual = editor.photo_settings().wb;
             assert!(
                 (actual.warmth - balance.warmth).abs() < 2e-6,
                 "{actual:?} != {balance:?}"
@@ -595,7 +596,6 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                     Ok(())
                 })
                 .unwrap();
-            editor.sync_document();
             editor
                 .validate_document_candidate(&editor.document)
                 .unwrap();
@@ -760,7 +760,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 > 0
         });
         set_layout(&mut harness, egui::vec2(800., 600.), 270.);

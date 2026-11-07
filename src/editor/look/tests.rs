@@ -29,7 +29,6 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
     e.set_dmin(None);
     e.set_dmax(None);
     e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
-    e.sync_document();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -318,6 +317,30 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
 }
 
 #[test]
+fn a_completed_look_rejects_overlap_without_waiting_or_changing_its_owner() {
+    let (e, scheduler) = editor();
+    with_application(e, |app| {
+        let predecessor = app.enter(|editor, _| editor.edit_project("Existing").unwrap());
+        let before = app.read(|editor| editor.document.project.clone());
+        app.enter(|editor, cx| editor.select_look(Source::Loaded(asset(0.7)), cx));
+        app.run_until(Duration::from_secs(5), |editor| {
+            editor.document.look.is_none()
+        });
+        app.read(|editor| {
+            assert!(editor.activities.view().is_none());
+            assert_eq!(editor.document.project, before);
+            assert!(
+                editor.dialogs.is_open(),
+                "the rejected publication is reported"
+            );
+        });
+        assert!(predecessor.preview().active());
+        drop(predecessor);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn user_cancel_retires_queued_work_without_changing_the_accepted_look() {
     let (mut e, scheduler) = editor();
     e.document.state.project.output.lut = Some(asset(0.2));
@@ -494,8 +517,7 @@ fn retired_running_preparation_keeps_its_owner_until_cleanup_without_blocking_a_
 
 #[test]
 fn unavailable_look_service_restores_idle_feedback_without_changing_the_project() {
-    let mut e = fixture();
-    e.sync_document();
+    let e = fixture();
     let before = e.document.state.project.clone();
     with_application(e, |app| {
         app.enter(|e, access| {
