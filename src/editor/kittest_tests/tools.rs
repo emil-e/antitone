@@ -37,6 +37,8 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
 }
 
 fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+    harness.get_by_label("Fit").click();
+    harness.step();
     let at = harness.read(|editor| {
         editor
             .document
@@ -46,6 +48,12 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
             .unwrap()
             .0
             .screen_point(point)
+    });
+    harness.read(|editor| {
+        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
+        assert!(layout.canvas.contains(at) && layout.image.contains(at),
+            "sample {point:?} maps to {at:?} outside visible image {:?} / canvas {:?}; picker={:?}, crop={:?}",
+            layout.image, layout.canvas, editor.test_pick(), editor.photo_crop());
     });
     harness.hover_at(at);
     for pressed in [true, false] {
@@ -326,7 +334,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.step();
                 harness.read(|editor| assert!(!editor.interaction_blocked()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
-                click_patch(&mut harness, egui::pos2(96., 32.));
+                click_patch(&mut harness, egui::pos2(160., 160.));
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
                 harness.get_by_label("Cancel").click();
                 harness.step();
@@ -337,7 +345,11 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 wait_for(&mut harness, |editor| editor.test_pick().is_some());
                 click_patch(
                     &mut harness,
-                    egui::pos2(if kind == PickerCase::Dmin { 32. } else { 96. }, 32.),
+                    if kind == PickerCase::Dmin {
+                        egui::pos2(32., 32.)
+                    } else {
+                        egui::pos2(160., 160.)
+                    },
                 );
                 harness.get_by_label("Apply").click();
                 harness.step();
