@@ -80,8 +80,7 @@ pub(super) fn install_layers(editor: &mut Editor) -> [AdjustmentLayerId; 2] {
         .source_mut(source)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.document.visit.adjustment_layer_settings =
-        editor.selected_adjustment_layer_settings().unwrap();
+
     editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(sky));
     editor
         .validate_source_candidate(editor.document.state.project.source(source).unwrap())
@@ -166,10 +165,7 @@ fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls
         workflow::enter_numeric(&mut harness, "Exposure", "-0.25");
         click(&mut harness, "Global");
         harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.5
-            );
+            assert_eq!(editor.photo_settings().exposure, 0.5);
             let layers = layers(editor);
             assert_eq!(layers.layers[0].adjustment.photo.exposure, 0.5);
             assert_eq!(layers.layers[1].adjustment.photo.exposure, -0.25);
@@ -181,10 +177,7 @@ fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls
             let layers = layers(editor);
             assert_eq!(layers.layers.len(), 1);
             assert_eq!(layers.layers[0].name, "Global 2");
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                -0.25
-            );
+            assert_eq!(editor.photo_settings().exposure, -0.25);
         });
     });
 }
@@ -345,7 +338,7 @@ fn zero_strength_greys_out_ineffective_controls_but_can_be_restored() {
         harness.step();
         show_layers(&mut harness);
         click(&mut harness, "Foreground");
-        let settings = harness.read(|editor| editor.document.visit.adjustment_layer_settings);
+        let settings = harness.read(|editor| editor.photo_settings());
         workflow::enter_numeric(&mut harness, "Strength", "0");
         harness.try_run_realtime().unwrap();
         for name in ["Exposure", "Contrast", "Saturation", "Feather"] {
@@ -580,84 +573,155 @@ fn deletion_confirmation_can_cancel_and_text_input_owns_delete() {
 }
 
 #[test]
-fn source_switch_cancels_hidden_text_without_applying_it_to_another_photo() {
-    workflow::calibrated_workflow(|mut harness, _, _directory| {
-        harness.update(install_layers);
-        harness.step();
-        show_layers(&mut harness);
-        click(&mut harness, "Sky");
-        let (outgoing, outgoing_grade, other, other_grade) = harness.read(|editor| {
-            let outgoing = editor.document.visit.current_source.unwrap();
-            let other = editor
-                .document
-                .project
-                .order
-                .iter()
-                .copied()
-                .find(|id| {
+fn source_switch_keeps_completed_edits_on_the_outgoing_layer_and_retires_private_text() {
+    for complete in [false, true] {
+        workflow::calibrated_workflow(|mut harness, _, _directory| {
+            harness.update(install_layers);
+            harness.step();
+            show_layers(&mut harness);
+            click(&mut harness, "Sky");
+            let (outgoing, outgoing_grade, other, other_grade) = harness.read(|editor| {
+                let outgoing = editor.document.visit.current_source.unwrap();
+                let other = editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .copied()
+                    .find(|id| {
+                        editor
+                            .document
+                            .project
+                            .source(*id)
+                            .unwrap()
+                            .path
+                            .file_name()
+                            .unwrap()
+                            == "patches.dng"
+                    })
+                    .unwrap();
+                (
+                    outgoing,
                     editor
                         .document
                         .project
-                        .source(*id)
+                        .source(outgoing)
                         .unwrap()
-                        .path
-                        .file_name()
+                        .grade_snapshot()
+                        .unwrap(),
+                    other,
+                    editor
+                        .document
+                        .project
+                        .source(other)
                         .unwrap()
-                        == "patches.dng"
-                })
-                .unwrap();
-            (
-                outgoing,
-                editor
+                        .grade_snapshot()
+                        .unwrap(),
+                )
+            });
+            let layer = harness.read(|editor| {
+                let layers = editor
+                    .document
+                    .project
+                    .source(outgoing)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap();
+                let index = layers
+                    .layers
+                    .iter()
+                    .position(|record| record.name == "Sky")
+                    .unwrap();
+                assert_eq!(
+                    editor.adjustment_layer_target(),
+                    crate::editor::adjustment_layers::Target::Layer(layers.layers[index].id)
+                );
+                index
+            });
+            let mut expected = outgoing_grade.layers().to_vec();
+            expected[layer].photo.exposure = 0.875;
+            let expected = AdjustmentLayerSnapshot::new(expected).unwrap();
+            let old_undo =
+                harness.read(|editor| editor.history_label(super::super::history::Direction::Undo));
+            pending_exposure(&mut harness, "0.875");
+            if complete {
+                harness.key_press(egui::Key::Enter);
+                harness.step();
+            }
+            harness.get_by_label("patches.dng").click();
+            harness.step();
+            wait_for(&mut harness, |editor| {
+                editor.document.visit.current_source == Some(other) && !editor.interaction_blocked()
+            });
+            let accepted = harness.read(|editor| {
+                let outgoing_now = editor
                     .document
                     .project
                     .source(outgoing)
                     .unwrap()
                     .grade_snapshot()
-                    .unwrap(),
-                other,
-                editor
-                    .document
-                    .project
-                    .source(other)
-                    .unwrap()
-                    .grade_snapshot()
-                    .unwrap(),
-            )
+                    .unwrap();
+                if complete {
+                    assert_eq!(outgoing_now, expected);
+                } else {
+                    assert!(outgoing_now == outgoing_grade || outgoing_now == expected);
+                }
+                let changed = outgoing_now != outgoing_grade;
+                if !changed {
+                    assert_eq!(
+                        editor.history_label(super::super::history::Direction::Undo),
+                        old_undo
+                    );
+                }
+                assert_eq!(
+                    editor
+                        .document
+                        .project
+                        .source(other)
+                        .unwrap()
+                        .grade_snapshot()
+                        .unwrap(),
+                    other_grade
+                );
+                assert_eq!(
+                    editor.photo_settings(),
+                    editor.selected_adjustment_layer_settings().unwrap()
+                );
+                assert!(!editor.editing());
+                changed
+            });
+            if !accepted {
+                return;
+            }
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+            harness.step();
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
+            harness.read(|editor| {
+                assert_eq!(editor.document.visit.current_source, Some(outgoing));
+                assert_eq!(
+                    editor
+                        .document
+                        .project
+                        .source(outgoing)
+                        .unwrap()
+                        .grade_snapshot()
+                        .unwrap(),
+                    outgoing_grade
+                );
+                assert_eq!(
+                    editor
+                        .document
+                        .project
+                        .source(other)
+                        .unwrap()
+                        .grade_snapshot()
+                        .unwrap(),
+                    other_grade
+                );
+            });
         });
-        pending_exposure(&mut harness, "0.875");
-        harness.get_by_label("patches.dng").click();
-        harness.step();
-        wait_for(&mut harness, |editor| {
-            editor.document.visit.current_source == Some(other) && !editor.interaction_blocked()
-        });
-        harness.read(|editor| {
-            assert_eq!(
-                editor
-                    .document
-                    .project
-                    .source(outgoing)
-                    .unwrap()
-                    .grade_snapshot()
-                    .unwrap(),
-                outgoing_grade
-            );
-            assert_eq!(
-                editor
-                    .document
-                    .project
-                    .source(other)
-                    .unwrap()
-                    .grade_snapshot()
-                    .unwrap(),
-                other_grade
-            );
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings,
-                editor.selected_adjustment_layer_settings().unwrap()
-            );
-        });
-    });
+    }
 }
 
 #[test]
@@ -829,8 +893,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
                 .get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                 .rect()
                 .center();
-            let before =
-                harness.read(|editor| editor.document.visit.adjustment_layer_settings.exposure);
+            let before = harness.read(|editor| editor.photo_settings().exposure);
             harness.read(|editor| assert!(mask_artwork(editor) > 0));
             harness.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
             harness.hover_at(point);
@@ -843,10 +906,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.step();
             harness.run_steps(3);
             harness.read(|editor| {
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    before
-                );
+                assert_eq!(editor.photo_settings().exposure, before);
                 assert_eq!(mask_artwork(editor), 0);
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
             });
@@ -854,10 +914,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.hover_at(end);
             harness.step();
             harness.read(|editor| {
-                assert_ne!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    before
-                );
+                assert_ne!(editor.photo_settings().exposure, before);
                 assert_eq!(mask_artwork(editor), 0);
             });
             harness.event(egui::Event::PointerButton {
@@ -884,10 +941,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.step();
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    0.375
-                );
+                assert_eq!(editor.photo_settings().exposure, 0.375);
                 assert!(mask_artwork(editor) > 0);
             });
 

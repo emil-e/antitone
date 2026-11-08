@@ -23,10 +23,9 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
         workflow::enter_numeric(&mut harness, "Contrast", "0.75");
         harness.update(|editor| {
             let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            editor.document.visit.crop =
+            *editor.photo_crop_mut() =
                 Some(Crop::from_region(area).straightened(area, 0.11).unwrap());
-            editor.document.visit.photo_orientation.turn_clockwise();
-            editor.sync_document();
+            editor.photo_orientation_mut().turn_clockwise();
         });
         harness.step();
         workflow::wait_settled(&mut harness);
@@ -106,9 +105,9 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
         let size = harness.read(|editor| {
             Composition::with_crop(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
-                editor.document.visit.crop,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
+                editor.photo_crop(),
             )
             .unwrap()
             .size()

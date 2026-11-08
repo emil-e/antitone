@@ -119,7 +119,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     let first = preview_fixture::neutral_dng(0.3);
     let second = preview_fixture::neutral_dng(2.25);
     let mut editor = Editor::state();
-    editor.document.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
     editor.document.state.project.input = InputSettings::Digital;
     editor
         .document
@@ -155,8 +155,8 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         adapter.request_device(&Default::default()).await.unwrap()
     });
     editor.initialize_viewer(&device, &queue);
-    editor.document.roll.exposure = 16.;
-    editor.document.state.project.roll = editor.document.roll;
+    editor.document.project.roll.exposure = 16.;
+    editor.document.state.project.roll = editor.document.project.roll;
     let mut locals = crate::project::AdjustmentLayers::default();
     for exposure in [16., 16., 16., 16., 16., 4.] {
         locals
@@ -207,7 +207,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     crate::editor::processing::validate_source(
         Some(&device),
         InputSettings::Digital,
-        editor.document.roll,
+        editor.document.project.roll,
         &offscreen,
     )
     .expect("the zero-start control must fit; only the known baseline makes this stack unsafe");

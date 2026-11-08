@@ -179,7 +179,7 @@ impl Editor {
 
     pub(super) fn tool_start_available(&self) -> bool {
         !self.interaction_blocked()
-            && !self.document.gamma_pivot.pending()
+            && !self.controls_pending()
             && self.document_pending.is_none()
             && !self.export_modal()
             && !self.dialogs.is_open()
@@ -191,6 +191,7 @@ impl Editor {
         if !self.tool_start_available() {
             return false;
         }
+        self.cancel_control_edit();
         self.document.visit.interaction_action = None;
         self.cancel_active_tool();
         self.canvas_frame = Default::default();

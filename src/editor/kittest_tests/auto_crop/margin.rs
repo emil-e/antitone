@@ -77,7 +77,7 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
                     )
                 });
                 h.read(|editor| assert_eq!(editor.document.state.project, before));
-                h.read(|editor| assert_eq!(editor.document.visit.crop, None));
+                h.read(|editor| assert_eq!(editor.photo_crop(), None));
                 h.read(|editor| assert!(!editor.document.dirty()));
                 seen.push(crop);
             }

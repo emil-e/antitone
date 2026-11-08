@@ -71,7 +71,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         editor.set_dmin(Some(expected * 1.05));
         editor.set_dmax(Some(dark));
         editor.document.visit.canvas.ready = Some(ready);
-        editor.sync_document();
+
         editor.document.cache.set_budget(0);
         drop(scan);
         let hold = crate::background::testing::pause();
@@ -165,7 +165,6 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
 fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
     let mut editor = crate::editor::tests::with_document_services(crate::editor::tests::fixture());
     crate::editor::tests::add_ready_fixture(&mut editor);
-    editor.sync_document();
     let area = Scan::from_source(
         editor
             .document

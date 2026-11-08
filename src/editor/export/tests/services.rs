@@ -11,7 +11,7 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     let mut editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     editor.set_dmin(Some(glam::DVec3::splat(0.8)));
     editor.set_dmax(Some(glam::DVec3::splat(0.02)));
-    editor.sync_document();
+
     let directory = tempfile::tempdir().unwrap();
     let mut settings = Draft::new(
         crate::rendering::OutputTarget::Srgb,

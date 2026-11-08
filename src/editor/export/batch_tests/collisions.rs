@@ -11,12 +11,12 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
         let mut editor = authored_fixture(&["patches.dng"]);
         editor.set_dmin(Some(glam::DVec3::splat(0.8)));
         editor.set_dmax(Some(glam::DVec3::splat(0.02)));
-        editor.document.visit.crop = Some(crate::crop::Crop {
+        *editor.photo_crop_mut() = Some(crate::crop::Crop {
             center: [120., 100.],
             size: [16, 16],
             angle: 0.,
         });
-        editor.sync_document();
+
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("patches.exr");
         let mut settings = Draft::new(OutputTarget::Srgb, directory.path().to_owned());

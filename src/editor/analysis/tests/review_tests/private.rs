@@ -41,7 +41,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             "{}",
             editor.status
         );
-        editor.sync_document();
+
         let before = editor.document.state.project.clone();
         let first = editor.document.visit.current_source;
         let count = before.order.len();

@@ -97,7 +97,6 @@ impl Editor {
         if self.files.pending() {
             return;
         }
-        self.sync_document();
         if !self.document.dirty() {
             self.perform_transition(transition, cx);
             return;
@@ -121,7 +120,6 @@ impl Editor {
         if self.files.pending() || self.dust_search_pending() {
             return;
         }
-        self.sync_document();
         let id = self.id;
         let response = self.start_save(
             document::Write {
@@ -340,7 +338,7 @@ async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) 
             if editor.id != id || editor.dust_search_pending() {
                 return None;
             }
-            editor.sync_document();
+
             Some(editor.start_save(
                 document::Write {
                     document: editor.document.capture(),

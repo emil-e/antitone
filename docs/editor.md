@@ -10,13 +10,15 @@ The editor uses a neutral dark workspace with amber identity and active-state ac
 
 On macOS, native AppKit menus provide the conventional Antitone, File, Edit, View, Window and Help groups. File → **Add Scans…** adds camera RAW source references without moving or modifying originals; Export belongs under File. Settings, About and local workflow help open focused in-editor panels. Settings controls optional CPU/GPU retention in whole MiB, including zero and explicit reset — see [Responsiveness and optional caches](#responsiveness-and-optional-caches); those limits are not a process-memory cap.
 
-The [shared menu model](../src/platform/menu.rs) supplies actions, grouping and shortcuts to native and egui presentation; the [host](../src/platform/host.rs) owns native menu lifetime and forwards activations through winit's event-loop proxy, restoring a minimized editor so panels do not open invisibly. The editor revalidates queued commands against their actual input, decision and operation constraints; an active tool alone does not prevent activating another. Text-targeting Edit actions and focus-changing commands wait for pending text input to render, so a Paste followed immediately by Save cannot lose the pasted value. The egui fallback uses the same commands and state when native menus are not installed; only the macOS host is implemented.
+The [shared menu model](../src/platform/menu.rs) supplies actions, grouping and shortcuts to native and egui presentation; the [host](../src/platform/host.rs) owns native menu lifetime and forwards activations through winit's event-loop proxy, restoring a minimized editor so panels do not open invisibly. The editor revalidates menu activations against their input, decision and operation constraints; an active tool alone does not prevent activating another. Text-targeting Edit actions receive pending input before focus changes. File actions are unavailable during an unfinished control edit; finish or cancel it before invoking Save. The egui fallback uses the same commands and state when native menus are not installed; only the macOS host is implemented.
 
 ### Native quit negotiation
 
 Dock and system Quit enter the same unsaved-change guard as menu Quit: the editor reports live close continuations, and busy work or active drafts decline the request without accepting or discarding anything. The [termination bridge](../src/platform/termination.rs) uses AppKit's deferred decision — winit owns its delegate, so the bridge adds only the missing optional decision method — and coalesces repeated termination requests while a decision is pending.
 
 ## Accepted state and drafts
+
+The accepted project is the saved-state and history authority. An edit owns a whole working project; rendering observes it weakly. Acquisition fails while another edit is live; actions can instead retire their unfinished control owner before starting. Features validate their values before committing; the edit publishes the version with history. Dropping the owner withdraws its preview without restoring an old accepted snapshot. Photo edits belong to the visit; Roll and Rendering edits belong to the document. Readers and history share immutable project versions, with copy-on-write mutation.
 
 Crop, picker and reference-area edits have temporary interaction state. Apply submits the proposal; accepted state changes only after validation. Cancel discards the draft. Tabs and outside clicks do not implicitly accept or discard those drafts. Local gradients instead preview a captured gesture and accept a validated release. Save/Export never consume half-applied geometry.
 
@@ -34,7 +36,7 @@ Crop continuously centers the frame during handle resizing, retaining screen-spa
 
 The pin beside gamma's neutral picker opens the ordinary area picker. Apply captures evidence; Cancel preserves an existing anchor. The pin is outlined while choosing and filled when locked; clicking it cancels selection or releases the lock. Capture and release are transient, outside dirty state and history. The document retains accepted evidence across photo visits, retiring it when its source leaves or its upstream measurement basis changes. Crop, view, look and output changes preserve it.
 
-Manual gamma controls display their proposal while the shared GPU response runs off-thread. Gamma and compensating Roll WB are validated and accepted together, with one gesture/history entry. Admitted commands stay with the document until that edit and overlapping preparation allow dispatch; replacing the document retires them. Replay restores accepted values without compensating again. [Processing](processing.md#picked-colour-gamma-pivot) owns the measurement and numerical model.
+Manual gamma controls display their proposal while the shared GPU response runs off-thread. The photograph uses a coherent prepared gamma/WB pair; completing the gesture accepts both together with one history entry. The document-owned edit retains its calculation across browsing and tabs; retirement removes its publication rights. Replay restores accepted values without compensating again. [Processing](processing.md#picked-colour-gamma-pivot) owns the measurement and numerical model.
 
 ### Auto-crop is an explicit accepted edit
 
@@ -70,11 +72,11 @@ Stock/media names retain upstream attribution. Imported names remain as saved. S
 
 The Edit menu and Cmd–Z / Shift–Cmd–Z traverse one chronological history for the whole project. Roll, Photo and Rendering edits share it, including calibration, correction, accepted Analyze results and project-only photo removal. Navigation itself is not recorded; undoing a Photo edit activates its photo.
 
-A continuous gesture is one action; numeric text commits, resets and commands are separate actions. Undo/Redo can run with a tool selected; an admitted document restoration retires the current unfinished interaction before replacing accepted state. Unapplied draft gestures are not history entries. Cancelled, rejected and unchanged edits add no entries; new accepted edits discard redo. The implementation retains up to 100 actions in memory as cloned accepted project descriptions — not RAW pixels or rendered images — and history is neither stored in the project file nor restored on relaunch.
+A continuous gesture is one action; numeric text commits, resets and commands are separate actions. Undo/Redo can run with a tool selected; an admitted document restoration retires the current unfinished interaction before replacing accepted state. Unapplied draft gestures are not history entries. Cancelled, rejected and unchanged edits add no entries; new accepted edits discard redo. The implementation retains up to 100 actions in memory through shared immutable project versions — not RAW pixels or rendered images. History is neither stored in the project file nor restored on relaunch.
 
 ## Numeric edits own their input
 
-A displayed number is not necessarily a rounded stored value. Controls preserve precise values while the user reads or redraws them; only a deliberate edit may change processing. Pending text commits before a stage switch, Analyze snapshot or file action, and discrete commands wait for that admission so they remain separately undoable. Escape cancels text editing before it can cancel an image tool.
+A displayed number is not necessarily a rounded stored value. Controls preserve precise values while the user reads or redraws them; only a deliberate edit may change processing. Slider and wheel gestures preview values until completion; numeric text commits on Enter or ordinary focus loss. Incomplete numeric text stays private to its widget until completion. Moving between numeric fields completes the outgoing field; each completed field is independently undoable. Scope departure abandons an unfinished edit; ordinary focus loss can complete it before departure. Escape cancels text editing before it can cancel an image tool.
 
 Colour wheels drag relative to the accepted value; holding Shift gives ten-times finer motion without a jump when Shift changes. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
 
@@ -97,7 +99,7 @@ Working feedback answers two questions: **what is happening, and what can I stil
 | Shared region preparation and running Analyze | A delayed working modal with counted or indeterminate progress and Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
-Save/Export wait until the active tool and working modals end. Shared region preparation owns its feedback independently of the tools awaiting its result.
+Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
 
 [Activities](../src/editor/activity.rs) are scoped handles carrying caller-supplied status, progress, modality and cancellation feedback. Keep the handle in the async workflow; destruction removes its feedback. Worker reporters and UI snapshots observe weakly. Feature state and explicit modality govern admission; the presence of nonmodal feedback does not make the editor unavailable.
 
@@ -201,7 +203,7 @@ Use the existing component families rather than copying their painting or intera
 - [Decisions](../src/editor/presentation/dialogs.rs), [Feedback](../src/editor/presentation/feedback.rs), [Activities](../src/editor/activity.rs), [Working](../src/editor/presentation/progress.rs): the shared modal, severity, task and progress surfaces.
 - [Cards](../src/editor/presentation/cards.rs), [Icons](../src/editor/icons.rs), [Controls](../src/editor/controls.rs): filmstrip geometry, semantic actions, photographic value widgets.
 
-Presentation receives display-ready state and returns responses; controllers own feature availability, accepted/draft state and dispatch. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
+Presentation receives display-ready state and returns responses; controllers own feature availability, accepted/draft state and dispatch. Shared value widgets edit local values and return interaction responses; features apply those values to their own working projects. Each completed control edit is independently undoable. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
 
 ### Inspector density and value grammar
 
@@ -254,6 +256,6 @@ Colour expresses interaction state, not feature ownership. Presentation installs
 
 ## Working on this area
 
-Start with [editor orchestration](../src/editor.rs), [Photo-stage composition](../src/editor/photo_ui.rs), [editing commands](../src/editor/editing.rs) and [tool ownership and replacement](../src/editor/tool.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [measurement](../src/editor/measurement.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
+Start with [editor orchestration](../src/editor.rs), [Photo-stage composition](../src/editor/photo_ui.rs), [scoped control edits](../src/editor/editing.rs) and [tool ownership and replacement](../src/editor/tool.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [measurement](../src/editor/measurement.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
 
 Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks).

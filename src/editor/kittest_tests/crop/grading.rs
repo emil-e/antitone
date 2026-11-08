@@ -5,8 +5,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
     for exit in ["Apply", "Cancel", "Dust repair", "Add linear"] {
         editor_harness(|mut h, _| {
             h.update(|editor| {
-                editor.document.input = crate::processing::InputSettings::Digital;
-                editor.sync_document();
+                editor.document.project.input = crate::processing::InputSettings::Digital;
             });
             h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut h, |editor| {
@@ -14,12 +13,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             });
             stage(&mut h, "Photo");
             workflow::enter_numeric(&mut h, "Exposure", "0.75");
-            h.read(|editor| {
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    0.75
-                )
-            });
+            h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.75));
             h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
                 .click();
             h.step();
@@ -55,11 +49,8 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             );
             h.read(|editor| {
                 assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
-                assert!(editor.document.visit.crop.is_none());
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    0.75
-                );
+                assert!(editor.photo_crop().is_none());
+                assert_eq!(editor.photo_settings().exposure, 0.75);
             });
             let mut expected = h.read(|editor| editor.document.state.project.clone());
             let source = h.read(|editor| editor.document.visit.current_source.unwrap());
@@ -78,10 +69,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             });
             h.read(|editor| {
                 assert_eq!(editor.document.state.project, expected);
-                assert_eq!(
-                    editor.document.visit.adjustment_layer_settings.exposure,
-                    0.75
-                );
+                assert_eq!(editor.photo_settings().exposure, 0.75);
                 if exit == "Dust repair" {
                     assert!(editor.dusting());
                 }
@@ -110,11 +98,8 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                     !editor.interaction_blocked() && editor.document_pending.is_none()
                 });
                 h.read(|editor| {
-                    assert!(editor.document.visit.crop.is_none());
-                    assert_eq!(
-                        editor.document.visit.adjustment_layer_settings.exposure,
-                        0.75
-                    );
+                    assert!(editor.photo_crop().is_none());
+                    assert_eq!(editor.photo_settings().exposure, 0.75);
                 });
             }
             h.read(|editor| {
@@ -128,9 +113,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             wait_for(&mut h, |editor| {
                 !editor.interaction_blocked() && editor.document_pending.is_none()
             });
-            h.read(|editor| {
-                assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.)
-            });
+            h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
         });
     }
 }

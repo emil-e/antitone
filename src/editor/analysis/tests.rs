@@ -90,15 +90,14 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.document.state.project.analysis_area = Some([96, 96, 320, 320]);
         editor.set_gamma(0.7);
-        editor.document.visit.adjustment_layer_settings.exposure = 0.75;
-        editor.document.roll_orientation.turn_clockwise();
-        editor.document.visit.photo_orientation.flips.horizontal = true;
-        editor.document.visit.crop = Some(crate::crop::Crop {
+        editor.photo_settings_mut().exposure = 0.75;
+        editor.document.project.orientation.turn_clockwise();
+        editor.photo_orientation_mut().flips.horizontal = true;
+        *editor.photo_crop_mut() = Some(crate::crop::Crop {
             center: [256., 256.],
             size: [288, 288],
             angle: 0.05,
         });
-        editor.sync_document();
         let before = editor.document.state.project.clone();
         editor = click_analyze(editor, Duration::from_secs(60));
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
@@ -250,37 +249,28 @@ fn state() -> Editor {
     editor.document.visit.current_source = Some(id);
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_gamma(0.9);
-    editor.document.roll.exposure = 0.;
-    editor.document.visit.adjustment_layer_settings.exposure = 1.23456789;
-    editor.document.visit.adjustment_layer_settings.wb = Balance {
+    editor.document.project.roll.exposure = 0.;
+    editor.photo_settings_mut().exposure = 1.23456789;
+    editor.photo_settings_mut().wb = Balance {
         warmth: 0.3,
         tint: -0.2,
     };
-    editor.document.visit.adjustment_layer_settings.contrast = 0.8;
-    editor.document.visit.adjustment_layer_settings.pivot = 0.3;
-    editor
-        .document
-        .visit
-        .adjustment_layer_settings
-        .contrast_colour_mix = 0.4;
-    editor.document.visit.adjustment_layer_settings.saturation = 1.2;
-    editor
-        .document
-        .visit
-        .adjustment_layer_settings
-        .saturation_density = 0.6;
-    editor.document.roll.wb = Balance {
+    editor.photo_settings_mut().contrast = 0.8;
+    editor.photo_settings_mut().pivot = 0.3;
+    editor.photo_settings_mut().contrast_colour_mix = 0.4;
+    editor.photo_settings_mut().saturation = 1.2;
+    editor.photo_settings_mut().saturation_density = 0.6;
+    editor.document.project.roll.wb = Balance {
         warmth: 0.2,
         tint: -0.1,
     };
-    editor.document.roll_orientation.turn_clockwise();
-    editor.document.visit.photo_orientation.flips.horizontal = true;
-    editor.document.visit.crop = Some(crate::crop::Crop {
+    editor.document.project.orientation.turn_clockwise();
+    editor.photo_orientation_mut().flips.horizontal = true;
+    *editor.photo_crop_mut() = Some(crate::crop::Crop {
         center: [412., 312.],
         size: [600, 400],
         angle: 0.1,
     });
-    editor.sync_document();
     editor
 }
 
@@ -346,7 +336,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     editor.document.visit.working_view.observe(
         frame,
         crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
-        editor.document.target,
+        editor.document.target(),
     );
     assert!(editor.document.visit.working_view.revision().is_some());
     let view = ViewRequest {
@@ -358,7 +348,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         OriginalPurpose::Reference,
         super::super::original_view::Demand::fixture(
             input.clone(),
-            editor.document.target,
+            editor.document.target(),
             Some(view),
             composition,
             source::Context {
@@ -382,12 +372,12 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(!editor.interaction_blocked() && !editor.analysis_fitting());
     assert_eq!(editor.dmin().unwrap(), DVec3::new(0.8, 0.4, 0.2));
     assert_eq!(editor.dmax().unwrap(), DVec3::new(0.04, 0.02, 0.01));
-    assert_eq!(editor.document.roll.exposure, 2.1);
+    assert_eq!(editor.document.project.roll.exposure, 2.1);
     assert_eq!(editor.gamma(), before.input.gamma());
     assert_eq!(Some(editor.response()), Editor::response_of(before.input));
-    assert_eq!(editor.document.roll.wb, expected.roll.wb);
+    assert_eq!(editor.document.project.roll.wb, expected.roll.wb);
     assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_settings(),
         expected.sources[0]
             .adjustment_layers
             .as_ref()
@@ -397,7 +387,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             .photo
     );
     assert_ne!(
-        editor.document.visit.adjustment_layer_settings,
+        editor.photo_settings(),
         before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
             .adjustment
             .photo
@@ -467,19 +457,15 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             && editor.document.visit.canvas.original.settled().is_none()
     );
     assert!(editor.document.dirty());
-    editor.document.roll.exposure = 0.;
-    editor.document.visit.adjustment_layer_settings.exposure = 0.;
-    editor.document.visit.adjustment_layer_settings.wb = Balance {
+    editor.document.project.roll.exposure = 0.;
+    editor.photo_settings_mut().exposure = 0.;
+    editor.photo_settings_mut().wb = Balance {
         warmth: 0.25,
         tint: -0.15,
     };
-    let manual_photo = editor.document.visit.adjustment_layer_settings;
-    editor.sync_document();
-    assert_eq!(editor.document.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings,
-        manual_photo
-    );
+    let manual_photo = editor.photo_settings();
+    assert_eq!(editor.document.project.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
+    assert_eq!(editor.photo_settings(), manual_photo);
 }
 
 #[test]
@@ -514,9 +500,9 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
             &crate::application::UiContext::render_only(),
         );
         assert_eq!(editor.document.state.project, before);
-        assert_eq!(editor.document.roll, before.roll);
+        assert_eq!(editor.document.project.roll, before.roll);
         assert_eq!(
-            editor.document.visit.adjustment_layer_settings,
+            editor.photo_settings(),
             before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
                 .adjustment
                 .photo
@@ -530,10 +516,10 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
     for (settled, outstanding) in [(false, true), (true, false)] {
         for cancel in [false, true] {
             let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
-            editor.document.input = super::super::tests::fixture().document.input;
+            editor.document.project.input = super::super::tests::fixture().document.project.input;
             editor.document.source = false;
             editor.document.visit.working_view.compare = true;
-            editor.sync_document();
+
             crate::application::test_support::with_application(editor, |app| {
                 let ctx = egui::Context::default();
                 app.enter(|editor, cx| {
@@ -803,7 +789,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             "holder tails returned: {dmax:?}"
         );
         assert!(
-            editor.document.roll.exposure < 3.,
+            editor.document.project.roll.exposure < 3.,
             "holder-driven placement returned"
         );
         println!(
@@ -811,7 +797,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             editor.document.state.project.analysis_area,
             editor.dmin(),
             editor.balance(),
-            editor.document.roll.exposure
+            editor.document.project.roll.exposure
         );
     });
 }
@@ -934,16 +920,15 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             "numeric point {point:?}, labels {labels:?}"
         );
         super::super::tests::app_frame(app, &ctx, vec![egui::Event::Text("0.7654321".into())]);
-        assert_eq!(
-            app.read(|e| e.document.visit.adjustment_layer_settings.exposure),
-            0.
-        );
+        assert_eq!(app.read(|e| e.photo_settings().exposure), 0.);
         click_label(app, &ctx, "Roll");
         app.read(|e| {
             assert_eq!(
-                e.document.visit.adjustment_layer_settings.exposure, 0.7654321,
+                e.photo_settings().exposure,
+                0.7654321,
                 "tab={} status={}",
-                e.tab, e.status
+                e.tab,
+                e.status
             )
         });
         click_label(app, &ctx, "Analyze");
@@ -981,7 +966,7 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.visit.adjustment_layer_settings.contrast = 1.2;
+            editor.photo_settings_mut().contrast = 1.2;
             editor.document.source = false;
             editor.document.visit.working_view.compare = true;
             let ctx = egui::Context::default();

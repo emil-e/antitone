@@ -270,7 +270,6 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
 #[test]
 fn viewing_and_scope_preferences_do_not_dirty_the_project() {
     let mut editor = super::super::tests::fixture();
-    editor.sync_document();
     let project = editor.document.state.project.clone();
     for source in [true, false] {
         editor.document.source = source;
@@ -279,7 +278,6 @@ fn viewing_and_scope_preferences_do_not_dirty_the_project() {
         editor.scopes.amplification = 8;
         editor.scopes.height_ratio = 1.2;
         editor.scopes.visible = false;
-        editor.sync_document();
         assert_eq!(editor.document.state.project, project);
         if source {
             assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
@@ -565,7 +563,7 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
             output
         };
         let settings = Settings {
-            target: editor.document.target,
+            target: editor.document.target(),
             plot: Plot::Vector,
             ..Default::default()
         };
@@ -664,9 +662,9 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
         }
 
         let size = egui::vec2(1100., 800.);
-        editor.document.roll_orientation.turn_clockwise();
-        editor.document.visit.photo_orientation.flips.horizontal = true;
-        editor.document.visit.crop = Some(
+        editor.document.project.orientation.turn_clockwise();
+        editor.photo_orientation_mut().flips.horizontal = true;
+        *editor.photo_crop_mut() = Some(
             Crop {
                 center: [3512., 1534.],
                 size: [5000, 1000],
@@ -686,9 +684,9 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
             positive_frame.composition,
             Composition::with_crop(
                 area,
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation,
-                editor.document.visit.crop,
+                editor.document.project.orientation,
+                editor.photo_orientation(),
+                editor.photo_crop(),
             )
             .unwrap()
         );
@@ -747,7 +745,6 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
         editor.hosted_action(tool::Action::Dismiss);
         prepare(frame(&mut editor, size), size);
 
-        editor.sync_document();
         let before = editor.document.state.project.clone();
         editor.document.source = true;
         editor.source_exposure = 2.;

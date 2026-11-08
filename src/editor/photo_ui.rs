@@ -12,7 +12,7 @@ impl Editor {
         let commands_enabled = ready && !tool_active && !self.picking();
         let tool_ready = self.tool_start_available() && self.selected_area().is_some();
         let crop_enabled = cropping || tool_ready;
-        let dust_enabled = dusting || tool_ready && self.document.input.ready();
+        let dust_enabled = dusting || tool_ready && self.document.project.input.ready();
         let repairs_changed = self
             .document
             .visit
@@ -74,7 +74,7 @@ impl Editor {
                 cropping,
             )
             .enabled(crop_enabled)
-            .changed(self.document.visit.crop.is_some())
+            .changed(self.photo_crop().is_some())
             .show(ui)
             .clicked()
             {
@@ -100,7 +100,7 @@ impl Editor {
         });
 
         if let Some(action) = action {
-            self.control_command(editing::Command::Photo(action), cx);
+            self.apply_photo_action(action, cx);
         }
     }
 }

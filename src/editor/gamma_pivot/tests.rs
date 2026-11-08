@@ -30,35 +30,57 @@ fn lock(app: &mut App<'_>) {
     });
 }
 
-fn propose(app: &App<'_>, value: f64, group: Option<egui::Id>) {
+fn propose(app: &App<'_>, value: f64, active: bool) {
     app.enter(|editor, cx| {
-        let previous = ControlSettings::capture(editor);
-        let mut candidate = previous;
+        let mut candidate = editor.document.project_snapshot().as_ref().clone();
         if let InputSettings::Negative { gamma, .. } = &mut candidate.input {
             *gamma = value;
         }
-        editor
-            .accept_manual_controls(previous, candidate, true, group, cx)
-            .unwrap();
+        editor.roll_control(
+            super::super::controls::ControlResponse {
+                active,
+                ..super::super::controls::ControlResponse::action(
+                    egui::Id::new("test-document-field"),
+                    true,
+                )
+            },
+            cx,
+            move |v| *v = candidate,
+        );
+    });
+}
+
+fn release(app: &App<'_>) {
+    app.enter(|editor, cx| {
+        let candidate = editor.document.project_snapshot().as_ref().clone();
+        editor.roll_control(
+            super::super::controls::ControlResponse {
+                active: false,
+                ..super::super::controls::ControlResponse::action(
+                    egui::Id::new("test-document-field"),
+                    true,
+                )
+            },
+            cx,
+            move |v| *v = candidate,
+        );
     });
 }
 
 fn settle(app: &mut App<'_>) {
-    app.run_until(Duration::from_secs(10), |editor| {
-        !editor.document.gamma_pivot.pending()
-    });
+    app.run_until(Duration::from_secs(10), |editor| !editor.controls_pending());
 }
 
 fn setup() -> (crate::fixture_path::FixturePath, Editor) {
     let file = crate::raw::fixture::bayer_dng_with_rgb([16000, 20000, 24000]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.document.input = Calibration {
+    editor.document.project.input = Calibration {
         dmin: glam::DVec3::splat(0.8),
         dmax: glam::DVec3::splat(0.1),
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }
     .into();
-    editor.sync_document();
+
     (file, editor)
 }
 
@@ -93,23 +115,33 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
                 editor.status
             );
             assert_eq!(editor.history_snapshot(), before);
-            let previous = ControlSettings::capture(editor);
-            let mut candidate = previous;
+            let previous = editor.document.project_snapshot();
+            let mut candidate = previous.as_ref().clone();
             if let InputSettings::Negative { gamma, .. } = &mut candidate.input {
                 *gamma = 0.8;
             }
-            editor
-                .accept_manual_controls(previous, candidate, true, None, cx)
-                .unwrap();
-            assert_eq!(editor.document.input, previous.input);
-            assert_eq!(editor.document.roll, previous.roll);
+            editor.roll_control(
+                super::super::controls::ControlResponse {
+                    active: false,
+                    ..super::super::controls::ControlResponse::action(
+                        egui::Id::new("test-document-field"),
+                        true,
+                    )
+                },
+                cx,
+                move |v| *v = candidate,
+            );
+            assert_eq!(editor.document.project.input, previous.input);
+            assert_eq!(editor.document.project.roll, previous.roll);
         });
-        app.run_until(Duration::from_secs(10), |editor| {
-            !editor.document.gamma_pivot.pending()
-        });
+        app.run_until(Duration::from_secs(10), |editor| !editor.controls_pending());
         app.enter(|editor, cx| {
-            assert_ne!(editor.document.input, before.input, "{}", editor.status);
-            assert_ne!(editor.document.roll.wb, before.roll.wb);
+            assert_ne!(
+                editor.document.project.input, before.input,
+                "{}",
+                editor.status
+            );
+            assert_ne!(editor.document.project.roll.wb, before.roll.wb);
             assert_eq!(
                 editor.history_label(super::super::history::Direction::Undo),
                 Some("Gamma & balance")
@@ -130,24 +162,30 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
 fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start() {
     let (_file, editor) = setup();
     with_application(editor, |app| {
-        let wb = app.read(|editor| editor.document.roll.wb);
-        propose(app, 0.7, None);
+        let wb = app.read(|editor| editor.document.project.roll.wb);
+        propose(app, 0.7, false);
         app.read(|editor| {
-            assert_eq!(editor.document.input.gamma(), 0.7);
-            assert_eq!(editor.document.roll.wb, wb);
-            assert!(!editor.document.gamma_pivot.pending());
+            assert_eq!(editor.document.project.input.gamma(), 0.7);
+            assert_eq!(editor.document.project.roll.wb, wb);
+            assert!(!editor.controls_pending());
         });
         lock(app);
         let before = app.enter(|editor, _| editor.history_snapshot());
         let prior_undo =
             app.read(|editor| editor.history_label(super::super::history::Direction::Undo));
-        let group = Some(egui::Id::new("authored gamma gesture"));
-        propose(app, 0.9, group);
+
+        propose(app, 0.9, true);
         settle(app);
-        app.read(|editor| assert_ne!(editor.document.roll.wb, wb));
-        propose(app, 0.7, group);
+        app.read(|editor| {
+            assert_ne!(editor.document.project_snapshot().roll.wb, wb);
+            assert_eq!(
+                editor.document.project.roll.wb, wb,
+                "unfinished gesture stays a draft"
+            );
+        });
+        propose(app, 0.7, true);
         settle(app);
-        app.update(|editor| editor.gamma_gesture_frame(false));
+        release(app);
         app.enter(|editor, _| {
             assert_eq!(editor.history_snapshot(), before);
             assert_eq!(
@@ -157,23 +195,31 @@ fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start(
         });
         // A deliberate WB starts a new held colour, not a return to capture-time WB.
         app.enter(|editor, cx| {
-            let previous = ControlSettings::capture(editor);
-            let mut candidate = previous;
+            let previous = editor.document.project_snapshot();
+            let mut candidate = previous.as_ref().clone();
             candidate.roll.wb = Balance {
                 warmth: 0.25,
                 tint: -0.1,
             };
-            editor
-                .accept_manual_controls(previous, candidate, false, None, cx)
-                .unwrap();
+            editor.roll_control(
+                super::super::controls::ControlResponse {
+                    active: false,
+                    ..super::super::controls::ControlResponse::action(
+                        egui::Id::new("test-document-field"),
+                        true,
+                    )
+                },
+                cx,
+                move |v| *v = candidate,
+            );
         });
-        let manual = app.read(|editor| editor.document.roll.wb);
-        propose(app, 0.8, group);
+        let manual = app.read(|editor| editor.document.project.roll.wb);
+        propose(app, 0.8, true);
         settle(app);
-        propose(app, 0.7, group);
+        propose(app, 0.7, true);
         settle(app);
-        app.update(|editor| editor.gamma_gesture_frame(false));
-        app.read(|editor| assert_eq!(editor.document.roll.wb, manual));
+        release(app);
+        app.read(|editor| assert_eq!(editor.document.project.roll.wb, manual));
     });
 }
 
@@ -261,7 +307,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
                     app.read(|editor| editor.document.source_path(anchor.recipe.source).unwrap());
                 app.enter(|editor, cx| editor.load(path, cx));
                 app.run_until(Duration::from_secs(10), |editor| {
-                    !editor.interaction_blocked()
+                    !editor.interaction_blocked() && !editor.document.visit.source.pending()
                 });
                 app.update(|editor| {
                     editor.document.visit.measurement_gate = Some(gate.clone());
@@ -277,7 +323,7 @@ fn stale_gamma_completion_and_invalid_gamma_leave_accepted_state_unchanged() {
     with_application(editor, |app| {
         lock(app);
         let before = app.enter(|editor, _| editor.history_snapshot());
-        propose(app, 0.01, None);
+        propose(app, 0.01, false);
         settle(app);
         app.enter(|editor, _| {
             assert_eq!(editor.history_snapshot(), before);
@@ -286,25 +332,21 @@ fn stale_gamma_completion_and_invalid_gamma_leave_accepted_state_unchanged() {
         });
         let gate = measurement::testing::Gate::default();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
-        propose(app, 0.9, Some(egui::Id::new("pending gesture")));
+        propose(app, 0.9, true);
         let stale = gate.next(app);
         // Returning to accepted gamma before an older solve completes is an exact no-op.
-        propose(
-            app,
-            before.input.gamma(),
-            Some(egui::Id::new("pending gesture")),
-        );
+        propose(app, before.input.gamma(), true);
         app.pump();
         assert!(stale.cancelled.is_cancelled());
         let completed = stale.completed.clone();
         stale.run();
         completed.wait(app);
-        app.update(|editor| editor.gamma_gesture_frame(false));
+        release(app);
         app.pump();
         app.enter(|editor, _| assert_eq!(editor.history_snapshot(), before));
         let gate = measurement::testing::Gate::after_work();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
-        propose(app, 0.8, None);
+        propose(app, 0.8, false);
         let stale = gate.next(app);
         app.enter(|editor, cx| editor.toggle_gamma_pivot(cx));
         app.pump();
@@ -329,7 +371,7 @@ fn completed_gamma_work_cannot_publish_to_a_replacement_document() {
         let before = app.enter(|editor, _| editor.history_snapshot());
         let gate = measurement::testing::Gate::after_work();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
-        propose(app, 0.9, None);
+        propose(app, 0.9, false);
         let late = gate.next(app);
         app.update(|editor| {
             let saved = editor.document.capture();
@@ -356,7 +398,7 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
     with_application(editor, |app| {
         lock(app);
         let before = app.enter(|editor, _| editor.history_snapshot());
-        propose(app, 0.8, None);
+        propose(app, 0.8, false);
         settle(app);
         let after = app.enter(|editor, cx| {
             let after = editor.history_snapshot();
@@ -366,13 +408,24 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
         app.run_until(Duration::from_secs(10), |editor| {
             !editor.interaction_blocked()
         });
-        let group = Some(egui::Id::new("redo-preserving gesture"));
-        propose(app, 0.9, group);
+
+        propose(app, 0.9, true);
         settle(app);
-        propose(app, before.input.gamma(), group);
+        propose(app, before.input.gamma(), true);
         settle(app);
         app.enter(|editor, cx| {
-            editor.gamma_gesture_frame(false);
+            let candidate = editor.document.project_snapshot().as_ref().clone();
+            editor.roll_control(
+                super::super::controls::ControlResponse {
+                    active: false,
+                    ..super::super::controls::ControlResponse::action(
+                        egui::Id::new("test-document-field"),
+                        true,
+                    )
+                },
+                cx,
+                move |v| *v = candidate,
+            );
             assert_eq!(editor.history_snapshot(), before);
             assert_eq!(
                 editor.history_label(super::super::history::Direction::Redo),
@@ -393,13 +446,13 @@ fn downstream_changes_preserve_evidence_and_basis_or_source_removal_retires_it()
     with_application(editor, |app| {
         lock(app);
         app.update(|editor| {
-            editor.document.roll.exposure = 1.5;
-            editor.document.target = super::super::OutputTarget::Srgb;
-            editor.document.visit.adjustment_layer_settings.exposure = -1.;
+            editor.document.project.roll.exposure = 1.5;
+            editor.document.set_target(super::super::OutputTarget::Srgb);
+            editor.photo_settings_mut().exposure = -1.;
             editor.document.visit.canvas.viewport.fit();
             editor.observe_gamma_pivot();
             assert!(editor.document.gamma_pivot.anchor.is_some());
-            if let InputSettings::Negative { response, .. } = &mut editor.document.input {
+            if let InputSettings::Negative { response, .. } = &mut editor.document.project.input {
                 response.toe = 1.2;
             }
             editor.observe_gamma_pivot();

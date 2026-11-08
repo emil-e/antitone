@@ -153,7 +153,7 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                 let mut layers = local_records();
                 layers.layers = vec![layers.layers[index].clone()];
                 source.adjustment_layers = Some(layers);
-                editor.sync_document();
+
                 let before = editor.document.state.project.clone();
                 review_tests::prepared(editor, cx);
                 assert!(
@@ -191,7 +191,6 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
             let mut empty = local_records();
             empty.layers.clear();
             editor.document.state.project.sources[0].adjustment_layers = Some(empty);
-            editor.sync_document();
             let before = editor.document.state.project.clone();
             review_tests::prepared(editor, cx);
             assert!(!editor.document.analysis_review().unwrap().replaces_photos);
@@ -213,7 +212,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             .unwrap()
             .adjustment_layers = Some(local_records());
         editor.refresh_adjustment_layer_selection();
-        let settings_before = editor.document.visit.adjustment_layer_settings;
+        let settings_before = editor.photo_settings();
         let before = editor.document.state.project.clone();
         let request = capture_request(&editor);
         let mut candidate = proposed_document(
@@ -224,7 +223,8 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         .unwrap();
         candidate.validate().unwrap();
         if mode == 2 {
-            candidate.project.set_dmax(candidate.project.dmin());
+            let dmin = candidate.project.dmin();
+            candidate.project.set_dmax(dmin);
         }
         let result = if mode == 0 {
             Err("sampling failed".into())
@@ -262,10 +262,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             );
         } else {
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings,
-                settings_before
-            );
+            assert_eq!(editor.photo_settings(), settings_before);
         }
     }
 }

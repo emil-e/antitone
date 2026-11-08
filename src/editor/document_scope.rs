@@ -70,18 +70,12 @@ mod sampling_tests;
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub thumbnails: super::Thumbnails,
-    pub input: super::InputSettings,
-
-    pub roll: super::RollSettings,
+    pub project_preview: super::editing::Preview<crate::project::Project>,
+    pub controls_edit: Option<super::editing::ControlEdit>,
     pub gamma_pivot: super::gamma_pivot::State,
-    pub deferred_menu: std::collections::VecDeque<crate::platform::menu::Action>,
-    pub grain: super::GrainSettings,
-    pub halation: crate::halation::HalationSettings,
-    pub roll_orientation: super::RollOrientation,
-    pub auto_crop_requested: Option<super::auto_crop::Action>,
+
     #[cfg(test)]
     pub auto_crop: super::auto_crop::State,
-    pub target: super::OutputTarget,
     pub source: bool,
     pub selected: usize,
     pub roll_selection: super::RollSelection,
@@ -126,6 +120,36 @@ impl DocumentScope {
         next
     }
 
+    pub(super) fn project_snapshot(&self) -> super::editing::ProjectVersion {
+        self.visit
+            .project_preview
+            .snapshot()
+            .or_else(|| self.project_preview.snapshot())
+            .map(Into::into)
+            .unwrap_or_else(|| self.state.project.clone())
+    }
+
+    pub(super) fn target(&self) -> super::OutputTarget {
+        match self.project_snapshot().output.tiff {
+            crate::project::TiffTarget::Srgb => super::OutputTarget::Srgb,
+            crate::project::TiffTarget::DisplayP3 => super::OutputTarget::DisplayP3,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_target(&mut self, target: super::OutputTarget) {
+        self.state.project.output.tiff = match target {
+            super::OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
+            super::OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
+        };
+    }
+
+    pub(super) fn effective_document(&self) -> Document {
+        let mut document = self.capture();
+        document.project = self.project_snapshot();
+        document
+    }
+
     pub fn capture(&self) -> Document {
         let mut document = self.state.clone();
         document.spatial_metadata = self.spatial.ready();
@@ -140,6 +164,11 @@ impl DocumentScope {
     }
 
     pub fn install(&mut self, document: Document) {
+        self.project_preview = Default::default();
+        self.visit.project_preview = Default::default();
+        self.controls_edit = None;
+
+        self.visit.controls_edit = None;
         self.flat_correction = None;
         self.sampling_inputs.retain(&document);
         self.exposures.restore(&document.exposure_metadata, |id| {
@@ -217,7 +246,6 @@ impl DocumentScope {
 
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
-        let input = state.project.input;
         let cache = Arc::new(crate::source::SourceCache::new(0));
         let exposures = Arc::new(crate::exposure_metadata::Store::restored(
             &state.exposure_metadata,
@@ -225,6 +253,9 @@ impl From<Document> for DocumentScope {
         ));
         Self {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
+            project_preview: Default::default(),
+
+            controls_edit: None,
             correction: None,
             flat_correction: None,
             hosted_tool: Default::default(),
@@ -232,17 +263,9 @@ impl From<Document> for DocumentScope {
             roll_selection: super::RollSelection::default(),
 
             export: Default::default(),
-            input,
-
-            roll: super::RollSettings::default(),
             gamma_pivot: Default::default(),
-            deferred_menu: Default::default(),
-            grain: super::GrainSettings::default(),
-            halation: Default::default(),
-            roll_orientation: super::RollOrientation::default(),
-            target: super::OutputTarget::DisplayP3,
+
             source: true,
-            auto_crop_requested: None,
             #[cfg(test)]
             auto_crop: Default::default(),
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),

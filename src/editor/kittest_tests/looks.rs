@@ -56,9 +56,9 @@ fn positive_ready(editor: &Editor) -> bool {
             .is_some_and(|view| {
                 let mut expected = editor
                     .positive_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 expected.repairs = crate::gpu::repairs::Snapshot::logical(
@@ -69,7 +69,7 @@ fn positive_ready(editor: &Editor) -> bool {
                 )
                 .unwrap();
                 view.processing() == expected.clone()
-                    && view.target == editor.document.target
+                    && view.target == editor.document.target()
                     && !view.in_flight()
                     && matches!(view.image.look_result(), Some(Ok(())))
             })
@@ -94,7 +94,6 @@ fn fixture_editor_gpu<R>(
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.document.source = false;
             editor.scopes.visible = true;
-            editor.sync_document();
         });
         harness.step();
         stage(&mut harness, "Rendering");
@@ -207,7 +206,8 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                 select_target(&mut harness, OutputTarget::Srgb);
                 harness.get_by_label("Reset Target").click();
                 harness.run();
-                harness.read(|editor| assert_eq!(editor.document.target, OutputTarget::DisplayP3));
+                harness
+                    .read(|editor| assert_eq!(editor.document.target(), OutputTarget::DisplayP3));
             }
         }
     });
@@ -352,10 +352,10 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
             assert_eq!(asset.name(), selection.name());
             assert_eq!(asset.lut().size(), DEFAULT_GRID);
             harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
-            harness.read(|editor| assert_eq!(editor.document.roll, before.roll));
+            harness.read(|editor| assert_eq!(editor.document.project.roll, before.roll));
             harness.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.photo_settings(),
                     before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
                         .adjustment
                         .photo
@@ -374,14 +374,14 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
                 )
             });
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                harness.update(|editor| editor.document.target = target);
+                harness.update(|editor| editor.document.set_target(target));
                 paint_until(&mut harness, |editor| {
                     if !positive_ready(editor) {
                         return false;
                     }
                     let input = editor.scope_request().unwrap();
                     let settings = crate::scopes::Settings {
-                        target: editor.document.target,
+                        target: editor.document.target(),
                         plot: if editor.scopes.vector {
                             crate::scopes::Plot::Vector
                         } else {
@@ -631,7 +631,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                 )
                 .unwrap()
         });
-        harness.update(|editor| editor.document.target = OutputTarget::Srgb);
+        harness.update(|editor| editor.document.set_target(OutputTarget::Srgb));
         harness.update(|editor| editor.scopes.vector = true);
         harness.update(|editor| editor.scopes.amplification = 1);
         let settings = crate::scopes::Settings {
@@ -645,7 +645,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                 && editor
                     .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.document.target)
+                    .ready_count(&editor.document, editor.document.target())
                     == 2
                 && editor
                     .scope_request()
@@ -773,12 +773,8 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
 fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_session_list() {
     fixture_editor(|mut harness, _| {
         let directory = tempfile::tempdir().unwrap();
-        let baseline = harness.read(|editor| {
-            (
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
-            )
-        });
+        let baseline =
+            harness.read(|editor| (editor.document.project.roll, editor.photo_settings()));
         let mut assets = Vec::new();
         for index in 0..2 {
             let file = directory.path().join(format!("compare-{index}.cube"));
@@ -864,10 +860,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
             harness.read(|editor| {
                 assert_eq!(
-                    (
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings
-                    ),
+                    (editor.document.project.roll, editor.photo_settings()),
                     baseline
                 )
             });
@@ -1024,12 +1017,8 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
 #[test]
 fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_it() {
     fixture_editor(|mut harness, _| {
-        let baseline = harness.read(|editor| {
-            (
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
-            )
-        });
+        let baseline =
+            harness.read(|editor| (editor.document.project.roll, editor.photo_settings()));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("narrow.cube");
         let mut cube = String::from(
@@ -1057,10 +1046,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
-                (
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
-                ),
+                (editor.document.project.roll, editor.photo_settings()),
                 baseline
             )
         });
@@ -1120,10 +1106,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
-                (
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
-                ),
+                (editor.document.project.roll, editor.photo_settings()),
                 baseline
             )
         });

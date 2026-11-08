@@ -24,13 +24,12 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.document.visit.adjustment_layer_settings.exposure = 0.5;
-            editor.document.visit.adjustment_layer_settings.wb = Balance {
+            editor.photo_settings_mut().exposure = 0.5;
+            editor.photo_settings_mut().wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };
             editor.document.source = false;
-            editor.sync_document();
         });
         harness.step();
         test(harness)
@@ -38,6 +37,8 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
 }
 
 fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+    harness.get_by_label("Fit").click();
+    harness.step();
     let at = harness.read(|editor| {
         editor
             .document
@@ -47,6 +48,12 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
             .unwrap()
             .0
             .screen_point(point)
+    });
+    harness.read(|editor| {
+        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
+        assert!(layout.canvas.contains(at) && layout.image.contains(at),
+            "sample {point:?} maps to {at:?} outside visible image {:?} / canvas {:?}; picker={:?}, crop={:?}",
+            layout.image, layout.canvas, editor.test_pick(), editor.photo_crop());
     });
     harness.hover_at(at);
     for pressed in [true, false] {
@@ -144,14 +151,14 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                 e.document.source = false;
                 // Cancel the documented +1 EV source-display baseline for the scalar oracle.
                 e.source_exposure = -1.;
-                e.document.visit.photo_orientation.turn_clockwise();
-                e.document.roll_orientation.horizontal = true;
-                e.document.visit.crop = Some(Crop {
+                e.photo_orientation_mut().turn_clockwise();
+                e.document.project.orientation.horizontal = true;
+                *e.photo_crop_mut() = Some(Crop {
                     center: [128., 96.],
                     size: [220, 140],
                     angle,
                 });
-                e.sync_document();
+
                 // Make the coarse proxy deliberately distinguishable from real originals.
                 // The original service still reads the unchanged authored RAW.
                 let services = e.source_services.as_ref().unwrap();
@@ -206,7 +213,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     .matrix();
                 (
                     e.active_canvas().last_layout.unwrap().0,
-                    e.document.target,
+                    e.document.target(),
                     matrix,
                     matches!(kind, PickerCase::Wb).then(|| {
                         e.adjustment_layer_snapshot(
@@ -215,12 +222,12 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                                 .project
                                 .source(e.document.visit.current_source.unwrap())
                                 .unwrap(),
-                            e.document.visit.adjustment_layer_settings,
+                            e.photo_settings(),
                         )
                         .and_then(|layers| {
                             crate::adjustment_layers::AdjustmentLayerPipeline::new(
-                                e.document.input,
-                                e.document.roll,
+                                e.document.project.input,
+                                e.document.project.roll,
                                 layers,
                                 matrix,
                             )
@@ -293,7 +300,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             harness.get_by_label("Apply").click();
             harness.step();
             harness.read(|editor| assert!(editor.document.crop_edit().is_none()));
-            harness.read(|editor| assert_eq!(editor.document.visit.crop, Some(draft)));
+            harness.read(|editor| assert_eq!(editor.photo_crop(), Some(draft)));
             let mut expected = before;
             harness.read(|editor| {
                 expected
@@ -327,7 +334,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.step();
                 harness.read(|editor| assert!(!editor.interaction_blocked()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
-                click_patch(&mut harness, egui::pos2(96., 32.));
+                click_patch(&mut harness, egui::pos2(160., 160.));
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
                 harness.get_by_label("Cancel").click();
                 harness.step();
@@ -338,7 +345,11 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 wait_for(&mut harness, |editor| editor.test_pick().is_some());
                 click_patch(
                     &mut harness,
-                    egui::pos2(if kind == PickerCase::Dmin { 32. } else { 96. }, 32.),
+                    if kind == PickerCase::Dmin {
+                        egui::pos2(32., 32.)
+                    } else {
+                        egui::pos2(160., 160.)
+                    },
                 );
                 harness.get_by_label("Apply").click();
                 harness.step();
@@ -355,7 +366,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 } else {
                     harness.read(|editor| {
                         assert_ne!(
-                            editor.document.visit.adjustment_layer_settings.wb,
+                            editor.photo_settings().wb,
                             Balance {
                                 warmth: 0.1,
                                 tint: -0.05
@@ -372,7 +383,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                             .layers[0]
                             .adjustment
                             .photo
-                            .wb = editor.document.visit.adjustment_layer_settings.wb
+                            .wb = editor.photo_settings().wb
                     });
                 }
                 harness.read(|editor| assert_eq!(editor.document.state.project, expected));
@@ -433,9 +444,8 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
             calibrated_harness(|mut harness| {
                 if oriented {
                     harness.update(|editor| {
-                        editor.document.roll_orientation.turn_clockwise();
-                        editor.document.visit.photo_orientation.flips.horizontal = true;
-                        editor.sync_document();
+                        editor.document.project.orientation.turn_clockwise();
+                        editor.photo_orientation_mut().flips.horizontal = true;
                     });
                     harness.step();
                 }

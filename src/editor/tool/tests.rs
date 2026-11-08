@@ -211,7 +211,7 @@ impl Tool for Candidate {
 fn photo_geometry_edit_rejects_before_mutation_and_records_valid_acceptance() {
     let mut editor = Editor::state();
     super::super::tests::add_ready_fixture(&mut editor);
-    editor.sync_document();
+
     let before = editor.document.state.project.clone();
     let viewport = editor.document.visit.canvas.viewport;
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
@@ -226,7 +226,7 @@ fn photo_geometry_edit_rejects_before_mutation_and_records_valid_acceptance() {
         editor.current_tool().is_some(),
         "rejection leaves the interaction available"
     );
-    assert!(editor.document.visit.crop.is_none());
+    assert!(editor.photo_crop().is_none());
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.document.state.project, before);
     assert!(editor.history_label(history::Direction::Undo).is_none());
@@ -237,7 +237,7 @@ fn photo_geometry_edit_rejects_before_mutation_and_records_valid_acceptance() {
     assert!(editor.activate_tool(Placement::Photo, Box::new(Candidate(valid))));
     editor.hosted_action(Action::Primary);
     assert!(editor.current_tool().is_none());
-    assert_eq!(editor.document.visit.crop, Some(valid));
+    assert_eq!(editor.photo_crop(), Some(valid));
     assert_eq!(
         editor
             .document
@@ -486,7 +486,7 @@ fn ending_crop_does_not_borrow_shared_draft_or_retain_its_state() {
     draft.draft.size = [300, 200];
     editor.end_tool();
     assert!(!editor.has_hosted_tool());
-    assert!(editor.document.visit.crop.is_none());
+    assert!(editor.photo_crop().is_none());
     drop(draft);
     drop(state);
     assert!(
@@ -499,9 +499,9 @@ fn ending_crop_does_not_borrow_shared_draft_or_retain_its_state() {
 fn ordinary_photo_orientation_and_crop_acceptance_share_geometry_history() {
     let mut editor = Editor::state();
     super::super::tests::add_ready_fixture(&mut editor);
-    let before = editor.document.visit.photo_orientation;
+    let before = editor.photo_orientation();
     editor.apply_photo_action(editing::PhotoAction::TurnRight, &UiContext::render_only());
-    assert_ne!(editor.document.visit.photo_orientation, before);
+    assert_ne!(editor.photo_orientation(), before);
     assert_eq!(
         editor.history_label(history::Direction::Undo),
         Some("Photo orientation")
@@ -509,7 +509,7 @@ fn ordinary_photo_orientation_and_crop_acceptance_share_geometry_history() {
     let id = editor.document.visit.current_source.unwrap();
     assert_eq!(
         editor.document.project.source(id).unwrap().orientation,
-        editor.document.visit.photo_orientation
+        editor.photo_orientation()
     );
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let crop = Crop {
@@ -519,7 +519,7 @@ fn ordinary_photo_orientation_and_crop_acceptance_share_geometry_history() {
     editor.accept_crop(crop).unwrap();
     assert_eq!(editor.history_label(history::Direction::Undo), Some("Crop"));
     assert_eq!(editor.document.project.source(id).unwrap().crop, Some(crop));
-    assert_eq!(editor.document.visit.crop, Some(crop));
+    assert_eq!(editor.photo_crop(), Some(crop));
 }
 
 #[test]

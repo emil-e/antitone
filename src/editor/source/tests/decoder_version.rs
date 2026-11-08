@@ -62,10 +62,8 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     )
                     .unwrap(),
                 );
-                document.project.set_flat_field(Some(FlatFieldSettings::new(
-                    document.project.source(id).unwrap(),
-                    map,
-                )));
+                let field = FlatFieldSettings::new(document.project.source(id).unwrap(), map);
+                document.project.set_flat_field(Some(field));
             }
             let baseline = ReferenceExposure::Matched(StartingExposure {
                 ev: 0.5,

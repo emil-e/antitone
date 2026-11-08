@@ -25,7 +25,7 @@ fn export_scan(output: std::path::PathBuf) {
             Duration::from_secs(1800),
             |editor, cx| editor.begin_analysis(cx),
         );
-        editor.sync_document();
+
         eprintln!("AB analysis status={:?}", editor.status);
         let started = Instant::now();
         editor = crate::editor::tests::complete_export_operation(

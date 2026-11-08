@@ -68,7 +68,7 @@ fn photo_auto_crop_drawer_updates_only_its_draft_and_dust_can_switch_directly_to
             h.step();
             wait_for(&mut h, |editor| !editor.cropping());
             h.read(|editor| {
-                assert_eq!(editor.document.visit.crop, Some(expected));
+                assert_eq!(editor.photo_crop(), Some(expected));
                 assert_eq!(
                     editor.document.project.source(id).unwrap().crop,
                     Some(expected)

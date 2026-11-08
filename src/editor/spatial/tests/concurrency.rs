@@ -91,7 +91,7 @@ fn held_preparation(
         scheduler.clone(),
     );
     previous.close_and_wait().unwrap();
-    editor.sync_document();
+
     (
         editor,
         scheduler,

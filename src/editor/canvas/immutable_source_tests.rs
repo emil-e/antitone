@@ -44,7 +44,6 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             "unchanged inspection must reuse the current rendered value"
         );
 
-        editor.sync_document();
         let id = editor.document.visit.current_source.unwrap();
         let source = editor.document.state.project.source(id).unwrap().clone();
         let map = Arc::new(

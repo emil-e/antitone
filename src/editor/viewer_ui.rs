@@ -48,7 +48,7 @@ impl Editor {
         preview: crate::raw::SourcePreview,
         exposure: f64,
     ) -> Result<ProcessingParameters, Error> {
-        let transform = if self.document.input.is_negative() {
+        let transform = if self.input().is_negative() {
             preview.transform(self.source_white_balance)
         } else {
             glam::DMat3::IDENTITY
@@ -102,7 +102,7 @@ impl Editor {
 
         let mut cancel = false;
         let mut apply = false;
-        let calibrated = self.document.input.ready();
+        let calibrated = self.input().ready();
         if !calibrated {
             self.document.source = true;
         }
@@ -142,7 +142,7 @@ impl Editor {
             }
             ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
             icons::row(ui, |ui| {
-                let target = if self.document.target == OutputTarget::DisplayP3 {
+                let target = if self.document.target() == OutputTarget::DisplayP3 {
                     "Display P3"
                 } else {
                     "sRGB"
@@ -373,7 +373,7 @@ impl Editor {
 
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
         let inspecting = navigating
-            && self.document.input.ready()
+            && self.input().ready()
             && (!self.has_hosted_tool() || self.fullscreen.is_some())
             && !self.masking();
         ui.add_enabled_ui(inspecting, |ui| {
@@ -419,7 +419,7 @@ impl Editor {
                 ui.set_width(240.);
                 ui.label(egui::RichText::new("Source inspection").strong());
                 ui.add_enabled_ui(navigating, |ui| {
-                    if self.document.input.is_negative() {
+                    if self.input().is_negative() {
                         use crate::raw::SourceWhiteBalance;
                         presentation::labelled_row(ui, "Viewing WB", None, |ui, _| {
                             ui.selectable_value(

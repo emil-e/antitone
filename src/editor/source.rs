@@ -529,7 +529,6 @@ impl Editor {
     }
 
     pub(super) fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
-        self.sync_document();
         if let Err(error) = self.validate_document_candidate(&self.document.state) {
             self.status = format!("Source not changed: {error}");
             return;
@@ -550,29 +549,7 @@ impl Editor {
                 self.document.visit.current_source,
             );
         }
-        self.document.visit.adjustment_layer_settings = self
-            .document
-            .visit
-            .current_source
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .and_then(|source| source.adjustment_layers.as_ref())
-            .and_then(|layers| layers.layers.last())
-            .map(|record| record.adjustment.photo)
-            .unwrap_or_default();
         self.refresh_adjustment_layer_selection();
-        self.document.visit.photo_orientation = self
-            .document
-            .visit
-            .current_source
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .map(|source| source.orientation)
-            .unwrap_or_default();
-        self.document.visit.crop = self
-            .document
-            .visit
-            .current_source
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .and_then(|source| source.crop);
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
@@ -587,7 +564,7 @@ impl Editor {
         self.document.visit.canvas.ready = None;
         self.document.visit.canvas.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
-        self.document.source = !self.document.input.ready();
+        self.document.source = !self.document.project.input.ready();
         self.status = "Developing full-resolution RAW…".into();
 
         let activity = self
@@ -603,10 +580,25 @@ impl Editor {
         let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let result = match services {
+            let mut result = match services {
                 Some(services) => services.prepare(request, cancelled).await.map(Box::new),
                 None => Err("Source services unavailable".into()),
             };
+            if result.is_ok()
+                && cx.read(|editor| {
+                    matches!(
+                        editor.document.project.input,
+                        InputSettings::Negative {
+                            input_floor: 0.,
+                            ..
+                        }
+                    )
+                })
+                && cx.read(|editor| editor.editing())
+            {
+                result =
+                    Err("Finish or cancel the current edit before preparing this source".into());
+            }
             drop(activity);
             cx.update(|editor| editor.source_result(view, result));
         }) else {
@@ -675,20 +667,17 @@ impl Editor {
                     height = ready.area.height;
                     "source_ready"
                 );
-                if let InputSettings::Negative { input_floor, .. } = &mut self.document.input
+                if let InputSettings::Negative { input_floor, .. } =
+                    &mut self.document.project.input
                     && *input_floor == 0.
                 {
                     *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-                    self.document.state.project.input = self.document.input;
                 }
                 if self.document.visit.current_source.is_none() {
                     let mut record = ready.record.clone();
-                    self.overlay_adjustment_layer_settings(
-                        &mut record,
-                        self.document.visit.adjustment_layer_settings,
-                    );
-                    record.orientation = self.document.visit.photo_orientation;
-                    record.crop = self.document.visit.crop;
+                    self.overlay_adjustment_layer_settings(&mut record, self.photo_settings());
+                    record.orientation = self.photo_orientation();
+                    record.crop = self.photo_crop();
                     match self.document.register(record) {
                         Ok(id) => self.document.visit.current_source = Some(id),
                         Err(error) => {

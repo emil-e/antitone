@@ -9,7 +9,6 @@ fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardo
         let editor = fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.sync_document();
                 let before = editor.document.state.project.clone();
                 if save {
                     editor.save_project(
@@ -51,7 +50,6 @@ fn unavailable_export_services_and_analysis_device_leave_no_working_feedback() {
     for export in [true, false] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        editor.sync_document();
         let before = editor.document.state.project.clone();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, access| {
@@ -86,7 +84,6 @@ fn export_activity_closes_before_awaited_failure_feedback() {
     crate::application::test_support::with_application(editor, |app| {
         let before = app.enter(|editor, cx| {
             add_ready_fixture(editor);
-            editor.sync_document();
             let before = editor.document.state.project.clone();
             editor.export(
                 "output.exr".into(),

@@ -14,12 +14,11 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
     let file = crate::exposure_fixture::neutral_dng(1.3);
     editor_harness_with_thumbnails(true, |mut h, capture| {
         h.update(|editor| {
-            editor.document.input = crate::processing::InputSettings::Digital;
-            editor.document.target = OutputTarget::Srgb;
+            editor.document.project.input = crate::processing::InputSettings::Digital;
+            editor.document.set_target(OutputTarget::Srgb);
             // Zero grain amplitude keeps the constant-patch oracle; MTF still needs padding.
-            editor.document.grain.enabled = film_enabled;
-            editor.document.grain.amount = 0.;
-            editor.sync_document();
+            editor.document.project.output.grain.enabled = film_enabled;
+            editor.document.project.output.grain.amount = 0.;
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().to_owned()], cx));
         wait_for(&mut h, |editor| {
@@ -29,7 +28,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 && editor
                     .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.document.target)
+                    .ready_count(&editor.document, editor.document.target())
                     == 1
         });
         h.event(egui::Event::PointerGone);
@@ -38,7 +37,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         let image = h.read(|editor| {
             assert!(!editor.document.source);
             let support = crate::pixel_pipeline::PixelPipeline::film(
-                editor.document.grain,
+                editor.document.project.output.grain,
                 editor
                     .source_composition(
                         editor
@@ -58,8 +57,8 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 support != crate::processing_support::Support::NONE,
                 film_enabled
             );
-            assert_eq!(editor.document.roll.exposure, 0.);
-            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.document.project.roll.exposure, 0.);
+            assert_eq!(editor.photo_settings().exposure, 0.);
             let reference = editor
                 .document
                 .visit
@@ -193,7 +192,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 && editor.document.visit.working_view.support_ready()
         });
         let (selected, native, development) = h.read(|editor| {
-            assert!(editor.document.input.is_negative());
+            assert!(editor.document.project.input.is_negative());
             let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert!(ready.reference.as_ref().is_none());
             (
@@ -211,7 +210,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         h.render().unwrap();
         h.read(|editor| {
             assert_eq!(
-                editor.document.input,
+                editor.document.project.input,
                 crate::processing::InputSettings::Digital
             );
             assert_eq!(editor.document.visit.current_source, selected);
@@ -230,8 +229,8 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 .expect("Digital readiness must include preparation");
             assert!((reference.ev() - 1.3).abs() < 0.03, "{reference:?}");
             assert!(!editor.document.source);
-            assert_eq!(editor.document.roll.exposure, 0.);
-            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.document.project.roll.exposure, 0.);
+            assert_eq!(editor.photo_settings().exposure, 0.);
         });
     });
 }
@@ -306,7 +305,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                     && editor
                         .document
                         .thumbnails
-                        .ready_count(&editor.document, editor.document.target)
+                        .ready_count(&editor.document, editor.document.target())
                         == 1
             });
             h.event(egui::Event::PointerGone);

@@ -69,15 +69,14 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         );
         editor.set_dmin(Some(DVec3::splat(0.75)));
         editor.set_dmax(Some(DVec3::splat(0.01)));
-        editor.document.roll = RollSettings::default();
+        editor.document.project.roll = RollSettings::default();
         // Exercise the real full-resolution source while keeping generated files tiny.
         // These declared anchors are plumbing inputs, not a grade of this camera photograph.
-        editor.document.visit.crop = Some(crate::crop::Crop {
+        *editor.photo_crop_mut() = Some(crate::crop::Crop {
             center: [1024., 1024.],
             size: [32, 32],
             angle: 0.,
         });
-        editor.sync_document();
         let directory = tempfile::tempdir().unwrap();
         let project_path = directory.path().join("m9.antitone");
         let saved = editor
@@ -154,13 +153,12 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         );
         editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
         editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
-        editor.document.roll = RollSettings::default();
-        editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
+        editor.document.project.roll = RollSettings::default();
+        *editor.photo_settings_mut() = AdjustmentLayerSettings {
             contrast: 0.8,
             saturation: 1.3,
             ..Default::default()
         };
-        editor.sync_document();
         let before = editor.document.state.project.clone();
         let directory = tempfile::tempdir().unwrap();
         for (name, format) in [
@@ -224,18 +222,15 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             );
             assert!(editor.document.export.operation.is_some());
             // Later accepted edits/source identity cannot change the captured file recipe.
-            editor.document.visit.adjustment_layer_settings.exposure = 0.75;
-            editor.sync_document();
+            editor.photo_settings_mut().exposure = 0.75;
+
             editor.id += 7;
         });
         assert!(editor.dialogs.message().is_none(), "{}", editor.status);
         acknowledge_export_summary(&mut editor);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.state.project, edited);
-        assert_eq!(
-            editor.document.visit.adjustment_layer_settings.exposure,
-            0.75
-        );
+        assert_eq!(editor.photo_settings().exposure, 0.75);
         // A refused destination remains intact even after the visible authority and grade change.
         let bytes = std::fs::read(&source).unwrap();
         editor = wait(editor, |editor, cx| {

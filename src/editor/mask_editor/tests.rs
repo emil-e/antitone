@@ -128,9 +128,9 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         }
         let input = editor
             .positive_processing(
-                editor.document.input,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.input,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .unwrap();
         editor.document.visit.adjustment_layers.show_coverage = true;
@@ -146,9 +146,9 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             input.clone(),
             editor
                 .positive_processing(
-                    editor.document.input,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings()
                 )
                 .unwrap()
                 .clone()
@@ -177,9 +177,9 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
         let before = editor.document.state.project.clone();
         let input = editor
             .positive_processing(
-                editor.document.input,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.input,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .unwrap();
         editor.begin_linear_mask(Some(id));
@@ -215,9 +215,9 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
             input.clone(),
             editor
                 .view_processing(
-                    editor.document.input,
-                    editor.document.roll,
-                    editor.document.visit.adjustment_layer_settings
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings()
                 )
                 .unwrap()
                 .clone()
@@ -307,9 +307,9 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         let id = records.layers[0].id;
         let input = editor
             .positive_processing(
-                editor.document.input,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.input,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
@@ -362,7 +362,8 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.begin_linear_mask(Some(id));
         assert!(editor.document.visit.working_view.compare);
         assert!(!editor.comparing_original());
-        editor.document.roll.exposure += 0.1;
+        editor.document.project.roll.exposure += 0.1;
+        let accepted = editor.document.project.clone();
         editor.finish_mask(true);
         assert!(
             editor.document.visit.masks.gesture().is_none(),
@@ -372,6 +373,6 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             editor.document.visit.working_view.compare,
             "stale rejection preserves the ordinary comparison preference"
         );
-        assert_eq!(editor.document.state.project, before);
+        assert_eq!(editor.document.state.project, accepted);
     });
 }

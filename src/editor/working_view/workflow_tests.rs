@@ -494,14 +494,10 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     let mut e = crate::editor::tests::authored_fixture(&["patches.dng"]);
     e.set_dmin(Some(DVec3::splat(0.8)));
     e.set_dmax(Some(DVec3::splat(0.2)));
-    e.document.roll.exposure = 1.;
+    e.document.project.roll.exposure = 1.;
     let recipe = Arc::new(
-        e.view_recipe(
-            e.input(),
-            e.document.roll,
-            e.document.visit.adjustment_layer_settings,
-        )
-        .unwrap(),
+        e.view_recipe(e.input(), e.document.project.roll, e.photo_settings())
+            .unwrap(),
     );
     let pixels = e.source_context().unwrap();
     let device = e.document.visit.working_view.device().unwrap().clone();
@@ -510,9 +506,9 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             e.input(),
             RollSettings {
                 exposure: 2.,
-                ..e.document.roll
+                ..e.document.project.roll
             },
-            e.document.visit.adjustment_layer_settings,
+            e.photo_settings(),
         )
         .unwrap(),
     );
@@ -527,7 +523,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     };
     with_application(e, |app| {
         app.enter(|e, cx| e.request_working(demand, cx));
-        app.update(|e| e.document.roll.exposure = 2.);
+        app.update(|e| e.document.project.roll.exposure = 2.);
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
@@ -705,12 +701,8 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
         )
         .unwrap();
     let recipe = Arc::new(
-        e.view_recipe(
-            e.input(),
-            e.document.roll,
-            e.document.visit.adjustment_layer_settings,
-        )
-        .unwrap(),
+        e.view_recipe(e.input(), e.document.project.roll, e.photo_settings())
+            .unwrap(),
     );
     assert_eq!(recipe.repairs.len(), 1);
     let pixels = e.source_context().unwrap();
@@ -819,7 +811,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             "this phase must submit genuinely changed processing"
         );
         app.enter(|e, access| {
-            e.document.target = OutputTarget::Srgb;
+            e.document.set_target(OutputTarget::Srgb);
             e.request_working(edited.clone(), access);
         });
         app.pump();
@@ -835,7 +827,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                 services.queue.clone(),
                 e.submissions.clone(),
             );
-            let target = e.document.target;
+            let target = e.document.target();
             let working = &mut e.document.visit.working_view;
             assert!(neutral.same_pixels_as(&working.neutral_source().unwrap()));
             let frame = working.frame.as_ref().unwrap();

@@ -138,11 +138,10 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(|editor| {
             let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            editor.document.roll_orientation.turn_clockwise();
-            editor.document.visit.photo_orientation.flips.horizontal = true;
-            editor.document.visit.crop =
+            editor.document.project.orientation.turn_clockwise();
+            editor.photo_orientation_mut().flips.horizontal = true;
+            *editor.photo_crop_mut() =
                 Some(Crop::from_region(area).straightened(area, 0.13).unwrap());
-            editor.sync_document();
         });
         harness.step();
         arm(&mut harness, false);
@@ -163,9 +162,9 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             let (input, snapshot, layout, start) = harness.read(|editor| {
                 let input = editor
                     .positive_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 let snapshot = input.grade().unwrap().snapshot().clone();
@@ -181,9 +180,9 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             let (preview, preview_end, original_end) = harness.read(|editor| {
                 let preview = editor
                     .view_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap();
                 assert_ne!(preview.clone(), input.clone());

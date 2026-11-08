@@ -250,10 +250,7 @@ pub struct Editor {
     document: DocumentScope,
     candidate_operation: document::State,
     history_pending: Option<history::Pending>,
-    history_controls: Option<history::Controls>,
-    #[cfg(test)]
-    history_snapshot_clones: usize,
-    control_commands: Vec<editing::Command>,
+
     next_request: u64,
     document_pending: Option<u64>,
     export_services: Option<export::Services>,
@@ -287,7 +284,7 @@ impl Editor {
         let device = device.clone();
         let queue = queue.clone();
         let mut editor = Self::state();
-        editor.document.input = editor.document.state.project.input;
+
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
         editor.look.services = Some(look::Services::new(device.limits()));
@@ -345,7 +342,7 @@ impl Editor {
             balance: Balance::default(),
         };
         let mut document: document_scope::DocumentScope = document.into();
-        document.input = input;
+        document.project.input = input;
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
@@ -374,10 +371,7 @@ impl Editor {
             preference_store: None,
             new_project_pending: false,
             history_pending: None,
-            history_controls: None,
-            #[cfg(test)]
-            history_snapshot_clones: 0,
-            control_commands: Vec::new(),
+
             document,
             candidate_operation: document::State::default(),
             next_request: 0,
@@ -404,10 +398,106 @@ impl Editor {
         }
     }
 
+    fn validate_roll_values(&self, project: &crate::project::Project) -> Result<(), Error> {
+        crate::processing::exposure_multiplier(project.roll.exposure)?;
+        crate::color::wb_matrix(project.roll.wb)?;
+        if let Some(input) = project.input.negative_input() {
+            input.parameters()?;
+        }
+        if project.input.ready() && !project.sources.is_empty() {
+            self.validate_processing(project.input, project.roll, self.photo_settings())?;
+        }
+        Ok(())
+    }
+
+    fn roll_control(
+        &mut self,
+        response: controls::ControlResponse,
+        cx: &UiContext<'_, Self>,
+        write: impl FnOnce(&mut crate::project::Project),
+    ) {
+        let Some(mut edit) = self.begin_control(response, false) else {
+            return;
+        };
+        if response.changed {
+            let starting = edit.values.initial();
+            let previous_request = edit
+                .gamma_request
+                .unwrap_or_else(|| edit.values.preview().snapshot().unwrap().input);
+            let proposed = edit.values.update(|project| {
+                let previous = project.input;
+                write(project);
+                let proposed = project.input;
+                project.input = previous;
+                proposed
+            });
+            if proposed != previous_request {
+                edit.calculation = None;
+                if self.gamma_compensation_required(starting.input, proposed) {
+                    edit.gamma_request = Some(proposed);
+                    edit.values.rename("Gamma & balance");
+                } else {
+                    edit.gamma_request = None;
+                    edit.values.update(|project| {
+                        project.input = proposed;
+                        if proposed == starting.input {
+                            project.roll.wb = starting.roll.wb;
+                        }
+                    });
+                }
+            }
+            let validation = if let Some(input) = edit.gamma_request {
+                input
+                    .negative_input()
+                    .map(|input| input.parameters())
+                    .transpose()
+                    .map(|_| ())
+            } else {
+                self.validate_roll_values(&edit.values.preview().snapshot().unwrap())
+            };
+            if let Err(error) = validation {
+                self.status = format!("Edit rejected: {error}");
+                return;
+            }
+        }
+        let calculate = edit.gamma_request.is_some() && edit.calculation.is_none();
+        // The calculation is feature-owned; it retains the edit until its result is ready.
+        if calculate {
+            edit.finished = !response.active;
+            self.document.controls_edit = Some(edit);
+            self.compensate_control_edit(cx);
+        } else {
+            self.retain_control(edit, response, false);
+        }
+    }
+
+    fn output_control(
+        &mut self,
+        response: controls::ControlResponse,
+        write: impl FnOnce(&mut crate::project::Output),
+    ) {
+        let Some(mut edit) = self.begin_control(response, false) else {
+            return;
+        };
+        if response.changed {
+            let result = edit.values.update(|project| {
+                write(&mut project.output);
+                project.output.grain.validate()?;
+                project.output.halation.validate()
+            });
+            if let Err(error) = result {
+                self.status = format!("Edit rejected: {error}");
+                return;
+            }
+        }
+        self.retain_control(edit, response, false);
+    }
+
     fn grain_preset_controls(&mut self, ui: &mut egui::Ui) {
+        let grade = self.document.project_snapshot();
         let current = [GrainPreset::ThirtyFiveMm, GrainPreset::MediumFormat]
             .into_iter()
-            .find(|preset| preset.matches(self.document.grain, self.document.halation));
+            .find(|preset| preset.matches(grade.output.grain, grade.output.halation));
         let label = current.map_or("Custom", GrainPreset::label);
         let mut selected = None;
         presentation::inspector_dropdown(ui, "grain-preset", "Preset", label, |ui| {
@@ -421,20 +511,25 @@ impl Editor {
             }
         });
         if let Some(preset) = selected {
-            self.document.grain = GrainSettings {
-                enabled: self.document.grain.enabled,
-                ..preset.settings()
-            };
-            self.document.halation = crate::halation::HalationSettings {
-                enabled: self.document.halation.enabled,
-                ..preset.halation()
-            };
+            self.output_control(
+                controls::ControlResponse::action(ui.make_persistent_id("grain-preset"), true),
+                |output| {
+                    output.grain = GrainSettings {
+                        enabled: output.grain.enabled,
+                        ..preset.settings()
+                    };
+                    output.halation = crate::halation::HalationSettings {
+                        enabled: output.halation.enabled,
+                        ..preset.halation()
+                    };
+                },
+            );
         }
     }
 
     fn halation_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = &mut self.document.halation;
-        let changed = *settings != crate::halation::HalationSettings::default();
+        let mut settings = self.document.project_snapshot().output.halation;
+        let changed = settings != crate::halation::HalationSettings::default();
         let summary = if settings.active() {
             format!("{:.3}%", settings.size)
         } else {
@@ -452,23 +547,43 @@ impl Editor {
                 default_open: Some(true),
             },
             |ui| {
-                ui.checkbox(&mut settings.enabled, "Enable halation");
-                controls::parameter(
+                let enabled = ui
+                    .checkbox(&mut settings.enabled, "Enable halation")
+                    .changed();
+                self.output_control(
+                    controls::ControlResponse::action(
+                        ui.make_persistent_id("halation-enabled"),
+                        enabled,
+                    ),
+                    |output| output.halation.enabled = settings.enabled,
+                );
+                let response = controls::parameter_edit(
                     ui,
                     controls::Parameter::HalationStrength,
                     &mut settings.strength,
                 );
-                controls::parameter(ui, controls::Parameter::HalationSize, &mut settings.size);
+                self.output_control(response, |output| {
+                    output.halation.strength = settings.strength
+                });
+                let response = controls::parameter_edit(
+                    ui,
+                    controls::Parameter::HalationSize,
+                    &mut settings.size,
+                );
+                self.output_control(response, |output| output.halation.size = settings.size);
             },
         );
         if action.reset {
-            *settings = crate::halation::HalationSettings::default();
+            self.output_control(
+                controls::ControlResponse::action(ui.make_persistent_id("reset-halation"), true),
+                |output| output.halation = Default::default(),
+            );
         }
     }
 
     fn grain_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = &mut self.document.grain;
-        let changed = *settings != GrainSettings::default();
+        let mut settings = self.document.project_snapshot().output.grain;
+        let changed = settings != GrainSettings::default();
         let summary = if settings.enabled {
             format!("{:.3}% · a {:.3}", settings.size, settings.amount)
         } else {
@@ -486,23 +601,38 @@ impl Editor {
                 default_open: Some(true),
             },
             |ui| {
-                ui.checkbox(&mut settings.enabled, "Enable");
-                controls::parameter(ui, controls::Parameter::FilmAmount, &mut settings.amount);
-                let mut size = settings.size;
-                controls::parameter(ui, controls::Parameter::FilmSize, &mut size);
-                if size != settings.size {
-                    let resized = settings.resized(size);
-                    if let Err(error) = resized.validate() {
-                        ui.label(error.to_string());
-                    } else {
-                        *settings = resized;
-                    }
-                }
-                controls::parameter(ui, controls::Parameter::FilmColour, &mut settings.colour);
+                let enabled = ui.checkbox(&mut settings.enabled, "Enable").changed();
+                self.output_control(
+                    controls::ControlResponse::action(
+                        ui.make_persistent_id("grain-enabled"),
+                        enabled,
+                    ),
+                    |output| output.grain.enabled = settings.enabled,
+                );
+                let response = controls::parameter_edit(
+                    ui,
+                    controls::Parameter::FilmAmount,
+                    &mut settings.amount,
+                );
+                self.output_control(response, |output| output.grain.amount = settings.amount);
+                let response =
+                    controls::parameter_edit(ui, controls::Parameter::FilmSize, &mut settings.size);
+                self.output_control(response, |output| {
+                    output.grain = output.grain.resized(settings.size)
+                });
+                let response = controls::parameter_edit(
+                    ui,
+                    controls::Parameter::FilmColour,
+                    &mut settings.colour,
+                );
+                self.output_control(response, |output| output.grain.colour = settings.colour);
             },
         );
         if action.reset {
-            *settings = GrainSettings::default();
+            self.output_control(
+                controls::ControlResponse::action(ui.make_persistent_id("reset-grain"), true),
+                |output| output.grain = Default::default(),
+            );
         }
     }
 
@@ -580,7 +710,7 @@ impl Editor {
 
     #[cfg(test)]
     fn dmin(&self) -> Option<DVec3> {
-        match self.document.input {
+        match self.document.project.input {
             InputSettings::Negative { dmin, .. } => dmin,
             InputSettings::Digital => None,
         }
@@ -591,12 +721,12 @@ impl Editor {
         if let InputSettings::Negative { dmin, .. } = self.negative_mut() {
             *dmin = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
     fn dmax(&self) -> Option<DVec3> {
-        match self.document.input {
+        match self.document.project.input {
             InputSettings::Negative { dmax, .. } => dmax,
             InputSettings::Digital => None,
         }
@@ -607,12 +737,12 @@ impl Editor {
         if let InputSettings::Negative { dmax, .. } = self.negative_mut() {
             *dmax = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
     fn floor(&self) -> f64 {
-        match self.document.input {
+        match self.document.project.input {
             InputSettings::Negative { input_floor, .. } => input_floor,
             InputSettings::Digital => 0.,
         }
@@ -623,12 +753,12 @@ impl Editor {
         if let InputSettings::Negative { input_floor, .. } = self.negative_mut() {
             *input_floor = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
     fn balance(&self) -> Balance {
-        match self.document.input {
+        match self.document.project.input {
             InputSettings::Negative { balance, .. } => balance,
             InputSettings::Digital => Balance::default(),
         }
@@ -639,7 +769,7 @@ impl Editor {
         if let InputSettings::Negative { balance, .. } = self.negative_mut() {
             *balance = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
@@ -647,7 +777,7 @@ impl Editor {
         if let InputSettings::Negative { gamma, .. } = self.negative_mut() {
             *gamma = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
@@ -655,13 +785,13 @@ impl Editor {
         if let InputSettings::Negative { response, .. } = self.negative_mut() {
             *response = value;
         }
-        self.document.state.project.input = self.document.input;
+        self.document.state.project.input = self.document.project.input;
     }
 
     #[cfg(test)]
     fn negative_mut(&mut self) -> &mut InputSettings {
-        if !self.document.input.is_negative() {
-            self.document.input = InputSettings::Negative {
+        if !self.document.project.input.is_negative() {
+            self.document.project.input = InputSettings::Negative {
                 dmin: None,
                 dmax: None,
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
@@ -670,12 +800,12 @@ impl Editor {
                 balance: Balance::default(),
             };
         }
-        &mut self.document.input
+        &mut self.document.project.input
     }
 
     #[cfg(test)]
     fn response(&self) -> crate::processing::Response {
-        Self::response_of(self.document.input)
+        Self::response_of(self.document.project.input)
             .expect("negative fixture has an interpretation response")
     }
 
@@ -689,7 +819,7 @@ impl Editor {
 
     #[cfg(test)]
     fn gamma(&self) -> f64 {
-        match self.document.input {
+        match self.document.project.input {
             InputSettings::Negative { gamma, .. } => gamma,
             InputSettings::Digital => crate::processing::DEFAULT_GAMMA,
         }
@@ -698,6 +828,7 @@ impl Editor {
     #[allow(dead_code)]
     fn calibration(&self) -> Option<Calibration> {
         self.document
+            .project
             .input
             .calibration()
             .and_then(|calibration| calibration.validate().ok())
@@ -735,11 +866,12 @@ impl Editor {
     }
 
     fn input(&self) -> InputSettings {
-        self.document.input
+        self.document.project_snapshot().input
     }
 
+    #[cfg(test)]
     fn load_input(&mut self, input: InputSettings) {
-        self.document.input = input;
+        self.document.project.input = input;
     }
 
     fn negative_input(&self) -> InputSettings {
@@ -754,10 +886,10 @@ impl Editor {
     }
 
     fn request_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        if target.is_negative() == self.document.input.is_negative() {
+        if target.is_negative() == self.document.project.input.is_negative() {
             return;
         }
-        if self.document.input.has_stage_settings() && !target.is_negative() {
+        if self.document.project.input.has_stage_settings() && !target.is_negative() {
             let response = self.dialogs.show(move |context, id, escape| {
                 presentation::DecisionDialog::new(
                     "Switch input stage?",
@@ -776,12 +908,20 @@ impl Editor {
     }
 
     fn apply_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        if self.document.input.is_negative() != target.is_negative()
+        let mut draft = match self.edit_project("Input stage") {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        if self.document.project.input.is_negative() != target.is_negative()
             && !self.document.state.project.sources.is_empty()
         {
             // Crossing stages changes every active source's decode WB, so it is an atomic
             // document operation rather than an input-only edit.
-            self.sync_document();
+
+            drop(draft);
             let mut candidate = self.document.capture();
             candidate.project.input = target;
             self.start_document(
@@ -792,49 +932,18 @@ impl Editor {
         }
         if target.ready()
             && !self.document.state.project.sources.is_empty()
-            && let Err(error) = self.validate_processing(
-                target,
-                self.document.roll,
-                self.document.visit.adjustment_layer_settings,
-            )
+            && let Err(error) =
+                self.validate_processing(target, self.document.project.roll, self.photo_settings())
         {
             self.status = error.to_string();
             return;
         }
-        let before = self.history_snapshot();
-        self.document.input = target;
-        self.document.source = !target.ready();
-        self.record_edit(before, "Input stage", None);
-    }
-
-    fn sync_document(&mut self) {
-        let input = self.document.input;
-        let adjustment_layer_target = self.adjustment_layer_target();
-        let project = &mut self.document.state.project;
-        project.input = input;
-        project.roll = self.document.roll;
-        project.orientation = self.document.roll_orientation;
-        project.output.grain = self.document.grain;
-        project.output.halation = self.document.halation;
-        project.output.tiff = match self.document.target {
-            OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
-            OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
-        };
-        if let Some(id) = self.document.visit.current_source {
-            let source = project
-                .source_mut(id)
-                .expect("active source belongs to document");
-            if let adjustment_layers::Target::Layer(layer) = adjustment_layer_target
-                && let Some(record) = source
-                    .adjustment_layers
-                    .as_mut()
-                    .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
-            {
-                record.adjustment.photo = self.document.visit.adjustment_layer_settings;
-            }
-            source.orientation = self.document.visit.photo_orientation;
-            source.crop = self.document.visit.crop;
+        draft.update(|project| project.input = target);
+        if let Err(error) = self.commit_project(draft) {
+            self.status = error.to_string();
+            return;
         }
+        self.document.source = !target.ready();
     }
 
     fn request_id(&mut self) -> u64 {
@@ -872,7 +981,6 @@ impl Editor {
     }
 
     fn add_raws(&mut self, paths: Vec<PathBuf>, cx: &UiContext<'_, Self>) {
-        self.sync_document();
         let reuse = self
             .document
             .visit
@@ -887,25 +995,24 @@ impl Editor {
         );
     }
 
-    fn controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
-    ) -> (Option<ScopeSlot>, bool, bool) {
+    fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
 
-        let initial_input = self.document.input;
-        let previous_orientation = (
-            self.document.roll_orientation,
-            self.document.visit.photo_orientation,
-        );
+        let grade = self.document.project_snapshot();
+        let requested_input = self
+            .document
+            .controls_edit
+            .as_ref()
+            .and_then(|edit| edit.gamma_request);
+        let mut stage_target = None;
+        let mut toggle_pivot = false;
+        let previous_orientation = (self.document.project.orientation, self.photo_orientation());
         presentation::inspector_spacing(ui);
         // The inspector column width is authoritative; content must not widen the panel.
         let inspector_width = ui.available_width();
         ui.set_width(inspector_width);
         presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
-        let mut analyze = false;
         let scope_slot = self.scope_panel(ui);
         ui.add_space(8.);
 
@@ -921,19 +1028,18 @@ impl Editor {
         }
 
         if self.tab == 0 {
-            analyze = self.roll_tool_shelf(ui, cx);
+            self.roll_tool_shelf(ui, cx);
         } else if self.tab == 1 {
             self.photo_tool_shelf(ui, cx);
         }
 
-        let gamma_pending = self.document.gamma_pivot.pending();
+        let gamma_pending = self.controls_pending();
         let editable = !self.interaction_blocked()
             && !self.tool_interacting()
             && !gamma_pending
-            && self.document.input.ready();
+            && grade.input.ready();
         let can_pick = self.tool_start_available() && self.selected_area().is_some();
         let mut start_pick: Option<editing::Interaction> = None;
-        let mut gamma_edited = false;
 
         egui::ScrollArea::vertical()
             .id_salt(("inspector", self.tab))
@@ -944,9 +1050,8 @@ impl Editor {
                     ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.hosted_drawer(ui, cx));
                 }
                 if self.tab == 0 {
-                    let displayed_input = self.gamma_pivot_input();
-                    let mut input = displayed_input;
-                    let mut stage_target = None;
+                    let displayed_input = grade.input;
+                    let input = displayed_input;
                     ui.push_id("roll", |ui| {
                         let capabilities = input.capabilities();
                         let scan = self.document.state.project.require_scan_sources();
@@ -1040,14 +1145,14 @@ impl Editor {
                         }
                         ui.scope(|ui| {
                             if let InputSettings::Negative {
-                                response,
-                                gamma,
-                                balance,
+                                mut response,
+                                mut gamma,
+                                mut balance,
                                 ..
-                            } = &mut input
+                            } = requested_input.unwrap_or(grade.input)
                             {
-                                let inversion_changed = *gamma != crate::processing::DEFAULT_GAMMA
-                                    || *balance != Balance::default();
+                                let inversion_changed = gamma != crate::processing::DEFAULT_GAMMA
+                                    || balance != Balance::default();
                                 let (_, reset) = presentation::section_with_secondary_tool(
                                     ui,
                                     "roll-gamma-balance",
@@ -1055,7 +1160,7 @@ impl Editor {
                                     SectionHeader {
                                         summary: &format!(
                                             "Gamma {gamma:.2} · Balance {}",
-                                            if *balance == Balance::default() {
+                                            if balance == Balance::default() {
                                                 "neutral"
                                             } else {
                                                 "adjusted"
@@ -1077,12 +1182,43 @@ impl Editor {
                                                     && !self.interaction_blocked()
                                                     && !self.tool_interacting(),
                                             |ui| {
-                                                controls::parameter(ui, Parameter::Gamma, gamma);
-                                                controls::balance_body(
+                                                let response = controls::parameter_edit(
+                                                    ui,
+                                                    Parameter::Gamma,
+                                                    &mut gamma,
+                                                );
+                                                self.roll_control(response, cx, |project| {
+                                                    if let InputSettings::Negative {
+                                                        gamma: value,
+                                                        ..
+                                                    } = &mut project.input
+                                                    {
+                                                        *value = gamma;
+                                                    }
+                                                });
+                                            },
+                                        );
+                                        ui.add_enabled_ui(
+                                            editable
+                                                || gamma_pending
+                                                    && !self.interaction_blocked()
+                                                    && !self.tool_interacting(),
+                                            |ui| {
+                                                for response in controls::balance_body(
                                                     ui,
                                                     ColorControl::GammaBalance,
-                                                    balance,
-                                                );
+                                                    &mut balance,
+                                                ) {
+                                                    self.roll_control(response, cx, |project| {
+                                                        if let InputSettings::Negative {
+                                                            balance: value,
+                                                            ..
+                                                        } = &mut project.input
+                                                        {
+                                                            *value = balance;
+                                                        }
+                                                    });
+                                                }
                                             },
                                         );
                                     },
@@ -1091,13 +1227,25 @@ impl Editor {
                                     start_pick = Some(|cx| Box::pin(calibration::pick_gamma(cx)));
                                 }
                                 if reset.secondary_tool {
-                                    self.control_command(editing::Command::GammaPivot, cx);
+                                    toggle_pivot = true;
                                 }
-                                if reset.reset
-                                    && !controls::defer_reset(ui, controls::Reset::GammaAndBalance)
-                                {
-                                    *gamma = crate::processing::DEFAULT_GAMMA;
-                                    *balance = Balance::default();
+                                if reset.reset {
+                                    self.roll_control(
+                                        controls::ControlResponse::action(
+                                            ui.make_persistent_id("reset-gamma-balance"),
+                                            true,
+                                        ),
+                                        cx,
+                                        |project| {
+                                            if let InputSettings::Negative {
+                                                gamma, balance, ..
+                                            } = &mut project.input
+                                            {
+                                                *gamma = crate::processing::DEFAULT_GAMMA;
+                                                *balance = Balance::default();
+                                            }
+                                        },
+                                    );
                                 }
                                 let response_summary = format!(
                                     "Toe {:.2} · Shoulder {:.4}",
@@ -1109,9 +1257,9 @@ impl Editor {
                                     "Toe & shoulder",
                                     SectionHeader {
                                         summary: &response_summary,
-                                        changed: *response != crate::processing::Response::film(),
+                                        changed: response != crate::processing::Response::film(),
                                         reset: Some(
-                                            *response != crate::processing::Response::film()
+                                            response != crate::processing::Response::film()
                                                 && editable,
                                         ),
                                         tool: None,
@@ -1119,76 +1267,114 @@ impl Editor {
                                     },
                                     |ui| {
                                         ui.add_enabled_ui(editable, |ui| {
-                                            controls::parameter(
+                                            let edit = controls::parameter_edit(
                                                 ui,
                                                 Parameter::Toe,
                                                 &mut response.toe,
                                             );
-                                            controls::parameter(
+                                            self.roll_control(edit, cx, |project| {
+                                                if let InputSettings::Negative {
+                                                    response: value,
+                                                    ..
+                                                } = &mut project.input
+                                                {
+                                                    value.toe = response.toe;
+                                                }
+                                            });
+                                            let edit = controls::parameter_edit(
                                                 ui,
                                                 Parameter::Shoulder,
                                                 &mut response.shoulder,
                                             );
+                                            self.roll_control(edit, cx, |project| {
+                                                if let InputSettings::Negative {
+                                                    response: value,
+                                                    ..
+                                                } = &mut project.input
+                                                {
+                                                    value.shoulder = response.shoulder;
+                                                }
+                                            });
                                         });
                                     },
                                 );
-                                if reset.reset
-                                    && !controls::defer_reset(ui, controls::Reset::Response)
-                                {
-                                    *response = crate::processing::Response::film();
+                                if reset.reset {
+                                    self.roll_control(
+                                        controls::ControlResponse::action(
+                                            ui.make_persistent_id("reset-response"),
+                                            true,
+                                        ),
+                                        cx,
+                                        |project| {
+                                            if let InputSettings::Negative { response, .. } =
+                                                &mut project.input
+                                            {
+                                                *response = crate::processing::Response::film();
+                                            }
+                                        },
+                                    );
                                 }
                             }
-                            if controls::white_balance(
+                            let mut wb = grade.roll.wb;
+                            let (responses, pick) = controls::white_balance(
                                 ui,
                                 "roll-white-balance",
-                                &mut self.document.roll.wb,
+                                &mut wb,
                                 editable,
                                 can_pick,
-                            ) {
+                            );
+                            for response in responses {
+                                self.roll_control(response, cx, |project| project.roll.wb = wb);
+                            }
+                            if pick {
                                 start_pick = Some(|cx| Box::pin(white_balance::pick_roll(cx)));
                             }
+                            let mut exposure = grade.roll.exposure;
                             let (_, action) = presentation::section(
                                 ui,
                                 "roll-exposure",
                                 "Exposure",
                                 SectionHeader {
-                                    summary: &format!("{:+.2} EV", self.document.roll.exposure),
-                                    changed: self.document.roll.exposure != 0.,
-                                    reset: Some(self.document.roll.exposure != 0. && editable),
+                                    summary: &format!("{:+.2} EV", exposure),
+                                    changed: exposure != 0.,
+                                    reset: Some(exposure != 0. && editable),
                                     tool: None,
                                     default_open: Some(false),
                                 },
                                 |ui| {
                                     ui.add_enabled_ui(editable, |ui| {
-                                        controls::parameter(
+                                        let response = controls::parameter_edit(
                                             ui,
                                             Parameter::Exposure,
-                                            &mut self.document.roll.exposure,
+                                            &mut exposure,
                                         );
+                                        self.roll_control(response, cx, |project| {
+                                            project.roll.exposure = exposure
+                                        });
                                     });
                                 },
                             );
-                            if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure)
-                            {
-                                self.document.roll.exposure = 0.;
+                            if action.reset {
+                                self.roll_control(
+                                    controls::ControlResponse::action(
+                                        ui.make_persistent_id("reset-roll-exposure"),
+                                        true,
+                                    ),
+                                    cx,
+                                    |project| project.roll.exposure = 0.,
+                                );
                             }
                         });
                     });
-                    // A reset command may already have replaced the staged input for this frame.
-                    gamma_edited = !gamma_pivot::same_gamma(input, displayed_input);
-                    if self.document.input == initial_input && input != displayed_input {
-                        self.document.input = input;
-                    }
-                    if let Some(target) = stage_target {
-                        self.control_command(editing::Command::Input(target), cx);
-                    }
                 } else if self.tab == 1 {
                     if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
                         start_pick = Some(|cx| Box::pin(white_balance::pick_layer(cx)));
                     }
                 } else {
-                    if self.document.input.capabilities().grain {
-                        let allowed = !self.interaction_blocked() && !self.tool_interacting();
+                    if grade.input.capabilities().grain {
+                        let allowed = !self.interaction_blocked()
+                            && !self.tool_interacting()
+                            && !self.controls_pending();
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
@@ -1212,14 +1398,16 @@ impl Editor {
                         });
                     }
                     self.look_controls(ui, cx);
-                    ui.add_enabled_ui(!self.tool_interacting(), |ui| {
-                        let changed = self.document.target != OutputTarget::DisplayP3;
+                    ui.add_enabled_ui(!self.tool_interacting() && !self.controls_pending(), |ui| {
+                        let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
                         let (_, action) = presentation::section(
                             ui,
                             "rendering-target",
                             "Target",
                             SectionHeader {
-                                summary: if self.document.target == OutputTarget::DisplayP3 {
+                                summary: if grade.output.tiff
+                                    == crate::project::TiffTarget::DisplayP3
+                                {
                                     "Display P3 · 100 nit"
                                 } else {
                                     "sRGB · 100 nit"
@@ -1234,30 +1422,46 @@ impl Editor {
                                     ui,
                                     "rendering-target",
                                     "Target",
-                                    if self.document.target == OutputTarget::DisplayP3 {
+                                    if grade.output.tiff == crate::project::TiffTarget::DisplayP3 {
                                         "Display P3"
                                     } else {
                                         "sRGB"
                                     },
                                     |ui| {
-                                        ui.selectable_value(
-                                            &mut self.document.target,
-                                            OutputTarget::DisplayP3,
-                                            "Display P3",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.document.target,
-                                            OutputTarget::Srgb,
-                                            "sRGB",
-                                        );
+                                        for (target, label) in [
+                                            (crate::project::TiffTarget::DisplayP3, "Display P3"),
+                                            (crate::project::TiffTarget::Srgb, "sRGB"),
+                                        ] {
+                                            if ui
+                                                .selectable_label(
+                                                    grade.output.tiff == target,
+                                                    label,
+                                                )
+                                                .clicked()
+                                            {
+                                                self.output_control(
+                                                    controls::ControlResponse::action(
+                                                        ui.make_persistent_id("target"),
+                                                        true,
+                                                    ),
+                                                    |output| output.tiff = target,
+                                                );
+                                            }
+                                        }
                                     },
                                 )
                                 .response
                                 .on_hover_text("Output colour space, not the monitor profile.");
                             },
                         );
-                        if action.reset && !controls::defer_reset(ui, controls::Reset::Target) {
-                            self.document.target = OutputTarget::DisplayP3;
+                        if action.reset {
+                            self.output_control(
+                                controls::ControlResponse::action(
+                                    ui.make_persistent_id("reset-target"),
+                                    true,
+                                ),
+                                |output| output.tiff = crate::project::TiffTarget::DisplayP3,
+                            );
                         }
                     });
                 }
@@ -1266,21 +1470,27 @@ impl Editor {
         self.preferences.sections = presentation::collect_expansion(ui.ctx());
         self.preferences.scopes_visible = self.scopes.visible;
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
-        if previous_orientation
-            != (
-                self.document.roll_orientation,
-                self.document.visit.photo_orientation,
-            )
-        {
+        if previous_orientation != (self.document.project.orientation, self.photo_orientation()) {
             self.document.visit.canvas.viewport.fit();
         }
-        if let Some(kind) = start_pick {
-            self.control_command(editing::Command::Pick(kind), cx);
+        if self.tab != 1 {
+            self.document.visit.controls_edit = None;
         }
-
-        // Render outgoing numeric controls once to commit focus loss before switching stages.
+        if let Some(target) = stage_target {
+            self.cancel_control_edit();
+            self.request_input(target, cx);
+        }
+        if toggle_pivot {
+            self.toggle_gamma_pivot(cx);
+        }
+        if let Some(start) = start_pick {
+            self.cancel_control_edit();
+            if let Err(error) = self.start_interaction(cx, start) {
+                self.status = error;
+            }
+        }
         self.tab = next_tab;
-        (scope_slot, analyze, gamma_edited)
+        scope_slot
     }
 }
 
@@ -1388,7 +1598,7 @@ impl Editor {
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
         self.workspace_chrome(ui, cx, &mut actions);
-        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx);
+        let scope_slot = self.edit_frame_controls(ui, cx);
 
         let menu_zoom = match actions.menu {
             Some(crate::platform::menu::Action::ActualSize) => Some(1.),
@@ -1401,14 +1611,13 @@ impl Editor {
         ui.ctx()
             .data_mut(|data| data.insert_temp(ui.id().with("editor-text-focus"), text_focused));
         self.paint_scope(scope_slot);
-        self.sync_document();
         if self.document.dirty() != was_dirty {
             ui.ctx().request_repaint();
         }
 
-        // Deferred actions must see validated edits and committed numeric focus loss.
+        // Platform menu and file intents are revalidated after workspace input.
         self.application_panel(ui.ctx(), panel_escape_available);
-        self.dispatch_frame_actions(ui, cx, actions, analyze);
+        self.dispatch_frame_actions(ui, cx, actions);
         self.frame_dialogs(ui, cx, !popup_was_open);
         if self.allow_close {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

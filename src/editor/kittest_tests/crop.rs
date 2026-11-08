@@ -20,18 +20,18 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
                         .project
                         .source(editor.document.visit.current_source.unwrap())
                         .unwrap(),
-                    editor.document.visit.adjustment_layer_settings,
+                    editor.photo_settings(),
                 )
                 .and_then(|layers| {
                     crate::adjustment_layers::AdjustmentLayerPipeline::new(
-                        editor.document.input,
-                        editor.document.roll,
+                        editor.document.project.input,
+                        editor.document.project.roll,
                         layers,
                         DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
                     )
                 })
                 .unwrap(),
-            editor.document.target,
+            editor.document.target(),
         )
     });
     let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
@@ -90,8 +90,7 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
 fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_navigation() {
     editor_harness(|mut h, _| {
         h.update(|editor| {
-            editor.document.input = crate::processing::InputSettings::Digital;
-            editor.sync_document();
+            editor.document.project.input = crate::processing::InputSettings::Digital;
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {
@@ -116,7 +115,6 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
                 let layout =
                     viewport.layout_composition(layout.canvas, layout.composition, density);
                 viewport.pan(layout, density, egui::vec2(35., -20.));
-                editor.sync_document();
             });
             h.step();
             let (normal, project, undo) = h.read(|editor| {
@@ -258,13 +256,13 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
         h.get_by_label("Apply").click();
         h.step();
         h.read(|editor| {
-            assert_eq!(editor.document.visit.crop, Some(draft));
+            assert_eq!(editor.photo_crop(), Some(draft));
             assert!(editor.document.crop_edit().is_none());
         });
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         h.step();
         wait_for(&mut h, |editor| !editor.interaction_blocked());
-        h.read(|editor| assert!(editor.document.visit.crop.is_none()));
+        h.read(|editor| assert!(editor.photo_crop().is_none()));
     });
 }
 
@@ -293,8 +291,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
     std::fs::write(&damaged, bytes).unwrap();
     editor_harness(|mut h, capture| {
         h.update(|e| {
-            e.document.input = crate::processing::InputSettings::Digital;
-            e.sync_document();
+            e.document.project.input = crate::processing::InputSettings::Digital;
         });
         h.enter(|e, cx| e.add_raws(vec![damaged], cx));
         wait_for(&mut h, |e| {
@@ -302,10 +299,9 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         });
         h.update(|e| {
             e.document.source = false;
-            e.document.visit.adjustment_layer_settings.exposure = 0.75;
-            e.document.visit.photo_orientation.turn_clockwise();
-            e.document.roll_orientation.horizontal = true;
-            e.sync_document();
+            e.photo_settings_mut().exposure = 0.75;
+            e.photo_orientation_mut().turn_clockwise();
+            e.document.project.orientation.horizontal = true;
         });
         wait_for(&mut h, |e| e.document.visit.working_view.idle());
         h.event(egui::Event::PointerGone);
@@ -409,18 +405,18 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                         .project
                         .source(e.document.visit.current_source.unwrap())
                         .unwrap(),
-                    e.document.visit.adjustment_layer_settings,
+                    e.photo_settings(),
                 )
                 .and_then(|layers| {
                     crate::adjustment_layers::AdjustmentLayerPipeline::new(
-                        e.document.input,
-                        e.document.roll,
+                        e.document.project.input,
+                        e.document.project.roll,
                         layers,
                         ready.proxy.matrix(),
                     )
                 })
                 .unwrap(),
-                e.document.target,
+                e.document.target(),
             )
         });
         let output = capture.borrow();
@@ -459,8 +455,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
         editor_harness(|mut harness, capture| {
             if digital {
                 harness.update(|editor| {
-                    editor.document.input = crate::processing::InputSettings::Digital;
-                    editor.sync_document();
+                    editor.document.project.input = crate::processing::InputSettings::Digital;
                 });
             }
             harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
@@ -479,14 +474,13 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                     editor.set_gamma(0.75);
                 }
                 editor.document.source = false;
-                editor.document.roll.exposure = 0.75;
-                editor.document.visit.adjustment_layer_settings.wb = Balance {
+                editor.document.project.roll.exposure = 0.75;
+                editor.photo_settings_mut().wb = Balance {
                     warmth: 0.1,
                     tint: -0.05,
                 };
-                editor.document.visit.photo_orientation.turns = turns;
-                editor.document.roll_orientation.horizontal = reflected;
-                editor.sync_document();
+                editor.photo_orientation_mut().turns = turns;
+                editor.document.project.orientation.horizontal = reflected;
             });
             stage(&mut harness, "Photo");
             harness
@@ -567,7 +561,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             assert_crop_patch_pixels(&mut harness, &capture);
             harness.get_by_label("Cancel").click();
             harness.step();
-            harness.read(|editor| assert!(editor.document.visit.crop.is_none()));
+            harness.read(|editor| assert!(editor.photo_crop().is_none()));
         });
     }
 }

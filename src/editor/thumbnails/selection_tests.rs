@@ -243,7 +243,6 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
             truncate_filmstrip(editor, 2);
             crate::editor::tests::add_ready_fixture(editor);
             editor.document.selected = 2;
-            editor.sync_document();
             let before = editor.document.state.project.clone();
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
@@ -445,7 +444,7 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
                 truncate_filmstrip(editor, 2);
                 crate::editor::tests::add_ready_fixture(editor);
                 editor.document.selected = 2;
-                editor.sync_document();
+
                 (
                     editor.document.state.project.clone(),
                     editor.document.visit.current_source,

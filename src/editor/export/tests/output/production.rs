@@ -25,9 +25,9 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         );
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.document.roll = RollSettings::default();
+        editor.document.project.roll = RollSettings::default();
         let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-        editor.document.visit.crop = Some(Crop {
+        *editor.photo_crop_mut() = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,
                 f64::from(area.y) + f64::from(area.height) / 2.,
@@ -35,7 +35,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             size: [area.width - 96, area.height - 96],
             angle: 0.13,
         });
-        editor.sync_document();
+
         let id = editor.document.visit.current_source.unwrap();
         editor
             .document

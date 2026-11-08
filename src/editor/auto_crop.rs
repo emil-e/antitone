@@ -7,13 +7,6 @@ use crate::{
 use std::rc::Weak;
 use std::{cell::RefCell, rc::Rc};
 
-pub(super) enum Action {
-    Batch {
-        photos: Vec<SourceId>,
-        scope: &'static str,
-    },
-}
-
 #[derive(Clone)]
 struct Entry {
     source: SourceId,
@@ -89,7 +82,7 @@ impl Entry {
             .is_ok_and(|path| editor.document.file_key(&path) == self.file)
             && source.crop == self.before
             && (editor.document.visit.current_source != Some(self.source)
-                || editor.document.visit.crop == self.before)
+                || editor.photo_crop() == self.before)
             && source.development == self.development
             && if let Some(metadata) = &self.spatial {
                 Arc::ptr_eq(metadata, &editor.document.spatial.ready())
@@ -237,7 +230,6 @@ impl Editor {
         {
             return;
         }
-        self.sync_document();
         let result = self.photo_crop_proposal(photo);
         let status = finish_photo_proposal(&mut self.document.crop_edit_mut().unwrap(), result);
         self.status = status;
@@ -247,7 +239,6 @@ impl Editor {
         if photos.is_empty() || !self.auto_crop_entry_available() {
             return None;
         }
-        self.sync_document();
         let attempted = photos.len();
         let mut entries = Vec::new();
         let mut problems = Vec::new();
@@ -297,6 +288,9 @@ impl Editor {
     }
 
     fn commit_auto_crop(&mut self, edit: &Draft) -> Result<(), (Option<SourceId>, Error)> {
+        let mut transaction = self
+            .edit_project("Auto-crop")
+            .map_err(|error| (None, error))?;
         let mut failed_source = None;
         let candidate = (|| -> Result<_, Error> {
             if !edit.valid(self) {
@@ -304,7 +298,7 @@ impl Editor {
                     "document, crops or measurements changed",
                 ));
             }
-            self.sync_document();
+
             let ready = self.document.capture().ready_spatial_metadata();
             if edit.entries.iter().any(|entry| {
                 entry
@@ -332,17 +326,9 @@ impl Editor {
             Ok(candidate)
         })()
         .map_err(|error| (failed_source, error))?;
-        let before = self.history_snapshot();
-        self.document.state.project = candidate;
-        if let Some(id) = self.document.visit.current_source {
-            self.document.visit.crop = self
-                .document
-                .project
-                .source(id)
-                .expect("active source")
-                .crop;
-        }
-        self.record_edit(before, "Auto-crop", None);
+        transaction.replace_snapshot(candidate.snapshot());
+        self.commit_project(transaction)
+            .map_err(|error| (None, error))?;
         self.document.visit.canvas.viewport.fit();
         self.status = format!("Auto-crop applied to {} photos", edit.entries.len());
         Ok(())
@@ -674,7 +660,7 @@ impl Draft {
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
-        if !editor.document.input.capabilities().auto_crop {
+        if !editor.document.project.input.capabilities().auto_crop {
             return;
         }
         if std::mem::take(&mut self.reveal_controls) {
@@ -772,7 +758,7 @@ pub(super) fn propose_photo_crop(
     {
         return None;
     }
-    editor.sync_document();
+
     let regions = editor.prepare_regions(cx)?;
     cx.spawn(move |cx| async move {
         if regions.await.is_none() {

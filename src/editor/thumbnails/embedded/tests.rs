@@ -859,7 +859,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor.set_dmin(Some(glam::DVec3::splat(0.5)));
     editor.set_dmax(Some(glam::DVec3::splat(0.02)));
     editor.document.source = false;
-    editor.document.roll.exposure = 2.;
+    editor.document.project.roll.exposure = 2.;
     editor
         .document
         .project
@@ -930,7 +930,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             &[[1000, 2000, 3000, 0]; 32],
             glam::DMat3::IDENTITY,
             None,
-            editor.document.target,
+            editor.document.target(),
         )
         .await
         .unwrap()

@@ -146,15 +146,46 @@ fn refinement_paints_its_draft_without_changing_the_comparison_preference() {
             assert!(editor.document.visit.working_view.compare);
             assert!(!editor.comparing_original());
             assert_eq!(editor.document.state.project, before);
-            crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
-                editor
-                    .view_recipe(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
-                    )
-                    .unwrap(),
-            ))
+            let source = editor.document.visit.current_source.unwrap();
+            let candidate = editor
+                .mask_preview_source()
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers
+                .last()
+                .unwrap()
+                .adjustment
+                .mask;
+            let accepted = before
+                .source(source)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers
+                .last()
+                .unwrap()
+                .adjustment
+                .mask;
+            assert_ne!(
+                candidate, accepted,
+                "the held gesture must actually change its geometry"
+            );
+            let recipe = editor
+                .view_recipe(
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
+                )
+                .unwrap();
+            assert_eq!(
+                recipe.grade.layers().last().unwrap().mask,
+                candidate,
+                "render capture must contain the gesture, not accepted geometry"
+            );
+            crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe))
         });
         wait_for(&mut h, |editor| {
             editor

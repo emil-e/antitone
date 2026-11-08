@@ -1127,7 +1127,7 @@ impl Editor {
             if inspection && self.document.visit.working_view.wanted.is_some() {
                 self.document.visit.working_view.render_capture(
                     capture,
-                    self.document.target,
+                    self.document.target(),
                     context,
                 )?;
             }
@@ -1137,7 +1137,7 @@ impl Editor {
                 .visit
                 .working_view
                 .present(frame, previous.as_ref(), compare)?
-                .filter(|rendered| rendered.target == self.document.target);
+                .filter(|rendered| rendered.target == self.document.target());
             self.document.visit.working_view.updating =
                 !self.document.visit.working_view.support_ready()
                     || self
@@ -1151,7 +1151,7 @@ impl Editor {
                                 || !rendered.matches_capture(
                                     &rendered.spec,
                                     capture,
-                                    self.document.target,
+                                    self.document.target(),
                                 )
                         });
             return Ok(self.document.visit.working_view.displayed.clone());
@@ -1164,7 +1164,7 @@ impl Editor {
                 .document
                 .visit
                 .working_view
-                .hold(self.document.target, compare));
+                .hold(self.document.target(), compare));
         }
 
         if repairs.0.is_empty()
@@ -1192,7 +1192,7 @@ impl Editor {
             );
             self.document.visit.working_view.render_capture(
                 capture,
-                self.document.target,
+                self.document.target(),
                 context,
             )?;
             self.document.visit.working_view.reference = None;
@@ -1202,7 +1202,7 @@ impl Editor {
                 .visit
                 .working_view
                 .present(frame, previous.as_ref(), compare)?
-                .filter(|rendered| rendered.target == self.document.target);
+                .filter(|rendered| rendered.target == self.document.target());
             self.document.visit.working_view.updating |= self
                 .document
                 .visit
@@ -1216,7 +1216,7 @@ impl Editor {
                         .wanted
                         .as_ref()
                         .is_none_or(|wanted| {
-                            !rendered.matches_capture(&wanted.spec, capture, self.document.target)
+                            !rendered.matches_capture(&wanted.spec, capture, self.document.target())
                         })
                 });
             return Ok(self.document.visit.working_view.displayed.clone());
@@ -1231,10 +1231,11 @@ impl Editor {
             },
             cx,
         );
-        self.document
-            .visit
-            .working_view
-            .render_capture(capture, self.document.target, context)?;
+        self.document.visit.working_view.render_capture(
+            capture,
+            self.document.target(),
+            context,
+        )?;
 
         self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference)?
@@ -1245,7 +1246,7 @@ impl Editor {
             .visit
             .working_view
             .present(frame, previous.as_ref(), compare)?
-            .filter(|rendered| rendered.target == self.document.target);
+            .filter(|rendered| rendered.target == self.document.target());
         self.document.visit.working_view.updating |= self
             .document
             .visit
@@ -1259,7 +1260,7 @@ impl Editor {
                     .wanted
                     .as_ref()
                     .is_none_or(|wanted| {
-                        !rendered.matches_capture(&wanted.spec, capture, self.document.target)
+                        !rendered.matches_capture(&wanted.spec, capture, self.document.target())
                     })
             });
         if self.document.visit.working_view.displayed.is_none()

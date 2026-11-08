@@ -39,7 +39,6 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
             SourceAnalysis { source, areas }
         })
         .collect();
-    editor.sync_document();
     let accepted = editor.document.state.project.clone();
     let dirty = editor.document.dirty();
     let undo = editor.history_label(history::Direction::Undo);
@@ -123,7 +122,6 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         })
         .collect();
     editor.auto_crop_margin = 0.;
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     let target = before.order[0];
     with_application(editor, |app| {
@@ -219,7 +217,6 @@ fn analyze_uses_an_independent_shared_picture_inset_and_preserves_authored_sampl
             },
         })
         .collect();
-    editor.sync_document();
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));

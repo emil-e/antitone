@@ -8,7 +8,6 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.sync_document();
             let before = editor.document.state.project.clone();
             editor.save_project(
                 "project.json".into(),
@@ -59,7 +58,6 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
 fn unavailable_export_services_report_failure_and_keep_accepted_state() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     let source = editor.document.visit.current_source;
     let view = (
@@ -103,7 +101,6 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.document.source = false;
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     let visit = editor.document.visit.view;
     let path = editor
@@ -230,7 +227,6 @@ fn rejected_support_and_accepted_state_remain_visible_until_acknowledgement() {
         )
         .unwrap(),
     ));
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     let region = editor.test_pick_region();
     editor.apply_flat_edit(&UiContext::render_only());
@@ -276,7 +272,6 @@ fn rejected_support_and_accepted_state_remain_visible_until_acknowledgement() {
 fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_message() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.sync_document();
     let before = editor.document.state.project.clone();
     assert!(editor.document.dirty());
     editor.report_failure(FailureCase::Export, "disk full".into());

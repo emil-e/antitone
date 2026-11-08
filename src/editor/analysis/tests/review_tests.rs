@@ -268,7 +268,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                     }
                 }
                 editor.document.state.project.add_source(other).unwrap();
-                editor.sync_document();
+
                 let before = editor.document.state.project.clone();
                 prepared(editor, cx);
                 assert!(
@@ -363,8 +363,8 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
                 .project
                 .order
                 .retain(|id| *id != retired);
-            editor.document.roll.exposure = 1.;
-            editor.document.roll.wb.tint = 0.2;
+            editor.document.project.roll.exposure = 1.;
+            editor.document.project.roll.wb.tint = 0.2;
             prepared(editor, cx);
             assert!(!editor.document.analysis_review().unwrap().replaces_photos);
             assert!(!editor.analysis_fitting());
@@ -598,7 +598,7 @@ fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
 fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action() {
     for accept in [false, true] {
         let mut editor = ready_state();
-        editor.document.visit.adjustment_layer_settings.pivot = 0.3;
+        editor.photo_settings_mut().pivot = 0.3;
         let ctx = egui::Context::default();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(prepared);

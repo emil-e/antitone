@@ -12,7 +12,6 @@ fn calibrated_roll(harness: &mut Harness<'_, Editor>) -> Vec<SourceId> {
     harness.update(|editor| {
         editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
         editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
-        editor.sync_document();
     });
     harness.step();
     harness.read(|editor| editor.document.project.order.clone())

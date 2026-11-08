@@ -152,24 +152,14 @@ pub(super) fn calibrated_workflow<R>(
         harness.read(|editor| assert_eq!(editor.gamma(), 0.75));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure, 0.5,
-                "{}",
-                editor.status
-            )
-        });
+        harness
+            .read(|editor| assert_eq!(editor.photo_settings().exposure, 0.5, "{}", editor.status));
         enter_numeric(&mut harness, "Warmth", "0.1");
         enter_numeric(&mut harness, "Tint", "-0.05");
+        harness.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.5));
         harness.read(|editor| {
             assert_eq!(
-                editor.document.visit.adjustment_layer_settings.exposure,
-                0.5
-            )
-        });
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.adjustment_layer_settings.wb,
+                editor.photo_settings().wb,
                 Balance {
                     warmth: 0.1,
                     tint: -0.05
@@ -189,7 +179,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
             return original
                 .wanted
                 .as_ref()
-                .is_some_and(|demand| demand.target == e.document.target)
+                .is_some_and(|demand| demand.target == e.document.target())
                 && original.settled().is_some();
         }
         assert!(!e.document.visit.canvas.original.failed(), "{}", e.status);
@@ -199,9 +189,9 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                     .map(AuthoredPhotograph::from)
             } else {
                 e.positive_processing(
-                    e.document.input,
-                    e.document.roll,
-                    e.document.visit.adjustment_layer_settings,
+                    e.document.project.input,
+                    e.document.project.roll,
+                    e.photo_settings(),
                 )
             }
             .unwrap();
@@ -213,7 +203,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                     .as_ref()
                     .is_some_and(|view| {
                         view.processing() == expected.clone()
-                            && view.target == e.document.target
+                            && view.target == e.document.target()
                             && (!e.document.visit.working_view.compare
                                 || e.document.source
                                 || e.document.visit.working_view.reference_ready())
@@ -223,7 +213,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                 .original
                 .wanted
                 .as_ref()
-                .is_some_and(|demand| demand.target == e.document.target)
+                .is_some_and(|demand| demand.target == e.document.target())
                 && e.active_canvas().original.settled().is_some()
         }
     });
@@ -664,9 +654,9 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     .unwrap();
                 editor
                     .positive_processing(
-                        editor.document.input,
-                        editor.document.roll,
-                        editor.document.visit.adjustment_layer_settings,
+                        editor.document.project.input,
+                        editor.document.project.roll,
+                        editor.photo_settings(),
                     )
                     .unwrap()
             });
@@ -705,11 +695,11 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
         harness.enter(|editor, cx| {
             let bad = editor
                 .positive_processing(
-                    editor.document.input,
-                    editor.document.roll,
+                    editor.document.project.input,
+                    editor.document.project.roll,
                     AdjustmentLayerSettings {
-                        exposure: editor.document.visit.adjustment_layer_settings.exposure + 1.,
-                        ..editor.document.visit.adjustment_layer_settings
+                        exposure: editor.photo_settings().exposure + 1.,
+                        ..editor.photo_settings()
                     },
                 )
                 .unwrap();
@@ -870,7 +860,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                         .output_retained(),
                     "dragging/scopes must not allocate a second presentation path"
                 );
-                exposures.push(editor.document.visit.adjustment_layer_settings.exposure);
+                exposures.push(editor.photo_settings().exposure);
             });
         }
         let end = slider.right_center() - egui::vec2(8., 0.);
@@ -1116,7 +1106,7 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                     wait_for(&mut harness, |editor| {
                         let input = editor.scope_request().unwrap();
                         let settings = crate::scopes::Settings {
-                            target: editor.document.target,
+                            target: editor.document.target(),
                             plot,
                             amplification: 1,
                         };

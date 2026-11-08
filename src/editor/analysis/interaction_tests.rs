@@ -103,7 +103,7 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
                     assert_eq!(editor.document.project, before);
                     assert!(editor.status.contains("Document services unavailable"));
                 } else {
-                    assert_eq!(editor.document.input, InputSettings::Digital);
+                    assert_eq!(editor.document.project.input, InputSettings::Digital);
                 }
             });
         });

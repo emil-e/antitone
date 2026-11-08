@@ -72,7 +72,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                     .as_ref()
                     .is_some_and(|r| {
                         Some(&r.processing()) == e.document.visit.working_view.processing().as_ref()
-                            && r.target == e.document.target
+                            && r.target == e.document.target()
                     })
             });
             harness.render().unwrap();
@@ -123,7 +123,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                     e.document.visit.working_view.displayed.as_ref().unwrap()
                 ));
                 let settings = crate::scopes::Settings {
-                    target: e.document.target,
+                    target: e.document.target(),
                     plot: if e.scopes.vector {
                         crate::scopes::Plot::Vector
                     } else {

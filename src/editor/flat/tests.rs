@@ -72,12 +72,11 @@ fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
 fn reference_rejection_and_cancel_preserve_document_and_working_context() {
     let mut editor = Editor::state();
     editor.document.source = false;
-    editor.document.roll.exposure = 2.123456789;
+    editor.document.project.roll.exposure = 2.123456789;
     editor.set_dmin(Some(DVec3::splat(0.2)));
     editor.set_floor(1. / 65535.);
-    editor.sync_document();
     let original = editor.document.state.project.clone();
-    let roll = editor.document.roll;
+    let roll = editor.document.project.roll;
     with_application(editor, |app| {
         app.enter(|e, cx| e.begin_flat_edit("light.ARW".into(), None, cx));
         assert!(
@@ -109,7 +108,7 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
             e.begin_flat_edit("other.ARW".into(), None, cx);
             assert!(e.interaction_blocked());
             e.end_tool();
-            assert_eq!(e.document.roll, roll);
+            assert_eq!(e.document.project.roll, roll);
             assert_eq!(e.document.state.project, original);
             assert!(!e.document.source);
         });
@@ -179,15 +178,11 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     editor.set_dmin(Some(DVec3::splat(0.2)));
     editor.set_dmax(Some(DVec3::splat(0.01)));
     editor.document.source = false;
-    editor.document.roll_orientation.turn_clockwise();
-    editor.document.roll_orientation.horizontal = true;
-    editor
-        .document
-        .visit
-        .photo_orientation
-        .turn_counterclockwise();
-    editor.document.visit.photo_orientation.flips.vertical = true;
-    editor.document.visit.crop = Some(Crop {
+    editor.document.project.orientation.turn_clockwise();
+    editor.document.project.orientation.horizontal = true;
+    editor.photo_orientation_mut().turn_counterclockwise();
+    editor.photo_orientation_mut().flips.vertical = true;
+    *editor.photo_crop_mut() = Some(Crop {
         center: [400.25, 200.75],
         size: [300, 200],
         angle: 0.2,
@@ -195,9 +190,9 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     editor.document.visit.canvas.viewport.zoom = Some(1.375);
     let composition = Composition::with_crop(
         editor.document.visit.canvas.ready.as_ref().unwrap().area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
-        editor.document.visit.crop,
+        editor.document.project.orientation,
+        editor.photo_orientation(),
+        editor.photo_crop(),
     )
     .unwrap();
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(180., 120.));
@@ -222,7 +217,6 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             .layout_composition(canvas, composition, 1.),
         1.,
     ));
-    editor.sync_document();
     let original = editor.document.state.project.clone();
     let viewport = editor.document.visit.canvas.viewport;
     let working_layout = editor.document.visit.canvas.last_layout;
@@ -285,9 +279,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         )
     );
     assert_eq!(editor.document.state.project, original);
-    editor.set_test_pick_region(Some(
-        editor.document.visit.crop.unwrap().coverage().unwrap(),
-    ));
+    editor.set_test_pick_region(Some(editor.photo_crop().unwrap().coverage().unwrap()));
     editor.apply_flat_edit(&UiContext::render_only());
     assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
     assert_eq!(editor.document.state.project, original);
@@ -302,13 +294,13 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             e.end_tool();
             assert_eq!(e.document.state.project, original);
             assert_eq!(
-                e.document.visit.crop,
+                e.photo_crop(),
                 original
                     .source(e.document.visit.current_source.unwrap())
                     .unwrap()
                     .crop
             );
-            assert_eq!(e.document.roll_orientation, original.orientation);
+            assert_eq!(e.document.project.orientation, original.orientation);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!(!e.document.source && e.document.flat_edit().is_none());
             assert_eq!(e.normal_canvas_composition(area), composition);
@@ -391,7 +383,6 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                     .adjustment_layers = Some(layers);
                 e.refresh_adjustment_layer_selection();
                 e.select_adjustment_layer(adjustment_layers::Target::Layer(selected_layer));
-                e.sync_document();
                 (
                     (e.dmin(), e.dmax()),
                     e.document.state.project.clone(),
@@ -400,7 +391,6 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             });
             app.enter(|e, cx| {
                 e.begin_flat_edit(root.join("bare-light.dng"), None, cx);
-                e.sync_document();
                 assert_eq!(
                     e.adjustment_layer_target(),
                     adjustment_layers::Target::Layer(selected_layer)
@@ -409,7 +399,6 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             });
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.update(|e| {
-                e.sync_document();
                 assert_eq!(e.document.state.project, original);
                 assert!(e.current_tool().unwrap().is::<FlatTool>());
                 assert!(e.test_pick_region().is_some());

@@ -146,13 +146,14 @@ fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
 fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibrated_roll() {
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
-    let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.document.input
+    let crate::processing::InputSettings::Negative { dmin, dmax, .. } =
+        &mut editor.document.project.input
     else {
         panic!("authored scan roll must use Negative");
     };
     *dmin = None;
     *dmax = None;
-    editor.sync_document();
+
     let before = editor.document.state.project.clone();
     assert!(!before.input.ready());
     assert!(before.input.calibration().is_none());
@@ -176,7 +177,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
                     .max_element()
                     <= 2. / 65535.
             );
-            assert!(e.document.input.ready());
+            assert!(e.document.project.input.ready());
             assert_eq!(e.document.state.project.analysis_regions.len(), 2);
         });
         app.enter(|e, access| e.restore_history(Direction::Undo, access));

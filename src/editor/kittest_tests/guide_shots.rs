@@ -116,7 +116,7 @@ fn documented_states_render() {
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 == roll_size
         });
         settle_view(&mut harness);
@@ -156,7 +156,7 @@ fn documented_states_render() {
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             e.document
                 .thumbnails
-                .ready_count(&e.document, e.document.target)
+                .ready_count(&e.document, e.document.target())
                 == roll_size
         });
         settle_view(&mut harness);
@@ -284,11 +284,7 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
             return false;
         }
         let expected = e
-            .positive_processing(
-                e.input(),
-                e.document.roll,
-                e.document.visit.adjustment_layer_settings,
-            )
+            .positive_processing(e.input(), e.document.project.roll, e.photo_settings())
             .unwrap();
         !e.document.visit.working_view.updating
             && e.document
@@ -297,7 +293,7 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
                 .displayed
                 .as_ref()
                 .is_some_and(|view| {
-                    view.processing() == expected.clone() && view.target == e.document.target
+                    view.processing() == expected.clone() && view.target == e.document.target()
                 })
     });
     frames(harness);

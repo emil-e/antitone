@@ -25,7 +25,6 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     editor.set_dmin(None);
     editor.set_dmax(None);
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
-    editor.sync_document();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -72,8 +71,8 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
             let directory = tempfile::tempdir().unwrap();
             let added = directory.path().join("added.dng");
             std::fs::copy(path("patches.dng"), &added).unwrap();
-            let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-            editor.sync_document();
+            let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+
             let source = editor.document.visit.current_source.unwrap();
             let Target::Layer(layer) = editor.adjustment_layer_target() else {
                 panic!("fixture layer");
@@ -83,7 +82,7 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
                 .history_label(crate::editor::history::Direction::Undo)
                 .map(str::to_owned);
             let before = if layer_pick {
-                editor.document.visit.adjustment_layer_settings.wb
+                editor.photo_settings().wb
             } else {
                 editor.balance()
             };
@@ -163,7 +162,7 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
                 app.read(|editor| {
                     assert_eq!(editor.document.visit.current_source, Some(source));
                     let actual = if layer_pick {
-                        editor.document.visit.adjustment_layer_settings.wb
+                        editor.photo_settings().wb
                     } else {
                         editor.balance()
                     };
@@ -347,20 +346,25 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert!(e.document.input.is_negative(), "{}", e.status);
+            assert!(e.document.project.input.is_negative(), "{}", e.status);
             assert_eq!(e.document.state.project.sources.len(), 2);
             assert_stage_development(e, false);
         });
         app.enter(|e, cx| e.request_input(InputSettings::Digital, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
+            assert_eq!(
+                e.document.project.input,
+                InputSettings::Digital,
+                "{}",
+                e.status
+            );
             assert_stage_development(e, true);
         });
         app.enter(|e, cx| e.request_input(e.negative_input(), cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert!(e.document.input.is_negative(), "{}", e.status);
+            assert!(e.document.project.input.is_negative(), "{}", e.status);
             assert_stage_development(e, false);
             assert_eq!(
                 e.document.state.project.scan_basis(),
@@ -372,13 +376,18 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
+            assert_eq!(
+                e.document.project.input,
+                InputSettings::Digital,
+                "{}",
+                e.status
+            );
             assert_stage_development(e, true);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert!(e.document.input.is_negative(), "{}", e.status);
+            assert!(e.document.project.input.is_negative(), "{}", e.status);
             assert_stage_development(e, false);
         });
     });
@@ -399,7 +408,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             e.set_dmin(Some(glam::DVec3::splat(0.6)));
             e.set_dmax(Some(glam::DVec3::splat(0.005)));
             e.document.source = false;
-            e.sync_document();
+
             let mut candidate = e.document.capture();
             let source = candidate
                 .project
@@ -436,7 +445,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             )
             .unwrap();
             (
-                e.document.input,
+                e.document.project.input,
                 e.document.state.project.scan.clone(),
                 digital_proxy_pixels(e, &uncorrected, None),
             )
@@ -462,7 +471,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         );
         app.enter(|e, cx| {
             e.request_input(InputSettings::Digital, cx);
-            assert_eq!(e.document.input, negative);
+            assert_eq!(e.document.project.input, negative);
             assert!(e.dialogs.is_open());
             e.dialogs.answer_for_test("Switch stage");
         });
@@ -470,13 +479,18 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.read(|e| {
             assert!(e.interaction_blocked() && e.document.correction.is_some());
             assert_eq!(
-                e.document.input, negative,
+                e.document.project.input, negative,
                 "old interpretation stays accepted until preparation completes"
             );
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
+            assert_eq!(
+                e.document.project.input,
+                InputSettings::Digital,
+                "{}",
+                e.status
+            );
             assert!(e.document.correction.is_none() && !e.document.source);
             assert!(
                 e.source_context()
@@ -509,21 +523,26 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert_eq!(e.document.input, negative, "{}", e.status);
+            assert_eq!(e.document.project.input, negative, "{}", e.status);
             assert!(e.document.correction.is_some() && !e.document.source);
             assert_eq!(e.document.state.project.scan, scan);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.enter(|e, cx| {
-            assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
+            assert_eq!(
+                e.document.project.input,
+                InputSettings::Digital,
+                "{}",
+                e.status
+            );
             assert!(e.document.correction.is_none());
             e.request_input(e.negative_input(), cx);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(
-                e.document.input.is_negative()
+                e.document.project.input.is_negative()
                     && e.document.source
                     && e.document.correction.is_none(),
                 "{}",
@@ -578,7 +597,8 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             )
             .unwrap(),
         ));
-        let view = RenderedView::new(device, source, &parameters, e.document.target, None).unwrap();
+        let view =
+            RenderedView::new(device, source, &parameters, e.document.target(), None).unwrap();
         view.ensure_submitted(device, queue, &e.submissions, &egui::Context::default());
         crate::viewer::readback::image_pixels(device, queue, &view.image)
     }
@@ -602,7 +622,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (snapshot, visit, native, store) = app.update(|e| {
             let before = e.history_snapshot();
-            e.document.roll.exposure = 0.25;
+            e.document.project.roll.exposure = 0.25;
             e.record_edit(before, "Exposure", None);
             (
                 e.document.state.project.clone(),

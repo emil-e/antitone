@@ -30,8 +30,7 @@ fn editor(
         editor.document = editor.document.replacement(document);
         editor.set_dmin(editor.document.state.project.dmin().map(DVec3::from_array));
         editor.set_dmax(editor.document.state.project.dmax().map(DVec3::from_array));
-        editor.document.roll = editor.document.state.project.roll;
-        editor.document.roll_orientation = editor.document.state.project.orientation;
+
         editor.document.thumbnails = (Thumbnails::with_developments(
             device,
             queue,
@@ -108,7 +107,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
                 editor
                     .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.document.target),
+                    .ready_count(&editor.document, editor.document.target()),
                 1
             );
             assert!(editor.document.thumbnails.pending.is_none());
@@ -162,7 +161,7 @@ fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callba
                 editor
                     .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.document.target),
+                    .ready_count(&editor.document, editor.document.target()),
                 2
             );
             assert!(

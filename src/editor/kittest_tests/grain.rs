@@ -17,9 +17,9 @@ pub(super) fn painted(harness: &mut Harness<'_, Editor>) {
                     view.processing()
                         == editor
                             .positive_processing(
-                                editor.document.input,
-                                editor.document.roll,
-                                editor.document.visit.adjustment_layer_settings,
+                                editor.document.project.input,
+                                editor.document.project.roll,
+                                editor.photo_settings(),
                             )
                             .unwrap()
                             .clone()
@@ -66,7 +66,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             h.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
             wait_for(&mut h, |e| {
                 !e.interaction_blocked()
-                    && e.document.input == crate::processing::InputSettings::Digital
+                    && e.document.project.input == crate::processing::InputSettings::Digital
             });
             let directory = tempfile::tempdir().unwrap();
             h.input_mut()
@@ -76,13 +76,12 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                 .native_pixels_per_point = Some(scale);
             h.update(|e| {
                 e.document.source = false;
-                e.document.target = OutputTarget::Srgb;
-                e.document.grain = GrainSettings::default();
-                e.document.halation = crate::halation::HalationSettings {
+                e.document.set_target(OutputTarget::Srgb);
+                e.document.project.output.grain = GrainSettings::default();
+                e.document.project.output.halation = crate::halation::HalationSettings {
                     enabled: true,
                     ..Default::default()
                 };
-                e.sync_document();
             });
             stage(&mut h, "Rendering");
             h.run();
@@ -115,15 +114,22 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             select_preset(&mut h, "Medium format");
             h.read(|e| {
                 assert!(
-                    !e.document.grain.enabled,
+                    !e.document.project.output.grain.enabled,
                     "choosing a format is not a master enable"
                 );
-                assert!(e.document.halation.enabled);
-                assert!((e.document.grain.size - 0.017142857142857144).abs() < 1e-14);
-                assert!((e.document.grain.image_sigma - 0.017142857142857144).abs() < 1e-14);
-                assert!((e.document.halation.size - 0.046714285714285715).abs() < 1e-14);
-                assert_eq!(e.document.grain.amount, 0.065);
-                assert_eq!(e.document.halation.strength, 0.54);
+                assert!(e.document.project.output.halation.enabled);
+                assert!(
+                    (e.document.project.output.grain.size - 0.017142857142857144).abs() < 1e-14
+                );
+                assert!(
+                    (e.document.project.output.grain.image_sigma - 0.017142857142857144).abs()
+                        < 1e-14
+                );
+                assert!(
+                    (e.document.project.output.halation.size - 0.046714285714285715).abs() < 1e-14
+                );
+                assert_eq!(e.document.project.output.grain.amount, 0.065);
+                assert_eq!(e.document.project.output.halation.strength, 0.54);
             });
             h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Enable")
                 .scroll_to_me();
@@ -132,8 +138,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                 .click();
             h.step();
             h.update(|e| {
-                e.document.grain.image_sigma *= 0.5;
-                e.sync_document();
+                e.document.project.output.grain.image_sigma *= 0.5;
             });
             enter_numeric(&mut h, "Size", "0.090");
             h.try_run_realtime().unwrap();
@@ -142,20 +147,23 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             painted(&mut h);
             h.read(|e| {
                 assert_eq!(
-                    e.document.grain.size, 0.090,
+                    e.document.project.output.grain.size, 0.090,
                     "fixed units, not a format multiplier"
                 );
-                assert!((e.document.grain.image_sigma - 0.045).abs() < 1e-14);
-                assert_eq!(e.document.grain.amount, 0.071);
-                assert!(!GrainPreset::MediumFormat.matches(e.document.grain, e.document.halation));
+                assert!((e.document.project.output.grain.image_sigma - 0.045).abs() < 1e-14);
+                assert_eq!(e.document.project.output.grain.amount, 0.071);
+                assert!(!GrainPreset::MediumFormat.matches(
+                    e.document.project.output.grain,
+                    e.document.project.output.halation
+                ));
                 assert!(e.document.dirty());
                 let reopened: crate::project::Project = serde_json::from_str(
                     &serde_json::to_string(&e.document.state.project).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reopened.output.grain, e.document.grain);
-                assert_eq!(reopened.output.halation, e.document.halation);
-                assert_eq!(e.document.target, OutputTarget::Srgb);
+                assert_eq!(reopened.output.grain, e.document.project.output.grain);
+                assert_eq!(reopened.output.halation, e.document.project.output.halation);
+                assert_eq!(e.document.target(), OutputTarget::Srgb);
             });
             if scale == 1. {
                 save_capture(
@@ -170,7 +178,12 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                     .as_deref(),
                 Some("Custom")
             );
-            let saved_values = h.read(|e| (e.document.grain, e.document.halation));
+            let saved_values = h.read(|e| {
+                (
+                    e.document.project.output.grain,
+                    e.document.project.output.halation,
+                )
+            });
             let path = directory.path().join(format!("film-{scale}.antitone"));
             h.update(|e| e.document.path = Some(path.clone()));
             native_file_action(&mut h, crate::platform::menu::Action::Save);
@@ -193,7 +206,13 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             stage(&mut h, "Rendering");
             h.run();
             h.read(|e| {
-                assert_eq!((e.document.grain, e.document.halation), saved_values);
+                assert_eq!(
+                    (
+                        e.document.project.output.grain,
+                        e.document.project.output.halation
+                    ),
+                    saved_values
+                );
             });
             assert_eq!(
                 h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Preset")
@@ -222,25 +241,42 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             h.step();
             h.try_run_realtime().unwrap();
             h.read(|e| {
-                assert_eq!(e.document.grain.size, 0.040);
+                assert_eq!(e.document.project.output.grain.size, 0.040);
                 assert!(
-                    (e.document.grain.image_sigma - 0.020).abs() < 1e-14,
+                    (e.document.project.output.grain.image_sigma - 0.020).abs() < 1e-14,
                     "reset Size preserves the saved relationship rather than guessing a preset"
                 );
-                assert_eq!(e.document.halation, saved_values.1);
+                assert_eq!(e.document.project.output.halation, saved_values.1);
             });
-            let previous = h.read(|e| (e.document.grain, e.document.halation));
+            let previous = h.read(|e| {
+                (
+                    e.document.project.output.grain,
+                    e.document.project.output.halation,
+                )
+            });
             select_preset(&mut h, "35mm");
             h.enter(|e, cx| e.restore_history(super::super::history::Direction::Undo, cx));
             wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| {
-                assert_eq!((e.document.grain, e.document.halation), previous);
+                assert_eq!(
+                    (
+                        e.document.project.output.grain,
+                        e.document.project.output.halation
+                    ),
+                    previous
+                );
             });
             h.enter(|e, cx| e.restore_history(super::super::history::Direction::Redo, cx));
             wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| {
-                assert!(e.document.grain.enabled && e.document.halation.enabled);
-                assert!(GrainPreset::ThirtyFiveMm.matches(e.document.grain, e.document.halation));
+                assert!(
+                    e.document.project.output.grain.enabled
+                        && e.document.project.output.halation.enabled
+                );
+                assert!(GrainPreset::ThirtyFiveMm.matches(
+                    e.document.project.output.grain,
+                    e.document.project.output.halation
+                ));
             });
             select_preset(&mut h, "Medium format");
             enter_numeric(&mut h, "Amount", "0.071");
@@ -248,7 +284,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             select_preset(&mut h, "Medium format");
             h.read(|e| {
                 assert_eq!(
-                    e.document.grain.amount, 0.065,
+                    e.document.project.output.grain.amount, 0.065,
                     "reapplying the selected preset restores actual starting values"
                 )
             });

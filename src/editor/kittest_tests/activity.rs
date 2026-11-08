@@ -30,7 +30,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
-        harness.update(|editor| editor.sync_document());
+
         let before = harness.read(|editor| editor.document.state.project.clone());
         for (layout, size) in [
             ("normal", egui::vec2(1100., 800.)),

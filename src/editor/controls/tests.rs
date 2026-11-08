@@ -1543,9 +1543,19 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
                 ..Default::default()
             },
             |ui| {
-                balance_body(ui, ColorControl::GammaBalance, &mut balances[0]);
-                white_balance(ui, "roll-white-balance", &mut balances[1], true, false);
-                balance_body(ui, ColorControl::WhiteBalance, &mut balances[2]);
+                for (index, value) in balances.iter_mut().enumerate() {
+                    match index {
+                        0 => {
+                            balance_body(ui, ColorControl::GammaBalance, value);
+                        }
+                        1 => {
+                            white_balance(ui, "roll-white-balance", value, true, false);
+                        }
+                        _ => {
+                            balance_body(ui, ColorControl::WhiteBalance, value);
+                        }
+                    }
+                }
             },
         );
         output.textures_delta.clear();

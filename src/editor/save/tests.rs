@@ -53,14 +53,14 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
             )
         });
         app.enter(|e, access| {
-            e.document.roll.exposure = 0.25;
+            e.document.project.roll.exposure = 0.25;
             e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         app.pump();
         assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         app.update(|e| {
             let before = e.history_snapshot();
-            e.document.roll.exposure = 0.5;
+            e.document.project.roll.exposure = 0.5;
             e.record_edit(before, "Later exposure", None);
         });
         drop(hold);

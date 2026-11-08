@@ -122,7 +122,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             wait_context(&mut h);
             h.read(|editor| assert_eq!(editor.document.state.project, before));
             h.read(|editor| assert!(!editor.document.dirty()));
-            h.read(|editor| assert_eq!(editor.document.visit.crop, None));
+            h.read(|editor| assert_eq!(editor.photo_crop(), None));
             h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             h.read(|editor| {
                 assert_eq!(
@@ -218,7 +218,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             click_action(&mut h, "Apply");
             h.read(|editor| assert_eq!(editor.document.state.project, expected));
             h.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
-            h.read(|editor| assert_eq!(editor.document.visit.crop, None));
+            h.read(|editor| assert_eq!(editor.photo_crop(), None));
             let full = h.read(|editor| {
                 Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area)
             });
@@ -241,8 +241,8 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             let composition = h.read(|editor| {
                 Composition::with_crop(
                     editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                    editor.document.roll_orientation,
-                    editor.document.visit.photo_orientation,
+                    editor.document.project.orientation,
+                    editor.photo_orientation(),
                     Some(crop),
                 )
                 .unwrap()

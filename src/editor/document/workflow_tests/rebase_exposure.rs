@@ -248,8 +248,8 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     );
     let removed = editor.document.state.project.clone();
 
-    editor.document.input = InputSettings::Digital;
-    editor.document.roll = removed.roll;
+    editor.document.project.input = InputSettings::Digital;
+    editor.document.project.roll = removed.roll;
     editor.document.visit.current_source = Some(selected);
     editor.document.history = Default::default();
     editor.record_edit(target.project.clone(), "Remove photo", None);
@@ -279,7 +279,7 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
     let replacement = crate::exposure_fixture::neutral_dng(2.3);
     let loader = source_loading::SourceLoader::new();
     let mut editor = editor(loader.clone());
-    editor.document.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
     editor.document.state.project.input = InputSettings::Digital;
     with_application(editor, |app| {
         for path in [first.path(), removed.path()] {

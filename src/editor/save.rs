@@ -20,8 +20,8 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> futures_channel::oneshot::Receiver<bool> {
         let (send, receive) = futures_channel::oneshot::channel();
-        if self.dust_search_pending() {
-            self.status = "Wait for donor selection before saving".into();
+        if self.dust_search_pending() || self.editing() {
+            self.status = "Finish or cancel the current edit before saving".into();
             let _ = send.send(false);
             return receive;
         }

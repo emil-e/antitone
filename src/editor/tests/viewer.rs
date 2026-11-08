@@ -757,8 +757,8 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
         -edited.angle
             * Composition::new(
                 area,
-                editor.document.roll_orientation,
-                editor.document.visit.photo_orientation
+                editor.document.project.orientation,
+                editor.photo_orientation()
             )
             .unwrap()
             .handedness(),
@@ -1049,7 +1049,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
         .reference_coverage(region)
         .unwrap();
         editor.set_dmin(Some(expected * 1.05));
-        editor.sync_document();
+
         with_application(editor, |app| {
             let context = egui::Context::default();
             let size = egui::vec2(800., 600.);

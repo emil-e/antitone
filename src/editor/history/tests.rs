@@ -248,7 +248,7 @@ fn controller() -> Editor {
     editor.document.history = History::default();
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
-    editor.sync_document();
+
     editor
 }
 
@@ -264,24 +264,21 @@ fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_witho
     let mut editor = controller();
     let ids = editor.document.state.project.order.clone();
     let before = editor.history_snapshot();
-    editor.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
+    editor.photo_settings_mut().exposure = 7.123456789012345;
     editor.record_edit(before.clone(), "Photo exposure", Some(ids[0]));
     let after = editor.document.state.project.clone();
     editor.document.visit.current_source = Some(ids[1]);
-    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
+    *editor.photo_settings_mut() = AdjustmentLayerSettings::default();
     editor.document.visit.canvas.viewport.zoom = Some(1.75);
     let viewport = editor.document.visit.canvas.viewport;
     editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.state.project, before);
     assert_eq!(editor.document.visit.current_source, Some(ids[0]));
-    assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+    assert_eq!(editor.photo_settings().exposure, 0.);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(editor.document.state.project, after);
-    assert_eq!(
-        editor.document.visit.adjustment_layer_settings.exposure,
-        7.123456789012345
-    );
+    assert_eq!(editor.photo_settings().exposure, 7.123456789012345);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
 }
 
@@ -337,7 +334,7 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
     let mut editor = controller();
     editor.document.path = Some(old.clone());
     let before = editor.history_snapshot();
-    editor.document.visit.adjustment_layer_settings.exposure = 1.;
+    editor.photo_settings_mut().exposure = 1.;
     editor.record_edit(before, "Exposure", editor.document.visit.current_source);
     let saved = editor.document.save(&new, crate::project::Save::New);
     // The destination directory is intentionally absent: ordinary failed writes do not
@@ -383,18 +380,18 @@ fn save_completion_baselines_only_the_written_snapshot_and_undo_can_return_to_it
         |e, cx| {
             e.save_project(path, crate::project::Save::Replace, None, cx);
             let before = e.history_snapshot();
-            e.document.roll.exposure = 0.375;
+            e.document.project.roll.exposure = 0.375;
             e.record_edit(before, "Roll exposure", None);
         },
     );
     assert_eq!(written.project.roll.exposure, 0.);
     assert!(editor.document.dirty());
-    assert_eq!(editor.document.roll.exposure, 0.375);
+    assert_eq!(editor.document.project.roll.exposure, 0.375);
     editor = accept_history(editor, Direction::Undo);
     assert!(!editor.document.dirty());
     editor = accept_history(editor, Direction::Redo);
     assert!(editor.document.dirty());
-    assert_eq!(editor.document.roll.exposure, 0.375);
+    assert_eq!(editor.document.project.roll.exposure, 0.375);
 }
 
 #[test]
@@ -421,7 +418,7 @@ fn accepted_calibration_is_one_entry_and_an_invalid_pick_preserves_redo() {
 fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() {
     let mut editor = controller();
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.5;
+    editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
     editor = crate::editor::tests::complete_document_operation(
         editor,
@@ -432,7 +429,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         },
     );
     assert_eq!(editor.document.history.undo.len(), 1);
-    assert_eq!(editor.document.roll.exposure, 0.5);
+    assert_eq!(editor.document.project.roll.exposure, 0.5);
     editor = crate::editor::tests::complete_document_operation(
         editor,
         Duration::from_secs(60),
@@ -451,69 +448,127 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
     assert!(!editor.document.dirty());
 }
 
-fn finish_controls(editor: &mut Editor) {
-    let context = egui::Context::default();
-    let photo = editor.document.visit.current_source;
-    let mut output = context.run_ui(Default::default(), |ui| editor.record_controls(photo, ui));
-    output.textures_delta.clear();
-}
-
 #[test]
-fn unchanged_control_passes_do_not_clone_projects_and_local_edits_capture_their_before_state_lazily()
- {
+fn draft_preview_preserves_accepted_history_and_metadata_edits_commit_directly() {
     let mut editor = controller();
     let original = editor.history_snapshot();
-    editor.history_snapshot_clones = 0;
-    editor.begin_control_history("Photo settings");
-    finish_controls(&mut editor);
-    assert_eq!(editor.history_snapshot_clones, 0);
+    let mut edit = editor.edit_project("Rendering settings").unwrap();
+    let mut values = edit.values();
+    values.roll.exposure = 0.5;
+    edit.replace(values);
+    assert_eq!(editor.document.project_snapshot().roll.exposure, 0.5);
+    assert_eq!(editor.document.state.project, original);
     assert!(editor.document.history.undo.is_empty());
+    drop(edit);
+    assert_eq!(editor.document.project_snapshot().roll, original.roll);
 
-    editor.begin_control_history("Photo settings");
-    // Renaming changes saved metadata without changing photographic controls.
     editor
         .edit_adjustment_layers(|layers| {
             layers.layers[0].name = "Renamed".into();
             Ok(())
         })
         .unwrap();
-    assert_eq!(editor.history_snapshot_clones, 1);
-    assert!(
-        editor.document.history.undo.is_empty(),
-        "the control pass still owns the edit"
-    );
-    finish_controls(&mut editor);
-    assert_eq!(editor.history_snapshot_clones, 2);
-    assert_eq!(editor.document.history.undo[0].before, original);
-    assert!(
-        editor.document.history.undo[0]
-            .after
-            .source(editor.document.visit.current_source.unwrap())
-            .unwrap()
-            .adjustment_layers
-            .is_some()
-    );
-
-    editor.history_snapshot_clones = 0;
-    editor.begin_control_history("Photo settings");
-    finish_controls(&mut editor);
-    assert_eq!(editor.history_snapshot_clones, 0);
     assert_eq!(editor.document.history.undo.len(), 1);
+    assert_eq!(editor.document.history.undo[0].before, original);
 }
 
 #[test]
-fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a_change() {
+fn a_layer_action_rejects_overlap_then_records_its_own_edit_after_completion() {
+    let mut editor = controller();
+    let original = editor.document.project.clone();
+    let source = editor.document.visit.current_source.unwrap();
+    let mut previous = editor.edit_photo("Exposure").unwrap();
+    previous.update(|project| {
+        project
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo
+            .exposure = 0.75;
+    });
+    let mut first_accepted = original.clone();
+    first_accepted
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.75;
+    assert!(
+        editor
+            .edit_adjustment_layers(|layers| {
+                layers.layers[0].name = "Rejected".into();
+                Ok(())
+            })
+            .is_err()
+    );
+    assert!(previous.preview().active());
+    assert_eq!(editor.document.project, original);
+    assert!(editor.document.history.undo.is_empty());
+    editor.commit_project(previous).unwrap();
+    editor
+        .edit_adjustment_layers(|layers| {
+            layers.layers[0].name = "Renamed".into();
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(editor.document.history.undo.len(), 2);
+    assert_eq!(editor.document.history.undo[0].before, original);
+    assert_eq!(editor.document.history.undo[0].after, first_accepted);
+    assert_eq!(editor.document.history.undo[1].before, first_accepted);
+    assert_eq!(editor.photo_settings().exposure, 0.75);
+    editor = accept_history(editor, Direction::Undo);
+    assert_eq!(editor.document.project, first_accepted);
+    editor = accept_history(editor, Direction::Undo);
+    assert_eq!(editor.document.project, original);
+}
+
+#[test]
+fn photo_draft_keeps_accepted_state_until_one_exact_history_commit() {
     let mut editor = controller();
     let original = editor.history_snapshot();
-    editor.history_snapshot_clones = 0;
-    editor.begin_control_history("Photo settings");
-    editor.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
+    let source = editor.document.visit.current_source.unwrap();
+    let record = &editor
+        .document
+        .project
+        .source(source)
+        .unwrap()
+        .adjustment_layers
+        .as_ref()
+        .unwrap()
+        .layers[0];
     assert_eq!(
-        editor.history_snapshot_clones, 0,
-        "capture contains only small control values"
+        editor.adjustment_layer_target(),
+        super::super::adjustment_layers::Target::Layer(record.id)
     );
-    finish_controls(&mut editor);
-    assert_eq!(editor.history_snapshot_clones, 2);
+    let mut adjustment = record.adjustment;
+    adjustment.photo.exposure = 7.123456789012345;
+    editor.photo_control(
+        controls::ControlResponse {
+            active: true,
+            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+        },
+        move |v| *v = adjustment,
+    );
+    assert_eq!(editor.photo_settings().exposure, 7.123456789012345);
+    assert_eq!(editor.document.state.project, original);
+    assert!(editor.document.history.undo.is_empty());
+    editor.photo_control(
+        controls::ControlResponse {
+            active: false,
+            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+        },
+        move |v| *v = adjustment,
+    );
+    assert!(!editor.editing());
+    assert_eq!(editor.document.history.undo.len(), 1);
     assert_eq!(editor.document.history.undo[0].before, original);
     let source = editor.document.visit.current_source.unwrap();
     assert_eq!(
@@ -545,28 +600,39 @@ fn grain_controls_are_saved_dirty_and_undoable_rendering_state() {
         .unwrap();
     editor.document.accept_save(saved);
     let before = editor.history_snapshot();
-    editor.begin_control_history("Rendering settings");
-    editor.document.grain = crate::grain::GrainSettings {
+    let mut edit = editor.edit_project("Rendering settings").unwrap();
+    let mut values = edit.values();
+    values.output.grain = crate::grain::GrainSettings {
         enabled: true,
         size: 0.025,
         image_sigma: 0.025,
         amount: 0.040,
         ..Default::default()
     };
-    finish_controls(&mut editor);
+    let expected_grain = values.output.grain;
+    edit.replace(values);
+    assert!(!editor.document.dirty());
+    assert_eq!(
+        editor.document.project_snapshot().output.grain,
+        expected_grain
+    );
+    editor.commit_project(edit).unwrap();
     assert!(editor.document.dirty());
     let entry = &editor.document.history.undo[0];
     assert_eq!(entry.before, before);
-    assert_eq!(entry.after.output.grain, editor.document.grain);
+    assert_eq!(
+        entry.after.output.grain,
+        editor.document.project.output.grain
+    );
     let written = serde_json::to_string(&entry.after).unwrap();
     let reopened: Project = serde_json::from_str(&written).unwrap();
-    assert_eq!(reopened.output.grain, editor.document.grain);
+    assert_eq!(reopened.output.grain, editor.document.project.output.grain);
     editor = accept_history(editor, Direction::Undo);
-    assert_eq!(editor.document.grain, before.output.grain);
+    assert_eq!(editor.document.project.output.grain, before.output.grain);
     assert!(!editor.document.dirty());
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(
-        editor.document.grain,
+        editor.document.project.output.grain,
         crate::grain::GrainSettings {
             enabled: true,
             size: 0.025,
@@ -582,7 +648,7 @@ fn busy_work_and_decisions_cannot_dispatch_document_history() {
     for busy in [false, true] {
         let mut editor = controller();
         let before = editor.history_snapshot();
-        editor.document.roll.exposure = 1.;
+        editor.document.project.roll.exposure = 1.;
         editor.record_edit(before, "Exposure", None);
         assert!(editor.history_available());
         if busy {
@@ -600,7 +666,7 @@ fn busy_work_and_decisions_cannot_dispatch_document_history() {
 fn failed_and_stale_restoration_preserve_state_and_history_until_acceptance() {
     let mut editor = crate::editor::tests::fixture();
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 1.;
+    editor.document.project.roll.exposure = 1.;
     editor.record_edit(before, "Exposure", None);
     let accepted = editor.document.state.project.clone();
     crate::application::test_support::with_application(editor, |app| {

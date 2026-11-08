@@ -56,7 +56,7 @@ impl Editor {
                 source: self.document.source,
                 source_exposure: self.source_exposure,
                 source_white_balance: self.source_white_balance,
-                calibrated: self.document.input.ready(),
+                calibrated: self.document.project.input.ready(),
                 native_before,
                 restored: false,
                 exiting: false,
@@ -92,7 +92,7 @@ impl Editor {
         if view.id == self.id {
             self.document.visit.canvas.viewport = view.viewport;
             self.document.visit.canvas.last_layout = view.layout;
-            if self.document.input.ready() == view.calibrated {
+            if self.document.project.input.ready() == view.calibrated {
                 self.document.source = view.source;
             }
             self.source_exposure = view.source_exposure;
@@ -123,7 +123,7 @@ impl Editor {
             if !context_changed {
                 self.active_canvas_mut().viewport = view.viewport;
                 self.active_canvas_mut().last_layout = view.layout;
-                if self.document.input.ready() == view.calibrated {
+                if self.document.project.input.ready() == view.calibrated {
                     self.document.source = view.source;
                 }
                 self.source_exposure = view.source_exposure;

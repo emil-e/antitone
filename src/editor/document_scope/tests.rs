@@ -43,19 +43,18 @@ impl crate::editor::tool::Tool for OwnedInteraction {
 }
 
 #[test]
-fn admitted_menu_commands_follow_the_document_owner_not_an_installed_snapshot() {
-    let mut scope = DocumentScope::from(Document::default());
-    scope
-        .deferred_menu
-        .push_back(crate::platform::menu::Action::Save);
-    let snapshot = scope.capture();
-    scope.install(snapshot.clone());
-    assert_eq!(
-        scope.deferred_menu.front(),
-        Some(&crate::platform::menu::Action::Save)
-    );
-    let replacement = scope.replacement(snapshot);
-    assert!(replacement.deferred_menu.is_empty());
+fn captured_accepted_snapshots_do_not_include_or_retain_a_scope_draft() {
+    let mut editor = crate::editor::Editor::state();
+    let mut edit = editor.edit_project("Rendering settings").unwrap();
+    let mut values = edit.values();
+    values.roll.exposure = 1.;
+    edit.replace(values);
+    let snapshot = editor.document.capture();
+    assert_eq!(snapshot.project.roll.exposure, 0.);
+    assert_eq!(editor.document.project_snapshot().roll.exposure, 1.);
+    drop(edit);
+    assert_eq!(editor.document.project_snapshot().roll.exposure, 0.);
+    assert_eq!(snapshot.project.roll.exposure, 0.);
 }
 
 #[test]
@@ -144,7 +143,7 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.25;
+    editor.document.project.roll.exposure = 0.25;
     editor.record_edit(before, "Exposure", None);
     let accepted = editor.document.state.project.clone();
     let source = editor
@@ -202,7 +201,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
     for replace in [false, true] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        editor.sync_document();
+
         let view = editor.document.visit.view;
         let store = Arc::downgrade(&editor.document.cache);
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
@@ -251,7 +250,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
 fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_written_baseline() {
     let mut editor = fixture();
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.25;
+    editor.document.project.roll.exposure = 0.25;
     editor.record_edit(before, "First exposure", None);
     let directory = tempfile::tempdir().unwrap();
     let saved = editor
@@ -263,7 +262,7 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
         )
         .unwrap();
     let before = editor.history_snapshot();
-    editor.document.roll.exposure = 0.5;
+    editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before, "Later exposure", None);
     let view = editor.document.visit.view;
     let store = editor.document.cache.clone();

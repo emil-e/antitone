@@ -7,8 +7,8 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
         harness.update(|editor| {
             assert!(editor.document.visit.canvas.ready.is_none());
             assert!(editor.document.project.order.is_empty());
-            editor.document.roll_orientation.turn_clockwise();
-            editor.sync_document();
+            editor.document.project.orientation.turn_clockwise();
+
             editor.scopes.visible = true;
             editor.preferences.scopes_visible = true;
         });

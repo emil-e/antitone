@@ -54,8 +54,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 .adjustment
                 .photo
                 .exposure = 0.123456789012345;
-            e.document.visit.adjustment_layer_settings.exposure = 0.123456789012345;
-            e.sync_document();
+            e.photo_settings_mut().exposure = 0.123456789012345;
             *e.document = e
                 .document
                 .save(&project_path, crate::project::Save::New)
@@ -280,7 +279,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     .unwrap()
                     .reference_only
             );
-            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.photo_settings().exposure, 0.);
         });
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         for (path, bytes) in paths.iter().zip(originals) {
@@ -494,8 +493,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         h.update(|e| {
             e.set_dmin(Some(DVec3::splat(0.8)));
             e.set_dmax(Some(DVec3::splat(0.02)));
-            e.document.visit.crop = Some(crop);
-            e.sync_document();
+            *e.photo_crop_mut() = Some(crop);
         });
         h.step();
         h.get_by_label("roll-1.dng").click();
@@ -509,7 +507,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         h.step();
         h.read(|e| {
             assert!(e.document.visit.source.pending());
-            assert_eq!(e.document.visit.crop, Some(crop));
+            assert_eq!(e.photo_crop(), Some(crop));
             assert_eq!(
                 e.document.state.project.source(first).unwrap().crop,
                 Some(crop)

@@ -127,55 +127,68 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
 }
 
 pub(super) fn set_dmin(editor: &mut Editor, value: DVec3) -> Result<(), String> {
-    let mut candidate = editor.document.input;
-    let InputSettings::Negative { dmin, .. } = &mut candidate else {
-        return Err("Reference picks require a scan input".into());
-    };
-    *dmin = Some(value);
-    change_input(editor, candidate)?;
+    change_input(editor, |candidate| {
+        let InputSettings::Negative { dmin, .. } = candidate else {
+            return Err("Reference picks require a scan input".into());
+        };
+        *dmin = Some(value);
+        Ok(())
+    })?;
     editor.status = "Dmin measured".into();
     Ok(())
 }
 
 pub(super) fn set_dmax(editor: &mut Editor, value: DVec3) -> Result<(), String> {
-    let mut candidate = editor.document.input;
-    let InputSettings::Negative { dmax, .. } = &mut candidate else {
-        return Err("Reference picks require a scan input".into());
-    };
-    *dmax = Some(value);
-    change_input(editor, candidate)?;
+    change_input(editor, |candidate| {
+        let InputSettings::Negative { dmax, .. } = candidate else {
+            return Err("Reference picks require a scan input".into());
+        };
+        *dmax = Some(value);
+        Ok(())
+    })?;
     editor.status = "Dmax measured".into();
     Ok(())
 }
 
 pub(super) fn set_gamma_balance(editor: &mut Editor, value: Balance) -> Result<(), String> {
-    let mut candidate = editor.document.input;
-    let InputSettings::Negative { balance, .. } = &mut candidate else {
-        return Err("Gamma balance requires a scan input".into());
-    };
-    *balance = value;
-    change_input(editor, candidate).map_err(|error| format!("Pick rejected: {error}"))?;
+    change_input(editor, |candidate| {
+        let InputSettings::Negative { balance, .. } = candidate else {
+            return Err("Gamma balance requires a scan input".into());
+        };
+        *balance = value;
+        Ok(())
+    })
+    .map_err(|error| format!("Pick rejected: {error}"))?;
     editor.status = "Gamma neutral correction applied".into();
     Ok(())
 }
 
-fn change_input(editor: &mut Editor, candidate: InputSettings) -> Result<(), String> {
+fn change_input(
+    editor: &mut Editor,
+    change: impl FnOnce(&mut InputSettings) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut draft = editor
+        .edit_project("Calibration pick")
+        .map_err(|error| error.to_string())?;
+    let mut candidate = editor.document.project.input;
+    change(&mut candidate)?;
     if let Some(calibration) = candidate.calibration() {
         calibration.validate().map_err(|error| error.to_string())?;
         editor
             .validate_processing(
                 candidate,
-                editor.document.roll,
-                editor.document.visit.adjustment_layer_settings,
+                editor.document.project.roll,
+                editor.photo_settings(),
             )
             .map_err(|error| error.to_string())?;
     }
-    let became_ready = !editor.document.input.ready() && candidate.ready();
-    let before = editor.history_snapshot();
-    editor.document.input = candidate;
+    let became_ready = !editor.document.project.input.ready() && candidate.ready();
+    draft.update(|project| project.input = candidate);
+    editor
+        .commit_project(draft)
+        .map_err(|error| error.to_string())?;
     if became_ready {
         editor.document.source = false;
     }
-    editor.record_edit(before, "Calibration pick", None);
     Ok(())
 }

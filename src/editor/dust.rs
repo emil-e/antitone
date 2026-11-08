@@ -802,6 +802,7 @@ impl Editor {
             .filter(|set| !set.repairs().is_empty())
     }
 
+    #[cfg(test)]
     pub(super) fn dust_repairs_mut(&mut self, source: SourceId) -> &mut RepairSet {
         &mut self
             .document
@@ -886,8 +887,19 @@ impl Editor {
     }
 
     pub(super) fn reset_dust_repairs(&mut self, source: SourceId) {
-        let before = self.history_snapshot();
-        self.dust_repairs_mut(source).clear();
+        let result = (|| -> Result<(), Error> {
+            let mut transaction = self.edit_photo("Reset Dust repairs")?;
+            transaction.update(|project| {
+                project
+                    .source_mut(source)
+                    .map(|source| source.repairs.clear())
+            })?;
+            self.commit_project(transaction)
+        })();
+        if let Err(error) = result {
+            self.status = error.to_string();
+            return;
+        }
         self.document.dust.clear_repairs(source);
         if self.document.visit.current_source == Some(source) {
             if let Some(session) = self.dust_session() {
@@ -898,7 +910,6 @@ impl Editor {
             }
             self.document.visit.dust.reset_repairs();
         }
-        self.record_edit(before, "Reset Dust repairs", Some(source));
     }
 
     fn invalidate_settled(&mut self) {
@@ -906,7 +917,7 @@ impl Editor {
     }
 
     pub(super) fn begin_dust_cleanup(&mut self) {
-        if !self.document.input.ready() || !self.tool_start_available() {
+        if !self.document.project.input.ready() || !self.tool_start_available() {
             return;
         }
         if self.document.visit.dust.brush_source != self.document.visit.current_source
@@ -1085,7 +1096,7 @@ impl Editor {
         let input = self.input();
         let snapshot = match grade {
             Some(grade) => grade.clone(),
-            None => self.dust_grade_snapshot(self.document.visit.adjustment_layer_settings)?,
+            None => self.dust_grade_snapshot(self.photo_settings())?,
         };
         let repairs = self.effective_dust_repairs(source);
         let candidates = repairs
@@ -1114,15 +1125,19 @@ impl Editor {
             .iter()
             .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
         let all_valid = self
-            .validate_repaired_source(&input, self.document.roll, &snapshot, bound)
+            .validate_repaired_source(&input, self.document.project.roll, &snapshot, bound)
             .is_ok();
         let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
         for (id, cached) in candidates {
             let bound = admitted_bound.max(cached.bound);
             if !all_valid
-                && let Err(error) =
-                    self.validate_repaired_source(&input, self.document.roll, &snapshot, bound)
+                && let Err(error) = self.validate_repaired_source(
+                    &input,
+                    self.document.project.roll,
+                    &snapshot,
+                    bound,
+                )
             {
                 self.document.visit.dust.render_error = Some(error.to_string());
                 continue;
@@ -1298,7 +1313,7 @@ impl tool::Tool for DustTool {
         }
     }
 
-    fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+    fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         self.interaction.searches.borrow_mut().prune();
         if std::mem::take(&mut self.reveal_controls) {
             ui.scroll_to_cursor(Some(egui::Align::Min));
@@ -1378,7 +1393,7 @@ impl tool::Tool for DustTool {
                     ui.small("Manual masks only · automatic proposals are not wired yet");
                 }
                 if reset {
-                    editor.control_command(editing::Command::ResetRepairs(source), cx);
+                    editor.reset_dust_repairs(source);
                     editor.status = "Dust repairs reset".into();
                     editor.invalidate_settled();
                 }
@@ -1907,9 +1922,12 @@ impl DustTool {
             return;
         };
         self.cancel_dust_mask();
-        let before = editor.history_snapshot();
-        if editor.dust_repairs_mut(source).remove(id).is_ok() {
-            editor.record_edit(before, "Delete Dust repair", Some(source));
+        let result = (|| -> Result<(), Error> {
+            let mut transaction = editor.edit_photo("Delete Dust repair")?;
+            transaction.update(|project| project.source_mut(source)?.repairs.remove(id))?;
+            editor.commit_project(transaction)
+        })();
+        if result.is_ok() {
             editor.document.dust.removed(source, id);
             self.interaction
                 .searches
@@ -2116,20 +2134,32 @@ impl DustTool {
         if draft.offset == accepted_offset {
             return;
         }
-        let before = editor.history_snapshot();
+        let mut transaction = match editor.edit_photo("Dust donor") {
+            Ok(edit) => edit,
+            Err(error) => {
+                editor.status = error.to_string();
+                return;
+            }
+        };
         let result = editor
             .selected_area()
             .ok_or(Error::InvalidParameter("manual donor unavailable"))
             .and_then(|active| validate_dust_offset(draft.offset, &support, active))
             .and_then(|()| {
-                editor
-                    .dust_repairs_mut(source)
-                    .set_offset(draft.repair, draft.offset)
+                transaction.update(|project| {
+                    project
+                        .source_mut(source)?
+                        .repairs
+                        .set_offset(draft.repair, draft.offset)
+                })
             });
         match result {
             Ok(()) => {
+                if let Err(error) = editor.commit_project(transaction) {
+                    editor.status = error.to_string();
+                    return;
+                }
                 editor.dust_repair_changed(source, draft.repair);
-                editor.record_edit(before, "Dust donor", Some(source));
                 editor.status = "Dust source updated".into();
             }
             Err(error) => {
@@ -2576,25 +2606,28 @@ impl Editor {
         select: bool,
     ) -> Result<RepairId, String> {
         let source = stroke.source;
-        let before = self.history_snapshot();
-        let repair = match stroke.target {
-            Some(target) => self
-                .dust_repairs_mut(source)
-                .set_support(target, stroke.support.clone())
-                .and_then(|()| self.dust_repairs_mut(source).set_offset(target, offset))
-                .map(|()| target),
-            None => self.dust_repairs_mut(source).insert(
-                stroke.support.clone(),
-                RepairOrigin::Manual,
-                offset,
-            ),
-        }
-        .map_err(|error| error.to_string())?;
+        let mut transaction = self
+            .edit_photo("Dust mask")
+            .map_err(|error| error.to_string())?;
+        let repair = transaction
+            .update(|project| -> Result<RepairId, Error> {
+                let repairs = &mut project.source_mut(source)?.repairs;
+                match stroke.target {
+                    Some(target) => {
+                        repairs.set_support(target, stroke.support.clone())?;
+                        repairs.set_offset(target, offset)?;
+                        Ok(target)
+                    }
+                    None => repairs.insert(stroke.support.clone(), RepairOrigin::Manual, offset),
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        self.commit_project(transaction)
+            .map_err(|error| error.to_string())?;
         if select {
             self.document.dust.selected.insert(source, repair);
         }
         self.dust_repair_changed(source, repair);
-        self.record_edit(before, "Dust mask", Some(source));
         self.status = "Donor selected; evaluating repair…".into();
         self.invalidate_settled();
         Ok(repair)

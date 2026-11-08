@@ -7,9 +7,9 @@ fn picker_view_and_navigation_are_owned_without_overwriting_normal_preferences()
             let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
             editor.load_input(InputSettings::Digital);
             let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            editor.document.roll_orientation.turn_clockwise();
-            editor.document.visit.photo_orientation.flips.horizontal = true;
-            editor.document.visit.crop = Some(Crop::from_region(Rect {
+            editor.document.project.orientation.turn_clockwise();
+            editor.photo_orientation_mut().flips.horizontal = true;
+            *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
                 x: area.x + 20,
                 y: area.y + 10,
                 width: area.width - 40,

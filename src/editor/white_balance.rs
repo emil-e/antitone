@@ -33,7 +33,7 @@ impl RollInput {
             input: editor.input(),
             roll: RollSettings {
                 wb: Balance::default(),
-                ..editor.document.roll
+                ..editor.document.project.roll
             },
         }
     }
@@ -84,10 +84,10 @@ impl LayerInput {
         )
         .map_err(|error| error.to_string())?;
         let mut layer = records[index].adjustment;
-        layer.photo = editor.document.visit.adjustment_layer_settings;
+        layer.photo = editor.photo_settings();
         Ok(Self {
             input: editor.input(),
-            roll: editor.document.roll,
+            roll: editor.document.project.roll,
             upstream,
             layer,
         })
@@ -189,18 +189,18 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
 }
 
 pub(super) fn set_roll(editor: &mut Editor, value: Balance) -> Result<(), String> {
+    let mut draft = editor
+        .edit_project("Calibration pick")
+        .map_err(|error| error.to_string())?;
     let candidate = RollSettings {
         wb: value,
-        ..editor.document.roll
+        ..editor.document.project.roll
     };
-    validate(
-        editor,
-        candidate,
-        editor.document.visit.adjustment_layer_settings,
-    )?;
-    let before = editor.history_snapshot();
-    editor.document.roll = candidate;
-    editor.record_edit(before, "Calibration pick", None);
+    validate(editor, candidate, editor.photo_settings())?;
+    draft.update(|project| project.roll = candidate);
+    editor
+        .commit_project(draft)
+        .map_err(|error| error.to_string())?;
     editor.status = "RollWb neutral correction applied".into();
     Ok(())
 }
@@ -238,9 +238,10 @@ fn validate(
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
 ) -> Result<(), String> {
-    if editor.document.input.ready() {
+    crate::color::wb_matrix(roll.wb).map_err(|error| format!("Pick rejected: {error}"))?;
+    if editor.document.project.input.ready() {
         editor
-            .validate_processing(editor.document.input, roll, photo)
+            .validate_processing(editor.document.project.input, roll, photo)
             .map_err(|error| format!("Pick rejected: {error}"))?;
     }
     Ok(())

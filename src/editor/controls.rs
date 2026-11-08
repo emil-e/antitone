@@ -42,37 +42,6 @@ pub enum Parameter {
     HalationSize,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum Reset {
-    Parameter(Parameter, ColorControl),
-    Exposure,
-    Contrast,
-    Saturation,
-    Balance(ColorControl),
-    GammaAndBalance,
-    Response,
-    Target,
-}
-
-// The composed editor collects reset intent until numeric focus loss has been
-// admitted. Standalone controls and tool-draft values retain immediate resets.
-pub(super) fn defer_reset(ui: &Ui, reset: Reset) -> bool {
-    if matches!(reset, Reset::Parameter(Parameter::CropMargin, _)) {
-        return false;
-    }
-    let active = ui.ctx().data(|data| {
-        data.get_temp::<bool>(egui::Id::new("defer-control-resets"))
-            .unwrap_or(false)
-    });
-    if active {
-        ui.ctx().data_mut(|data| {
-            data.get_temp_mut_or_default::<Vec<Reset>>(egui::Id::new("control-resets"))
-                .push(reset)
-        });
-    }
-    active
-}
-
 impl Parameter {
     fn label(self) -> &'static str {
         match self {
@@ -171,20 +140,13 @@ pub(super) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {
     cancelled || cancelling
 }
 
-/// Frame-local activity, independent of the history group retained for a completed drag.
+/// Reports input activity in this paint; features own edit lifetime and completion.
 pub(super) fn values_are_being_adjusted(context: &egui::Context) -> bool {
     context.data(|data| data.get_temp::<u64>(egui::Id::new("value-adjustment-frame")))
         == Some(context.cumulative_frame_nr())
 }
 
-fn record_control_interaction(ui: &Ui, response: &Response) {
-    if response.enabled()
-        && (response.is_pointer_button_down_on() || response.dragged() || response.drag_stopped())
-    {
-        ui.ctx().data_mut(|data| {
-            data.insert_temp(egui::Id::new("project-control-gesture"), response.id);
-        });
-    }
+fn control_active(ui: &Ui, response: &Response) -> bool {
     let keyboard = response.has_focus()
         && (ui.ctx().text_edit_focused()
             || ui.input(|input| {
@@ -197,9 +159,15 @@ fn record_control_interaction(ui: &Ui, response: &Response) {
                 .into_iter()
                 .any(|key| input.key_down(key))
             }));
-    if response.enabled()
-        && (response.is_pointer_button_down_on() || response.dragged() || keyboard)
-    {
+    response.enabled()
+        && ((response.is_pointer_button_down_on()
+            && ui.input(|input| input.pointer.primary_down()))
+            || response.dragged_by(egui::PointerButton::Primary)
+            || keyboard)
+}
+
+fn record_control_interaction(ui: &Ui, response: &Response) {
+    if control_active(ui, response) {
         let frame = ui.ctx().cumulative_frame_nr();
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::new("value-adjustment-frame"), frame));
@@ -253,14 +221,8 @@ fn parameter_name(ui: &mut Ui, kind: Parameter) -> Response {
     label
 }
 
-fn reset_parameter(ui: &Ui, kind: Parameter, value: &mut f64) {
-    let balance = ui
-        .ctx()
-        .data(|data| data.get_temp::<ColorControl>(egui::Id::new("reset-balance-scope")))
-        .unwrap_or(ColorControl::WhiteBalance);
-    if !defer_reset(ui, Reset::Parameter(kind, balance)) {
-        *value = kind.default();
-    }
+fn reset_parameter(kind: Parameter, value: &mut f64) {
+    *value = kind.default();
 }
 
 /// The name is a hover-only label, so reading the pointer avoids making every name a tab stop.
@@ -355,7 +317,7 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
     .labelled_by(name)
 }
 
-fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> Response {
+fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> (Response, bool) {
     let previous = *value;
     let decimals = match kind {
         Parameter::Shoulder => 4,
@@ -384,7 +346,8 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
             )
         })
         .inner;
-    if numeric_cancelled(ui, &numeric) {
+    let cancelled = numeric_cancelled(ui, &numeric);
+    if cancelled {
         *value = previous;
     } else if numeric.lost_focus() {
         // Focus alone rewrites the stored value with its formatted text; keep the accepted
@@ -395,148 +358,139 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
             *value = previous;
         }
     }
-    numeric
+    (numeric, cancelled)
 }
 
-pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Response, Response) {
-    // DragValue can commit on focus loss while disabled; render a read-only snapshot.
-    let mut disabled_value = *value;
-    let value = if ui.is_enabled() {
-        value
-    } else {
-        &mut disabled_value
-    };
-
-    ui.push_id(kind.label(), |ui| {
-        let unit = parameter_unit(kind);
-        let (slider, numeric, label) = icons::row_at(ui, INSPECTOR_ROW_HEIGHT, |ui| {
-            let label = parameter_name(ui, kind);
-            if name_reset_gesture(ui, &label) {
-                reset_parameter(ui, kind, value);
-            }
-            // Reserve one unit column for every row, including rows without a unit, so the
-            // numeric fields and slider ends align across parameters.
-            let reserved =
-                PARAMETER_NUMERIC_WIDTH + 3. * ui.spacing().item_spacing.x + PARAMETER_UNIT_WIDTH;
-            let width = (ui.available_width() - reserved).max(48.);
-            let slider = track(ui, kind, value, width, label.id);
-            let numeric = ui
-                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_sized(
-                        [PARAMETER_UNIT_WIDTH, INSPECTOR_ROW_HEIGHT - 2.],
-                        egui::Label::new(unit.unwrap_or("")),
-                    );
-                    let numeric = numeric_field(ui, kind, value, INSPECTOR_ROW_HEIGHT - 2.)
-                        .labelled_by(label.id);
-                    numeric.clone().context_menu(|ui| {
-                        if ui.button("Reset to default").clicked() {
-                            reset_parameter(ui, kind, value);
-                            ui.close();
-                        }
-                    });
-                    numeric
-                })
-                .inner;
-            (slider, numeric, label)
-        })
-        .inner;
-
-        record_control_interaction(ui, &slider);
-        record_control_interaction(ui, &numeric);
-        ui.add_space(PARAMETER_GAP);
-        (slider, numeric, label)
-    })
-    .inner
+/// Interaction reported by a value widget; feature code owns its edit and value.
+#[derive(Clone, Copy)]
+pub(super) struct ControlResponse {
+    pub id: egui::Id,
+    pub active: bool,
+    pub cancelled: bool,
+    pub changed: bool,
+    pub enabled: bool,
 }
 
-pub(super) fn photographic_exposure(
-    ui: &mut Ui,
-    photo: &mut crate::adjustment_layers::AdjustmentLayerSettings,
-) {
-    let (_, action) = section(
-        ui,
-        "photo-exposure",
-        "Exposure",
-        SectionHeader {
-            summary: &format!("{:+.2} EV", photo.exposure),
-            changed: photo.exposure != 0.,
-            reset: Some(photo.exposure != 0.),
-            tool: None,
-            default_open: Some(true),
-        },
-        |ui| {
-            parameter(ui, Parameter::Exposure, &mut photo.exposure);
-        },
-    );
-    if action.reset && !defer_reset(ui, Reset::Exposure) {
-        photo.exposure = 0.;
+impl ControlResponse {
+    pub(super) fn action(id: egui::Id, changed: bool) -> Self {
+        Self {
+            id,
+            active: false,
+            cancelled: false,
+            changed,
+            enabled: true,
+        }
+    }
+
+    pub(super) fn idle(id: egui::Id) -> Self {
+        Self {
+            enabled: false,
+            ..Self::action(id, false)
+        }
     }
 }
 
-pub(super) fn photographic_colour(
+pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Response, Response) {
+    parameter_row(ui, kind, value).0
+}
+
+pub(super) fn parameter_edit(ui: &mut Ui, kind: Parameter, value: &mut f64) -> ControlResponse {
+    parameter_row(ui, kind, value).1
+}
+
+fn parameter_row(
     ui: &mut Ui,
-    photo: &mut crate::adjustment_layers::AdjustmentLayerSettings,
-    can_pick: bool,
-    editable: bool,
-) -> bool {
-    let pick = white_balance(ui, "photo-white-balance", &mut photo.wb, editable, can_pick);
-    ui.add_enabled_ui(editable, |ui| {
-        let defaults = crate::adjustment_layers::AdjustmentLayerSettings::default();
-        let changed = photo.contrast != defaults.contrast
-            || photo.pivot != defaults.pivot
-            || photo.contrast_colour_mix != defaults.contrast_colour_mix;
-        let (_, action) = section(
-            ui,
-            "photo-contrast",
-            "Contrast",
-            SectionHeader {
-                summary: &format!(
-                    "{:.2} · Pivot {:.3} · Preserve {:.2}",
-                    photo.contrast, photo.pivot, photo.contrast_colour_mix
-                ),
-                changed,
-                reset: Some(changed),
-                tool: None,
-                default_open: Some(true),
-            },
-            |ui| {
-                parameter(ui, Parameter::Contrast, &mut photo.contrast);
-                parameter(ui, Parameter::Pivot, &mut photo.pivot);
-                parameter(ui, Parameter::ColourMix, &mut photo.contrast_colour_mix);
-            },
-        );
-        if action.reset && !defer_reset(ui, Reset::Contrast) {
-            photo.contrast = defaults.contrast;
-            photo.pivot = defaults.pivot;
-            photo.contrast_colour_mix = defaults.contrast_colour_mix;
+    kind: Parameter,
+    value: &mut f64,
+) -> ((Response, Response, Response), ControlResponse) {
+    ui.push_id(kind.label(), |ui| {
+        let previous = *value;
+        let mut reset = false;
+        let unit = parameter_unit(kind);
+        let (slider, numeric, label, cancelled, slider_value, numeric_value) =
+            icons::row_at(ui, INSPECTOR_ROW_HEIGHT, |ui| {
+                let label = parameter_name(ui, kind);
+                reset = name_reset_gesture(ui, &label);
+                let reserved = PARAMETER_NUMERIC_WIDTH
+                    + 3. * ui.spacing().item_spacing.x
+                    + PARAMETER_UNIT_WIDTH;
+                let width = (ui.available_width() - reserved).max(48.);
+                let mut slider_value = previous;
+                let slider = ui
+                    .push_id("track", |ui| {
+                        track(ui, kind, &mut slider_value, width, label.id)
+                    })
+                    .inner;
+                let mut numeric_value = previous;
+                let (numeric, cancelled) = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_sized(
+                            [PARAMETER_UNIT_WIDTH, INSPECTOR_ROW_HEIGHT - 2.],
+                            egui::Label::new(unit.unwrap_or("")),
+                        );
+                        let (numeric, cancelled) = ui
+                            .push_id("number", |ui| {
+                                numeric_field(
+                                    ui,
+                                    kind,
+                                    &mut numeric_value,
+                                    INSPECTOR_ROW_HEIGHT - 2.,
+                                )
+                            })
+                            .inner;
+                        let numeric = numeric.labelled_by(label.id);
+                        numeric.clone().context_menu(|ui| {
+                            if ui.button("Reset to default").clicked() {
+                                reset = true;
+                                ui.close();
+                            }
+                        });
+                        (numeric, cancelled)
+                    })
+                    .inner;
+                (
+                    slider,
+                    numeric,
+                    label,
+                    cancelled,
+                    slider_value,
+                    numeric_value,
+                )
+            })
+            .inner;
+
+        let number = numeric.has_focus()
+            || numeric.lost_focus()
+            || numeric.is_pointer_button_down_on()
+            || numeric.dragged()
+            || numeric.drag_stopped()
+            || cancelled
+            || numeric_value != previous;
+        let selected = if number { &numeric } else { &slider };
+        let mut response = ControlResponse {
+            id: selected.id,
+            active: control_active(ui, selected),
+            enabled: selected.enabled(),
+            cancelled: number && cancelled,
+            changed: false,
+        };
+        if response.enabled && !response.cancelled {
+            *value = if number { numeric_value } else { slider_value };
+            response.changed = *value != previous
+                || (!number
+                    && slider.is_pointer_button_down_on()
+                    && !ui.input(|input| input.modifiers.shift));
         }
-        let changed = photo.saturation != defaults.saturation
-            || photo.saturation_density != defaults.saturation_density;
-        let (_, action) = section(
-            ui,
-            "photo-saturation",
-            "Saturation",
-            SectionHeader {
-                summary: &format!(
-                    "{:.2} · Density {:.2}",
-                    photo.saturation, photo.saturation_density
-                ),
-                changed,
-                reset: Some(changed),
-                tool: None,
-                default_open: Some(true),
-            },
-            |ui| {
-                parameter(ui, Parameter::Saturation, &mut photo.saturation);
-                parameter(ui, Parameter::Density, &mut photo.saturation_density);
-            },
-        );
-        if action.reset && !defer_reset(ui, Reset::Saturation) {
-            photo.saturation = defaults.saturation;
-            photo.saturation_density = defaults.saturation_density;
+        if reset && ui.is_enabled() {
+            reset_parameter(kind, value);
+            response = ControlResponse::action(ui.id().with("reset"), true);
         }
-    });
-    pick
+        record_control_interaction(ui, &slider);
+        record_control_interaction(ui, &numeric);
+        ui.add_space(PARAMETER_GAP);
+        ((slider, numeric, label), response)
+    })
+    .inner
 }
 
 pub fn calibration(
@@ -630,28 +584,6 @@ impl ColorControl {
     }
 }
 
-/// Shared balance body: a compact hue wheel with the two axis controls beside it.
-///
-/// The wheel is a correction surface, not a measurement device; its radius follows the panel
-/// width and the axis sliders keep the fine, single-axis work.
-pub(super) fn balance_body(ui: &mut Ui, kind: ColorControl, value: &mut Balance) {
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new("reset-balance-scope"), kind));
-    ui.horizontal(|ui| {
-        let size = wheel_size(ui.available_width());
-        // Reserve exactly one inter-item gap for the wheel so the row never widens the panel.
-        let column = (ui.available_width() - size - ui.spacing().item_spacing.x).max(120.);
-        ui.vertical(|ui| {
-            ui.set_width(column);
-            parameter(ui, Parameter::Warmth, &mut value.warmth);
-            parameter(ui, Parameter::Tint, &mut value.tint);
-        });
-        wheel(ui, kind, value, size);
-    });
-    ui.ctx()
-        .data_mut(|data| data.remove::<ColorControl>(egui::Id::new("reset-balance-scope")));
-}
-
 pub(super) fn balance_pick_tool(can_pick: bool, subject: &'static str) -> SectionTool<'static> {
     SectionTool {
         icon: Icon::Pick,
@@ -663,42 +595,6 @@ pub(super) fn balance_pick_tool(can_pick: bool, subject: &'static str) -> Sectio
 
 fn wheel_size(available: f32) -> f32 {
     (available * 0.22).clamp(60., 76.)
-}
-
-pub fn white_balance(
-    ui: &mut Ui,
-    id: &str,
-    value: &mut Balance,
-    editable: bool,
-    can_pick: bool,
-) -> bool {
-    let changed = *value != Balance::default();
-    let (_, action) = section(
-        ui,
-        id,
-        "White balance",
-        SectionHeader {
-            summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
-            changed,
-            reset: Some(changed && editable),
-            tool: Some(balance_pick_tool(
-                can_pick,
-                "Pick neutral for white balance",
-            )),
-            default_open: Some(true),
-        },
-        |ui| {
-            ui.add_enabled_ui(editable, |ui| {
-                balance_body(ui, ColorControl::WhiteBalance, value)
-            });
-        },
-    );
-
-    if action.reset && !defer_reset(ui, Reset::Balance(ColorControl::WhiteBalance)) {
-        *value = Balance::default();
-    }
-
-    action.tool
 }
 
 /// A track drag that started with Shift held; travel is applied relatively at one-tenth rate.
@@ -824,7 +720,7 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance, size: f32) -> Res
         ui.ctx().data_mut(|data| data.insert_temp(drag_id, drag));
     }
 
-    if response.double_clicked() && !defer_reset(ui, Reset::Balance(kind)) {
+    if response.double_clicked() {
         *value = Balance::default();
     }
 
@@ -838,6 +734,81 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance, size: f32) -> Res
     response.on_hover_text(
         "Drag to shift the balance; hold Shift for finer motion. Double-click resets.",
     )
+}
+
+pub(in crate::editor) fn balance_body(
+    ui: &mut Ui,
+    kind: ColorControl,
+    value: &mut Balance,
+) -> [ControlResponse; 3] {
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new("reset-balance-scope"), kind));
+    let responses = ui
+        .horizontal(|ui| {
+            let size = wheel_size(ui.available_width());
+            let column = (ui.available_width() - size - ui.spacing().item_spacing.x).max(120.);
+            let axes = ui
+                .vertical(|ui| {
+                    ui.set_width(column);
+                    let warmth = parameter_edit(ui, Parameter::Warmth, &mut value.warmth);
+                    let tint = parameter_edit(ui, Parameter::Tint, &mut value.tint);
+                    [warmth, tint]
+                })
+                .inner;
+            let before = *value;
+            let response = wheel(ui, kind, value, size);
+            let wheel = ControlResponse {
+                id: response.id,
+                active: control_active(ui, &response),
+                enabled: response.enabled(),
+                cancelled: false,
+                changed: *value != before,
+            };
+            [axes[0], axes[1], wheel]
+        })
+        .inner;
+    ui.ctx()
+        .data_mut(|data| data.remove::<ColorControl>(egui::Id::new("reset-balance-scope")));
+    responses
+}
+
+pub(in crate::editor) fn white_balance(
+    ui: &mut Ui,
+    id: &str,
+    value: &mut Balance,
+    editable: bool,
+    can_pick: bool,
+) -> ([ControlResponse; 4], bool) {
+    let mut responses = [ControlResponse::idle(ui.id()); 4];
+    let changed = *value != Balance::default();
+    let (_, action) = section(
+        ui,
+        id,
+        "White balance",
+        SectionHeader {
+            summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
+            changed,
+            reset: Some(changed && editable),
+            tool: Some(balance_pick_tool(
+                can_pick,
+                "Pick neutral for white balance",
+            )),
+            default_open: Some(true),
+        },
+        |ui| {
+            let body = ui
+                .add_enabled_ui(editable, |ui| {
+                    balance_body(ui, ColorControl::WhiteBalance, value)
+                })
+                .inner;
+            responses[..3].copy_from_slice(&body);
+        },
+    );
+    if action.reset {
+        *value = Balance::default();
+        responses[3] = ControlResponse::action(ui.make_persistent_id((id, "reset")), true);
+    }
+    (responses, action.tool)
 }
 
 #[cfg(test)]

@@ -358,9 +358,8 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     let map = Arc::new(
         crate::flat_field::FlatField::from_nodes(a, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
     );
-    document
-        .project
-        .set_flat_field(Some(crate::project::FlatFieldSettings::new(source, map)));
+    let settings = crate::project::FlatFieldSettings::new(source, map);
+    document.project.set_flat_field(Some(settings));
     let corrected = key(&document, id);
     assert_ne!(corrected, plain);
     assert_eq!(corrected.source, plain.source);
@@ -584,7 +583,7 @@ fn unavailable_source_parameters_cannot_fall_back_to_a_calibrated_positive() {
     *editor.document = fixture();
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
-    editor.sync_document();
+
     let source = editor
         .document
         .project
@@ -655,7 +654,21 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         first.clone()
     );
     assert_eq!(key(&editor.document, id), unchanged_key);
-    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
+    let record = &editor
+        .document
+        .project
+        .source(id)
+        .unwrap()
+        .adjustment_layers
+        .as_ref()
+        .unwrap()
+        .layers[0];
+    assert_eq!(
+        editor.adjustment_layer_target(),
+        super::super::adjustment_layers::Target::Layer(record.id)
+    );
+    let mut adjustment = record.adjustment;
+    adjustment.photo = AdjustmentLayerSettings {
         exposure: 1.25,
         contrast: 1.2,
         pivot: 0.25,
@@ -664,10 +677,17 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         saturation_density: 0.25,
         ..Default::default()
     };
+    editor.photo_control(
+        controls::ControlResponse {
+            active: true,
+            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+        },
+        move |v| *v = adjustment,
+    );
     let adjusted = editor.thumbnail_parameters(&source).unwrap();
     assert_eq!(
         adjusted.grade().unwrap().snapshot().layers()[0].photo,
-        editor.document.visit.adjustment_layer_settings
+        editor.photo_settings()
     );
     assert_ne!(adjusted.clone(), first.clone());
     assert_eq!(
@@ -677,7 +697,11 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
             .clone(),
         other_before
     );
-    editor.document.roll.exposure = 0.5;
+    editor.cancel_control_edit();
+    let mut document_draft = editor.edit_project("Rendering settings").unwrap();
+    let mut values = document_draft.values();
+    values.roll.exposure = 0.5;
+    document_draft.replace(values);
     assert_ne!(
         editor
             .thumbnail_parameters(editor.document.state.project.source(other).unwrap())
@@ -686,6 +710,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         other_before
     );
     assert_eq!(key(&editor.document, id), unchanged_key);
+    drop(document_draft);
     editor
         .document
         .project
@@ -839,7 +864,7 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
         editor.initialize_viewer(&device, &queue);
         editor.document.state.project.input = InputSettings::Digital;
         editor.document.import(&[path]).unwrap();
-        editor.document.input = InputSettings::Digital;
+        editor.document.project.input = InputSettings::Digital;
         editor.document.source = true;
         editor.source_exposure = 0.37;
         let id = editor.document.state.project.order[0];
@@ -847,7 +872,7 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
         assert_ne!(source.development.decode.fixed_wb, crate::project::UNITY_WB);
         let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();
         let positive = ProcessingParameters::digital(
-            editor.document.roll,
+            editor.document.project.roll,
             glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
         )
         .unwrap();
@@ -1804,7 +1829,7 @@ fn replacing_a_document_releases_thumbnail_images_even_for_identical_project_dat
             .as_ref()
             .unwrap()
             .proxy
-            .image(editor.document.target)
+            .image(editor.document.target())
             .unwrap();
         let pixels = Arc::downgrade(&image);
         let product = Product::camera(image);
