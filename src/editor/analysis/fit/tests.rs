@@ -116,7 +116,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
     request.document.project.set_gamma(0.7);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Resources {
+    let mut services = Resources {
         exposures: Arc::default(),
         sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
@@ -125,10 +125,11 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    // Inspect the sampling boundary directly: every ordered frame contributes both
-    // populations, with the same per-frame bound used by the numerical estimator.
+    // Sparse retained patches and regular original-site GI evidence have distinct jobs.
     let mut state = services.fit(request.clone(), captured.clone()).unwrap();
     state.geometry().unwrap();
+    let mut retained_state = services.fit(request.clone(), captured.clone()).unwrap();
+    retained_state.geometry().unwrap();
     for index in 0..before.order.len() {
         let scan = futures_lite::future::block_on(services.acquire(
             Arc::new(request.clone()),
@@ -137,8 +138,67 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, || false).unwrap());
+        let source = scan.source().clone();
+        let retained = Arc::new(
+            crate::scan::AnalysisInput::capture(&scan, MAX_SAMPLES_PER_FRAME, || false)
+                .unwrap()
+                .unwrap(),
+        );
+        if index == 0 {
+            let wrong_grid = Arc::new(
+                crate::scan::AnalysisInput::capture(&scan, MAX_SAMPLES_PER_FRAME / 2, || false)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let mut rejected = services.fit(request.clone(), captured.clone()).unwrap();
+            rejected.geometry().unwrap();
+            assert!(matches!(
+                rejected.sample(
+                    index,
+                    Scan::from_source(source.clone()),
+                    Some(wrong_grid),
+                    || false
+                ),
+                Err(Error::InvalidParameter(
+                    "retained sampling grid does not match request"
+                ))
+            ));
+            assert!(
+                rejected.owned.is_empty(),
+                "incompatible retained data must not silently fall back to native statistics"
+            );
+        }
+        assert!(state.sample(index, scan, None, || false).unwrap());
+        assert!(
+            retained_state
+                .sample(
+                    index,
+                    Scan::from_source(source),
+                    Some(retained.clone()),
+                    || false
+                )
+                .unwrap()
+        );
+        let id = request.document.project.order[index];
+        services
+            .sampling_inputs
+            .insert(id, request.document.source_key(id).unwrap(), retained);
         let frame = &state.owned[index];
+        let reused = &retained_state.owned[index];
+        assert_eq!(reused.film.pixels, frame.film.pixels);
+        assert_eq!(reused.picture.pixels, frame.picture.pixels);
+        assert_eq!(
+            reused.spatial.camera_samples(),
+            frame.spatial.camera_samples()
+        );
+        assert_eq!(reused.spatial.eligibility(), frame.spatial.eligibility());
+        let [width, height] = reused.spatial.size();
+        assert!(
+            width <= crate::roll_analysis::GRAYNESS_LONG_EDGE
+                && height <= crate::roll_analysis::GRAYNESS_LONG_EDGE
+        );
+        assert_eq!(reused.spatial.camera_samples().len(), width * height);
+        assert_eq!(reused.spatial.eligibility().len(), width * height);
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
             (MIN_PICTURE_SAMPLES..=MAX_SAMPLES_PER_FRAME).contains(&frame.picture.pixels.len())
@@ -146,6 +206,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
     }
     assert_eq!(state.owned.len(), before.order.len());
     drop(state);
+    drop(retained_state);
     let outcome = futures_lite::future::block_on(run(
         request.clone(),
         captured,

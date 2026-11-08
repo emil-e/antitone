@@ -140,7 +140,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                     }
                 }
             }
-            assert!(state.sample(index, scan, || false).unwrap());
+            assert!(state.sample(index, scan, None, || false).unwrap());
             let frame = &state.owned[index];
             let expected = if index == 0 {
                 [3100, 1560]
@@ -298,7 +298,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
                 }
             }
         }
-        assert!(state.sample(index, scan, || false).unwrap());
+        assert!(state.sample(index, scan, None, || false).unwrap());
         let expected = if index == 0 {
             [3100, 1560]
         } else {
@@ -399,7 +399,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, || false).unwrap());
+    assert!(state.sample(0, scan, None, || false).unwrap());
     // Source centres12..300retain37film rows; picture centres100..300retain26.
     assert_eq!(state.owned[0].film.pixels.len(), 2294);
     assert_eq!(state.owned[0].picture.pixels.len(), 1040);
@@ -448,7 +448,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, || false).unwrap());
+        assert!(state.sample(index, scan, None, || false).unwrap());
         // Fourteen retained grid columns leave enough picture statistics, but
         // their 868 film samples per photo cannot satisfy the 2048 roll minimum.
         assert_eq!(state.owned[index].picture.pixels.len(), 560);
@@ -500,7 +500,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, || false).unwrap());
+    assert!(state.sample(0, scan, None, || false).unwrap());
     assert_eq!(state.owned[0].film.pixels.len(), 3844);
     assert_eq!(state.owned[0].picture.pixels.len(), 1600);
     scheduler.close_and_wait().unwrap();

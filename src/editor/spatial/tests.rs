@@ -54,12 +54,11 @@ fn observed_by_source() -> (source_loading::SourceLoader, Arc<AtomicUsize>, Sour
     (scheduler, count, sources)
 }
 
-fn confirm_without_native(
-    app: &mut TestApplication<'_, Editor>,
-    scheduler: &source_loading::SourceLoader,
-) {
-    assert!(app.read(|e| e.document.sampling_inputs.retained_bytes() > 0));
-    scheduler.close_and_wait().unwrap();
+fn confirm_with_originals_for_gi(app: &mut TestApplication<'_, Editor>, starts: &AtomicUsize) {
+    let retained = app.read(|e| e.document.sampling_inputs.retained_bytes());
+    assert!(retained > 0);
+    let metadata = app.read(|e| e.document.spatial.ready());
+    let acquired = starts.load(Ordering::SeqCst);
     app.enter(|editor, cx| editor.confirm_analysis_review(cx));
     app.run_until(LIMIT, |editor| {
         !editor.interaction_blocked() && editor.document.analysis_operation().is_none()
@@ -67,6 +66,39 @@ fn confirm_without_native(
     app.read(|editor| {
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
         assert_eq!(editor.document.project.analysis_regions.len(), 2);
+        assert!(Arc::ptr_eq(&editor.document.spatial.ready(), &metadata));
+        assert_eq!(editor.document.sampling_inputs.retained_bytes(), retained);
+        let additional = starts.load(Ordering::SeqCst) - acquired;
+        assert!(
+            additional > 0 && additional <= editor.document.project.order.len(),
+            "GI acquires missing originals once per photo, without redetecting areas: {additional}"
+        );
+    });
+}
+
+#[test]
+fn retained_sparse_patches_do_not_hide_unavailable_gi_originals_or_publish_partial_grades() {
+    let (scheduler, _) = observed();
+    let mut editor = fixture(scheduler.clone());
+    editor.photo_settings_mut().exposure = 0.75;
+    let accepted = editor.document.project.clone();
+    let undo = editor.history_label(history::Direction::Undo);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.request_analysis(cx));
+        app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
+        assert!(app.read(|editor| editor.document.sampling_inputs.retained_bytes() > 0));
+        scheduler.close_and_wait().unwrap();
+        app.enter(|editor, cx| editor.confirm_analysis_review(cx));
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
+        app.read(|editor| {
+            assert!(
+                editor.status.contains("RAW development worker stopped"),
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.history_label(history::Direction::Undo), undo);
+        });
     });
 }
 
@@ -184,8 +216,11 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
-        confirm_without_native(app, &scheduler);
-        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        confirm_with_originals_for_gi(app, &starts);
+        assert!(Arc::ptr_eq(
+            &app.read(|editor| editor.document.spatial.ready()),
+            &regions
+        ));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -251,8 +286,11 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
             editor.request_analysis(cx);
         });
         app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
-        confirm_without_native(app, &scheduler);
-        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        confirm_with_originals_for_gi(app, &starts);
+        assert!(Arc::ptr_eq(
+            &app.read(|editor| editor.document.spatial.ready()),
+            &regions
+        ));
     });
     scheduler.close_and_wait().unwrap();
 }

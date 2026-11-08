@@ -232,6 +232,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             Ok(Some(Box::new(Outcome {
                 document: candidate,
                 frames: 1,
+                wb_rejections: Vec::new(),
                 support: rect([12, 12, 800, 600]),
             })))
         };

@@ -66,10 +66,6 @@ impl AnalysisInput {
         }))
     }
 
-    pub(crate) fn area(&self) -> Rect {
-        self.area
-    }
-
     pub(crate) fn effective_floor(&self, field: Option<&FlatField>) -> Result<f64> {
         match field {
             Some(field) => {

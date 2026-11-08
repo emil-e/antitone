@@ -98,6 +98,7 @@ struct FrameMeasurements {
     floor: f64,
     film: crate::scan::AnalysisSamples,
     picture: crate::scan::AnalysisSamples,
+    spatial: roll_analysis::SpatialSamples,
 }
 
 fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Error> {
@@ -116,6 +117,7 @@ fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Err
 pub(super) struct Outcome {
     pub document: Document,
     pub frames: usize,
+    pub wb_rejections: Vec<(SourceId, String)>,
     pub support: Rect,
 }
 
@@ -414,6 +416,13 @@ impl Editor {
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
                     outcome.frames
                 );
+                if !outcome.wb_rejections.is_empty() {
+                    self.status.push_str(&format!(
+                        " Shared WB used {}/{} frames.",
+                        outcome.frames - outcome.wb_rejections.len(),
+                        outcome.frames
+                    ));
+                }
             }
             Ok(None) => self.status = "Analysis cancelled".into(),
             Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),

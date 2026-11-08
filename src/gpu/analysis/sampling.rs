@@ -8,6 +8,7 @@ use crate::{
     scan::{AnalysisSamples, DevelopedSource, Scan},
 };
 
+mod spatial;
 #[cfg(test)]
 mod tests;
 
@@ -197,6 +198,25 @@ impl<'a> CameraSampler<'a> {
             .iter()
             .map(|footprint| [footprint.region.x, footprint.region.y])
             .collect();
+        let Some(footprints) = self.read_footprints(origins, &mut cancelled)? else {
+            return Ok(None);
+        };
+        for state in footprints {
+            if state.floor {
+                plan.samples.rejected_floor += 1;
+            } else {
+                plan.samples.pixels.push(state.centre);
+            }
+        }
+        Ok(Some(plan.samples))
+    }
+
+    fn read_footprints(
+        &self,
+        origins: Vec<[u32; 2]>,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<Vec<Footprint>>, Error> {
+        let count = origins.len();
         let image = self.gathered(origins)?;
         let request = self.context.request(
             image.clone(),
@@ -207,8 +227,8 @@ impl<'a> CameraSampler<'a> {
             BUDGET,
         )?;
         let floor = self.floor as f32;
-        let mut footprints = vec![Footprint::default(); plan.footprints.len()];
-        let cancelled = RefCell::new(&mut cancelled);
+        let mut footprints = vec![Footprint::default(); count];
+        let cancelled = RefCell::new(cancelled);
         let interrupted = Cell::new(false);
 
         // The index raster contains only selected original cells. Its sideband origins preserve
@@ -254,24 +274,17 @@ impl<'a> CameraSampler<'a> {
             },
         )?;
 
-        if result.is_none() {
+        if result.is_none() || interrupted.get() {
             return Ok(None);
         }
 
-        for state in footprints {
+        for state in &footprints {
             if state.cells != 64 {
                 return Err(Error::InvalidParameter(
                     "analysis footprint lacks camera cells",
                 ));
             }
-
-            if state.floor {
-                plan.samples.rejected_floor += 1;
-            } else {
-                plan.samples.pixels.push(state.centre);
-            }
         }
-
-        Ok(Some(plan.samples))
+        Ok(Some(footprints))
     }
 }

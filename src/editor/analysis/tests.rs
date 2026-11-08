@@ -9,6 +9,7 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
     let native = crate::processing::CAMERA_INPUT_FLOOR;
     let frame = |floor| FrameMeasurements {
         floor,
+        spatial: roll_analysis::SpatialSamples::new([1, 1], vec![DVec3::ONE], vec![true]).unwrap(),
         film: crate::scan::AnalysisSamples {
             pixels: vec![DVec3::splat(0.8); 2048],
             ..Default::default()
@@ -312,8 +313,35 @@ fn outcome(request: &Request) -> Outcome {
     Outcome {
         document,
         frames,
+        wb_rejections: Vec::new(),
         support: rect([12, 12, 800, 600]),
     }
+}
+
+#[test]
+fn partial_shared_wb_contribution_is_reported_without_omitting_the_photo() {
+    let mut editor = state();
+    let mut second = editor.document.project.sources[0].clone();
+    second.id = SourceId(0);
+    second.path = "second.ARW".into();
+    editor.document.project.add_source(second).unwrap();
+    let request = capture_request(&editor);
+    let mut result = outcome(&request);
+    let rejected = request.document.project.order[1];
+    result.wb_rejections.push((
+        rejected,
+        "WB correction is outside the control range".into(),
+    ));
+    let expected = result.document.project.clone();
+    editor.accept_analysis(
+        &request,
+        Ok(Some(Box::new(result))),
+        false,
+        &crate::application::UiContext::render_only(),
+    );
+    assert_eq!(editor.document.project, expected);
+    assert!(editor.document.project.order.contains(&rejected));
+    assert!(editor.status.contains("1/2"), "{}", editor.status);
 }
 
 #[test]
@@ -687,6 +715,7 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
         balance_eligible: 256,
         balance_samples: 256,
         exposure_samples: 512,
+        grayness: None,
     };
     assert!(require_statistics(1, std::slice::from_ref(&enough)).is_err());
     assert!(

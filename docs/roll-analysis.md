@@ -7,15 +7,18 @@ The distinction from [processing](processing.md) matters: processing transforms 
 ```text
 eligible camera samples
   → Dmin and independent-channel Dmax
-  → shared channel curves, fitted independently of photographic WB
-  → shared Roll WB
+  → sparse-picture seed curves and exposure
+  → ordinary GI evidence; one shared channel-curve fit
+  → refreshed GI evidence; coordinate-median shared Roll WB
   → per-photo luminance medians
   → shared Roll EV from their median; Photo EV zero
 ```
 
 ## 1. Choose what to sample
 
-The analysis uses original developed camera pixels, with accepted scan correction applied — never a displayed preview or an embedded camera JPEG. Two sample populations have different jobs: the film population supplies the low-density reference; the picture population supplies dense tails, colour trends and exposure statistics. Sampling batches only selected 8×8 camera cells, retaining their original coordinates for correction. Local numerical checks reject precision-floored footprints before retaining their original centre pixels; fitting retains samples rather than every developed RAW.
+The analysis uses original developed camera pixels, with accepted scan correction applied — never a displayed preview or an embedded camera JPEG. Sparse film samples supply the low-density reference; sparse picture samples supply dense tails, a seed grade and exposure statistics. Sampling batches selected 8×8 camera cells, retaining their original coordinates for correction. Local numerical checks reject precision-floored footprints before retaining their original centre pixels.
+
+GI also needs spatial neighbourhoods. After confirmation, fitting acquires each original and captures a regular picture raster, currently limited to a 512-pixel long edge. Each site retains its corrected original camera centre and footprint eligibility; no interpolation reconstructs pixels from the sparse patches. Only bounded camera evidence survives each source acquisition.
 
 Spatial support excludes the holder and unsuitable material; numerical checks establish usable developed values. Statistical anchors and median exposure statistics limit the influence of isolated extremes.
 
@@ -39,7 +42,9 @@ These are useful statistical anchors, not guaranteed observations of clean film 
 
 A constant WB adjustment cannot fix every shadow-to-highlight colour trend. Channel gamma balance can, because its effect varies with density. The analysis therefore fits curves first and WB afterward.
 
-Each photo is divided into shadow, middle and highlight bands using its positive luminance ranks with zero gamma balance. These memberships stay fixed during fitting, so a candidate cannot improve its score simply by moving samples into different bands.
+The sparse picture population first supplies seed curves and exposure. At those curves, ordinary Grayness Index (GI) ranks local channel-proportion stability in native positives, without applying photographic WB. The current selector follows the Gaussian-gradient executable reference for [Qian et al.'s GI](https://openaccess.thecvf.com/content_CVPR_2019/html/Qian_On_Finding_Gray_Pixels_CVPR_2019_paper.html): 7×7 smoothing, complete valid neighbourhoods, dark/flat rejection and the lowest 0.1% score quota, including threshold ties. Seed EV supplies its brightness gain and stays fixed through selection and the subsequent WB refresh.
+
+Selected original camera vectors supply one further gamma fit. Each photo's selected population is divided into shadow, middle and highlight bands using its positive luminance ranks with zero gamma balance. These memberships stay fixed during fitting, so a candidate cannot improve its score simply by moving samples into different bands. Every photo must supply complete gamma evidence; fitting does not iterate GI selection and curves.
 
 The [production forward model](../src/gpu/analysis.rs) evaluates shared photographic GPU components for every candidate, not just the initial samples. Captured camera vectors use an index grid after original-footprint eligibility; they need no image reconstruction. CPU ranking, reduction and search consume these f32 responses, while the public scalar estimator remains an independent f64 reference.
 
@@ -69,9 +74,9 @@ That is still an assumption. A roll dominated by the same materials or coloured 
 
 ## 4. Set shared photographic WB
 
-With the curves fixed, equal-count samples produce one positive mean per photo. Their equally weighted mean supplies a shared Bradford correction toward AP1/D60 neutral.
+With the fitted curves fixed, fresh ordinary GI selection supplies one native-positive mean per photo. Camera-to-AP1 conversion and Bradford neutralization yield a candidate WB. The shared Roll WB is the coordinate-wise median of admitted candidates, averaging the middle pair for even counts. A photo whose GI evidence or WB correction is unusable abstains from this aggregation, not from gamma fitting or the resulting grade. Analyze reports partial WB participation; rejection reasons are logged by source. No admitted candidate means failure rather than a substitute grade.
 
-This is a roll-wide colour prior, not a measured neutral target. Photo WB starts at zero and remains manual: automatically neutralizing each photo would too readily remove blue shade, coloured lighting or a scene's dominant material colour.
+GI evidence is not a measured neutral target: coloured material and coloured illumination can also have stable channel proportions. Roll aggregation limits some frame-specific extremes, not shared scene bias. Photo WB starts at zero and remains manual; automatically applying individual estimates would too readily remove blue shade, coloured lighting or a scene's dominant material colour.
 
 ## 5. Set shared roll exposure
 
@@ -92,7 +97,7 @@ The shared baseline still depends on the roll's scenes and consistent scanning e
 
 The document-placed [Analyze tool](../src/editor/analysis.rs) owns its unfinished task, source-keyed sampling edits, gestures and temporary view. Its task awaits shared detection and review confirmation before fitting. Confirmation snapshots the areas and displayed source; fitting remains provisional until validated installation. Browsing replaces the photo visit while the tool's drafts survive ([architecture](architecture.md#scopes-nested-disposable-ui-state) owns that model). Reusable original sampling inputs belong to the document; active fitting retains its own input snapshot.
 
-While each original is available, shared preparation copies the current canonical grid's 8×8 camera-code patches and native-floor decisions. These document-owned working inputs retain original coordinates and precision, independently of saved regions and the full-image LRU; they hold no native image leases. Reviewed windows, material support and the current flat-field correction select and evaluate those patches after confirmation. Closing the document or removing a source releases its working inputs. Their reported bytes count owned patch payloads, not total process memory.
+While each original is available, shared preparation copies the current canonical grid's 8×8 camera-code patches and native-floor decisions. These document-owned working inputs retain original coordinates and precision, independently of saved regions and the full-image LRU; they hold no native image leases. Reviewed windows, material support and the current flat-field correction select and evaluate those patches after confirmation. Closing the document or removing a source releases its working inputs. Their reported bytes count owned patch payloads, not total process memory. Those sparse patches cannot supply GI's regular raster: fitting still acquires originals after confirmation, even when it reuses patches for anchor and exposure measurements. This adds a source pass when the full-image cache cannot satisfy acquisition.
 
 Review needs only geometry and material classification; it does not develop RAWs or run image-based refinement. Opening a project with finished regions collects missing sampling inputs when Analyze needs them, without redetecting areas; Auto-crop can use those regions without collecting pixels. Legacy requests without reviewed regions, and sources without retained inputs, use direct sampling.
 
@@ -111,10 +116,10 @@ Faint/off-image or scene-confounded boundaries can defeat area suggestions; hold
 ## Working on this area
 
 - [Footprint selection](../src/scan/analysis.rs), [GPU camera sampling](../src/gpu/analysis/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
-- [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
+- [Point-only seed](../src/roll_analysis.rs), [spatial GI baseline](../src/roll_analysis/gi.rs), [selector](../src/roll_analysis/grayness.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
 - [Spatial hypotheses](../src/scan_regions.rs), [shared preparation](../src/editor/spatial/preparation.rs) and [document retention](../src/editor/document_scope.rs): reusable source-owned support and original sampling inputs.
 - [Editor Analyze](../src/editor/analysis.rs): tool interaction, review assembly, awaited preparation, cancellation acknowledgement and atomic installation of reviewed areas with grade.
 - [Captured sampling/fitting](../src/editor/analysis/fit.rs): footprint eligibility, GPU measurements and validated numerical proposals.
-- [Scalar tests](../tests/roll_analysis.rs), [sampling tests](../tests/roll_sampling.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, invariance and transaction behavior.
+- [Scalar seed tests](../tests/roll_analysis.rs), [GI tests](../src/roll_analysis/gi/tests.rs), [spatial GPU sampling tests](../src/gpu/analysis/sampling/spatial/tests.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, abstention, original-coordinate eligibility and transaction behavior.
 
 Use [development checks](development.md#roll-analysis) for changes and [diagnostics](diagnostics.md#analyze-roll) for real-RAW exercises.

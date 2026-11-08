@@ -195,6 +195,7 @@ fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inpu
                             Box::new(analysis::Outcome {
                                 document,
                                 frames: 2,
+                                wb_rejections: Vec::new(),
                                 support: editor.document.visit.canvas.ready.as_ref().unwrap().area,
                             }),
                             entered,

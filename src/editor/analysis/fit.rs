@@ -1,5 +1,5 @@
 //! Captured roll sampling and fitting. Native awaits retain no blocking worker;
-//! each measured source is released before only bounded statistics advance.
+//! each source lease is released after bounded camera evidence is captured.
 use crate::renderer::GpuRenderer;
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
@@ -129,6 +129,7 @@ impl Fit {
         &mut self,
         index: usize,
         mut scan: Scan,
+        retained: Option<Arc<crate::scan::AnalysisInput>>,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         if cancelled() {
@@ -152,36 +153,24 @@ impl Fit {
             (&queue, &renderer.submissions),
             &scan,
         )?;
-        self.sample_camera(index, scan.area, &sampler, cancelled)
-    }
-
-    fn sample_retained(
-        &mut self,
-        index: usize,
-        input: Arc<crate::scan::AnalysisInput>,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<bool, Error> {
-        if cancelled() {
-            return Ok(false);
-        }
-        let project = &self.request.document.project;
-        let record = project.source(project.order[index])?;
-        project.require_scan_source(&record.development)?;
-        if let Some(correction) = &self.correction {
-            correction.settings.require_source(&record.development)?;
-        }
-        let active = input.area();
-        let renderer = self.renderer.clone();
-        let queue = self.queue.clone();
-        let device = self.device.clone();
-        let sampler = crate::gpu::analysis::CameraSampler::retained(
-            &device,
-            &renderer,
-            (&queue, &renderer.submissions),
-            input,
-            self.correction.as_ref().map(|c| c.settings.map.clone()),
-        )?;
-        self.sample_camera(index, active, &sampler, cancelled)
+        let retained = retained
+            .map(|input| {
+                crate::gpu::analysis::CameraSampler::retained(
+                    &device,
+                    &renderer,
+                    (&queue, &renderer.submissions),
+                    input,
+                    self.correction.as_ref().map(|c| c.settings.map.clone()),
+                )
+            })
+            .transpose()?;
+        self.sample_camera(
+            index,
+            scan.area,
+            retained.as_ref().unwrap_or(&sampler),
+            &sampler,
+            cancelled,
+        )
     }
 
     fn sample_camera(
@@ -189,6 +178,7 @@ impl Fit {
         index: usize,
         active: Rect,
         sampler: &crate::gpu::analysis::CameraSampler<'_>,
+        originals: &crate::gpu::analysis::CameraSampler<'_>,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         let frame_areas = self.request.areas.as_ref().map(|a| &a.entries[index].areas);
@@ -265,10 +255,32 @@ impl Fit {
             return Ok(false);
         };
         require_picture(&picture)?;
+        let area = match frame_areas {
+            Some(areas) => crate::scan_regions::Areas::coverage(
+                areas
+                    .picture
+                    .ok_or(Error::UnusableSample("no GI picture area"))?,
+            )?
+            .clipped_bounds(active)?,
+            None => self.picture.expect("legacy picture geometry"),
+        };
+        let Some(spatial) = originals.spatial(
+            area,
+            |f| {
+                frame_areas.is_none_or(|areas| areas.contains_footprint(f, active, true))
+                    && on_film(f)
+                    && inside_film(f, &picture_planes, 0.)
+            },
+            &cancelled,
+        )?
+        else {
+            return Ok(false);
+        };
         self.owned.push(FrameMeasurements {
             floor: sampler.effective_floor(),
             film,
             picture,
+            spatial,
         });
         Ok(true)
     }
@@ -284,16 +296,19 @@ impl Fit {
         let frames: Vec<_> = self
             .owned
             .iter()
-            .map(|frame| FrameSamples {
-                film: &frame.film.pixels,
-                picture: &frame.picture.pixels,
+            .map(|frame| roll_analysis::SpatialFrameSamples {
+                statistics: FrameSamples {
+                    film: &frame.film.pixels,
+                    picture: &frame.picture.pixels,
+                },
+                spatial: &frame.spatial,
             })
             .collect();
         let mut model = crate::gpu::analysis::ResponseModel::new(
             self.renderer.evaluation(),
             (&self.queue, &self.renderer.submissions),
         );
-        let Some(proposal) = roll_analysis::estimate_with_model(
+        let Some(proposal) = roll_analysis::estimate_spatial_with_model(
             &frames,
             floor,
             self.matrix,
@@ -308,6 +323,21 @@ impl Fit {
             self.owned.iter().map(|frame| frame.film.pixels.len()).sum(),
             &proposal.frames,
         )?;
+        let wb_rejections: Vec<_> = proposal
+            .frames
+            .iter()
+            .zip(&project.order)
+            .filter_map(|(frame, id)| {
+                frame
+                    .grayness
+                    .as_ref()
+                    .and_then(|gi| gi.wb_rejection.as_ref())
+                    .map(|reason| (*id, reason.clone()))
+            })
+            .collect();
+        for (source, reason) in &wb_rejections {
+            log::debug!(source = source.0, reason = reason.as_str(); "analysis_wb_abstained");
+        }
         let mut candidate = proposed_document(&request.document, proposal, self.picture)?;
         if let Some(approved) = &request.areas {
             candidate
@@ -346,6 +376,7 @@ impl Fit {
         Ok(Some(Outcome {
             document: candidate,
             frames: frames.len(),
+            wb_rejections,
             support: self.film.expect("film geometry"),
         }))
     }
@@ -411,27 +442,21 @@ impl Fit {
                 None
             };
             let retired = cancelled.clone();
-            let measured = if let Some(input) = retained {
-                background::compute(&cancelled, move || {
-                    let keep = state.sample_retained(index, input, || retired.is_cancelled())?;
-                    Ok((state, keep))
-                })
+            // Spatial GI needs original sites beyond the retained sparse patches. The
+            // source lease ends after this photograph's bounded camera evidence is copied.
+            let Some(scan) = state
+                .request
+                .document
+                .acquire_source(source, sources.as_ref(), &exposures, &cancelled)
                 .await?
-            } else {
-                let Some(scan) = state
-                    .request
-                    .document
-                    .acquire_source(source, sources.as_ref(), &exposures, &cancelled)
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                background::compute(&cancelled, move || {
-                    let keep = state.sample(index, scan, || retired.is_cancelled())?;
-                    Ok((state, keep))
-                })
-                .await?
+            else {
+                return Ok(None);
             };
+            let measured = background::compute(&cancelled, move || {
+                let keep = state.sample(index, scan, retained, || retired.is_cancelled())?;
+                Ok((state, keep))
+            })
+            .await?;
             let Some((next, keep)) = measured else {
                 return Ok(None);
             };
