@@ -108,6 +108,194 @@ fn seed(negative: NegativeInput, count: usize) -> Proposal {
 }
 
 #[test]
+fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
+    use std::{cell::Cell, rc::Rc};
+    struct Loaded<'a> {
+        image: &'a SpatialSamples,
+        active: Rc<Cell<usize>>,
+    }
+    impl AsRef<SpatialSamples> for Loaded<'_> {
+        fn as_ref(&self) -> &SpatialSamples {
+            self.image
+        }
+    }
+    impl Drop for Loaded<'_> {
+        fn drop(&mut self) {
+            self.active.set(self.active.get() - 1);
+        }
+    }
+    let (truth, images, pictures, _) = authored();
+    let frames: Vec<_> = pictures
+        .iter()
+        .map(|p| FrameSamples {
+            film: &[],
+            picture: p,
+        })
+        .collect();
+    let active = Rc::new(Cell::new(0));
+    let mut calls = Vec::new();
+    let result = refine_from(
+        &frames,
+        DMat3::IDENTITY,
+        truth.calibration.input_floor,
+        seed(truth, images.len()),
+        &mut model::ScalarReference,
+        &mut || false,
+        |index, cancelled| {
+            assert!(!cancelled());
+            assert_eq!(
+                active.get(),
+                0,
+                "a spatial selection must not retain earlier photo rasters"
+            );
+            calls.push(index);
+            active.set(1);
+            Ok(Some(Loaded {
+                image: &images[index],
+                active: active.clone(),
+            }))
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(calls, vec![0, 1, 2, 0, 1, 2]);
+    assert_eq!(active.get(), 0);
+    assert_eq!(result.frames.len(), images.len());
+    let error = refine_from(
+        &frames,
+        DMat3::IDENTITY,
+        truth.calibration.input_floor,
+        seed(truth, images.len()),
+        &mut model::ScalarReference,
+        &mut || false,
+        |index, _| {
+            if index == 1 {
+                Err(Error::Project("camera query failed".into()))
+            } else {
+                Ok(Some(&images[index]))
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("camera query failed"));
+}
+
+#[test]
+fn gamma_selection_uses_defined_colour_evidence_without_dropping_a_coloured_photo() {
+    let (truth, mut images, mut pictures, _) = authored_directions(&[DVec3::ONE; 2]);
+    let matrix = crate::color::ap1_to_cones().inverse()
+        * DMat3::from_cols(DVec3::X, DVec3::new(0., 1., -0.2), DVec3::Z);
+    let cones = crate::color::ap1_to_cones() * matrix;
+    let size = images[0].size;
+    let gammas = truth.channel_gammas().unwrap();
+    let span = (truth.calibration.dmin / truth.calibration.dmax).ln();
+    for (i, camera) in images[0].camera.iter_mut().enumerate() {
+        let x = (i % size[0]) as f64;
+        let y = (i / size[0]) as f64;
+        let level = 0.1 + 0.4 * ((x * 0.09).sin() * (y * 0.11).cos() + 1.) / 2.;
+        // Stable red light outranks the defined, slightly changing proportions on the right.
+        let direction = if x < size[0] as f64 / 2. {
+            DVec3::new(0.8, 0.2, 0.03)
+        } else {
+            DVec3::new(1. + 0.04 * (y * 0.27).sin(), 1., 1.)
+        };
+        let positive = direction * level;
+        *camera = DVec3::from_array(std::array::from_fn(|c| {
+            truth.calibration.dmin[c]
+                * (1. + positive[c] * (span[c] / gammas[c]).exp_m1()).powf(-gammas[c])
+        }));
+    }
+    pictures[0] = images[0].camera.iter().step_by(24).copied().collect();
+    let native: Vec<_> = images[0]
+        .camera
+        .iter()
+        .map(|p| Inversion::new(truth).unwrap().apply(*p).unwrap().rgb)
+        .collect();
+    let unfiltered = grayness::select(&native, &images[0].valid, size, 1., &mut || false)
+        .unwrap()
+        .unwrap();
+    assert!(
+        (cones * unfiltered.mean).min_element() < 0.,
+        "the control must select colour outside the log-drift domain"
+    );
+
+    struct Captured {
+        raster_samples: usize,
+        gamma: Vec<DVec3>,
+    }
+    impl ForwardModel for Captured {
+        fn read(
+            &mut self,
+            negative: NegativeInput,
+            points: &[DVec3],
+            cancelled: &mut dyn FnMut() -> bool,
+            consume: &mut dyn FnMut(usize, DVec3) -> Result<(), Error>,
+        ) -> Result<bool, Error> {
+            // Both full-raster reads precede the first, smaller gamma population.
+            if self.gamma.is_empty() && points.len() != self.raster_samples {
+                self.gamma = points.to_vec();
+            }
+            model::ScalarReference.read(negative, points, cancelled, consume)
+        }
+    }
+    let frames: Vec<_> = pictures
+        .iter()
+        .map(|p| FrameSamples {
+            film: &[],
+            picture: p,
+        })
+        .collect();
+    let refs: Vec<_> = images.iter().collect();
+    let mut proposal = seed(truth, images.len());
+    proposal.input = truth.into();
+    let mut model = Captured {
+        raster_samples: images[0].camera.len(),
+        gamma: Vec::new(),
+    };
+    let result = refine(
+        &frames,
+        &refs,
+        matrix,
+        truth.calibration.input_floor,
+        proposal,
+        &mut model,
+        &mut || false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.frames.len(), 2);
+    assert!(
+        result.frames[0]
+            .grayness
+            .as_ref()
+            .unwrap()
+            .wb_rejection
+            .is_some(),
+        "refreshed WB must still use ordinary GI rather than the gamma admission mask"
+    );
+    assert!(
+        result
+            .frames
+            .iter()
+            .all(|f| f.grayness.as_ref().unwrap().gamma_samples >= 10)
+    );
+    assert_eq!(
+        model.gamma.len(),
+        result
+            .frames
+            .iter()
+            .map(|f| f.grayness.as_ref().unwrap().gamma_samples)
+            .sum::<usize>()
+    );
+    assert!(
+        model.gamma.iter().all(|p| {
+            (cones * Inversion::new(truth).unwrap().apply(*p).unwrap().rgb).min_element() > 0.
+        }),
+        "selected gamma evidence must have a defined colour at the seed curves"
+    );
+}
+
+#[test]
 fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exposure() {
     let (truth, images, pictures, positives) = authored();
     let frames: Vec<_> = pictures

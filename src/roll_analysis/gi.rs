@@ -14,6 +14,12 @@ struct PositiveRaster {
     valid: Vec<bool>,
 }
 
+impl AsRef<SpatialSamples> for SpatialSamples {
+    fn as_ref(&self) -> &SpatialSamples {
+        self
+    }
+}
+
 impl SpatialSamples {
     pub fn new(size: [usize; 2], camera: Vec<DVec3>, valid: Vec<bool>) -> Result<Self, Error> {
         if size.iter().any(|&v| v == 0 || v > GRAYNESS_LONG_EDGE)
@@ -110,37 +116,72 @@ pub(crate) fn estimate_spatial_with_model(
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
     let statistics: Vec<_> = frames.iter().map(|f| f.statistics).collect();
-    let images: Vec<_> = frames.iter().map(|f| f.spatial).collect();
-    let Some(seed) = estimate_with_model(
+    estimate_spatial_with_provider(
         &statistics,
         effective_floor,
         matrix,
         current,
         model,
         cancelled,
-    )?
+        |index, _| Ok(Some(frames[index].spatial)),
+    )
+}
+
+/// Spatial camera evidence is evaluated per photograph and released between selections.
+pub(crate) fn estimate_spatial_with_provider<S: AsRef<SpatialSamples>>(
+    frames: &[FrameSamples<'_>],
+    effective_floor: f64,
+    matrix: DMat3,
+    current: impl Into<InputSettings>,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+    image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
+) -> Result<Option<Proposal>, Error> {
+    let Some(seed) =
+        estimate_with_model(frames, effective_floor, matrix, current, model, cancelled)?
     else {
         return Ok(None);
     };
-    refine(
-        &statistics,
-        &images,
+    refine_from(
+        frames,
         matrix,
         effective_floor,
         seed,
         model,
         cancelled,
+        image,
     )
 }
 
+#[cfg(test)]
 fn refine(
     frames: &[FrameSamples<'_>],
     images: &[&SpatialSamples],
     matrix: DMat3,
     effective_floor: f64,
+    proposal: Proposal,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Proposal>, Error> {
+    refine_from(
+        frames,
+        matrix,
+        effective_floor,
+        proposal,
+        model,
+        cancelled,
+        |index, _| Ok(Some(images[index])),
+    )
+}
+
+fn refine_from<S: AsRef<SpatialSamples>>(
+    frames: &[FrameSamples<'_>],
+    matrix: DMat3,
+    effective_floor: f64,
     mut proposal: Proposal,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
+    mut image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
 ) -> Result<Option<Proposal>, Error> {
     let mut initial = proposal
         .input
@@ -152,15 +193,33 @@ fn refine(
     // This threshold gain stays at the seed grade throughout the single GI cycle.
     // It is not a WB pre-correction or an exposure-normalization step.
     let gain = exposure_multiplier(proposal.roll.exposure)?;
-    let mut points = Vec::with_capacity(images.len());
-    for (index, image) in images.iter().enumerate() {
+    let mut points = Vec::with_capacity(frames.len());
+    for index in 0..frames.len() {
+        let Some(samples) = image(index, cancelled)? else {
+            return Ok(None);
+        };
+        let image = samples.as_ref();
         let Some(PositiveRaster { rgb, valid }) = image.response(initial, model, cancelled)? else {
             return Ok(None);
         };
+        // Native-positive GI can favour saturated colours outside the log-cone domain.
+        // Establish defined evidence at the seed curves before ranking gamma samples.
+        let to_cones = crate::color::ap1_to_cones() * matrix;
+        let mut admitted = valid.clone();
+        for (positive, valid) in rgb.iter().zip(&mut admitted) {
+            if *valid {
+                let cones = to_cones * *positive;
+                if !cones.is_finite() {
+                    return Err(Error::NumericalOverflow);
+                }
+                *valid = cones.min_element() > 0.;
+            }
+        }
         let Some(selected) =
-            grayness::select(&rgb, &valid, image.size, gain, cancelled).map_err(|error| {
-                Error::Project(format!("photo {} GI gamma evidence: {error}", index + 1))
-            })?
+            grayness::select_admitted(&rgb, &valid, &admitted, image.size, gain, cancelled)
+                .map_err(|error| {
+                    Error::Project(format!("photo {} GI gamma evidence: {error}", index + 1))
+                })?
         else {
             return Ok(None);
         };
@@ -183,7 +242,11 @@ fn refine(
     };
     let negative = NegativeInput { balance, ..initial };
     let mut corrections = Vec::new();
-    for (index, image) in images.iter().enumerate() {
+    for (index, selected_gamma) in points.iter().enumerate() {
+        let Some(samples) = image(index, cancelled)? else {
+            return Ok(None);
+        };
+        let image = samples.as_ref();
         let Some(PositiveRaster { rgb, valid }) = image.response(negative, model, cancelled)?
         else {
             return Ok(None);
@@ -204,7 +267,7 @@ fn refine(
             Err(error) => return Err(error),
         };
         proposal.frames[index].grayness = Some(GraynessStatistics {
-            gamma_samples: points[index].len(),
+            gamma_samples: selected_gamma.len(),
             wb_samples: count,
             wb_rejection: rejection,
         });

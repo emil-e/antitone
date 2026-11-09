@@ -79,6 +79,7 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
         source(Arc::new(NeverRead)),
         Meaning::Neutral,
         Function {
+            linked: Default::default(),
             code: r#"
 fn identity(p: vec4f, xy: vec2f) -> vec4f {
     return p;
@@ -122,6 +123,7 @@ fn operation_constants_must_fit_their_gpu_representation() {
         camera,
         Meaning::Graded,
         Function {
+            linked: Default::default(),
             code: r#"
 fn identity(p: vec4f, xy: vec2f) -> vec4f {
     return p;

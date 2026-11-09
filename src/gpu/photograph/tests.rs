@@ -546,6 +546,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             photo.neutral.clone(),
             Meaning::Neutral,
             Function {
+                linked: Default::default(),
                 code: r#"
 fn double(p: vec4f, pos: vec2f) -> vec4f {
     return vec4f(p.rgb * 2., p.w);

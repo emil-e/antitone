@@ -32,6 +32,7 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
     let base = execute::read(&device, &queue, &base.pixels);
     for gain in [0.75f32, 1.25] {
         let function = Function {
+            linked: Default::default(),
             code: format!(
                 r#"
 fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{

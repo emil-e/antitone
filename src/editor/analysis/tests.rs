@@ -9,7 +9,17 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
     let native = crate::processing::CAMERA_INPUT_FLOOR;
     let frame = |floor| FrameMeasurements {
         floor,
-        spatial: roll_analysis::SpatialSamples::new([1, 1], vec![DVec3::ONE], vec![true]).unwrap(),
+        spatial: {
+            let area = rect([0, 0, 1, 1]);
+            let input = Arc::new(crate::scan::AnalysisInput::authored(
+                crate::geometry::SourceRaster::new(area, [1, 1]).unwrap(),
+                vec![[65535.; 3]],
+                native,
+            ));
+            crate::gpu::analysis::CameraWindow::new(input, area, |_| true, || false)
+                .unwrap()
+                .unwrap()
+        },
         film: crate::scan::AnalysisSamples {
             pixels: vec![DVec3::splat(0.8); 2048],
             ..Default::default()

@@ -398,6 +398,7 @@ fn evaluate_region(
                 input,
                 copy,
                 vec![Function {
+                    linked: Default::default(),
                     code: r#"
 fn evaluation_own_input(p: vec4f, position: vec2f) -> vec4f {
     return p;

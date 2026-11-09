@@ -355,7 +355,8 @@ impl Operation for Native {
     fn pointwise(&self) -> Option<Function> {
         let parameters =
             native_parameters(&self.interpretation).expect("captured interpretation was admitted");
-        Some(
+        static FUNCTION: std::sync::OnceLock<Function> = std::sync::OnceLock::new();
+        let function = FUNCTION.get_or_init(|| {
             Function::new(
                 format!(
                     "{}\n{}",
@@ -364,8 +365,8 @@ impl Operation for Native {
                 ),
                 "native_response",
             )
-            .with_uniform(2, &parameters),
-        )
+        });
+        Some(function.clone().with_uniform(2, &parameters))
     }
 }
 

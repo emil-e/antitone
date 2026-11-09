@@ -18,7 +18,7 @@ struct SamplingEntry {
     input: Arc<AnalysisInput>,
 }
 
-/// Retained original camera patches; compatibility follows the captured source development.
+/// One retained original-camera raster per source, keyed by its captured development.
 #[derive(Clone, Default)]
 pub struct SamplingInputs {
     entries: Arc<Vec<SamplingEntry>>,
@@ -52,7 +52,7 @@ impl SamplingInputs {
         Arc::make_mut(&mut self.entries).retain(matches);
     }
 
-    /// Owned patch payloads, once per allocation; lookup/Arc/allocator overhead is excluded.
+    /// Owned camera payloads, once per allocation; lookup/Arc/allocator overhead is excluded.
     pub fn retained_bytes(&self) -> u64 {
         let mut seen = std::collections::HashSet::new();
         self.entries

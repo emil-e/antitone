@@ -305,6 +305,19 @@ pub struct Function {
     pub code: Arc<str>,
     pub symbol: &'static str,
     pub bindings: Vec<(u32, FunctionBinding)>,
+    // One linked-code variant shared by clones; captured bindings remain per calculation.
+    pub(crate) linked: Arc<std::sync::Mutex<Option<Arc<FunctionLink>>>>,
+}
+
+pub(crate) struct FunctionLink {
+    pub source: Arc<str>,
+    pub symbols: Vec<&'static str>,
+    pub prefix: String,
+    pub first_slot: u32,
+    pub next_slot: u32,
+    pub declared: Vec<u32>,
+    pub captures: Vec<(u32, u32)>,
+    pub code: Arc<str>,
 }
 
 impl Function {
@@ -313,6 +326,7 @@ impl Function {
             code: code.into(),
             symbol,
             bindings: vec![],
+            linked: Default::default(),
         }
     }
 

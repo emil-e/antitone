@@ -17,7 +17,7 @@ mod grayness;
 mod model;
 
 #[cfg(feature = "editor")]
-pub(crate) use gi::estimate_spatial_with_model;
+pub(crate) use gi::estimate_spatial_with_provider;
 pub use gi::{SpatialFrameSamples, SpatialSamples, estimate_spatial};
 
 /// Current spatial evidence resolution, independent of output/rendering resolution.

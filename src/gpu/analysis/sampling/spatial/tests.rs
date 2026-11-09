@@ -3,7 +3,7 @@ use crate::geometry::SourceRegion;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
-fn large_asymmetric_picture_grid_keeps_rounded_dimensions_and_original_pixel_centres() {
+fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
         side: 1024,
@@ -20,16 +20,16 @@ fn large_asymmetric_picture_grid_keeps_rounded_dimensions_and_original_pixel_cen
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
         .unwrap();
-    assert_eq!(raster.size(), [512, 364]);
-    assert_eq!(raster.camera_samples().len(), 512 * 364);
-    assert!(!raster.eligibility()[0]);
-    for [x, y] in [[3usize, 3usize], [250, 183], [508, 360]] {
-        let sx = area.x + ((2 * x + 1) * area.width as usize / (2 * 512)) as u32;
-        let sy = area.y + ((2 * y + 1) * area.height as usize / (2 * 364)) as u32;
+    assert_eq!(raster.size(), [451, 321]);
+    assert_eq!(raster.camera_samples().len(), 451 * 321);
+    assert!(raster.eligibility()[0]);
+    for [x, y] in [[0usize, 0usize], [250, 183], [450, 320]] {
+        let sx = area.x + 2 * x as u32;
+        let sy = area.y + 2 * y as u32;
         let reference = scan.pixel(sx, sy).unwrap();
-        assert!(raster.eligibility()[y * 512 + x]);
+        assert!(raster.eligibility()[y * 451 + x]);
         assert!(
-            (raster.camera_samples()[y * 512 + x] - reference)
+            (raster.camera_samples()[y * 451 + x] - reference)
                 .abs()
                 .max_element()
                 < 2e-6 * reference.abs().max_element()
@@ -76,7 +76,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
     for y in 0..48 {
         for x in 0..48 {
             let (sx, sy) = (a.x + 8 + x, a.y + 8 + y);
-            let f = SourceRegion::from([sx - 4, sy - 4, 8, 8]);
+            let f = SourceRegion::from([sx, sy, 1, 1]);
             let expected = inside(f);
             let i = (y * 48 + x) as usize;
             assert_eq!(raster.eligibility()[i], expected);
@@ -122,7 +122,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
 }
 
 #[test]
-fn corrected_neighbours_can_reject_an_otherwise_usable_spatial_centre() {
+fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
@@ -151,12 +151,16 @@ fn corrected_neighbours_can_reject_an_otherwise_usable_spatial_centre() {
     assert!(scan.pixel(a.x + 26, a.y + 26).unwrap().min_element() > scan.effective_floor());
     assert!(scan.pixel(a.x + 22, a.y + 22).unwrap().min_element() <= scan.effective_floor());
     assert!(
-        !raster.eligibility()[18 * 48 + 18],
-        "full corrected footprint, not merely its centre"
+        raster.eligibility()[18 * 48 + 18],
+        "the retained centre is above its bound"
+    );
+    assert!(
+        !raster.eligibility()[14 * 48 + 14],
+        "a retained site below the bound stays unusable"
     );
     assert!(
         raster.eligibility()[18 * 48 + 30],
-        "contrasting valid footprint must remain usable"
+        "contrasting valid sites remain usable"
     );
 }
 

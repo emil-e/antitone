@@ -15,7 +15,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 mod analysis;
 #[cfg(feature = "editor")]
-pub(crate) use analysis::AnalysisInput;
+pub(crate) use analysis::{AnalysisInput, AnalysisWindow};
 mod identity;
 pub use identity::CameraIdentity;
 mod image_source;

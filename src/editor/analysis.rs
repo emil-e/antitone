@@ -98,7 +98,7 @@ struct FrameMeasurements {
     floor: f64,
     film: crate::scan::AnalysisSamples,
     picture: crate::scan::AnalysisSamples,
-    spatial: roll_analysis::SpatialSamples,
+    spatial: crate::gpu::analysis::CameraWindow,
 }
 
 fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Error> {
@@ -1399,7 +1399,7 @@ impl Drop for Operation {
 
 struct FitInput {
     activity: Activity,
-    source: std::pin::Pin<Box<dyn Future<Output = Result<source::Context, String>>>>,
+    correction: Option<Arc<Correction>>,
     sources: Option<Arc<dyn SourceProvider>>,
     sampling_inputs: SamplingInputs,
     exposures: Arc<crate::exposure_metadata::Store>,
@@ -1479,7 +1479,7 @@ async fn fit_and_accept(
 ) {
     let FitInput {
         activity,
-        source: input,
+        correction,
         sources,
         sampling_inputs,
         exposures,
@@ -1493,17 +1493,6 @@ async fn fit_and_accept(
         {
             return work(request.clone(), cancelled.clone()).await;
         }
-        let Some(input) = futures_lite::future::or(
-            async {
-                cancelled.wait().await;
-                Ok(None)
-            },
-            async { input.await.map(Some) },
-        )
-        .await?
-        else {
-            return Ok(None);
-        };
         let sources = sources.ok_or("Source provider unavailable")?;
         let (device, queue, renderers) = cx
             .read(|editor| {
@@ -1519,7 +1508,7 @@ async fn fit_and_accept(
         let captured = request.clone();
         let state = background::compute(&cancelled, move || {
             let renderer = renderers.get(&device, &queue)?;
-            fit::Fit::new(device, queue, renderer, captured, input)
+            fit::Fit::new(device, queue, renderer, captured, correction)
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -1658,7 +1647,6 @@ impl Editor {
 
 impl AnalyzeTool {
     fn begin_analysis_fit(&mut self, editor: &mut Editor, total: usize) -> Option<FitInput> {
-        let input = editor.capture_source_context().ok()?;
         let activity =
             editor
                 .activities
@@ -1678,7 +1666,7 @@ impl AnalyzeTool {
         editor.status = "Analyzing roll…".into();
         Some(FitInput {
             activity,
-            source: Box::pin(input),
+            correction: editor.document.correction.clone(),
             sources: editor.source_provider(),
             sampling_inputs: editor.document.sampling_inputs.clone(),
             exposures: editor.document.exposures.clone(),

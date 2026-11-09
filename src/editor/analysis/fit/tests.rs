@@ -16,7 +16,7 @@ struct Resources {
 }
 
 impl Resources {
-    fn fit(&self, request: Request, input: source::Context) -> Result<Fit, Error> {
+    fn fit(&self, request: Request, input: Option<Arc<Correction>>) -> Result<Fit, Error> {
         Fit::new(
             self.device.clone(),
             self.queue.clone(),
@@ -46,7 +46,7 @@ impl Resources {
 
 async fn run(
     request: Request,
-    input: source::Context,
+    input: Option<Arc<Correction>>,
     resources: Resources,
     cancelled: Cancellation,
     progress: impl FnMut(usize, usize),
@@ -94,19 +94,8 @@ fn approved(request: &mut Request) {
     request.areas = Some(analysis::Approved { entries, files });
 }
 
-fn input(services: &Resources, request: &Request) -> source::Context {
-    let scan = futures_lite::future::block_on(services.acquire(
-        Arc::new(request.clone()),
-        0,
-        Cancellation::default(),
-    ))
-    .unwrap()
-    .unwrap();
-    source::Context {
-        reference: None,
-        source: scan.source().clone(),
-        correction: None,
-    }
+fn input(services: &Resources, request: &Request) -> Option<Arc<Correction>> {
+    Correction::prepare(&services.device, &request.document, None).unwrap()
 }
 
 #[test]
@@ -140,13 +129,15 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         .unwrap();
         let source = scan.source().clone();
         let retained = Arc::new(
-            crate::scan::AnalysisInput::capture(&scan, MAX_SAMPLES_PER_FRAME, || false)
+            crate::scan::AnalysisInput::capture(&scan, || false)
                 .unwrap()
                 .unwrap(),
         );
         if index == 0 {
+            let mut smaller = Scan::from_source(source.clone());
+            smaller.area.width -= 8;
             let wrong_grid = Arc::new(
-                crate::scan::AnalysisInput::capture(&scan, MAX_SAMPLES_PER_FRAME / 2, || false)
+                crate::scan::AnalysisInput::capture(&smaller, || false)
                     .unwrap()
                     .unwrap(),
             );
@@ -160,7 +151,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
                     || false
                 ),
                 Err(Error::InvalidParameter(
-                    "retained sampling grid does not match request"
+                    "captured camera grid differs from source"
                 ))
             ));
             assert!(
@@ -187,18 +178,23 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         let reused = &retained_state.owned[index];
         assert_eq!(reused.film.pixels, frame.film.pixels);
         assert_eq!(reused.picture.pixels, frame.picture.pixels);
-        assert_eq!(
-            reused.spatial.camera_samples(),
-            frame.spatial.camera_samples()
-        );
-        assert_eq!(reused.spatial.eligibility(), frame.spatial.eligibility());
+        let raster = reused
+            .spatial
+            .read(
+                &retained_state.renderer,
+                (&retained_state.queue, &retained_state.renderer.submissions),
+                retained_state.correction.as_ref().map(|c| c.gpu.clone()),
+                || false,
+            )
+            .unwrap()
+            .unwrap();
         let [width, height] = reused.spatial.size();
         assert!(
             width <= crate::roll_analysis::GRAYNESS_LONG_EDGE
                 && height <= crate::roll_analysis::GRAYNESS_LONG_EDGE
         );
-        assert_eq!(reused.spatial.camera_samples().len(), width * height);
-        assert_eq!(reused.spatial.eligibility().len(), width * height);
+        assert_eq!(raster.camera_samples().len(), width * height);
+        assert_eq!(raster.eligibility().len(), width * height);
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
             (MIN_PICTURE_SAMPLES..=MAX_SAMPLES_PER_FRAME).contains(&frame.picture.pixels.len())

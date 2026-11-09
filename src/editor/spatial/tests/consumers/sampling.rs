@@ -61,7 +61,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
         app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(
-                editor.status.contains("only 40 of 40 picture samples are eligible; need 512"),
+                editor.status.contains("picture samples are eligible; need 512"),
                 "{}", editor.status
             );
             assert!(editor.document.analysis_review().is_none());

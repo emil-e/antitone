@@ -30,6 +30,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     assert!(state.enabled(Action::Undo));
     assert!(!state.enabled(Action::Redo));
     host::App::native_menu_installed(&mut editor);
+    let preparing = crate::background::testing::pause();
     host::App::menu_action(&mut editor, Action::Undo);
     crate::application::test_support::with_application(editor, |app| {
         frame(app, &context);
@@ -41,6 +42,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             );
             assert!(!e.application_menu_state().enabled(Action::Undo));
         });
+        drop(preparing);
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, before, "{}", e.status);
@@ -51,6 +53,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             assert!(!state.enabled(Action::Undo));
             assert!(state.enabled(Action::Redo));
         });
+        let preparing = crate::background::testing::pause();
         app.update(|e| {
             super::super::tests::add_ready_fixture(e);
             e.begin_crop();
@@ -66,6 +69,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             assert!(!e.cropping());
             assert_eq!(e.document.project.roll.exposure, 0.);
         });
+        drop(preparing);
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| assert_eq!(e.document.project.roll.exposure, 0.5));
     });

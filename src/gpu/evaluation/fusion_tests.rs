@@ -195,6 +195,7 @@ fn an_independently_authored_pixel_function_composes_with_sampling() {
 
         fn pointwise(&self) -> Option<Function> {
             Some(Function {
+                linked: Default::default(),
                 code: r#"
 fn independent_map(p: vec4f, position: vec2f) -> vec4f {
     return vec4f(p.rgb * 0.75, p.w);

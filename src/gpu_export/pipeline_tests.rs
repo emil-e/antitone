@@ -24,6 +24,7 @@ impl EffectDefinition for Square {
             input,
             meaning,
             evaluation::Function {
+                linked: Default::default(),
                 code: "fn square(pixel: vec4f, position: vec2f) -> vec4f { return vec4f(pixel.rgb * pixel.rgb, pixel.w); }".into(),
                 symbol: "square",
                 bindings: vec![],

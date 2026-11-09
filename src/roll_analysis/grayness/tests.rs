@@ -29,6 +29,40 @@ fn stable_coloured_texture_outranks_nearer_gray_but_changing_channel_proportions
 }
 
 #[test]
+fn centre_admission_does_not_remove_usable_gi_neighbours() {
+    let size = [64, 64];
+    let rgb: Vec<_> = (0..size[0] * size[1])
+        .map(|i| DVec3::splat(0.2 + 0.05 * ((i % size[0]) as f64 * 0.3).sin()))
+        .collect();
+    let support = vec![true; rgb.len()];
+    let mut admitted = support.clone();
+    for y in (0..size[1]).step_by(16) {
+        for x in (0..size[0]).step_by(16) {
+            admitted[y * size[0] + x] = false;
+        }
+    }
+    // A 17x17 neighbourhood always touches this sparse lattice. Treating admission
+    // as missing image support would wrongly reject every otherwise usable centre.
+    assert!(select(&rgb, &admitted, size, 1., &mut || false).is_err());
+    let selected = select_admitted(&rgb, &support, &admitted, size, 1., &mut || false)
+        .unwrap()
+        .unwrap();
+    assert!(selected.indices.len() >= 4);
+    assert!(selected.indices.iter().all(|&i| admitted[i]));
+    assert!(
+        select_admitted(
+            &rgb,
+            &support,
+            &vec![false; rgb.len()],
+            size,
+            1.,
+            &mut || false
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn picture_population_sets_the_lowest_rank_quota_and_threshold_ties_are_retained() {
     let mut scores = vec![0.; 2500];
     let mut eligible = vec![false; scores.len()];

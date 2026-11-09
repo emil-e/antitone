@@ -4,7 +4,7 @@ use super::*;
 #[cfg(feature = "editor")]
 mod input;
 #[cfg(feature = "editor")]
-pub(crate) use input::AnalysisInput;
+pub(crate) use input::{AnalysisInput, AnalysisWindow};
 
 #[derive(Clone, Copy)]
 pub(crate) struct AnalysisFootprint {

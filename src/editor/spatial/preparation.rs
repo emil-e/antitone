@@ -19,7 +19,7 @@ pub(in crate::editor) struct Prepared {
 struct CapturedSource {
     source: crate::project::SourceId,
     frame: Option<FrameInput>,
-    patches: Arc<AnalysisInput>,
+    camera: Arc<AnalysisInput>,
 }
 
 pub(in crate::editor) async fn prepare(
@@ -91,7 +91,7 @@ pub(in crate::editor) async fn prepare(
             retained.insert(
                 capture.source,
                 document.source_key(capture.source)?,
-                capture.patches,
+                capture.camera,
             );
             completed += 1;
             if completed < total {
@@ -162,25 +162,20 @@ async fn capture_source(
     };
     let stopped = cancelled.clone();
     let id = input.source;
-    let Some(Some((frame, patches))) = background::compute(cancelled, move || {
+    let Some(Some((frame, camera))) = background::compute(cancelled, move || {
         let path = document.source_path(input.source)?;
         let actual =
             document::source_metadata(&path, &scan.source().metadata(), scan.source().fixed_wb())?;
         document::verify_source(document.project.source(input.source)?, &actual)?;
         document::verify_scan(&actual, &scan)?;
         document.project.require_scan_source(&actual.development)?;
-        let patches = match existing {
-            Some(patches) => patches,
+        let camera = match existing {
+            Some(camera) => camera,
             None => {
-                let Some(patches) = AnalysisInput::capture(
-                    &scan,
-                    crate::roll_analysis::MAX_SAMPLES_PER_FRAME,
-                    || stopped.is_cancelled(),
-                )?
-                else {
+                let Some(camera) = AnalysisInput::capture(&scan, || stopped.is_cancelled())? else {
                     return Ok(None);
                 };
-                Arc::new(patches)
+                Arc::new(camera)
             }
         };
         let frame = if regions_ready {
@@ -191,7 +186,7 @@ async fn capture_source(
             let evidence = Evidence::observe([w, h], &rgb)?;
             Some(FrameInput::new(input, [w, h], rgb, evidence)?)
         };
-        Ok(Some((frame, patches)))
+        Ok(Some((frame, camera)))
     })
     .await?
     else {
@@ -200,6 +195,6 @@ async fn capture_source(
     Ok(Some(CapturedSource {
         source: id,
         frame,
-        patches,
+        camera,
     }))
 }

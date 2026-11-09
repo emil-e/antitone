@@ -42,6 +42,17 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
     );
 }
 
+// This fixture is smaller than the cache limit: each cached site is one original
+// pixel. Independently enumerate the source-wide 90x91 statistical strata.
+fn statistical_sites(scan: &Scan) -> Vec<[u32; 2]> {
+    assert_eq!(array(scan.area), [8, 8, 496, 496]);
+    (0..91)
+        .flat_map(|y| {
+            (0..90).map(move |x| [8 + (2 * x + 1) * 496 / 180, 8 + (2 * y + 1) * 496 / 182])
+        })
+        .collect()
+}
+
 fn left_edge(x: f64) -> [Boundary; 4] {
     [
         Boundary::Measured { plane: [1., 0., x] },
@@ -90,7 +101,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
         // Declared film-support hypothesis, not a claim that this ramp fixture contains
         // a physical cut. Picture metadata is deliberately absent: full-frame abstention
         // must not discard an independently available film limit.
-        attach_film(&mut request, 0, left_edge(96.));
+        attach_film(&mut request, 0, left_edge(112.));
         let before = request.document.project.clone();
         let physical = request.document.spatial_metadata.clone();
         let (scheduler, _) = observed();
@@ -106,58 +117,50 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
         let mut state = services.fit(request.clone(), captured.clone()).unwrap();
         state.geometry().unwrap();
         for index in 0..2 {
-            let mut scan = futures_lite::future::block_on(services.acquire(
+            let scan = futures_lite::future::block_on(services.acquire(
                 Arc::new(request.clone()),
                 index,
                 Cancellation::default(),
             ))
             .unwrap()
             .unwrap();
-            let baseline_film = scan
-                .analysis_samples(scan.area, MAX_SAMPLES_PER_FRAME, || false)
-                .unwrap()
-                .unwrap();
-            assert_eq!(baseline_film.attempted, 3844);
-            assert_eq!(
-                baseline_film.pixels.len(),
-                3844,
-                "all declared camera pixels pass numerical/capture rejection; the spatial guard must add real protection"
-            );
-            // The 496×496 active area has a 62×62 grid with centres 12, 20, ..., 500.
-            // Full 8×8 support plus the two-source-pixel inset from x96 keeps x108 onward.
-            // Independently enumerate original camera pixels, not a second mask/grid helper.
+            let sites = statistical_sites(&scan);
+            assert_eq!(sites.len(), 8190);
+            assert!(sites.iter().all(
+                |&[x, y]| scan.pixel(x, y).unwrap().min_element() > scan.source().input_floor()
+            ));
             let mut expected_film = vec![];
             let mut expected_picture = vec![];
-            for y in (12..504).step_by(8) {
-                for x in (12..504).step_by(8) {
-                    if index == 0 && x < 108 {
-                        continue;
-                    }
-                    let p = scan.pixel(x, y).unwrap();
-                    expected_film.push(p);
-                    if (100..416).contains(&x) && (100..416).contains(&y) {
-                        expected_picture.push(p);
-                    }
+            let mut nominal_picture = 0;
+            for [x, y] in sites {
+                let picture = (96..416).contains(&x) && (96..416).contains(&y);
+                nominal_picture += usize::from(picture);
+                // The centre must be two source pixels inside the measured x112 edge.
+                if index == 0 && x < 114 {
+                    continue;
                 }
+                let p = scan.pixel(x, y).unwrap();
+                expected_film.push(p);
+                if picture {
+                    expected_picture.push(p);
+                }
+            }
+            if index == 0 {
+                assert!(expected_picture.len() < nominal_picture);
             }
             assert!(state.sample(index, scan, None, || false).unwrap());
             let frame = &state.owned[index];
-            let expected = if index == 0 {
-                [3100, 1560]
-            } else {
-                [3844, 1600]
-            };
-            assert_eq!([frame.film.attempted, frame.picture.attempted], expected);
             for (samples, pixels) in [
                 (&frame.film, expected_film),
                 (&frame.picture, expected_picture),
             ] {
+                assert_eq!(samples.attempted, pixels.len());
                 assert_eq!(samples.pixels.len(), pixels.len());
                 for (i, (actual, expected)) in samples.pixels.iter().zip(pixels).enumerate() {
                     assert!(
                         (*actual - expected).abs().max_element()
                             < 4. * f64::from(f32::EPSILON) * expected.abs().max_element(),
-                        "sample {i} must match the independently enumerated original-camera value"
+                        "sample {i} must match independently enumerated original camera light"
                     );
                 }
             }
@@ -166,7 +169,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 [0; 2]
             );
             eprintln!(
-                "film_edge_trial reviewed={reviewed} source_index={index} film_before=3844 film_after={} picture_before=1600 picture_after={} numeric_rejected=0",
+                "film_edge_trial reviewed={reviewed} source_index={index} film_after={} picture_after={} numeric_rejected=0",
                 frame.film.pixels.len(),
                 frame.picture.pixels.len()
             );
@@ -269,41 +272,31 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
     let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     for index in 0..2 {
-        let mut scan = futures_lite::future::block_on(services.acquire(
+        let scan = futures_lite::future::block_on(services.acquire(
             Arc::new(request.clone()),
             index,
             Cancellation::default(),
         ))
         .unwrap()
         .unwrap();
-        assert_eq!(
-            scan.analysis_samples(scan.area, MAX_SAMPLES_PER_FRAME, || false)
-                .unwrap()
-                .unwrap()
-                .pixels
-                .len(),
-            3844
-        );
+        let sites = statistical_sites(&scan);
         let mut film = vec![];
         let mut picture = vec![];
-        for y in (12..504).step_by(8) {
-            for x in (12..504).step_by(8) {
-                if index == 0 && x < 108 {
-                    continue;
-                }
-                let p = scan.pixel(x, y).unwrap();
-                film.push(p);
-                if (100..416).contains(&x) && (100..416).contains(&y) {
-                    picture.push(p);
-                }
+        for [x, y] in sites {
+            // Material samples have centres 4.5, 12.5, ... in active-local units.
+            // The first 11 columns are light; ties and the 2px inset exclude x98.
+            if index == 0 && x <= 98 {
+                continue;
+            }
+            let p = scan.pixel(x, y).unwrap();
+            film.push(p);
+            if (96..416).contains(&x) && (96..416).contains(&y) {
+                picture.push(p);
             }
         }
         assert!(state.sample(index, scan, None, || false).unwrap());
-        let expected = if index == 0 {
-            [3100, 1560]
-        } else {
-            [3844, 1600]
-        };
+        let expected = [film.len(), picture.len()];
+        assert!(expected[0] > expected[1] && expected[1] >= MIN_PICTURE_SAMPLES);
         assert_eq!(
             [
                 state.owned[index].film.pixels.len(),
@@ -311,7 +304,6 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
             ],
             expected
         );
-        assert_eq!([film.len(), picture.len()], expected);
         for (actual, expected) in [
             (&state.owned[index].film.pixels, film),
             (&state.owned[index].picture.pixels, picture),
@@ -400,9 +392,9 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     .unwrap()
     .unwrap();
     assert!(state.sample(0, scan, None, || false).unwrap());
-    // Source centres12..300retain37film rows; picture centres100..300retain26.
-    assert_eq!(state.owned[0].film.pixels.len(), 2294);
-    assert_eq!(state.owned[0].picture.pixels.len(), 1040);
+    // The holder y312 boundary keeps centres above its 2px inward band.
+    assert_eq!(state.owned[0].film.pixels.len(), 4950);
+    assert_eq!(state.owned[0].picture.pixels.len(), 2262);
     assert_eq!(request.document.project, before);
     scheduler.close_and_wait().unwrap();
 }
@@ -416,10 +408,10 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         0,
         [
             Boundary::Measured {
-                plane: [1., 0., 192.],
+                plane: [1., 0., 228.],
             },
             Boundary::Measured {
-                plane: [-1., 0., -320.],
+                plane: [-1., 0., -284.],
             },
             Boundary::Unknown,
             Boundary::Unknown,
@@ -449,10 +441,10 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         .unwrap()
         .unwrap();
         assert!(state.sample(index, scan, None, || false).unwrap());
-        // Fourteen retained grid columns leave enough picture statistics, but
-        // their 868 film samples per photo cannot satisfy the 2048 roll minimum.
-        assert_eq!(state.owned[index].picture.pixels.len(), 560);
-        assert_eq!(state.owned[index].film.pixels.len(), 868);
+        // Ten source-wide strata columns leave enough picture statistics, but
+        // their 910 film samples per photo cannot satisfy the 2048 roll minimum.
+        assert_eq!(state.owned[index].picture.pixels.len(), 590);
+        assert_eq!(state.owned[index].film.pixels.len(), 910);
     }
     let error = state.finish(|| false).err().unwrap();
     assert!(
@@ -501,8 +493,8 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     .unwrap()
     .unwrap();
     assert!(state.sample(0, scan, None, || false).unwrap());
-    assert_eq!(state.owned[0].film.pixels.len(), 3844);
-    assert_eq!(state.owned[0].picture.pixels.len(), 1600);
+    assert_eq!(state.owned[0].film.pixels.len(), 8190);
+    assert_eq!(state.owned[0].picture.pixels.len(), 3422);
     scheduler.close_and_wait().unwrap();
 }
 
@@ -534,7 +526,7 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
     assert!(
         error
             .to_string()
-            .contains("only 40 of 40 picture samples are eligible; need 512"),
+            .contains("picture samples are eligible; need 512"),
         "{error}"
     );
     assert_eq!(request.document.project, before);

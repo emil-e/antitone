@@ -115,6 +115,17 @@ pub(super) fn select(
     gain: f64,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Selection>, Error> {
+    select_admitted(rgb, valid, valid, size, gain, cancelled)
+}
+
+pub(super) fn select_admitted(
+    rgb: &[DVec3],
+    valid: &[bool],
+    admitted: &[bool],
+    size: [usize; 2],
+    gain: f64,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Selection>, Error> {
     let [width, height] = size;
     if cancelled() {
         return Ok(None);
@@ -210,7 +221,13 @@ pub(super) fn select(
     if cancelled() {
         return Ok(None);
     }
-    let indices = ranked_indices(&scores, &eligible).expect("eligible GI evidence checked");
+    // Admission restricts retained centres, not the native-positive neighbourhood
+    // used to calculate their GI scores. Apply it before selecting the rank quota.
+    for (eligible, admitted) in eligible.iter_mut().zip(admitted) {
+        *eligible &= *admitted;
+    }
+    let indices = ranked_indices(&scores, &eligible)
+        .ok_or(Error::UnusableSample("no admitted GI evidence"))?;
     let mean = indices.iter().map(|&i| rgb[i] / indices.len() as f64).sum();
     Ok((!cancelled()).then_some(Selection { indices, mean }))
 }

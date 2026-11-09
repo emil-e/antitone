@@ -298,6 +298,7 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
             borrowed_input(domain),
             Meaning::Graded,
             Function {
+                linked: Default::default(),
                 code: code.clone(),
                 symbol: "times",
                 bindings: vec![(0, Shared::Buffer(first.clone()).into())],
@@ -307,6 +308,7 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
             root,
             Meaning::Graded,
             Function {
+                linked: Default::default(),
                 code: module,
                 symbol,
                 bindings: vec![(0, Shared::Buffer(resource.clone()).into())],
