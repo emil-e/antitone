@@ -2,7 +2,7 @@
 use super::*;
 use serde_json::{Value, json};
 
-fn material(exterior: Option<Exterior>, rgb: [u16; 3]) -> &'static str {
+fn material(exterior: Option<Exterior>, rgb: [f32; 3]) -> &'static str {
     match exterior.map(|model| model.classify(rgb)) {
         Some(Material::Base) => "Base",
         Some(Material::Photo) => "Photo",

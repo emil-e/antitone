@@ -88,9 +88,7 @@ fn render(
                 } else {
                     0.03 * rng.normal()
                 };
-                (20000. * (noise - attenuation).exp2())
-                    .round()
-                    .clamp(2., 65534.) as u16
+                (20000. * (noise - attenuation).exp2()).round() as f32
             });
         }
     }

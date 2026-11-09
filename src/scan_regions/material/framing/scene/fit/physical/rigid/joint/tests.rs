@@ -178,7 +178,7 @@ fn rejection_and_insufficient_observations_preserve_exact_pair_outcome() {
             areas.picture_observed = [true, false, false, true];
         }
         if kind == "blank" {
-            capture.rgb.fill([20000; 3]);
+            capture.rgb.fill([20000.; 3]);
         }
         if kind == "empty_span" {
             evidence.lines.get_mut("left").unwrap()[0].span_intervals = Some(vec![]);
@@ -218,15 +218,15 @@ fn rejection_and_insufficient_observations_preserve_exact_pair_outcome() {
 fn all_supplied_sides_requalify_on_completed_companions_before_joint_acceptance() {
     let bounds = [8., 44., 6., 42.];
     let (mut capture, evidence, scene) = fixture([96, 64], bounds, None, false);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     for y in 12..36 {
         for x in 8..12 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     for y in 6..42 {
         for x in 48..96 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     let areas = baseline(&capture, bounds, [true, false, true, true]);

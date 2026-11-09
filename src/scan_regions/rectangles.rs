@@ -107,7 +107,7 @@ fn runs(
     selection: &Selection,
     size: [u32; 2],
     measure: [u32; 2],
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
 ) -> [Option<Run>; 4] {
     std::array::from_fn(|side| {
         let upper = selection.upper?;
@@ -239,7 +239,7 @@ fn weak_border(
     c: &Capture,
     material: &Material,
     measure: [u32; 2],
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
 ) -> Option<f64> {
     let axis = usize::from(side >= 2);
     let other = if side < 2 { [2, 3] } else { [0, 1] };
@@ -260,14 +260,8 @@ fn weak_border(
         let [x, y] = std::array::from_fn(|a| {
             (p[a] * f64::from(measure[a]) / f64::from(c.size[a])).floor() as usize
         });
-        let codes = rgb[y * measure[0] as usize + x];
-        Some(
-            codes
-                .iter()
-                .map(|&v| f64::from(v.max(1)).log2())
-                .sum::<f64>()
-                / 3.,
-        )
+        let pixel = rgb[y * measure[0] as usize + x];
+        Some(super::material::logs(pixel)?.iter().sum::<f64>() / 3.)
     };
     let per_block = (((high - low) * 0.9 / 8.
         * (f64::from(measure[0]) / f64::from(c.size[0]))
@@ -352,7 +346,7 @@ impl RollModel {
         index: usize,
         c: &Capture,
         measurement_size: [u32; 2],
-        measurement: &[[u16; 3]],
+        measurement: &[[f32; 3]],
     ) -> Result<Areas, Error> {
         if !self.owns(index, c) {
             return Err(invalid(
@@ -385,7 +379,7 @@ impl RollModel {
         index: usize,
         c: &Capture,
         measurement_size: [u32; 2],
-        measurement: &[[u16; 3]],
+        measurement: &[[f32; 3]],
     ) -> Result<Areas, Error> {
         let selection = self
             .select(index, c)
@@ -399,7 +393,7 @@ pub(super) fn fit(
     c: &Capture,
     selection: Selection,
     measurement_size: [u32; 2],
-    measurement: &[[u16; 3]],
+    measurement: &[[f32; 3]],
 ) -> Result<Areas, Error> {
     fit_with_opening(c, selection, measurement_size, measurement, None)
 }
@@ -408,7 +402,7 @@ fn fit_with_opening(
     c: &Capture,
     selection: Selection,
     measurement_size: [u32; 2],
-    measurement: &[[u16; 3]],
+    measurement: &[[f32; 3]],
     shared: Option<&super::opening::Shared>,
 ) -> Result<Areas, Error> {
     let observed = timed!(

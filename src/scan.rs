@@ -21,29 +21,6 @@ pub use identity::CameraIdentity;
 mod image_source;
 pub use image_source::{ImageIdentity, ImageSource};
 
-/// Integer inference evidence only, using the same declared camera-code scale for the whole roll.
-#[cfg(feature = "editor")]
-pub(crate) fn measurement_codes(pixel: [f32; 4], code_scale: f64) -> Result<[u16; 4]> {
-    if !code_scale.is_finite() || code_scale < 1. {
-        return Err(Error::Raw("invalid region-evidence scale".into()));
-    }
-    let mut codes = [0; 4];
-    for c in 0..4 {
-        let value = pixel[c];
-        let rounded = (f64::from(value) / code_scale).round();
-        if !value.is_finite()
-            || !(0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(&value)
-            || !(0. ..=65535.).contains(&rounded)
-        {
-            return Err(Error::Raw(
-                "unsupported camera range for region evidence".into(),
-            ));
-        }
-        codes[c] = rounded as u16;
-    }
-    Ok(codes)
-}
-
 #[derive(Debug, Default)]
 pub struct AnalysisSamples {
     pub pixels: Vec<DVec3>,

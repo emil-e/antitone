@@ -24,23 +24,17 @@ struct CapturedSource {
 struct GeometryFrame {
     input: crate::spatial_metadata::Input,
     size: [u32; 2],
-    rgb: Vec<[u16; 3]>,
+    rgb: Vec<[f32; 3]>,
 }
 
 fn geometry_frames(
     captures: Vec<CapturedSource>,
     checkpoint: &impl Fn() -> Result<(), String>,
 ) -> Result<Vec<GeometryFrame>, Error> {
-    let code_scale = captures.iter().try_fold(1_f64, |scale, capture| {
-        capture
-            .camera
-            .effective_floor(None)
-            .map(|floor| scale.max(floor / crate::processing::CAMERA_INPUT_FLOOR))
-    })?;
     captures
         .into_iter()
         .map(|capture| {
-            let (size, rgb) = geometry_preview(&capture.camera, code_scale, 768, checkpoint)?;
+            let (size, rgb) = geometry_preview(&capture.camera, 768, checkpoint)?;
             Ok(GeometryFrame {
                 input: capture.input,
                 size,
@@ -55,10 +49,9 @@ fn geometry_frames(
 /// a 1024-wide grid and silently changing the detector's resolution or coordinate phase.
 fn geometry_preview(
     camera: &AnalysisInput,
-    code_scale: f64,
     maximum: u32,
     checkpoint: &impl Fn() -> Result<(), String>,
-) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
+) -> Result<([u32; 2], Vec<[f32; 3]>), Error> {
     if maximum == 0 {
         return Err(Error::InvalidParameter("preview size must be positive"));
     }
@@ -96,8 +89,7 @@ fn geometry_preview(
                     (upper * (1. - dy) + lower * dy) as f32
                 })
             };
-            let codes = crate::scan::measurement_codes(pixel, code_scale)?;
-            rgb.push([codes[0], codes[1], codes[2]]);
+            rgb.push([pixel[0], pixel[1], pixel[2]]);
         }
     }
     Ok((size, rgb))

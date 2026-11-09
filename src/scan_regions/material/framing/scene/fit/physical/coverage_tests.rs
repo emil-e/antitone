@@ -10,7 +10,7 @@ fn a_smooth_ramp_with_heterogeneous_unavailable_controls_is_not_a_boundary() {
         for x in 0..128 {
             capture.rgb[y * 128 + x] = [(18000.
                 * (0.002 * (x as f64 - 112.) + 0.001 * (y as f64 - 48.)).exp2())
-            .round() as u16; 3];
+            .round() as f32; 3];
         }
     }
     let mut roles = scene.roles(&capture);

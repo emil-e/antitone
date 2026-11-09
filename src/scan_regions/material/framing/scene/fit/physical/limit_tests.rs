@@ -6,9 +6,9 @@ use super::*;
 fn observed_rebate_then_known_holder_is_not_continuing_photographic_material() {
     let (mut capture, _, mut scene) = fixture([64, 48], [8., 56., 6., 42.], None, true);
     for x in 0..64 {
-        capture.rgb[44 * 64 + x] = [1000; 3];
+        capture.rgb[44 * 64 + x] = [1000.; 3];
         for y in 45..48 {
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
             scene.holder[y * 64 + x] = true;
         }
     }
@@ -32,7 +32,7 @@ fn photographic_continuation_before_any_base_is_not_excused_by_a_later_holder() 
     let (mut capture, _, mut scene) = fixture([64, 48], [8., 56., 6., 42.], None, true);
     for y in 45..48 {
         for x in 0..64 {
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
             scene.holder[y * 64 + x] = true;
         }
     }
@@ -53,10 +53,10 @@ fn photographic_continuation_before_any_base_is_not_excused_by_a_later_holder() 
 fn a_holder_explanation_requires_continuity_and_no_rgb_contradiction() {
     let (mut capture, _, mut scene) = fixture([64, 48], [8., 56., 6., 42.], None, true);
     for x in 0..64 {
-        capture.rgb[44 * 64 + x] = [1000; 3];
-        capture.rgb[45 * 64 + x] = [2000; 3];
+        capture.rgb[44 * 64 + x] = [1000.; 3];
+        capture.rgb[45 * 64 + x] = [2000.; 3];
         for y in 46..48 {
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
             scene.holder[y * 64 + x] = true;
         }
     }
@@ -70,7 +70,7 @@ fn a_holder_explanation_requires_continuity_and_no_rgb_contradiction() {
     ));
     // Removing visible image variation still cannot bridge unavailable material.
     for x in 0..64 {
-        capture.rgb[45 * 64 + x] = [500; 3];
+        capture.rgb[45 * 64 + x] = [500.; 3];
         roles[45 * 64 + x] = Role::Unknown;
     }
     assert!(!neighbors::holder_after_base(
@@ -79,7 +79,7 @@ fn a_holder_explanation_requires_continuity_and_no_rgb_contradiction() {
     // A shared holder label cannot override the target's contradictory RGB.
     for x in 0..64 {
         roles[45 * 64 + x] = Role::AttenuatedCompatible;
-        capture.rgb[46 * 64 + x] = [20000; 3];
+        capture.rgb[46 * 64 + x] = [20000.; 3];
     }
     assert!(!neighbors::holder_after_base(
         &capture, &roles, exterior, point, normal
@@ -91,7 +91,7 @@ fn separated_photo_without_known_holder_remains_a_neighbor_explanation() {
     let (mut capture, _, scene) = fixture([64, 48], [8., 56., 6., 42.], None, true);
     for y in 44..48 {
         for x in 0..64 {
-            capture.rgb[y * 64 + x] = [1000; 3];
+            capture.rgb[y * 64 + x] = [1000.; 3];
         }
     }
     let frame = geometry(capture.size, [8., 56., 6., 42.]);
@@ -118,9 +118,9 @@ fn clipped_corners_do_not_disqualify_four_independently_observable_physical_side
         for x in 0..64 {
             let point = [x as f64 + 0.5, y as f64 + 0.5];
             capture.rgb[y * 64 + x] = if in_hypothesis(point, &frame, None) {
-                [8000; 3]
+                [8000.; 3]
             } else {
-                [20000; 3]
+                [20000.; 3]
             };
         }
     }

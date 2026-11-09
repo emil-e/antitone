@@ -35,9 +35,6 @@ fn scalar(capture: &Capture, p: [f64; 2]) -> Option<f64> {
             continue;
         }
         let rgb = capture.rgb[(iy * w + ix) as usize];
-        if rgb.contains(&0) || rgb.contains(&65535) {
-            return None;
-        }
         sum += weight * logs(rgb)?.iter().sum::<f64>() / 3.;
     }
     Some(sum)
@@ -67,10 +64,11 @@ pub(super) fn measure(
             continue;
         };
         let scale = station.noise.hypot(station.tangent);
-        if !scale.is_finite() || scale <= 0. {
+        if !scale.is_finite() {
             continue;
         }
-        result.mean += ((g[0] * outward[0] + g[1] * outward[1]) / scale).clamp(-4., 4.);
+        result.mean +=
+            directional::standardized_response(g[0] * outward[0] + g[1] * outward[1], scale);
         result.available += 1;
     }
     result.mean /= result.available.max(1) as f64;

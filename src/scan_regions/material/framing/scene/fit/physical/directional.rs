@@ -3,15 +3,17 @@ use super::*;
 
 #[cfg(test)]
 pub(super) mod inspection;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Copy, Serialize)]
 struct Cell {
     value: f64,
     tangent: f64,
     curvature: f64,
-    quantization: f64,
+    resolution: f64,
     role: Role,
-    rgb: [u16; 3],
+    rgb: [f32; 3],
 }
 
 #[derive(Serialize)]
@@ -50,6 +52,24 @@ pub(super) struct Report {
     pub(super) stations: Vec<Station>,
 }
 
+/// Conservative log-light error over a sample's f32 rounding interval, not sensor noise.
+fn log_resolution(rgb: [f32; 3]) -> f64 {
+    rgb.into_iter()
+        .map(|value| {
+            let v = f64::from(value);
+            let lower = v - f64::from(value.next_down());
+            let upper = if value.next_up().is_finite() {
+                f64::from(value.next_up()) - v
+            } else {
+                lower
+            };
+            let relative = 0.5 * lower.max(upper) / v;
+            // -ln(1-e) <= e/(1-e), avoiding another logarithm per sample.
+            relative / ((1. - relative) * std::f64::consts::LN_2)
+        })
+        .fold(0., f64::max)
+}
+
 fn cell(
     capture: &Capture,
     roles: &[Role],
@@ -68,6 +88,7 @@ fn cell(
     }
     logs(rgb)?;
     let mut values = vec![];
+    let mut resolution = 0_f64;
     for distance in [-1., 0., 1.] {
         let q = std::array::from_fn(|axis| p[axis] + distance * tangent[axis]);
         if inward && !in_hypothesis(q, frame, Some(side)) {
@@ -78,6 +99,7 @@ fn cell(
             return None;
         }
         values.push(logs(v)?.iter().sum::<f64>() / 3.);
+        resolution = resolution.max(log_resolution(v));
     }
     if values.len() != 3 {
         return None;
@@ -86,11 +108,7 @@ fn cell(
         value: values.iter().sum::<f64>() / 3.,
         tangent: (values[2] - values[0]) * 0.5,
         curvature: (values[0] - 2. * values[1] + values[2]) / 6f64.sqrt(),
-        quantization: rgb
-            .iter()
-            .map(|&value| 1. / (f64::from(value) * std::f64::consts::LN_2))
-            .sum::<f64>()
-            / 3.,
+        resolution,
         role,
         rgb,
     })
@@ -142,6 +160,16 @@ fn profile(
     profile
 }
 
+/// Preserve the bounded response when a perfectly flat control has zero measured noise.
+/// Zero change remains zero; nonzero changes saturate without a camera-code noise floor.
+pub(super) fn standardized_response(signal: f64, noise: f64) -> f64 {
+    if signal == 0. {
+        0.
+    } else {
+        (signal / noise).clamp(-4., 4.)
+    }
+}
+
 fn station(
     capture: &Capture,
     roles: &[Role],
@@ -158,8 +186,8 @@ fn station(
     value(&profile, -0.5)?;
     value(&profile, 0.5)?;
     let cells: Vec<_> = profile.iter().flatten().collect();
-    let quantization = median(cells.iter().map(|v| v.quantization));
-    let noise = (1.4826 * median(cells.iter().map(|v| v.curvature.abs()))).max(quantization);
+    let noise = 1.4826 * median(cells.iter().map(|v| v.curvature.abs()));
+    let resolution = cells.iter().map(|v| v.resolution).fold(0., f64::max);
     let tangent = median(cells.iter().map(|v| v.tangent.abs()));
     let contrast = gradient(&profile, 0.)?;
     let controls: Vec<_> = [-3., 3.]
@@ -180,7 +208,13 @@ fn station(
         .collect();
     let best_offset: i32 = responses.iter().max_by(|a, b| a.1.total_cmp(&b.1))?.0;
     let reversed_offset: i32 = responses.iter().min_by(|a, b| a.1.total_cmp(&b.1))?.0;
-    let mut z = signal / noise.hypot(tangent);
+    // Contrast and its control are each differences of averages: their combined
+    // rounding error is at most four sample bounds. Repetition cannot resolve that bias.
+    let mut z = if signal.abs() <= 4. * resolution {
+        0.
+    } else {
+        standardized_response(signal, noise.hypot(tangent))
+    };
     if (z > 0. && best_offset.abs() > 1) || (z < 0. && reversed_offset.abs() > 1) {
         z = 0.;
     }
@@ -217,9 +251,8 @@ fn station(
         median(far.iter().map(|v| v.tangent.abs()))
             .hypot(gradient(&profile, 4.).unwrap_or(0.) * 0.5)
     };
-    let exterior_noise = (1.4826 * median(outside.iter().map(|v| v.curvature.abs())))
-        .max(quantization)
-        .hypot(exterior_phase);
+    let exterior_noise =
+        (1.4826 * median(outside.iter().map(|v| v.curvature.abs()))).hypot(exterior_phase);
     Some(Station {
         index,
         along: p[usize::from(side < 2)],
@@ -228,7 +261,7 @@ fn station(
         tangent,
         best_offset,
         reversed_offset,
-        z: z.clamp(-4., 4.),
+        z,
         broad_base,
         image_continuation: !separated
             && attenuated

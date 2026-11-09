@@ -16,7 +16,7 @@ pub struct RollModel {
     size: [u32; 2],
     xs: Vec<u32>,
     ys: Vec<u32>,
-    grids: Vec<Vec<[u16; 3]>>,
+    grids: Vec<Vec<[f32; 3]>>,
     base: Option<Base>,
     tail: Option<[f64; 3]>,
     upper: Option<[f64; 3]>,
@@ -33,13 +33,15 @@ pub(super) struct Selection {
     pub supported: [bool; 4],
 }
 
-fn logs(v: [u16; 3]) -> Option<[f64; 3]> {
+// Log-colour evidence needs positive light. Nominal white is not a clipping sentinel
+// after development WB/shading, and fractional positive samples remain useful.
+pub(super) fn logs(v: [f32; 3]) -> Option<[f64; 3]> {
     v.iter()
-        .all(|&v| v > 1 && v < 65535)
+        .all(|&v| v.is_finite() && v > 0.)
         .then(|| v.map(|v| f64::from(v).log2()))
 }
 
-fn affinity(v: [u16; 3], base: &Base) -> Option<f64> {
+fn affinity(v: [f32; 3], base: &Base) -> Option<f64> {
     let v = logs(v)?;
     Some(
         (-(0..3)
@@ -50,10 +52,10 @@ fn affinity(v: [u16; 3], base: &Base) -> Option<f64> {
     )
 }
 
-fn dark_affinity(v: [u16; 3], tail: Option<[f64; 3]>) -> Option<f64> {
+fn dark_affinity(v: [f32; 3], tail: Option<[f64; 3]>) -> Option<f64> {
     let t = tail?;
     let exponent = (0..3)
-        .map(|c| (f64::from(v[c].max(1)) / t[c]).log2())
+        .map(|c| (f64::from(v[c].max(0.)) / t[c]).log2())
         .fold(f64::NEG_INFINITY, f64::max)
         / 0.25;
     Some(if exponent >= 0. {
@@ -94,7 +96,7 @@ fn connected(allowed: &[bool], w: usize, h: usize) -> BTreeSet<usize> {
     found
 }
 
-fn fit_base(grids: &[Vec<[u16; 3]>]) -> Option<Base> {
+fn fit_base(grids: &[Vec<[f32; 3]>]) -> Option<Base> {
     let mut hist: BTreeMap<[i32; 3], Vec<f64>> = BTreeMap::new();
     let mut selected = vec![];
     for (n, grid) in grids.iter().enumerate() {
@@ -257,7 +259,7 @@ impl RollModel {
         }
         let upper = (!exterior.is_empty()).then(|| {
             std::array::from_fn(|c| {
-                2. * quantile(exterior.iter().map(|v| f64::from(v[c])), 0.99).unwrap() + 2.
+                2. * quantile(exterior.iter().map(|v| f64::from(v[c])), 0.99).unwrap()
             })
         });
         let dark = grids
@@ -370,10 +372,13 @@ impl RollModel {
         }
         let mut bright = BTreeSet::new();
         for (i, rgb) in self.grids[index].iter().enumerate() {
-            if holder.contains(&i) || rgb.iter().any(|&v| v <= 1) {
+            if holder.contains(&i) {
                 continue;
             }
-            let d: [f64; 3] = std::array::from_fn(|c| f64::from(rgb[c]).log2() - base.mean[c]);
+            let Some(value) = logs(*rgb) else {
+                continue;
+            };
+            let d: [f64; 3] = std::array::from_fn(|c| value[c] - base.mean[c]);
             if (0..3).all(|c| d[c] >= -3. * base.spread[c])
                 && (0..3).any(|c| d[c] > (3. * base.spread[c]).max(0.5))
             {
@@ -426,7 +431,7 @@ impl RollModel {
         })
     }
 
-    fn appearance(&self, index: usize, p: [f64; 2], rgb: [u16; 3]) -> Option<f64> {
+    fn appearance(&self, index: usize, p: [f64; 2], rgb: [f32; 3]) -> Option<f64> {
         let i =
             Material::nearest(&self.ys, p[1]) * self.xs.len() + Material::nearest(&self.xs, p[0]);
         let own = [
@@ -677,7 +682,7 @@ fn side_evidence(c: &Capture, m: &Material, f: &Family, s: usize, l: &Line) -> (
                     continue;
                 }
                 let channels: Vec<_> = (0..3)
-                    .filter(|&ch| pairs.iter().flatten().all(|v| v[ch] > 0 && v[ch] < 65535))
+                    .filter(|&ch| pairs.iter().flatten().all(|v| v[ch] > 0.))
                     .collect();
                 if channels.len() < 2 {
                     continue;

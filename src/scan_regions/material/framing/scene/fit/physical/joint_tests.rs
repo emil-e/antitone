@@ -201,9 +201,9 @@ fn independent_side_envelopes_do_not_relax_complete_frame_identity() {
     for y in 0..96 {
         for x in 0..128 {
             capture.rgb[y * 128 + x] = [if (11..117).contains(&x) && (7..89).contains(&y) {
-                6000
+                6000.
             } else {
-                20000
+                20000.
             }; 3];
         }
     }

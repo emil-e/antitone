@@ -1,49 +1,82 @@
 use super::*;
 
-#[cfg(all(feature = "editor", feature = "raw"))]
 #[test]
-fn above_native_white_evidence_preserves_internal_boundaries_instead_of_saturating() {
+fn fractional_and_hdr_camera_light_preserve_internal_boundaries_without_encoding() {
     let size = [192, 128];
-    // The four boundaries span the detector's central observation band.
-    let rgb: Vec<_> = (0..size[1])
-        .flat_map(|y| {
-            (0..size[0]).map(move |x| {
-                let native = if (24..168).contains(&x) && (16..112).contains(&y) {
-                    60000.
-                } else {
-                    50000.
-                };
-                let shaded = native * std::f32::consts::SQRT_2;
-                assert!(shaded > 65535.);
-                let code =
-                    crate::scan::measurement_codes([shaded, shaded, shaded, 0.], 2.).unwrap();
-                assert!(code[..3].iter().all(|&v| v > 1 && v < 65535));
-                [code[0], code[1], code[2]]
-            })
-        })
-        .collect();
-    let evidence = Evidence::observe(size, &rgb).unwrap();
-    for (side, position) in [
-        ("left", 24.),
-        ("right", 168.),
-        ("top", 16.),
-        ("bottom", 112.),
+    for (inside, outside) in [
+        (
+            60000. * std::f32::consts::SQRT_2,
+            50000. * std::f32::consts::SQRT_2,
+        ),
+        (100.375, 100.125),
+        (0.375, 0.3125),
+        (65535., 65535.25),
     ] {
+        let rgb: Vec<_> = (0..size[1])
+            .flat_map(|y| {
+                (0..size[0]).map(move |x| {
+                    [if (24..168).contains(&x) && (16..112).contains(&y) {
+                        inside
+                    } else {
+                        outside
+                    }; 3]
+                })
+            })
+            .collect();
+        let evidence = Evidence::observe(size, &rgb).unwrap();
+        for (side, position) in [
+            ("left", 24.),
+            ("right", 168.),
+            ("top", 16.),
+            ("bottom", 112.),
+        ] {
+            assert!(
+                evidence.lines[side]
+                    .iter()
+                    .any(|line| (line.midpoint_pixel - position).abs() < 4.),
+                "{inside}/{outside}: missing {side} boundary: {evidence:?}"
+            );
+        }
+        let capture = Capture::new([11, 17, 1920, 1280].into(), size, rgb, evidence).unwrap();
+        assert!(
+            !capture.group.families.is_empty(),
+            "flat backgrounds must retain useful lines"
+        );
+        assert!(
+            capture
+                .group
+                .families
+                .iter()
+                .all(|family| family.score.is_finite())
+        );
+    }
+}
+
+#[test]
+fn flat_dark_fractional_and_hdr_fields_do_not_invent_lines() {
+    for value in [0., 0.25, 100.125, 65535., 262140.] {
+        let evidence = Evidence::observe([32, 24], &vec![[value; 3]; 32 * 24]).unwrap();
         assert!(
             evidence
                 .lines
-                .get(side)
-                .is_some_and(|lines| lines
-                    .iter()
-                    .any(|line| (line.midpoint_pixel - position).abs() < 4.)),
-            "missing {side} boundary: {evidence:?}"
+                .values()
+                .chain(evidence.segments.values())
+                .all(Vec::is_empty)
         );
     }
-    assert_eq!(
-        crate::scan::measurement_codes([0., 1., 23.75, 65535.], 1.).unwrap(),
-        [0, 1, 24, 65535]
-    );
-    assert!(crate::scan::measurement_codes([65536.; 4], 1.).is_err());
+}
+
+#[test]
+fn camera_raster_boundaries_reject_nonfinite_samples() {
+    let size = [32, 24];
+    let rgb = vec![[100.; 3]; 32 * 24];
+    let evidence = Evidence::observe(size, &rgb).unwrap();
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut rgb = rgb.clone();
+        rgb[17][1] = value;
+        assert!(Evidence::observe(size, &rgb).is_err());
+        assert!(Capture::new([11, 17, 320, 240].into(), size, rgb, evidence.clone()).is_err());
+    }
 }
 
 #[test]
@@ -218,13 +251,15 @@ fn retained_rectangle_baseline_parity() {
             .unwrap();
     let filter = std::env::var("ANTITONE_REGION_ROLL").ok();
 
-    fn pixels(path: &Path) -> Vec<[u16; 3]> {
+    fn pixels(path: &Path) -> Vec<[f32; 3]> {
         std::fs::read(path)
             .unwrap()
             .as_chunks::<6>()
             .0
             .iter()
-            .map(|v| std::array::from_fn(|c| u16::from_le_bytes([v[2 * c], v[2 * c + 1]])))
+            .map(|v| {
+                std::array::from_fn(|c| f32::from(u16::from_le_bytes([v[2 * c], v[2 * c + 1]])))
+            })
             .collect()
     }
     let native = std::env::var_os("ANTITONE_REGION_NATIVE").is_some();

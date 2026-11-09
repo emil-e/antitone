@@ -2,6 +2,16 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 pub(super) const SIDES: [&str; 4] = ["left", "right", "top", "bottom"];
 
+/// Relative contrast, with a finite ceiling at f64 relative precision for flat backgrounds.
+/// This prevents infinite ranking weights without imposing an absolute camera-light floor.
+pub(super) fn gradient_ratio(score: f64, background: f64) -> f64 {
+    if score <= 0. {
+        0.
+    } else {
+        (score / background.max(0.)).min(1. / f64::EPSILON)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct Surface {
     pub median_camera_rgb: [f64; 3],
@@ -95,9 +105,10 @@ pub struct Evidence {
 }
 
 impl Evidence {
-    pub fn observe(size: [u32; 2], rgb: &[[u16; 3]]) -> Result<Self, Error> {
+    pub fn observe(size: [u32; 2], rgb: &[[f32; 3]]) -> Result<Self, Error> {
         if size.iter().any(|&v| !(16..=768).contains(&v))
             || rgb.len() != size[0] as usize * size[1] as usize
+            || rgb.iter().flatten().any(|v| !v.is_finite())
         {
             return Err(invalid("invalid region camera raster"));
         }
@@ -118,10 +129,11 @@ pub(super) struct Group {
     pub families: Vec<Family>,
 }
 
+/// Bounded camera RGB in source units (65535 nominal white), preserving fractions and headroom.
 pub struct Capture {
     pub area: SourceRegion,
     pub size: [u32; 2],
-    pub rgb: Vec<[u16; 3]>,
+    pub rgb: Vec<[f32; 3]>,
     pub(super) group: Group,
 }
 
@@ -129,11 +141,12 @@ impl Capture {
     pub fn new(
         area: SourceRegion,
         size: [u32; 2],
-        rgb: Vec<[u16; 3]>,
+        rgb: Vec<[f32; 3]>,
         evidence: Evidence,
     ) -> Result<Self, Error> {
         if size.iter().any(|&v| !(16..=768).contains(&v))
             || rgb.len() != size[0] as usize * size[1] as usize
+            || rgb.iter().flatten().any(|v| !v.is_finite())
             || area.width < 16
             || area.height < 16
         {
@@ -149,7 +162,7 @@ impl Capture {
         })
     }
 
-    pub(super) fn rgb(&self, p: [i32; 2]) -> Option<[u16; 3]> {
+    pub(super) fn rgb(&self, p: [i32; 2]) -> Option<[f32; 3]> {
         if p.iter()
             .zip(self.size)
             .any(|(&v, n)| v < 0 || v >= n as i32)
@@ -201,7 +214,7 @@ fn group(evidence: &Evidence, size: [u32; 2]) -> Result<Group, Error> {
             if let Some(background) = l.local_gradient_background {
                 let mut l = l.clone();
                 l.rank = rank;
-                l.gradient_ratio = l.lower_quartile_gradient_score / background.max(1. / 65535.);
+                l.gradient_ratio = gradient_ratio(l.lower_quartile_gradient_score, background);
                 if !l.angle_limit_reached && l.gradient_ratio >= 4. {
                     lines[s].push(l);
                 }
@@ -230,7 +243,7 @@ fn group(evidence: &Evidence, size: [u32; 2]) -> Result<Group, Error> {
             .filter_map(|l| {
                 let bg = l.local_gradient_background?;
                 let mut l = l.clone();
-                l.gradient_ratio = l.lower_quartile_gradient_score / bg.max(1. / 65535.);
+                l.gradient_ratio = gradient_ratio(l.lower_quartile_gradient_score, bg);
                 (!l.angle_limit_reached
                     && l.gradient_ratio >= 4.
                     && guides
@@ -354,13 +367,8 @@ fn group(evidence: &Evidence, size: [u32; 2]) -> Result<Group, Error> {
                             let colour: [f64; 3] = std::array::from_fn(|ch| {
                                 surfaces.iter().map(|v| v[ch]).sum::<f64>() / surfaces.len() as f64
                             });
-                            let scale = colour
-                                .iter()
-                                .map(|v| v * v)
-                                .sum::<f64>()
-                                .sqrt()
-                                .max(1. / 65535.);
-                            let delta = (surfaces
+                            let scale = colour.iter().map(|v| v * v).sum::<f64>().sqrt();
+                            let spread = (surfaces
                                 .iter()
                                 .map(|v| {
                                     v.iter()
@@ -370,8 +378,8 @@ fn group(evidence: &Evidence, size: [u32; 2]) -> Result<Group, Error> {
                                 })
                                 .sum::<f64>()
                                 / surfaces.len() as f64)
-                                .sqrt()
-                                / scale;
+                                .sqrt();
+                            let delta = if spread == 0. { 0. } else { spread / scale };
                             score *= (-4. * delta).exp();
                         }
                         score *= surfaces.len() as f64 / count as f64;
