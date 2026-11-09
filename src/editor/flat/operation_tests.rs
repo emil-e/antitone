@@ -169,7 +169,7 @@ fn correction_acquisition_rejects_an_existing_edit_without_retiring_it_or_its_re
     with_application(editor(scheduler.clone()), |app| {
         begin(app, "bare-light.dng");
         wait(app);
-        let (before, edit) = app.update(|e| {
+        let (before, mut edit) = app.update(|e| {
             let before = e.document.project.clone();
             (before, e.edit_project("Existing edit").unwrap())
         });
@@ -180,17 +180,19 @@ fn correction_acquisition_rejects_an_existing_edit_without_retiring_it_or_its_re
                 "rejected Apply retains the reference"
             );
             assert!(e.document.flat_correction.is_none());
-            assert!(edit.preview().active());
+            assert!(e.document.project_preview.same_edit(&edit.preview()));
             assert!(!e.document.document_preview.active());
             assert_eq!(e.document.project, before);
             assert!(e.history_label(history::Direction::Undo).is_none());
             assert!(!e.dialogs.is_open());
         });
-        drop(edit);
+        edit.update(|project| project.roll.exposure = 0.25);
+        app.update(|e| e.commit_project(edit).unwrap());
         apply(app);
         wait(app);
         app.read(|e| {
             assert!(e.document.correction.is_some(), "{}", e.status);
+            assert_eq!(e.document.project.roll.exposure, 0.25);
             assert_eq!(
                 e.history_label(history::Direction::Undo),
                 Some("Correction")
@@ -940,6 +942,14 @@ fn apply_captures_support_before_the_correction_task_runs() {
         import(app);
         begin(app, "bare-light.dng");
         wait(app);
+        let former = app.read(|e| {
+            let tool = e.document.hosted_tool.installed().unwrap();
+            (tool as &dyn std::any::Any)
+                .downcast_ref::<FlatTool>()
+                .unwrap()
+                .state
+                .clone()
+        });
         let chosen = app.enter(|e, cx| {
             let area = e
                 .document
@@ -959,7 +969,12 @@ fn apply_captures_support_before_the_correction_task_runs() {
                 height: chosen.height - 16,
             };
             assert_ne!(chosen, later);
-            e.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(later)));
+            former.borrow_mut().region = Some(crate::coverage::Coverage::rectangle(later));
+            assert_eq!(
+                former.borrow().region.unwrap().exact_rectangle(area),
+                Some(later)
+            );
+            assert!(e.document.flat_edit().is_none());
             chosen
         });
         wait(app);
