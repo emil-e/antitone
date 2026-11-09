@@ -330,7 +330,6 @@ mod tests {
             calibration: Calibration {
                 dmin: DVec3::ONE,
                 dmax: DVec3::splat(0.01),
-                input_floor: 1. / 65535.,
             },
             response: Response {
                 toe: 1.,
@@ -425,7 +424,6 @@ mod tests {
                 calibration: Calibration {
                     dmin: DVec3::ONE,
                     dmax: DVec3::splat(0.01),
-                    input_floor: 1. / 65535.,
                 },
                 response: Response {
                     toe: 1.,

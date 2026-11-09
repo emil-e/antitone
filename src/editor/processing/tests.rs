@@ -237,7 +237,6 @@ fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
             ..editor.calibration().unwrap()
         };
         editor.set_dmax(Some(calibration.dmax));
-        editor.sync_document();
         editor.document.validate_for_device(&device).unwrap();
         let source = editor.document.project.source(second).unwrap();
         let actual = editor

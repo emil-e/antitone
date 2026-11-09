@@ -172,7 +172,8 @@ fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
             project: Project {
                 input,
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         document.import(std::slice::from_ref(&path)).unwrap();

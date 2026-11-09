@@ -97,10 +97,9 @@ fn current_decoder_observations_do_not_invalidate_a_saved_map_with_an_unavailabl
         )
         .unwrap(),
     );
-    document.project.set_flat_field(Some(FlatFieldSettings::new(
-        document.project.source(reference_id).unwrap(),
-        map.clone(),
-    )));
+    let settings =
+        FlatFieldSettings::new(document.project.source(reference_id).unwrap(), map.clone());
+    document.project.set_flat_field(Some(settings));
     document
         .project
         .remove_from_filmstrip(reference_id)

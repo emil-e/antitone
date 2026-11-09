@@ -270,3 +270,6 @@ async fn capture_source(
     };
     Ok(Some(CapturedSource { input, camera }))
 }
+
+#[cfg(test)]
+mod tests;

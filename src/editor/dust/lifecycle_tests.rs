@@ -702,24 +702,15 @@ fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_t
 }
 
 #[test]
-fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_native_and_amplified_floors() {
-    for amplified in [false, true] {
+fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_regular_and_low_gamma() {
+    for gamma in [
+        crate::processing::DEFAULT_GAMMA,
+        crate::processing::MIN_GAMMA,
+    ] {
         let e = gpu_editor();
         crate::application::test_support::with_application(e, |app| {
             app.enter(|e, cx| {
-                if amplified {
-                    let source = e.document.visit.current_source.unwrap();
-                    let development =
-                        &mut e.document.project.source_mut(source).unwrap().development;
-                    development.lens_correction = Some("ab".repeat(32));
-                    development.input_floor *= 4.;
-                    assert!(
-                        e.processing_calibration(e.calibration().unwrap())
-                            .unwrap()
-                            .input_floor
-                            > crate::processing::CAMERA_INPUT_FLOOR
-                    );
-                }
+                e.set_gamma(gamma);
                 let response = high_response(e);
                 e.receive_dust(response.request, Ok(Some(response)));
                 assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
@@ -779,7 +770,7 @@ fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_native_and_
                     assert_eq!(
                         e.photo_settings().exposure,
                         0.25,
-                        "amplified={amplified}, input={text}: {}",
+                        "gamma={gamma}, input={text}: {}",
                         e.status
                     );
                     assert!(!e.editing());

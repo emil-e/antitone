@@ -138,7 +138,7 @@ impl Editor {
         )?;
         if self.document.visit.current_source == Some(source.id) {
             self.dust_validate_snapshot(
-                base_input,
+                input,
                 self.document.project_snapshot().roll,
                 &source.grade_snapshot()?,
             )?;

@@ -198,6 +198,7 @@ fn document_preflight_preserves_calibration_under_correction_and_checks_processi
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
         let mut document = calibrated(directory.path());
+        let calibration = document.project.calibration().unwrap().unwrap();
         let source = &document.project.sources[0];
         let field = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -207,13 +208,8 @@ fn document_preflight_preserves_calibration_under_correction_and_checks_processi
             )
             .unwrap(),
         );
-        document
-            .project
-            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                source,
-                field.clone(),
-            )));
-        let calibration = document.project.calibration().unwrap().unwrap();
+        let settings = crate::project::FlatFieldSettings::new(source, field);
+        document.project.set_flat_field(Some(settings));
         assert_eq!(Some(calibration), document.project.calibration().unwrap());
         document.validate_for_device(&device).unwrap();
         let before = document.project.clone();

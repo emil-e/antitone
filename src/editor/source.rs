@@ -573,25 +573,10 @@ impl Editor {
         let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let mut result = match services {
+            let result = match services {
                 Some(services) => services.prepare(request, cancelled).await.map(Box::new),
                 None => Err("Source services unavailable".into()),
             };
-            if result.is_ok()
-                && cx.read(|editor| {
-                    matches!(
-                        editor.document.project.input,
-                        InputSettings::Negative {
-                            input_floor: 0.,
-                            ..
-                        }
-                    )
-                })
-                && cx.read(|editor| editor.editing())
-            {
-                result =
-                    Err("Finish or cancel the current edit before preparing this source".into());
-            }
             drop(activity);
             cx.update(|editor| editor.source_result(view, result));
         }) else {

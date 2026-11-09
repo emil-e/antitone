@@ -33,7 +33,6 @@ fn authored_directions(directions: &[DVec3]) -> AuthoredRoll {
         calibration: Calibration {
             dmin: DVec3::splat(0.5),
             dmax: DVec3::splat(0.03),
-            input_floor: 1. / 65535.,
         },
         response: Response {
             toe: 1.,
@@ -137,7 +136,7 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     let result = refine_from(
         &frames,
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
         &mut || false,
@@ -164,7 +163,7 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     let error = refine_from(
         &frames,
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
         &mut || false,
@@ -256,7 +255,7 @@ fn gamma_selection_uses_defined_colour_evidence_without_dropping_a_coloured_phot
         &frames,
         &refs,
         matrix,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         proposal,
         &mut model,
         &mut || false,
@@ -314,7 +313,7 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
         &frames,
         &refs,
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 3),
         &mut model,
         &mut || false,
@@ -382,7 +381,7 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
         &frames[..2],
         &refs[..2],
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 2),
         &mut model::ScalarReference,
         &mut || false,
@@ -422,7 +421,7 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
         &frames,
         &refs,
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 3),
         &mut model::ScalarReference,
         &mut || false,
@@ -434,7 +433,7 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
             &frames,
             &refs,
             DMat3::IDENTITY,
-            truth.calibration.input_floor,
+            crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 3),
             &mut model::ScalarReference,
             &mut || true
@@ -464,17 +463,27 @@ fn forward_failures_and_incomplete_reads_propagate_instead_of_becoming_wb_absten
     }
     let (truth, images, _, _) = authored();
     assert!(matches!(
-        images[0].response(truth, &mut Broken(true), &mut || false),
+        images[0].response(
+            truth,
+            crate::processing::CAMERA_INPUT_FLOOR,
+            &mut Broken(true),
+            &mut || false
+        ),
         Err(Error::UnusableSample("authored forward failure"))
     ));
     assert!(matches!(
-        images[0].response(truth, &mut Broken(false), &mut || false),
+        images[0].response(
+            truth,
+            crate::processing::CAMERA_INPUT_FLOOR,
+            &mut Broken(false),
+            &mut || false
+        ),
         Err(Error::InvalidParameter("analysis model omitted samples"))
     ));
 }
 
 #[test]
-fn spatial_estimation_keeps_the_effective_response_floor_separate_from_the_saved_native_floor() {
+fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibration() {
     struct FloorGuard {
         common: f64,
         calls: usize,
@@ -488,7 +497,6 @@ fn spatial_estimation_keeps_the_effective_response_floor_separate_from_the_saved
             cancelled: &mut dyn FnMut() -> bool,
             consume: &mut dyn FnMut(usize, DVec3) -> Result<(), Error>,
         ) -> Result<bool, Error> {
-            assert_eq!(negative.calibration.input_floor, self.common);
             assert!(
                 points.iter().all(|p| p.min_element() > self.common),
                 "locally usable but below-common-floor sites must not reach the response model"
@@ -501,7 +509,7 @@ fn spatial_estimation_keeps_the_effective_response_floor_separate_from_the_saved
     let (truth, mut images, pictures, _) = authored();
     let common = 0.005;
     let locally_usable = DVec3::splat(common / 2.);
-    assert!(locally_usable.min_element() > truth.calibration.input_floor);
+    assert!(locally_usable.min_element() > crate::processing::CAMERA_INPUT_FLOOR);
     images[0].camera[48 * 128 + 64] = locally_usable;
     assert!(images[0].valid[48 * 128 + 64]);
     let film = vec![truth.calibration.dmin; 512];
@@ -532,15 +540,11 @@ fn spatial_estimation_keeps_the_effective_response_floor_separate_from_the_saved
     .unwrap()
     .unwrap();
     assert!(guard.calls > 0 && guard.spatial_reads > 0);
-    assert_eq!(
-        proposal
-            .input
-            .negative_input()
-            .unwrap()
-            .calibration
-            .input_floor,
-        truth.calibration.input_floor
-    );
+    let statistics: Vec<_> = frames.iter().map(|f| f.statistics).collect();
+    let seed = estimate(&statistics, common, DMat3::IDENTITY, truth, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proposal.input.calibration(), seed.input.calibration());
 }
 
 struct Observed {
@@ -585,7 +589,7 @@ fn final_forward_errors_are_not_misreported_as_ordinary_wb_rejections() {
             &frames,
             &refs,
             DMat3::IDENTITY,
-            truth.calibration.input_floor,
+            crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 3),
             &mut model,
             &mut || false
@@ -633,7 +637,7 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
         &frames,
         &refs,
         DMat3::IDENTITY,
-        truth.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 4),
         &mut model::ScalarReference,
         &mut || false,
@@ -680,7 +684,7 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
             frames,
             refs,
             DMat3::IDENTITY,
-            truth.calibration.input_floor,
+            crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 1),
             &mut model::ScalarReference,
             &mut || false

@@ -179,6 +179,71 @@ fn assert_once_per_source(counts: &SourceStarts, document: &Document) {
 }
 
 #[test]
+fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
+    let (scheduler, starts) = observed();
+    let editor = fixture(scheduler.clone());
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+        });
+        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        let rasters: Vec<_> = app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+            assert_eq!(
+                editor
+                    .document
+                    .spatial
+                    .ready()
+                    .groups
+                    .iter()
+                    .map(|g| g.sources.len())
+                    .sum::<usize>(),
+                2
+            );
+            editor
+                .document
+                .project
+                .order
+                .iter()
+                .map(|&id| {
+                    let key = editor.document.source_key(id).unwrap();
+                    (id, editor.document.sampling_inputs.get(id, &key).unwrap())
+                })
+                .collect()
+        });
+        assert!(starts.load(Ordering::SeqCst) > 0);
+        // Any new source acquisition would fail. Geometry must derive from these same rasters.
+        scheduler.close_and_wait().unwrap();
+        app.enter(|editor, cx| {
+            editor.finish_auto_crop(false);
+            editor.document.spatial = crate::spatial_metadata::Store::default();
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+        });
+        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+            assert_eq!(
+                editor
+                    .document
+                    .spatial
+                    .ready()
+                    .groups
+                    .iter()
+                    .map(|g| g.sources.len())
+                    .sum::<usize>(),
+                2
+            );
+            for (id, raster) in &rasters {
+                let key = editor.document.source_key(*id).unwrap();
+                let reused = editor.document.sampling_inputs.get(*id, &key).unwrap();
+                assert!(Arc::ptr_eq(raster, &reused));
+            }
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());

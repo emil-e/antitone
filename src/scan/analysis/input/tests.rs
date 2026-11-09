@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn runtime_precision_accepts_a_correction_map_extending_beyond_the_active_raster() {
+    let area = Rect::from([13, 29, 64, 48]);
+    let input = AnalysisInput::authored(
+        SourceRaster::new(area, [2, 2]).unwrap(),
+        vec![[1000.; 3]; 4],
+        crate::processing::CAMERA_INPUT_FLOOR,
+    );
+    let field = FlatField::from_nodes([45, 29, 64, 48], [2, 2], vec![DVec3::splat(2.); 4]).unwrap();
+    assert_eq!(
+        input.effective_floor(Some(&field)).unwrap(),
+        2. * crate::processing::CAMERA_INPUT_FLOOR
+    );
+    assert_eq!(input.area(), area);
+}
+
+#[test]
 fn capture_owns_one_original_rgb_raster_without_a_native_lease() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let scan = Scan::open(file.path(), None).unwrap();

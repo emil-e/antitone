@@ -134,7 +134,6 @@ impl Fit {
             .document
             .project
             .require_scan_source(&actual.development)?;
-        if let Some(correction) = &self.correction {}
         Ok(crate::scan::AnalysisInput::capture(scan, cancelled)?.map(Arc::new))
     }
 
