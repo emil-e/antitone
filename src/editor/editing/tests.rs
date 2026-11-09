@@ -1,6 +1,98 @@
 use super::*;
 
 #[test]
+fn document_edits_share_admission_and_publish_registered_source_metadata_with_history() {
+    let mut editor = editor();
+    let before = editor.document.project.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("reference.raw");
+    std::fs::write(&path, b"file identity fixture").unwrap();
+    let expected = crate::source::FileKey::new(&path);
+    let mut edit = editor.edit_document("Document edit").unwrap();
+    assert!(editor.edit_document("Another document").is_err());
+    assert!(editor.edit_project("Project edit").is_err());
+    assert!(editor.edit_photo("Photo edit").is_err());
+    let reference = edit.update(|document| {
+        let mut record = document
+            .project
+            .source(document.project.order[0])
+            .unwrap()
+            .clone();
+        record.path = path.clone();
+        let reference = document.register_reference(record).unwrap();
+        let record = document.project.source(reference).unwrap();
+        let map = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                record.development.active_area,
+                [2, 2],
+                vec![DVec3::ONE; 4],
+            )
+            .unwrap(),
+        );
+        let field = crate::project::FlatFieldSettings::new(record, map);
+        document.project.set_flat_field(Some(field));
+        reference
+    });
+    assert_eq!(editor.document.project, before);
+    std::fs::remove_file(&path).unwrap();
+    editor.commit_document(edit).unwrap();
+    assert!(
+        editor
+            .document
+            .project
+            .source(reference)
+            .unwrap()
+            .reference_only
+    );
+    assert_eq!(
+        editor.document.file_key(&path),
+        expected,
+        "commit preserves captured metadata rather than recapturing a missing file"
+    );
+    assert_eq!(
+        editor.history_label(history::Direction::Undo),
+        Some("Document edit")
+    );
+    assert!(!editor.editing());
+    assert!(editor.edit_project("Next project edit").is_ok());
+}
+
+#[test]
+fn document_readers_do_not_retain_mutation_rights_and_other_edits_deny_document_acquisition() {
+    let mut editor = editor();
+    let project = editor.edit_project("Project edit").unwrap();
+    assert!(editor.edit_document("Document edit").is_err());
+    drop(project);
+    let photo = editor.edit_photo("Photo edit").unwrap();
+    assert!(editor.edit_document("Document edit").is_err());
+    drop(photo);
+    let mut document = editor.edit_document("Abandoned").unwrap();
+    document.update(|candidate| candidate.project.roll.exposure = 1.);
+    let reader = document.preview().snapshot().unwrap();
+    drop(document);
+    assert_eq!(reader.project.roll.exposure, 1.);
+    assert_eq!(editor.document.project.roll.exposure, 0.);
+    assert!(!editor.editing());
+    assert!(editor.history_label(history::Direction::Undo).is_none());
+    assert!(editor.edit_document("Available again").is_ok());
+}
+
+#[test]
+fn retiring_document_edits_rejects_old_publication_without_retiring_the_new_owner() {
+    let mut editor = editor();
+    let before = editor.document.project.clone();
+    let mut old = editor.edit_document("Old document edit").unwrap();
+    old.update(|candidate| candidate.project.roll.exposure = 1.);
+    editor.document.retire_edits();
+    let next = editor.edit_project("Next edit").unwrap();
+    assert!(editor.commit_document(old).is_err());
+    assert!(next.preview().active());
+    assert_eq!(editor.document.project, before);
+    assert!(editor.history_label(history::Direction::Undo).is_none());
+    editor.commit_project(next).unwrap();
+}
+
+#[test]
 fn readers_do_not_retain_an_abandoned_edit() {
     let mut edit = Edit::from_snapshot(Arc::new(vec![1, 2]), "Edit", None);
     let preview = edit.preview();

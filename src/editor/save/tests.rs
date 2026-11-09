@@ -309,7 +309,7 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
         crate::editor::DocumentRequest {
             exposures: None,
             sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
-            work: Preparation::Correction(document.clone(), Some(source)),
+            work: Preparation::Import(document.clone(), vec![], None),
             source: None,
             correction: None,
         },

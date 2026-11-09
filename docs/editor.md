@@ -18,7 +18,7 @@ Dock and system Quit enter the same unsaved-change guard as menu Quit: the edito
 
 ## Accepted state and drafts
 
-The accepted project is the saved-state and history authority. An edit owns a whole working project; rendering observes it weakly. Acquisition fails while another edit is live; actions can instead retire their unfinished control owner before starting. Features validate their values before committing; the edit publishes the version with history. Dropping the owner withdraws its preview without restoring an old accepted snapshot. Photo edits belong to the visit; Roll and Rendering edits belong to the document. Readers and history share immutable project versions, with copy-on-write mutation.
+The accepted project is the saved-state and history authority. An edit owns a working project or document candidate; rendering observes its project weakly. Acquisition fails while another edit is live; actions can instead retire their unfinished control owner before starting. Features validate their values before committing; the edit publishes the version with history. Dropping the owner withdraws its preview without restoring an old accepted snapshot. Photo edits belong to the visit; Roll and Rendering edits belong to the document. Readers and history share immutable project versions, with copy-on-write mutation.
 
 Crop, picker and reference-area edits have temporary interaction state. Apply submits the proposal; accepted state changes only after validation. Cancel discards the draft. Tabs and outside clicks do not implicitly accept or discard those drafts. Local gradients instead preview a captured gesture and accept a validated release. Save/Export never consume half-applied geometry.
 

@@ -704,7 +704,6 @@ pub(super) enum Preparation {
     Import(Document, Vec<PathBuf>, Option<(u64, SourceId)>),
     Open(PathBuf),
     New,
-    Correction(Document, Option<SourceId>),
     Input(Document, Option<SourceId>),
     History(Document, Option<SourceId>, history::Direction),
 }
@@ -758,14 +757,9 @@ pub(super) fn candidate(
         sources,
         exposures,
     } = request;
-    let preserve_view = matches!(
-        work,
-        Preparation::Correction(..) | Preparation::Input(..) | Preparation::History(..)
-    );
+    let preserve_view = matches!(work, Preparation::Input(..) | Preparation::History(..));
     let selected_override = match &work {
-        Preparation::Correction(_, selected)
-        | Preparation::Input(_, selected)
-        | Preparation::History(_, selected, _) => Some(*selected),
+        Preparation::Input(_, selected) | Preparation::History(_, selected, _) => Some(*selected),
         _ => None,
     };
     let (mut document, reuse) = match work {
@@ -778,7 +772,6 @@ pub(super) fn candidate(
             None,
         ),
         Preparation::New => (Document::default(), None),
-        Preparation::Correction(document, _) => (document, None),
         Preparation::Input(mut document, _) => {
             let target = document.project.input;
             document.redevelop_for_input(target)?;
@@ -946,12 +939,9 @@ impl PreparationServices {
     }
 }
 
-type Completion = fn(&mut Editor, std::result::Result<(), String>);
-
 #[derive(Default)]
 pub(super) struct State {
     task: Option<async_executor::Task<()>>,
-    pub completed: Option<Completion>,
 }
 
 impl Editor {
@@ -959,24 +949,6 @@ impl Editor {
         &mut self,
         work: Preparation,
         cx: &crate::application::UiContext<'_, Self>,
-    ) {
-        self.prepare_document(work, cx, None);
-    }
-
-    pub(super) fn start_document_with(
-        &mut self,
-        work: Preparation,
-        cx: &crate::application::UiContext<'_, Self>,
-        completed: Completion,
-    ) {
-        self.prepare_document(work, cx, Some(completed));
-    }
-
-    fn prepare_document(
-        &mut self,
-        work: Preparation,
-        cx: &crate::application::UiContext<'_, Self>,
-        completed: Option<Completion>,
     ) {
         if self.dust_search_pending() {
             self.status = "Wait for donor selection before changing the document".into();
@@ -988,19 +960,15 @@ impl Editor {
 
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
-            Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
-                Some(history::Pending::Edit {
-                    before: Box::new(self.document.state.project.clone()),
-                    label: if matches!(&work, Preparation::Import(..)) {
-                        "Import photos"
-                    } else if matches!(&work, Preparation::Input(..)) {
-                        "Input stage"
-                    } else {
-                        "Correction"
-                    },
-                    photo: None,
-                })
-            }
+            Preparation::Import(..) | Preparation::Input(..) => Some(history::Pending::Edit {
+                before: Box::new(self.document.state.project.clone()),
+                label: if matches!(&work, Preparation::Import(..)) {
+                    "Import photos"
+                } else {
+                    "Input stage"
+                },
+                photo: None,
+            }),
             Preparation::History(_, _, direction) => Some(history::Pending::Restore {
                 direction: *direction,
                 cleanup: self.dusting().then(|| self.dust_outlines()),
@@ -1015,13 +983,11 @@ impl Editor {
                 Preparation::Import(..) => "Importing RAWs…",
                 Preparation::Open(_) => "Opening project…",
                 Preparation::New => "Creating project…",
-                Preparation::Correction(..) => "Applying correction…",
                 Preparation::Input(..) => "Switching input stage…",
                 Preparation::History(..) => "Restoring edit…",
             })
             .modal(),
         );
-        self.candidate_operation.completed = completed;
         self.new_project_pending = matches!(work, Preparation::New);
         let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
             self.document
@@ -1078,7 +1044,6 @@ impl Editor {
         if self.document_pending != Some(id) {
             return;
         }
-        let completed = self.candidate_operation.completed.take();
         self.candidate_operation = State::default();
 
         let new_project = std::mem::take(&mut self.new_project_pending);
@@ -1175,9 +1140,6 @@ impl Editor {
                 log::info!(request = id; "document_ready");
                 self.history_prepared(pending_history);
                 self.observe_gamma_pivot();
-                if let Some(completed) = completed {
-                    completed(self, Ok(()));
-                }
             }
             Err(error) => {
                 log::warn!(
@@ -1193,9 +1155,6 @@ impl Editor {
                 }
                 self.source_epoch
                     .store(self.id, std::sync::atomic::Ordering::Relaxed);
-                if let Some(completed) = completed {
-                    completed(self, Err(error));
-                }
             }
         }
     }

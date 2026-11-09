@@ -143,7 +143,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
                 height: 2,
             })));
             e.apply_flat_edit(cx);
-            assert!(e.document_pending.is_some());
+            assert!(e.document.flat_correction.is_some());
         });
         app.run_until(Duration::from_secs(10), |e| !e.interaction_blocked());
         app.read(|e| {

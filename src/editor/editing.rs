@@ -176,8 +176,39 @@ impl<T> Preview<T> {
 }
 
 pub(in crate::editor) type ProjectEdit = Edit<Project>;
+pub(in crate::editor) type DocumentEdit = Edit<Document>;
 
 impl Editor {
+    pub(in crate::editor) fn edit_document(
+        &mut self,
+        label: &'static str,
+    ) -> Result<DocumentEdit, Error> {
+        if self.editing() {
+            return Err(Error::InvalidParameter("finish or cancel the current edit"));
+        }
+        let edit = Edit::from_snapshot(Arc::new(self.document.capture()), label, None);
+        self.document.document_preview = edit.preview();
+        Ok(edit)
+    }
+
+    pub(in crate::editor) fn owns_document_edit(&self, edit: &DocumentEdit) -> bool {
+        self.document.document_preview.same_edit(&edit.preview())
+    }
+
+    // Resource-dependent observers run at feature publication, after the caller installs
+    // those resources in the same UI transaction as this metadata/history commit.
+    pub(in crate::editor) fn commit_document(&mut self, edit: DocumentEdit) -> Result<(), Error> {
+        if !self.owns_document_edit(&edit) {
+            return Err(Error::InvalidParameter("edit scope has retired"));
+        }
+        let before = self.document.state.project.clone();
+        let (label, photo) = edit.description();
+        self.document
+            .install(Arc::unwrap_or_clone(edit.into_snapshot()));
+        self.record_edit(before, label, photo);
+        Ok(())
+    }
+
     pub(in crate::editor) fn edit_project(
         &mut self,
         label: &'static str,
@@ -331,7 +362,9 @@ impl Editor {
     }
 
     pub(super) fn editing(&self) -> bool {
-        self.document.project_preview.active() || self.document.visit.project_preview.active()
+        self.document.document_preview.active()
+            || self.document.project_preview.active()
+            || self.document.visit.project_preview.active()
     }
 
     pub(super) fn controls_pending(&self) -> bool {
