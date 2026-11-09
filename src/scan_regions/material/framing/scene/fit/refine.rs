@@ -38,7 +38,7 @@ fn valid(
 #[derive(Clone, Copy)]
 pub(crate) struct Fine<'a> {
     pub(crate) size: [u32; 2],
-    pub(crate) rgb: &'a [[u16; 3]],
+    pub(crate) rgb: &'a [[f32; 3]],
 }
 
 #[derive(Clone, Serialize)]
@@ -201,15 +201,7 @@ fn edge(capture: &Capture, roles: &[Role], fine: Fine<'_>, choice: &Choice, side
             }
             *count += 1;
             let rgb = fine.rgb[pixel[1] as usize * fine_size[0] as usize + pixel[0] as usize];
-            if rgb.iter().any(|&value| value <= 1 || value == u16::MAX) {
-                return None;
-            }
-            Some(
-                rgb.into_iter()
-                    .map(|value| f64::from(value).log2())
-                    .sum::<f64>()
-                    / 3.,
-            )
+            Some(logs(rgb)?.iter().sum::<f64>() / 3.)
         };
         let mut profile = [0.; SAMPLES];
         let mut available = true;

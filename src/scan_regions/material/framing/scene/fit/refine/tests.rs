@@ -83,7 +83,7 @@ pub(super) fn previous() -> Constraints {
     Constraints::default()
 }
 
-pub(super) fn fine_picture(bounds: [f64; 4]) -> Vec<[u16; 3]> {
+pub(super) fn fine_picture(bounds: [f64; 4]) -> Vec<[f32; 3]> {
     (0..192)
         .flat_map(|y| {
             (0..256).map(move |x| {
@@ -92,9 +92,9 @@ pub(super) fn fine_picture(bounds: [f64; 4]) -> Vec<[u16; 3]> {
                     && y as f64 + 0.5 >= bounds[2] * 4.
                     && (y as f64 + 0.5) < bounds[3] * 4.
                 {
-                    [6000; 3]
+                    [6000.; 3]
                 } else {
-                    [20000; 3]
+                    [20000.; 3]
                 }
             })
         })

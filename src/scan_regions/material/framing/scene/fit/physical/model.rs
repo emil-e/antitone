@@ -55,7 +55,7 @@ impl Exterior {
             samples: values.len(),
         })
     }
-    pub(super) fn classify(self, rgb: [u16; 3]) -> Material {
+    pub(super) fn classify(self, rgb: [f32; 3]) -> Material {
         let Some(value) = logs(rgb) else {
             return Material::Other;
         };

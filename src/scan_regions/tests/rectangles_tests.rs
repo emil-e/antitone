@@ -3,14 +3,14 @@ use super::*;
 
 fn fixture(faint: bool, fuzz: bool) -> (Capture, Selection) {
     let size = [192, 128];
-    let mut rgb = vec![[10500; 3]; 192 * 128];
+    let mut rgb = vec![[10500.; 3]; 192 * 128];
     for y in 0..128 {
         for x in 0..192 {
             if faint && (12..180).contains(&x) && (10..118).contains(&y) {
-                rgb[y * 192 + x] = [10000; 3];
+                rgb[y * 192 + x] = [10000.; 3];
             }
             if fuzz && y >= 127 - (x / 7) % 3 {
-                rgb[y * 192 + x] = [10; 3];
+                rgb[y * 192 + x] = [10.; 3];
             }
         }
     }
@@ -59,10 +59,10 @@ fn corners(notch: bool, missing: bool) -> (Capture, Selection) {
                     || notch && (94..98).contains(&x))
                     && y >= 113
             {
-                c.rgb[y * 192 + x] = [10; 3];
+                c.rgb[y * 192 + x] = [10.; 3];
             }
             if missing && y >= 126 && (34..158).contains(&x) {
-                c.rgb[y * 192 + x] = [10500; 3];
+                c.rgb[y * 192 + x] = [10500.; 3];
             }
         }
     }
@@ -88,7 +88,7 @@ fn one_capture_cannot_supply_peer_material_evidence_and_wrong_roll_targets_rejec
     assert!(a.opening.is_none() && a.picture.is_none());
     let model = RollModel::fit_refs(&[&c, &c]).unwrap();
     assert!(model.areas(usize::MAX, &c, c.size, &c.rgb).is_err());
-    c.rgb.fill([1234; 3]);
+    c.rgb.fill([1234.; 3]);
     assert!(model.areas(0, &c, c.size, &c.rgb).is_err());
 }
 
@@ -141,7 +141,7 @@ fn fine_terminal_tips_are_excluded_without_relabelling_the_material_grid() {
     assert_eq!(a.material, Some(material));
     for x in 0..192 {
         for y in 125..128 {
-            if c.rgb[y * 192 + x] == [10; 3] {
+            if c.rgb[y * 192 + x] == [10.; 3] {
                 assert!(!inside(
                     c.source_point([x as f64 + 0.5, y as f64 + 0.5]),
                     &a.opening.unwrap()
@@ -157,7 +157,7 @@ fn censored_or_deep_unsupported_dark_scenes_are_not_observed_opening_sides() {
         let (mut c, s) = fixture(false, false);
         for y in 0..128 {
             for x in 0..width {
-                c.rgb[y * 192 + x] = [10; 3];
+                c.rgb[y * 192 + x] = [10.; 3];
             }
         }
         assert!(!fit(&c, s).opening_observed[0]);
@@ -184,7 +184,7 @@ fn faint_picture_border_retains_faint_content_and_freezing_membership_is_not_a_v
     assert!(a.contains_footprint(footprint, c.area, true));
     for y in 50..60 {
         for x in 70..80 {
-            c.rgb[y * 192 + x] = [0, 65535, 10500];
+            c.rgb[y * 192 + x] = [0., 65535., 10500.];
         }
     }
     assert!(a.contains_footprint(footprint, c.area, true));

@@ -92,7 +92,7 @@ fn a_short_positive_scene_segment_cannot_outvote_road_continuing_outside_the_res
     let (mut capture, _, scene) = fixture([64, 48], [8., 56., 6., 42.], None, false);
     for y in 6..12 {
         for x in 44..56 {
-            capture.rgb[y * 64 + x] = [20000; 3];
+            capture.rgb[y * 64 + x] = [20000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -199,7 +199,7 @@ fn narrow_rebate_before_holder_is_not_skipped_or_counted_as_unavailable_evidence
     let (mut capture, _, mut scene) = fixture([64, 48], [12., 60., 6., 42.], None, false);
     for y in 0..48 {
         for x in 0..11 {
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
             scene.holder[y * 64 + x] = true;
         }
     }
@@ -219,7 +219,7 @@ fn faint_or_missing_contrast_on_part_of_a_real_border_does_not_disqualify_it() {
     let (mut capture, _, scene) = fixture([64, 48], [8., 56., 6., 42.], None, false);
     for y in 6..26 {
         for x in 50..56 {
-            capture.rgb[y * 64 + x] = [20000; 3];
+            capture.rgb[y * 64 + x] = [20000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -239,7 +239,7 @@ fn image_brighter_on_the_inside_is_a_contradiction_not_a_picture_transition() {
     let (mut capture, _, scene) = fixture([64, 48], [8., 56., 6., 42.], None, false);
     for y in 6..42 {
         for x in 8..56 {
-            capture.rgb[y * 64 + x] = [40000; 3];
+            capture.rgb[y * 64 + x] = [40000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -258,7 +258,7 @@ fn adjacent_fragment_is_explained_by_base_gap_and_equal_frame_geometry() {
     let (mut capture, _, scene) = fixture([64, 48], [20., 52., 8., 40.], None, false);
     for y in 8..40 {
         for x in 0..16 {
-            capture.rgb[y * 64 + x] = [8000; 3];
+            capture.rgb[y * 64 + x] = [8000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -283,7 +283,7 @@ fn adjacent_fragment_can_follow_the_other_film_axis_without_orientation_clusteri
     let (mut capture, _, scene) = fixture([64, 80], [12., 52., 28., 68.], None, false);
     for y in 0..24 {
         for x in 12..52 {
-            capture.rgb[y * 64 + x] = [8000; 3];
+            capture.rgb[y * 64 + x] = [8000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -304,7 +304,7 @@ fn no_gap_continuation_cannot_be_relabelled_as_a_neighbor_to_save_a_bad_edge() {
     let (mut capture, _, scene) = fixture([64, 48], [20., 52., 8., 40.], None, false);
     for y in 8..40 {
         for x in 0..20 {
-            capture.rgb[y * 64 + x] = [6000; 3];
+            capture.rgb[y * 64 + x] = [6000.; 3];
         }
     }
     let side = perimeter::measure(
@@ -400,12 +400,12 @@ fn distant_dark_exterior_is_not_forced_into_simultaneous_neighbor_axes() {
     let (mut capture, evidence, scene) = fixture([72, 72], [20., 52., 20., 52.], None, true);
     for y in 20..52 {
         for x in 0..16 {
-            capture.rgb[y * 72 + x] = [8000; 3];
+            capture.rgb[y * 72 + x] = [8000.; 3];
         }
     }
     for y in 0..16 {
         for x in 20..52 {
-            capture.rgb[y * 72 + x] = [8000; 3];
+            capture.rgb[y * 72 + x] = [8000.; 3];
         }
     }
     let baseline = Areas {
@@ -431,7 +431,7 @@ fn a_narrow_visible_base_gap_can_explain_a_real_neighbor_inside_the_outer_strip(
     let (mut capture, evidence, scene) = fixture([64, 48], [20., 52., 8., 40.], None, true);
     for y in 8..40 {
         for x in 0..18 {
-            capture.rgb[y * 64 + x] = [8000; 3];
+            capture.rgb[y * 64 + x] = [8000.; 3];
         }
     }
     let baseline = Areas {

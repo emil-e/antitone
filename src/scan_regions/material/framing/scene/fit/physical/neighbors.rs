@@ -57,7 +57,7 @@ pub(super) fn holder_after_base(
 ) -> bool {
     let mut base = false;
     let mut attenuating = false;
-    let mut previous: Option<[u16; 3]> = None;
+    let mut previous: Option<[f32; 3]> = None;
     for index in 0..64 {
         let distance = index as f64 + 0.5;
         let p = std::array::from_fn(|axis| point[axis] - distance * inward[axis]);

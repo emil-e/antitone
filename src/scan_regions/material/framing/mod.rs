@@ -9,7 +9,7 @@ use serde::Serialize;
 mod scene;
 mod shape;
 
-/// One bounded, immutable camera-code capture. Native developments and UI state are not retained.
+/// One bounded, immutable camera-RGB capture. Native developments and UI state are not retained.
 pub struct FrameInput {
     input: Input,
     capture: Capture,
@@ -20,7 +20,7 @@ impl FrameInput {
     pub fn new(
         input: Input,
         size: [u32; 2],
-        rgb: Vec<[u16; 3]>,
+        rgb: Vec<[f32; 3]>,
         evidence: Evidence,
     ) -> Result<Self, Error> {
         input.development.validate()?;

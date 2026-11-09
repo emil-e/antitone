@@ -78,7 +78,7 @@ fn one_ambiguous_anchor_keeps_total_missing_side_uncertainty_unresolved() {
         capture.area,
     );
     let mut fine = fine_picture([8., 56., 6., 42.]);
-    fine[..40 * 256].fill([6000; 3]);
+    fine[..40 * 256].fill([6000.; 3]);
     let result = run(
         &capture,
         &scene.roles(&capture),

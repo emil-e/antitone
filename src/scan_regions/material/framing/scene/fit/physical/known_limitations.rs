@@ -20,7 +20,7 @@ pub(super) fn interior_line(seed: u64) -> (Capture, Evidence, Scene, PictureGeom
             let coverage = (distance / 2. + 0.5).clamp(0., 1.);
             let density = ((line - px) / 0.5 + 0.5).clamp(0., 1.) * 0.8 * coverage;
             for value in &mut capture.rgb[y * 128 + x] {
-                *value = (f64::from(*value) * (-density).exp2()).round() as u16;
+                *value = (f64::from(*value) * (-density).exp2()).round() as f32;
             }
         }
     }

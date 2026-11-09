@@ -48,7 +48,7 @@ impl Support {
     }
 }
 
-pub(super) fn role_at(capture: &Capture, roles: &[Role], p: [f64; 2]) -> Option<(Role, [u16; 3])> {
+pub(super) fn role_at(capture: &Capture, roles: &[Role], p: [f64; 2]) -> Option<(Role, [f32; 3])> {
     let p = p.map(|v| v.floor() as i32);
     let rgb = capture.rgb(p)?;
     Some((

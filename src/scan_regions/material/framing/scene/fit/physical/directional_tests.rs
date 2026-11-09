@@ -2,6 +2,16 @@ use super::super::tests::fixture;
 use super::tests::{geometry, reference, template};
 use super::*;
 
+mod float;
+
+#[test]
+fn flat_noise_controls_have_finite_signed_responses_without_inventing_zero_signal() {
+    for (signal, expected) in [(-0.5, -4.), (0., 0.), (0.5, 4.)] {
+        assert_eq!(directional::standardized_response(signal, 0.), expected);
+    }
+    assert_eq!(directional::standardized_response(1., 2.), 0.5);
+}
+
 fn surface(width: f64, dim: bool) -> (Capture, Scene) {
     let (mut capture, _, scene) = fixture([128, 96], [16., 112., 12., 84.], None, true);
     let mut seed = 71u64;
@@ -29,9 +39,7 @@ fn surface(width: f64, dim: bool) -> (Capture, Scene) {
             let rgb = std::array::from_fn(|_| {
                 seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
                 let noise = ((seed >> 32) as f64 / u32::MAX as f64 - 0.5) * 40.;
-                (base * (1. - alpha * (1. - transmission)) + noise)
-                    .round()
-                    .clamp(2., 65534.) as u16
+                (base * (1. - alpha * (1. - transmission)) + noise).round() as f32
             });
             capture.rgb[y * 128 + x] = rgb;
         }
@@ -74,7 +82,7 @@ fn one_extreme_short_segment_cannot_outvote_photo_continuing_along_the_side() {
     let (mut capture, _, scene) = fixture([128, 96], [16., 112., 12., 84.], None, false);
     for y in 12..20 {
         for x in 96..112 {
-            capture.rgb[y * 128 + x] = [20000; 3];
+            capture.rgb[y * 128 + x] = [20000.; 3];
         }
     }
     let frame = geometry(capture.size, [16., 96., 12., 84.]);
@@ -96,7 +104,7 @@ fn interleaved_photographic_continuation_cannot_hide_between_supporting_bins() {
         for y in 12..84 {
             if ((y - 12 + phase) / 9) % 2 == 0 {
                 for x in 96..112 {
-                    capture.rgb[y * 128 + x] = [20000; 3];
+                    capture.rgb[y * 128 + x] = [20000.; 3];
                 }
             }
         }
@@ -125,9 +133,9 @@ fn a_coherent_signed_scene_edge_does_not_erase_structured_photographic_exterior(
                 _ => 1.4,
             };
             capture.rgb[y * 128 + x] = [if x < 96 {
-                (4000. * texture) as u16
+                (4000. * texture) as f32
             } else {
-                (8000. * texture) as u16
+                (8000. * texture) as f32
             }; 3];
         }
     }
@@ -149,7 +157,7 @@ fn a_smooth_illumination_ramp_is_not_a_localized_frame_edge() {
     for y in 0..96 {
         for x in 0..128 {
             capture.rgb[y * 128 + x] =
-                [(20000. * (0.002 * x as f64 + 0.001 * y as f64 - 1.).exp2()).round() as u16; 3];
+                [(20000. * (0.002 * x as f64 + 0.001 * y as f64 - 1.).exp2()).round() as f32; 3];
         }
     }
     let frame = geometry(capture.size, [16., 112., 12., 84.]);
@@ -169,7 +177,7 @@ fn a_negative_illumination_ramp_is_uncertain_not_a_reversed_transition() {
     for y in 0..96 {
         for x in 0..128 {
             capture.rgb[y * 128 + x] =
-                [(20000. * (-0.002 * x as f64 + 0.001 * y as f64 - 1.).exp2()).round() as u16; 3];
+                [(20000. * (-0.002 * x as f64 + 0.001 * y as f64 - 1.).exp2()).round() as f32; 3];
         }
     }
     let frame = geometry(capture.size, [16., 112., 12., 84.]);
@@ -195,7 +203,7 @@ fn point_raster_phase_does_not_turn_smooth_illumination_into_exterior_texture() 
                     for x in 0..128 {
                         capture.rgb[y * 128 + x] = [(20000.
                             * (slope * x as f64 + 0.001 * y as f64 - 1.).exp2())
-                        .round() as u16; 3];
+                        .round() as f32; 3];
                     }
                 }
                 let mut frame = geometry(capture.size, [16., 112., 12., 12. + height]);
@@ -225,7 +233,7 @@ fn a_localized_reversed_transition_remains_contradictory() {
     let (mut capture, _, scene) = fixture([128, 96], [16., 112., 12., 84.], None, false);
     for y in 0..96 {
         for x in 0..128 {
-            capture.rgb[y * 128 + x] = [if x < 112 { 20000 } else { 8000 }; 3];
+            capture.rgb[y * 128 + x] = [if x < 112 { 20000. } else { 8000. }; 3];
         }
     }
     let frame = geometry(capture.size, [16., 112., 12., 84.]);
@@ -246,7 +254,7 @@ fn a_positive_but_mislocalized_transition_is_uncertain_not_a_reversed_edge() {
     for y in 0..96 {
         for x in 0..128 {
             let coverage = 1. / (1. + ((x as f64 + 0.5 - 112.) / 0.75).exp());
-            capture.rgb[y * 128 + x] = [(20000. * (1. - 0.6 * coverage)).round() as u16; 3];
+            capture.rgb[y * 128 + x] = [(20000. * (1. - 0.6 * coverage)).round() as f32; 3];
         }
     }
     let frame = geometry(capture.size, [16., 115., 12., 84.]);
@@ -265,11 +273,11 @@ fn a_positive_but_mislocalized_transition_is_uncertain_not_a_reversed_edge() {
 fn texture_beyond_an_observed_base_separator_is_not_target_picture_continuation() {
     let (mut capture, _, mut scene) = fixture([128, 96], [16., 112., 12., 84.], None, false);
     for y in 0..96 {
-        capture.rgb[y * 128 + 114] = [6000; 3];
-        capture.rgb[y * 128 + 115] = [20000; 3];
-        capture.rgb[y * 128 + 116] = [if (y / 4) % 2 == 0 { 3000 } else { 11000 }; 3];
+        capture.rgb[y * 128 + 114] = [6000.; 3];
+        capture.rgb[y * 128 + 115] = [20000.; 3];
+        capture.rgb[y * 128 + 116] = [if (y / 4) % 2 == 0 { 3000. } else { 11000. }; 3];
         for x in 117..128 {
-            capture.rgb[y * 128 + x] = [100; 3];
+            capture.rgb[y * 128 + x] = [100.; 3];
             scene.holder[y * 128 + x] = true;
         }
     }
@@ -288,7 +296,7 @@ fn texture_beyond_an_observed_base_separator_is_not_target_picture_continuation(
 #[test]
 fn a_uniform_base_coloured_target_cannot_become_a_frame_from_roll_geometry() {
     let (mut capture, evidence, scene) = fixture([64, 48], [8., 56., 6., 42.], None, true);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     let report = evaluate_with(
         &scene,
         Target {
@@ -340,7 +348,7 @@ fn source_censoring_does_not_allow_two_anchors_to_complete_two_missing_sides() {
     let (mut capture, evidence, scene) = fixture([64, 48], [8., 56., -3., 42.], None, false);
     for y in 0..42 {
         for x in 48..64 {
-            capture.rgb[y * 64 + x] = [8000; 3];
+            capture.rgb[y * 64 + x] = [8000.; 3];
         }
     }
     let mut prior = template(capture.size, [8., 56., 1., 46.]);

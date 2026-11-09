@@ -65,12 +65,12 @@ fn far_median_gap_cannot_hide_near_fragments_that_actually_explain_the_outer_str
     let (mut capture, _, scene) = fixture([72, 72], [20., 52., 20., 52.], None, true);
     for y in 20..52 {
         for x in 0..if y < 28 { 18 } else { 16 } {
-            capture.rgb[y * 72 + x] = [8000; 3];
+            capture.rgb[y * 72 + x] = [8000.; 3];
         }
     }
     for x in 20..52 {
         for y in 0..if x < 28 { 18 } else { 16 } {
-            capture.rgb[y * 72 + x] = [8000; 3];
+            capture.rgb[y * 72 + x] = [8000.; 3];
         }
     }
     let prior = template(capture.size, [20., 52., 20., 52.]);
@@ -166,7 +166,7 @@ fn ordered_ratio_below_one_remains_a_valid_detected_physical_shape() {
 #[test]
 fn a_roll_template_without_observed_picture_transitions_does_not_hallucinate_a_frame() {
     let (mut capture, evidence, scene) = fixture([64, 48], [8., 56., 6., 42.], None, false);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     let result = run(
         &capture,
         &evidence,
@@ -208,8 +208,8 @@ fn exterior_reference_stops_at_unknown_material_even_when_base_reappears_farther
     for id in 0..3 {
         let (mut capture, _, _) = fixture([64, 48], [8., 56., 6., 42.], None, true);
         for y in 0..48 {
-            capture.rgb[y * 64 + 6] = [40000, 2000, 20000];
-            capture.rgb[y * 64 + 5] = [21400; 3];
+            capture.rgb[y * 64 + 6] = [40000., 2000., 20000.];
+            capture.rgb[y * 64 + 5] = [21400.; 3];
         }
         frames.push((id, geometry(capture.size, [8., 56., 6., 42.])));
         captures.push(capture);

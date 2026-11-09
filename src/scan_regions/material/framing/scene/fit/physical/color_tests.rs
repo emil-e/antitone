@@ -3,16 +3,18 @@ use super::tests::{geometry, run};
 use super::*;
 
 // Deliberately varied sensor RGB, not literal stock profiles or an accepted-colour list.
-pub(super) const BASES: [[u16; 3]; 6] = [
-    [50000, 50000, 50000],
-    [45000, 20000, 11000],
-    [35000, 14000, 35000],
-    [12000, 35000, 16000],
-    [21000, 27000, 43000],
-    [31000, 17000, 23000],
+pub(super) const BASES: [[f32; 3]; 8] = [
+    [50000., 50000., 50000.],
+    [45000., 20000., 11000.],
+    [35000., 14000., 35000.],
+    [12000., 35000., 16000.],
+    [21000., 27000., 43000.],
+    [31000., 17000., 23000.],
+    [125000.25, 87500.5, 262140.5],
+    [0.5, 0.25, 0.125],
 ];
 
-pub(super) fn coloured_roll(base: [u16; 3], blank_target: bool) -> (Vec<Capture>, Scene, Template) {
+pub(super) fn coloured_roll(base: [f32; 3], blank_target: bool) -> (Vec<Capture>, Scene, Template) {
     let mut captures = vec![];
     for index in 0..4 {
         let (mut capture, _, _) = fixture([64, 48], [8., 56., 6., 42.], None, true);
@@ -20,7 +22,7 @@ pub(super) fn coloured_roll(base: [u16; 3], blank_target: bool) -> (Vec<Capture>
             for x in 0..64 {
                 let picture = (8..56).contains(&x) && (6..42).contains(&y);
                 capture.rgb[y * 64 + x] = if picture && !(blank_target && index == 3) {
-                    base.map(|value| (f64::from(value) * 0.4).round() as u16)
+                    base.map(|value| value * 0.4)
                 } else {
                     base
                 };

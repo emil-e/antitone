@@ -42,7 +42,7 @@ fn real_separated_fragments_are_not_photo_continuation_on_either_axis() {
                 if (side == 0 && x < 16 && (20..52).contains(&y))
                     || (side == 2 && y < 16 && (20..52).contains(&x))
                 {
-                    capture.rgb[y * 72 + x] = [8000; 3];
+                    capture.rgb[y * 72 + x] = [8000.; 3];
                 }
             }
         }
@@ -65,7 +65,7 @@ fn a_narrow_observed_rebate_can_end_in_known_holder_without_a_photo_veto() {
     let (mut capture, _, mut scene) = fixture([64, 48], [12., 60., 6., 42.], None, false);
     for y in 0..48 {
         for x in 0..11 {
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
             scene.holder[y * 64 + x] = true;
         }
     }
@@ -129,7 +129,7 @@ fn noise_only_does_not_systematically_produce_distributed_boundary_evidence() {
         for pixel in &mut capture.rgb {
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
             let value = 20000. + ((state >> 32) as f64 / u32::MAX as f64 - 0.5) * 1800.;
-            *pixel = [value.round() as u16; 3];
+            *pixel = [value.round() as f32; 3];
         }
         let roles = scene.roles(&capture);
         let frame = geometry(capture.size, [16., 112., 12., 84.]);

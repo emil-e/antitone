@@ -5,7 +5,7 @@ mod shared_sampling;
 
 fn capture(scene: usize, angle: f64) -> Capture {
     let size = [192, 128];
-    let mut rgb = vec![[10500; 3]; 192 * 128];
+    let mut rgb = vec![[10500.; 3]; 192 * 128];
     for y in 0..128 {
         for x in 0..192 {
             let [u, v] = project([x as f64 + 0.5 - 96., y as f64 + 0.5 - 64.], angle);
@@ -14,12 +14,12 @@ fn capture(scene: usize, angle: f64) -> Capture {
             let dy = (v - 64.).abs() - 42.;
             let outside = dx.max(0.).hypot(dy.max(0.)) > 12. || v >= 117. - ((x / 7) % 3) as f64;
             if outside {
-                rgb[y * 192 + x] = [10; 3];
+                rgb[y * 192 + x] = [10.; 3];
             } else if scene == 0 && u < 65. {
                 // A dark scene adjoining the left boundary is not a new holder position.
-                rgb[y * 192 + x] = [10; 3];
+                rgb[y * 192 + x] = [10.; 3];
             } else if (60. ..135.).contains(&u) && (32. ..96.).contains(&v) {
-                rgb[y * 192 + x] = [5000 + scene as u16 * 1000; 3];
+                rgb[y * 192 + x] = [5000. + scene as f32 * 1000.; 3];
             }
         }
     }
@@ -60,7 +60,7 @@ fn pooled_opening_ignores_one_dark_scene_and_excludes_rounded_corners_and_termin
             assert!(inside(c.source_point([96., 64.]), &opening));
             for y in 0..128 {
                 for x in 0..192 {
-                    if captures[1].rgb[y * 192 + x] == [10; 3] {
+                    if captures[1].rgb[y * 192 + x] == [10.; 3] {
                         assert!(
                             !inside(c.source_point([x as f64 + 0.5, y as f64 + 0.5]), &opening),
                             "holder admitted at {x},{y}, angle {angle}"
@@ -70,7 +70,7 @@ fn pooled_opening_ignores_one_dark_scene_and_excludes_rounded_corners_and_termin
             }
             assert!(a.picture.is_some());
             if i == 0 {
-                assert_eq!(c.rgb[64 * 192 + 45], [10; 3]);
+                assert_eq!(c.rgb[64 * 192 + 45], [10.; 3]);
                 assert!(
                     a.contains_footprint(
                         SourceRegion {
@@ -106,7 +106,7 @@ fn ragged_individual_edges_can_strengthen_a_common_interior_without_perfect_loca
             let mut c = capture(1 + i % 3, 0.);
             for y in 24..104 {
                 for x in 0..26 + 3 * ((y / 4 + i) % 4) {
-                    c.rgb[y * 192 + x] = [10; 3];
+                    c.rgb[y * 192 + x] = [10.; 3];
                 }
             }
             c
@@ -136,7 +136,7 @@ fn ragged_individual_edges_can_strengthen_a_common_interior_without_perfect_loca
     for (c, a) in captures.iter().zip(&areas) {
         for y in 0..128 {
             for x in 0..192 {
-                if c.rgb[y * 192 + x] == [10; 3] {
+                if c.rgb[y * 192 + x] == [10.; 3] {
                     assert!(!inside(
                         c.source_point([x as f64 + 0.5, y as f64 + 0.5]),
                         &a.opening.unwrap()
@@ -150,7 +150,7 @@ fn ragged_individual_edges_can_strengthen_a_common_interior_without_perfect_loca
 fn moved_capture(dx: usize) -> Capture {
     let mut c = capture(1, 0.);
     let original = c.rgb.clone();
-    c.rgb.fill([10; 3]);
+    c.rgb.fill([10.; 3]);
     for y in 0..128 {
         for x in dx..192 {
             c.rgb[y * 192 + x] = original[y * 192 + x - dx];
@@ -174,7 +174,7 @@ fn paired_motion_is_a_photo_exception_not_a_scene_edge_or_a_shared_redefinition(
     let q = a.opening.unwrap();
     for y in 0..128 {
         for x in 0..192 {
-            if c.rgb[y * 192 + x] == [10; 3] {
+            if c.rgb[y * 192 + x] == [10.; 3] {
                 assert!(
                     !inside(c.source_point([x as f64 + 0.5, y as f64 + 0.5]), &q),
                     "moved holder at {x},{y} admitted"
@@ -193,10 +193,10 @@ fn paired_motion_is_a_photo_exception_not_a_scene_edge_or_a_shared_redefinition(
 #[test]
 fn unsupported_scene_darkness_and_single_captures_do_not_define_a_shared_holder() {
     let mut c = capture(1, 0.);
-    c.rgb.fill([10500; 3]);
+    c.rgb.fill([10500.; 3]);
     for y in 32..96 {
         for x in 60..135 {
-            c.rgb[y * 192 + x] = [10; 3];
+            c.rgb[y * 192 + x] = [10.; 3];
         }
     }
     assert!(Shared::fit(&[&c], Some([100.; 3])).is_none());

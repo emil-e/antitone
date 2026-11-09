@@ -28,15 +28,15 @@ pub(super) fn fixture(
         .flat_map(|y| {
             (0..w).map(move |x| {
                 if film_right.is_some_and(|right| f64::from(x) >= right) {
-                    [40000; 3]
+                    [40000.; 3]
                 } else if f64::from(x) >= picture[0]
                     && f64::from(x) < picture[1]
                     && f64::from(y) >= picture[2]
                     && f64::from(y) < picture[3]
                 {
-                    [6000; 3]
+                    [6000.; 3]
                 } else {
-                    [20000; 3]
+                    [20000.; 3]
                 }
             })
         })
@@ -96,7 +96,7 @@ fn thin_rebate_measurement_stops_before_holder_instead_of_jumping_across_it() {
     for y in 0..48 {
         for x in 0..11 {
             scene.holder[y * 64 + x] = true;
-            capture.rgb[y * 64 + x] = [100; 3];
+            capture.rgb[y * 64 + x] = [100.; 3];
         }
     }
     let frame = frame(capture.size, [Some(12.), None, None, None]);
@@ -226,7 +226,7 @@ fn peer_supported_base_separator_excludes_a_merged_frame_from_donor_geometry() {
         let (mut capture, _, _) = fixture([96, 64], [20., 88., 6., 58.], None, false);
         for y in 6..58 {
             for x in 0..16 {
-                capture.rgb[y * 96 + x] = [6000; 3];
+                capture.rgb[y * 96 + x] = [6000.; 3];
             }
         }
         captures.push(capture);

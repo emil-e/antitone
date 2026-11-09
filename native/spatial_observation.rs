@@ -137,7 +137,9 @@ fn observe_spatial_metadata_cached_roll() {
             .as_chunks::<6>()
             .0
             .iter()
-            .map(|b| std::array::from_fn(|i| u16::from_le_bytes([b[i * 2], b[i * 2 + 1]])))
+            .map(|b| {
+                std::array::from_fn(|i| f32::from(u16::from_le_bytes([b[i * 2], b[i * 2 + 1]])))
+            })
             .collect::<Vec<_>>();
         let evidence = Evidence::observe(size, &rgb).unwrap();
         // This fixture identity describes old cached camera codes, not current SDK/Sony acceptance.

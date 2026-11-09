@@ -148,6 +148,31 @@ fn physical_dimensions_use_target_source_scale_not_the_donors_raster_scale() {
     assert!(((q[3][0] - q[0][0]).hypot(q[3][1] - q[0][1]) - 700.).abs() < 1e-8);
 }
 
+#[test]
+fn zero_noise_step_projection_uses_the_measured_gradient() {
+    for base in [0.5, 20000., 131070.] {
+        let (mut captures, scene, prior) =
+            super::super::color_tests::coloured_roll([base; 3], false);
+        let capture = &mut captures[3];
+        for y in 0..48 {
+            for x in 0..64 {
+                capture.rgb[y * 64 + x] = [if x < 56 { base * 0.4 } else { base }; 3];
+            }
+        }
+        let frame = rectangle(capture.size, [8., 56., 6., 42.]);
+        let side =
+            Mode::Joint.measure(capture, &scene.roles(capture), &frame, 1, prior.exterior[1]);
+        assert!(side.measured());
+        let stations = &side.directional.as_ref().unwrap().stations;
+        assert!(stations.len() >= 12);
+        assert!(stations.iter().all(|s| s.noise == 0. && s.tangent == 0.));
+        let projection = projection::measure(capture, &frame, 1, &side);
+        assert_eq!(projection.available, stations.len());
+        // The right-hand step increases outwards with zero observed noise, saturating at +4.
+        assert_eq!(projection.mean, 4.);
+    }
+}
+
 fn candidate(frame: PictureGeometry, score: f64, gradient: f64) -> Candidate {
     let (capture, _, scene) = fixture([128, 96], [16., 112., 12., 84.], None, true);
     let calibration = calibration_for(&capture, [16., 112., 12., 84.]);
@@ -341,7 +366,7 @@ fn one_batch_calibration_excludes_all_targets_and_is_identical_for_each_target()
     // Pixel-only corruption retains valid matching source geometry and cue groups.
     // A full-roll native model demonstrably loses the clear peer measurement.
     for &id in &excluded {
-        captures[id].rgb.fill([100; 3]);
+        captures[id].rgb.fill([100.; 3]);
     }
     unchanged(&captures);
     let full = RollModel::fit(&captures).unwrap();
@@ -438,7 +463,7 @@ fn inferred_weak_clipped_or_unqualified_geometry_cannot_donate_size() {
         .unwrap_err(),
         "camera_clipped_donor"
     );
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     assert!(
         calibration::check_donor(
             &scene,
@@ -455,15 +480,15 @@ fn inferred_weak_clipped_or_unqualified_geometry_cannot_donate_size() {
 fn completed_companions_requalify_both_rigid_anchors() {
     let bounds = [8., 44., 6., 42.];
     let (mut capture, _, scene) = fixture([96, 64], bounds, None, false);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     for y in 12..36 {
         for x in 8..12 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     for y in 6..42 {
         for x in 48..96 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     let mut calibrated = calibration_for(&capture, bounds);
@@ -604,9 +629,9 @@ fn camera_and_film_availability_do_not_replace_nominal_edges_but_unanchored_fram
         for y in 0..96 {
             for x in 0..128 {
                 capture.rgb[y * 128 + x] = if x >= 16 && (!right || x < 112) {
-                    [6000; 3]
+                    [6000.; 3]
                 } else {
-                    [20000; 3]
+                    [20000.; 3]
                 };
             }
         }
@@ -648,7 +673,7 @@ fn unavailable_material_cannot_hide_picture_continuation_on_the_surviving_inferr
     // quarter the picture actually continues past that edge; both facts must survive.
     for y in 12..30 {
         for x in 100..128 {
-            capture.rgb[y * 128 + x] = [6000; 3];
+            capture.rgb[y * 128 + x] = [6000.; 3];
         }
     }
     let roles = scene.roles(&capture);
@@ -713,7 +738,7 @@ fn direct_gradient_sign_constant_and_unavailable_pixels_have_independent_referen
     for y in 0..48 {
         for x in 0..64 {
             capture.rgb[y * 64 + x] =
-                [(12000. * (0.01 * x as f64 - 0.02 * y as f64).exp2()).round() as u16; 3];
+                [(12000. * (0.01 * x as f64 - 0.02 * y as f64).exp2()).round() as f32; 3];
         }
     }
     let gradient = projection::gradient(&capture, [30.5, 20.5]).unwrap();
@@ -751,10 +776,17 @@ fn direct_gradient_sign_constant_and_unavailable_pixels_have_independent_referen
         / stations.len() as f64;
     assert!(projected.mean > 0.);
     assert!((projected.mean - expected).abs() <= rounding_bound);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     assert_eq!(projection::gradient(&capture, [30.5, 20.5]), Some([0., 0.]));
     assert!(projection::gradient(&capture, [0.5, 20.5]).is_none());
-    capture.rgb[20 * 64 + 31] = [65535; 3];
+    for value in [65535., 131070.] {
+        capture.rgb[20 * 64 + 31] = [value; 3];
+        let gradient = projection::gradient(&capture, [30.5, 20.5]).unwrap();
+        let expected = (f64::from(value) / 20000.).log2() * 0.5;
+        assert!((gradient[0] - expected).abs() < 1e-12);
+        assert_eq!(gradient[1], 0.);
+    }
+    capture.rgb[20 * 64 + 31] = [0.; 3];
     assert!(projection::gradient(&capture, [30.5, 20.5]).is_none());
     let frame = rectangle(capture.size, [8., 56., -8., 42.]);
     let side = Mode::Joint.measure(

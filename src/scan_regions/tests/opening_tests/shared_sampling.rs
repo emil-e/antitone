@@ -64,7 +64,7 @@ fn shared_preparation_publishes_holder_safe_support_and_keeps_a_nonrecurring_dar
             for y in 0..127usize {
                 for x in 0..191usize {
                     if (0..2).any(|dy| {
-                        (0..2).any(|dx| captures[1].rgb[(y + dy) * 192 + x + dx] == [10; 3])
+                        (0..2).any(|dx| captures[1].rgb[(y + dy) * 192 + x + dx] == [10.; 3])
                     }) {
                         assert!(
                             !areas.contains_footprint(footprint(x as u32, y as u32), c.area, false),
@@ -81,7 +81,7 @@ fn shared_preparation_publishes_holder_safe_support_and_keeps_a_nonrecurring_dar
         );
         if angle == 0. {
             let c = &captures[0];
-            assert_eq!(c.rgb[64 * 192 + 45], [10; 3]);
+            assert_eq!(c.rgb[64 * 192 + 45], [10.; 3]);
             assert!(
                 metadata.groups[0].sources[0]
                     .sampling_areas()

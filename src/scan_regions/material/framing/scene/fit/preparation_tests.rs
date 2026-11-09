@@ -59,12 +59,12 @@ fn frames(inputs: &[Input], kind: &str) -> Vec<FrameInput> {
                 evidence.lines.get_mut("bottom").unwrap().clear();
             }
             if kind == "blank" {
-                capture.rgb.fill([20000; 3]);
+                capture.rgb.fill([20000.; 3]);
             }
             if kind == "edge_strip" {
                 for y in 0..3 {
                     for x in 16..112 {
-                        capture.rgb[y * 128 + x] = [6000; 3];
+                        capture.rgb[y * 128 + x] = [6000.; 3];
                     }
                 }
             }
@@ -75,9 +75,9 @@ fn frames(inputs: &[Input], kind: &str) -> Vec<FrameInput> {
                             || (50..62).contains(&x)
                             || (82..94).contains(&x)
                         {
-                            [6000; 3]
+                            [6000.; 3]
                         } else {
-                            [20000; 3]
+                            [20000.; 3]
                         };
                     }
                 }

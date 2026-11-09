@@ -1,11 +1,11 @@
 //! Bounded camera-code geometry: gradient observations as line and segment hypotheses per side.
 //! Strength and polarity are not material identity; nothing here develops, repairs or grades.
-use super::lines::{Evidence, Line, SIDES, Surface};
+use super::lines::{Evidence, Line, SIDES, Surface, gradient_ratio};
 use std::collections::BTreeMap;
 
 const PI: f64 = std::f64::consts::PI;
-/// Smallest resolvable 16-bit code step, the floor for gradient-relative comparisons.
-const FLOOR: f64 = 1. / 65535.;
+/// Evidence scores and surface colours use nominal-white units; this is not a clipping limit.
+const NOMINAL_WHITE: f64 = 65535.;
 
 /// Positional nearest-rank quantile, matching a k-th-element selection over the observed values.
 fn quantile(values: &mut [f32], q: f64) -> f32 {
@@ -75,7 +75,7 @@ fn gradient_along(
 
 /// Median camera code on the surface beyond a candidate line, sampled at whole pixels.
 fn surface_along(
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
     size: [u32; 2],
     pass: Pass,
     position: f64,
@@ -105,7 +105,7 @@ fn surface_along(
         }
         let pixel = rgb[y as usize * w as usize + x as usize];
         for (channel, value) in channels.iter_mut().zip(pixel) {
-            channel.push(f32::from(value) / 65535.);
+            channel.push((f64::from(value) / NOMINAL_WHITE) as f32);
         }
     }
     if channels[0].len() < (count / 2) as usize {
@@ -124,7 +124,7 @@ struct Transition {
 }
 
 fn normal_transition(
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
     size: [u32; 2],
     pass: Pass,
     position: f64,
@@ -149,7 +149,7 @@ fn normal_transition(
         let code = |offset: usize| f64::from(rgb[i + offset][channel]);
         ((code(0) * (1. - dx) + code(1) * dx) * (1. - dy)
             + (code(w as usize) * (1. - dx) + code(w as usize + 1) * dx) * dy)
-            / 65535.
+            / NOMINAL_WHITE
     };
     let mut deltas = vec![];
     let mut mean = [0.; 3];
@@ -227,7 +227,7 @@ struct Search<'a> {
 /// Ranked line hypotheses for one side within a positional window.
 fn oriented_lines(
     gradient: &[f32],
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
     size: [u32; 2],
     search: &Search,
 ) -> Vec<Line> {
@@ -341,7 +341,7 @@ fn segment_pose_guides(lines: &[Vec<Line>; 4]) -> Vec<f64> {
             if line.angle_limit_reached {
                 continue;
             }
-            if line.lower_quartile_gradient_score / background.max(FLOOR) >= 4. {
+            if gradient_ratio(line.lower_quartile_gradient_score, background) >= 4. {
                 poses.push((side, line.angle_degrees * if side < 2 { -1. } else { 1. }));
             }
         }
@@ -362,7 +362,7 @@ fn segment_pose_guides(lines: &[Vec<Line>; 4]) -> Vec<f64> {
 /// Narrow-window line hypotheses along an agreed pose, admitting opposed pairs of parallel lines.
 fn segment_lines(
     gradient: &[f32],
-    rgb: &[[u16; 3]],
+    rgb: &[[f32; 3]],
     size: [u32; 2],
     axis: Pass,
     first: i32,
@@ -406,7 +406,7 @@ fn segment_lines(
 }
 
 /// Camera-code gradient energy along each axis, excluding the derivative border.
-fn gradients(rgb: &[[u16; 3]], size: [u32; 2]) -> (Vec<f32>, Vec<f32>) {
+fn gradients(rgb: &[[f32; 3]], size: [u32; 2]) -> (Vec<f32>, Vec<f32>) {
     let [w, h] = size;
     let mut gx = vec![0f32; (w * h) as usize];
     let mut gy = vec![0f32; (w * h) as usize];
@@ -419,8 +419,8 @@ fn gradients(rgb: &[[u16; 3]], size: [u32; 2]) -> (Vec<f32>, Vec<f32>) {
             for ((&left, right), (&above, below)) in
                 left.iter().zip(right).zip(above.iter().zip(below))
             {
-                let horizontal = (f64::from(right) - f64::from(left)) / 65535.;
-                let vertical = (f64::from(below) - f64::from(above)) / 65535.;
+                let horizontal = (f64::from(right) - f64::from(left)) / NOMINAL_WHITE;
+                let vertical = (f64::from(below) - f64::from(above)) / NOMINAL_WHITE;
                 dx += horizontal * horizontal;
                 dy += vertical * vertical;
             }
@@ -432,7 +432,7 @@ fn gradients(rgb: &[[u16; 3]], size: [u32; 2]) -> (Vec<f32>, Vec<f32>) {
 }
 
 /// Observes one bounded camera-code raster: up to five lines and three segments per side.
-pub(super) fn observe(size: [u32; 2], rgb: &[[u16; 3]]) -> Evidence {
+pub(super) fn observe(size: [u32; 2], rgb: &[[f32; 3]]) -> Evidence {
     let [w, h] = size;
     let (gx, gy) = gradients(rgb, size);
     let lines_pass = Pass {

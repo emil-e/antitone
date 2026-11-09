@@ -7,17 +7,17 @@ use super::*;
 fn transitions_beyond_completed_companions_cannot_certify_the_target_sides() {
     let bounds = [8., 44., 6., 42.];
     let (mut capture, mut evidence, scene) = fixture([96, 64], bounds, None, false);
-    capture.rgb.fill([20000; 3]);
+    capture.rgb.fill([20000.; 3]);
     for y in 12..36 {
         for x in 8..12 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     for y in 6..42 {
         // Strong top/bottom cues lie outside the completed target's horizontal span.
         // Continuing to the camera limit avoids supplying a second complete rectangle.
         for x in 48..96 {
-            capture.rgb[y * 96 + x] = [6000; 3];
+            capture.rgb[y * 96 + x] = [6000.; 3];
         }
     }
     evidence.lines.get_mut("right").unwrap().clear();

@@ -2,13 +2,13 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn pixels(path: &Path) -> Vec<[u16; 3]> {
+fn pixels(path: &Path) -> Vec<[f32; 3]> {
     std::fs::read(path)
         .unwrap()
         .as_chunks::<6>()
         .0
         .iter()
-        .map(|v| std::array::from_fn(|c| u16::from_le_bytes([v[2 * c], v[2 * c + 1]])))
+        .map(|v| std::array::from_fn(|c| f32::from(u16::from_le_bytes([v[2 * c], v[2 * c + 1]]))))
         .collect()
 }
 
