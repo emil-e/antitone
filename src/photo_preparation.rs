@@ -77,6 +77,7 @@ pub(crate) fn native_with_preview(
     source: &Arc<DevelopedSource>,
     preview: Option<PreviewResult>,
 ) -> Result<PreparedSource, Error> {
+    source.require_input(&input)?;
     if input.is_negative() {
         return Ok(PreparedSource {
             source: source.clone(),
@@ -84,12 +85,11 @@ pub(crate) fn native_with_preview(
             proxy: None,
         });
     }
-    let development = SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb())?;
+    let development = SourceDevelopment::from_metadata(&source.metadata(), source.white_balance())?;
     let mut sampled = None;
     let value = reference.get_or_init(|| {
         resolve(
             preview.unwrap_or_else(|| embedded_preview::read(&source.file.path, &development)),
-            development.input_floor,
             || {
                 let proxy = store.cloned().map_or_else(
                     || CameraPixels::from_scan(&Scan::from_source(source.clone())).map(Arc::new),
@@ -109,14 +109,13 @@ pub(crate) fn native_with_preview(
 
 pub(crate) fn proxy(
     reference: &OnceLock<ReferenceExposure>,
-    development: &SourceDevelopment,
     input: InputSettings,
     proxy: &Arc<CameraPixels>,
     preview: PreviewResult,
 ) -> CameraProxy {
     let value = (!input.is_negative()).then(|| {
         reference
-            .get_or_init(|| resolve(preview, development.input_floor, || Ok(proxy.clone())))
+            .get_or_init(|| resolve(preview, || Ok(proxy.clone())))
             .clone()
     });
     CameraProxy::new(proxy.clone(), value)
@@ -124,7 +123,6 @@ pub(crate) fn proxy(
 
 fn resolve(
     preview: PreviewResult,
-    floor: f64,
     sample: impl FnOnce() -> Result<Arc<CameraPixels>, Error>,
 ) -> ReferenceExposure {
     let preview = match preview {
@@ -136,7 +134,7 @@ fn resolve(
         }
     };
     match sample() {
-        Ok(proxy) => estimate(&proxy, &preview, floor),
+        Ok(proxy) => estimate(&proxy, &preview),
         Err(reason) => {
             log::debug!(reason = reason.to_string().as_str(); "digital_reference_sampling_unavailable");
             ReferenceExposure::Unavailable(Unavailable::ReadFailed)
@@ -150,7 +148,7 @@ mod tests;
 #[cfg(all(test, feature = "ocio-reference"))]
 mod photographic;
 
-fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExposure {
+fn estimate(proxy: &CameraPixels, preview: &Preview) -> ReferenceExposure {
     let unavailable = |reason| ReferenceExposure::Unavailable(reason);
     let native = match preview.capture_flip {
         0 | 3 => [proxy.width, proxy.height],
@@ -166,7 +164,7 @@ fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExp
     let weights = crate::color::AP1_TO_XYZ.transpose().y_axis;
     let samples = (0..grid[1])
         .flat_map(|y| (0..grid[0]).map(move |x| (x, y)))
-        .filter_map(|(x, y)| {
+        .map(|(x, y)| {
             let u = 0.1 + 0.8 * (f64::from(x) + 0.5) / f64::from(grid[0]);
             let v = 0.1 + 0.8 * (f64::from(y) + 0.5) / f64::from(grid[1]);
             let (sx, sy) = match preview.capture_flip {
@@ -185,9 +183,6 @@ fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExp
                 f64::from(pixel[2]),
             ) / 65535.;
             let raw_y = weights.dot(proxy.matrix * camera);
-            if raw_y < floor {
-                return None;
-            }
             let rgb = preview
                 .rgb
                 .get_pixel(
@@ -196,7 +191,7 @@ fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExp
                 )
                 .0;
             let target_y = preview.luminance(rgb);
-            Some((raw_y, target_y))
+            (raw_y, target_y)
         });
     match exposure_reference::estimate(samples) {
         Some(value) if exposure_multiplier(value.ev).is_ok() => ReferenceExposure::Matched(value),

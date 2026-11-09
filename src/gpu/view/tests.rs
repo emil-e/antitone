@@ -87,7 +87,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
         dmax: DVec3::new(0.008, 0.004, 0.002),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }
 }
 
@@ -96,7 +95,6 @@ pub(super) fn negative(gamma: f64) -> InputSettings {
     InputSettings::Negative {
         dmin: Some(calibration.dmin),
         dmax: Some(calibration.dmax),
-        input_floor: calibration.input_floor,
         response: crate::processing::Response::film(),
         gamma,
         balance: crate::color::Balance::default(),
@@ -216,7 +214,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
             .unwrap(),
         );
         let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
-        scan.set_flat_field(Some(field)).unwrap();
+        scan.set_flat_field(Some(field));
         assert!(!original.same_definition(&native(&scan, frame, settings, Some(gpu_field))));
     });
 }
@@ -244,13 +242,8 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone()).unwrap();
-            let cal = field
-                .as_ref()
-                .map_or(Ok(calibration()), |f| {
-                    f.processing_calibration(calibration())
-                })
-                .unwrap();
+            scan.set_flat_field(field.clone());
+            let cal = calibration();
             let gpu_field = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));

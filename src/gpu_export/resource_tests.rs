@@ -124,16 +124,13 @@ fn exercise(
                 .unwrap(),
             )
         });
-        scan.set_flat_field(field.clone())
-            .map_err(|e| e.to_string())?;
+        scan.set_flat_field(field.clone());
         let gpu_field = field
             .as_ref()
             .map(|f| GpuFlatField::new(device, f.clone()).map(Arc::new))
             .transpose()
             .map_err(|e| e.to_string())?;
-        let adjusted = scan
-            .processing_calibration(calibration)
-            .map_err(|e| e.to_string())?;
+        let adjusted = (calibration).validate().map_err(|e| e.to_string())?;
         let roll = RollSettings::default();
         let photo = AdjustmentLayerSettings {
             contrast: 0.8,
@@ -492,7 +489,6 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
     let calibration = crate::processing::Calibration {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
-        input_floor: scan.input_floor,
     };
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
     let request = || Request {

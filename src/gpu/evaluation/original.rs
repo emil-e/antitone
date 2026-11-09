@@ -82,7 +82,7 @@ pub fn camera_source(scan: &crate::scan::Scan) -> Result<Arc<ImageNode>, Error> 
     let bounds = scan.area.try_into()?;
     let mut snapshot =
         crate::scan::Scan::with_reference(scan.source().clone(), scan.reference_exposure.clone());
-    snapshot.set_flat_field(scan.flat_field().cloned())?;
+    snapshot.set_flat_field(scan.flat_field().cloned());
     let format = if snapshot.source().camera_image()?.is_continuous() {
         ImageFormat::Rgba32Float
     } else {

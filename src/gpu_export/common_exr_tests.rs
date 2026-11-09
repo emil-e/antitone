@@ -17,7 +17,6 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
     let calibration = Calibration {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
-        input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
     let grade =

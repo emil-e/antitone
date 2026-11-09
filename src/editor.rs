@@ -336,7 +336,6 @@ impl Editor {
         let input = InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -741,22 +740,6 @@ impl Editor {
     }
 
     #[cfg(test)]
-    fn floor(&self) -> f64 {
-        match self.document.project.input {
-            InputSettings::Negative { input_floor, .. } => input_floor,
-            InputSettings::Digital => 0.,
-        }
-    }
-
-    #[cfg(test)]
-    fn set_floor(&mut self, value: f64) {
-        if let InputSettings::Negative { input_floor, .. } = self.negative_mut() {
-            *input_floor = value;
-        }
-        self.document.state.project.input = self.document.project.input;
-    }
-
-    #[cfg(test)]
     fn balance(&self) -> Balance {
         match self.document.project.input {
             InputSettings::Negative { balance, .. } => balance,
@@ -794,7 +777,6 @@ impl Editor {
             self.document.project.input = InputSettings::Negative {
                 dmin: None,
                 dmax: None,
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 response: crate::processing::Response::film(),
                 gamma: crate::processing::DEFAULT_GAMMA,
                 balance: Balance::default(),
@@ -878,7 +860,6 @@ impl Editor {
         InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),

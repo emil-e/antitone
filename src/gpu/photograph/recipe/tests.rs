@@ -39,13 +39,10 @@ fn project() -> (Project, SourceId) {
             reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("fixture".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [3, 1],
                 active_area: [0, 0, 3, 1],
                 camera_model: "fixture".into(),
                 camera_to_ap1: DMat3::from_diagonal(DVec3::new(1.2, 0.8, 0.4)).to_cols_array_2d(),
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
             orientation: Default::default(),
             crop: None,

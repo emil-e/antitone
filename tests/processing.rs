@@ -30,7 +30,6 @@ fn inp(cal: Calibration, gamma: f64, balance: Balance) -> InputSettings {
     InputSettings::Negative {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
-        input_floor: cal.input_floor,
         response: Response {
             toe: 1.,
             shoulder: 0.,
@@ -179,7 +178,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.75, 0.48, 0.22),
         dmax: DVec3::new(0.003, 0.006, 0.008),
-        input_floor: 1e-6,
     }
 }
 
@@ -259,10 +257,7 @@ fn floors_only_scan_inputs_and_reports_each_affected_channel() {
     assert_eq!(result.floored, [true, true, false]);
     close_rgb(
         result.rgb,
-        inversion
-            .apply(DVec3::new(cal.input_floor, cal.input_floor, 0.02))
-            .unwrap()
-            .rgb,
+        inversion.apply(DVec3::new(0., 0., 0.02)).unwrap().rgb,
     );
     assert!(matches!(
         inversion.apply(DVec3::new(f64::NAN, 0.1, 0.1)),
@@ -292,15 +287,11 @@ fn invalid_references_and_parameters_are_not_repaired() {
             ..cal
         },
         Calibration {
-            dmax: DVec3::splat(1e-8),
+            dmax: DVec3::splat(-1e-8),
             ..cal
         },
         Calibration {
             dmax: cal.dmin * (1.0 - 1e-10),
-            ..cal
-        },
-        Calibration {
-            input_floor: 0.0,
             ..cal
         },
     ] {
@@ -324,7 +315,6 @@ fn ratio_evaluation_avoids_overflow_when_the_result_is_finite() {
     let cal = Calibration {
         dmin: DVec3::splat(1e200),
         dmax: DVec3::splat(1e-200),
-        input_floor: 1e-250,
     };
     let inversion = Inversion::new(neg(cal, 1.0, Balance::default())).unwrap();
     close_rgb(inversion.apply(cal.dmax).unwrap().rgb, DVec3::ONE);
@@ -332,12 +322,11 @@ fn ratio_evaluation_avoids_overflow_when_the_result_is_finite() {
         inversion.apply(DVec3::splat(1e-201)).unwrap().rgb,
         DVec3::splat(10.0),
     );
-    assert!(
-        Inversion::new(neg(cal, 0.1, Balance::default()))
-            .unwrap()
-            .apply(DVec3::splat(1e-250))
-            .is_err()
-    );
+    let extended = Inversion::new(neg(cal, 0.1, Balance::default()))
+        .unwrap()
+        .apply(DVec3::splat(1e-250))
+        .unwrap();
+    assert!(extended.rgb.is_finite() && extended.rgb.min_element() > 1.);
 }
 
 #[test]

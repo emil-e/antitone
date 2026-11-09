@@ -56,7 +56,7 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let a = scan.area;
-    scan.set_flat_field(Some(variable_field(a))).unwrap();
+    scan.set_flat_field(Some(variable_field(a)));
     scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
         crate::exposure_reference::StartingExposure {
             ev: 8.,
@@ -158,8 +158,7 @@ fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually
             ],
         )
         .unwrap(),
-    )))
-    .unwrap();
+    )));
     let gate = SubmissionGate::default();
     let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
@@ -197,7 +196,7 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
         assert!(weak.upgrade().is_none());
         let mut reference = Scan::open(file.path(), None).unwrap();
         for field in [None, Some(variable_field(a))] {
-            reference.set_flat_field(field.clone()).unwrap();
+            reference.set_flat_field(field.clone());
             let sampler =
                 CameraSampler::retained(&device, &renderer, (&queue, &gate), input.clone(), field)
                     .unwrap();

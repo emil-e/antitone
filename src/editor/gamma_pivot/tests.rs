@@ -77,7 +77,6 @@ fn setup() -> (crate::fixture_path::FixturePath, Editor) {
     editor.document.project.input = Calibration {
         dmin: glam::DVec3::splat(0.8),
         dmax: glam::DVec3::splat(0.1),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }
     .into();
 

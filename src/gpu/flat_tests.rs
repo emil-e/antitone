@@ -313,11 +313,9 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     );
                 }
             }
-            let floor = field.precision_floor().unwrap();
             let calibration = Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),
                 dmax: DVec3::new(0.01, 0.005, 0.001),
-                input_floor: floor,
             };
             let mut cases = vec![
                 (

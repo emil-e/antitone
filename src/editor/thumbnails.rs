@@ -148,16 +148,7 @@ impl ImageKey {
         std::mem::size_of::<Self>()
             + self.source.file.path.capacity()
             + self.source.source.camera_model.capacity()
-            + self
-                .source
-                .source
-                .lens_correction
-                .as_ref()
-                .map_or(0, String::capacity)
-            + development.backend_version.capacity()
-            + development.contract.capacity()
-            + development.inversion_space.capacity()
-            + development.working_space.capacity()
+            + development.version().len()
             + self
                 .field
                 .as_ref()
@@ -422,7 +413,6 @@ impl Thumbnails {
         request: u64,
         document: &Document,
         id: SourceId,
-        correction: Option<&Arc<Correction>>,
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
@@ -443,9 +433,6 @@ impl Thumbnails {
             return Ok(None);
         };
         let renderer = renderers.get(device, queue)?;
-        if let Some(correction) = correction {
-            correction.settings.require_source(&source.development)?;
-        }
         // Selected and filmstrip outputs have independent mutable processing state.
         let preview = SelectedPreview {
             request,
@@ -898,11 +885,6 @@ fn make_image(
     let renderer = renderers.get(device, queue)?;
     metrics.renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
-    if let Some(correction) = &job.correction {
-        correction
-            .settings
-            .require_source(&job.source.development)?;
-    }
     let image = pollster::block_on(proxy.image(
         &renderer,
         device,
@@ -2111,7 +2093,6 @@ impl Worker {
                 let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
                 let prepared = crate::photo_preparation::proxy(
                     &job.reference,
-                    &job.source.development,
                     recipe.neutral.input,
                     &proxy,
                     work.preview.unwrap_or(Ok(None)),

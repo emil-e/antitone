@@ -75,7 +75,7 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
     let clean = editor.document.state.project.image_recipe(id).unwrap();
     let scan = Scan::open(
         &editor.document.source_path(id).unwrap(),
-        Some(clean.neutral.source_development.decode.fixed_wb),
+        editor.document.project.acquisition_wb(),
     )
     .unwrap();
     assert!(
@@ -177,11 +177,11 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let recipe = editor.document.state.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
-            Some(recipe.neutral.source_development.decode.fixed_wb),
+            editor.document.project.acquisition_wb(),
         )
         .unwrap();
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-            recipe.neutral.processing_input().unwrap(),
+            recipe.neutral.input,
             recipe.roll,
             recipe.grade.clone(),
             scan.camera_to_ap1,
@@ -280,7 +280,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let recipe = editor.document.state.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
-            Some(recipe.neutral.source_development.decode.fixed_wb),
+            editor.document.project.acquisition_wb(),
         )
         .unwrap();
         assert!(

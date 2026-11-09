@@ -66,7 +66,6 @@ fn positive_input_adopts_look_but_source_inspection_cannot() {
     let calibration = Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.003),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     };
     let input = AuthoredPhotograph::from(
         ProcessingParameters::positive(calibration, RollSettings::default(), glam::DMat3::IDENTITY)

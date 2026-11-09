@@ -125,13 +125,10 @@ pub(super) fn fixture() -> Document {
                     path,
                     development: SourceDevelopment {
                         decode: Development::new("test-backend".into(), [1.; 4]),
-                        lens_correction: None,
-                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -253,7 +250,7 @@ fn queued_thumbnail_results_do_not_install_after_source_development_changes() {
         .unwrap()
         .development
         .decode
-        .fixed_wb[0] *= 2.;
+        .white_balance[0] = 2.;
     thumbnails.complete(
         Outcome {
             proxy: None,
@@ -323,7 +320,7 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
     candidate.source.source.camera_to_ap1[0][0] += 0.1;
     assert_ne!(candidate, original);
     candidate = original.clone();
-    candidate.source.source.decode.fixed_wb[0] += 0.1;
+    candidate.source.source.decode.white_balance = [2., 1., 1., 1.];
     assert_ne!(candidate, original);
     candidate = original.clone();
     candidate.source.id = SourceId(42);
@@ -415,13 +412,13 @@ fn changed_document_identity_rejects_result_and_typed_worker_stop_clears_pending
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
     let (ticket, old_key) = typed_ticket(&mut thumbnails, key(&document, id));
-    document.project.development_mut().unwrap().fixed_wb[0] += 0.1;
+    document.project.development_mut().unwrap().white_balance[0] = 2.;
     thumbnails.complete(
         Outcome {
             proxy: None,
             ticket,
             key: old_key,
-            image: Err("old WB".into()),
+            image: Err("old development".into()),
             proper: false,
         },
         &document,
@@ -440,7 +437,6 @@ fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholder
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             *editor.document = fixture();
-            editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
             let before = editor.document.state.project.clone();
             let context = egui::Context::default();
             let mut run = |events| {
@@ -636,7 +632,6 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
     );
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     let first = editor.thumbnail_parameters(&source).unwrap();
     let other_before = editor
         .thumbnail_parameters(editor.document.state.project.source(other).unwrap())
@@ -869,7 +864,10 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
         editor.source_exposure = 0.37;
         let id = editor.document.state.project.order[0];
         let source = editor.document.state.project.source(id).unwrap().clone();
-        assert_ne!(source.development.decode.fixed_wb, crate::project::UNITY_WB);
+        assert_ne!(
+            Scan::open(&source.path, None).unwrap().white_balance,
+            crate::project::UNITY_WB
+        );
         let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();
         let positive = ProcessingParameters::digital(
             editor.document.project.roll,
@@ -1213,10 +1211,6 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
     let (mut editor, requests) = idle_prefetch_fixture();
     editor.document.state.project.set_dmin(Some([0.8; 3]));
     editor.document.state.project.set_dmax(Some([0.02; 3]));
-    editor
-        .document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     editor.document.thumbnails.cache.retain(|_, _| false);
     let last = *editor.document.state.project.order.last().unwrap();
     for &id in &editor.document.state.project.order {
@@ -1461,7 +1455,6 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
 fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     super::super::tests::add_ready_fixture(&mut editor);
     let last = *editor.document.state.project.order.last().unwrap();
     let image_key = key(&editor.document, last);
@@ -1729,7 +1722,6 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         document.project.input = crate::processing::InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Default::default(),
@@ -1765,9 +1757,6 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         );
         document.project.set_dmin(Some([0.8; 3]));
         document.project.set_dmax(Some([0.02; 3]));
-        document
-            .project
-            .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
         let mut positive = Thumbnails::with_disk(
             device.clone(),
             queue.clone(),

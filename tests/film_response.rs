@@ -9,7 +9,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.75, 0.48, 0.22),
         dmax: DVec3::new(0.003, 0.006, 0.008),
-        input_floor: 1e-6,
     }
 }
 
@@ -56,7 +55,7 @@ fn response_defaults_are_explicit() {
 }
 
 #[test]
-fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
+fn film_anchors_and_ordinary_forward_inverse_are_preserved() {
     let cal = calibration();
     for toe in [1., 1.125, 2.5, 3.875, 4.] {
         for shoulder in [0., 0.005, 0.02] {
@@ -75,8 +74,7 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
             }
             let mut previous = DVec3::ZERO;
             for i in 0..=256 {
-                let scan =
-                    cal.dmin * (DVec3::splat(cal.input_floor) / cal.dmin).powf(i as f64 / 256.);
+                let scan = cal.dmin * (cal.dmax / (16. * cal.dmin)).powf(i as f64 / 256.);
                 let v = inv.apply(scan).unwrap().rgb;
                 assert!(v.is_finite() && v.cmpge(previous).all());
                 let recovered = forward(cal, neg, v);
@@ -87,10 +85,10 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
                 }
                 previous = v;
             }
-            let floor = inv.apply(DVec3::splat(cal.input_floor)).unwrap();
+            let zero = inv.apply(DVec3::ZERO).unwrap();
             let below = inv.apply(DVec3::splat(-1.)).unwrap();
-            assert_eq!(floor.rgb, below.rgb);
-            assert_eq!(floor.floored, [false; 3]);
+            assert_eq!(zero.rgb, below.rgb);
+            assert!(zero.rgb.is_finite() && zero.rgb.cmpgt(previous).all());
             assert_eq!(below.floored, [true; 3]);
         }
     }
@@ -131,7 +129,7 @@ fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
 }
 
 #[test]
-fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
+fn invalid_shapes_and_nonfinite_samples_have_no_photographic_interpretation() {
     let cal = calibration();
     for (toe, shoulder) in [
         (0.99, 0.),
@@ -154,18 +152,6 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
     assert!(
         Inversion::new(negative(
             cal,
-            Response {
-                toe: 2.5,
-                shoulder: 0.02
-            },
-            0.1,
-            Balance::default()
-        ))
-        .is_err()
-    );
-    assert!(
-        Inversion::new(negative(
-            cal,
             Response::film(),
             DEFAULT_GAMMA,
             Balance::default()
@@ -174,6 +160,107 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
         .apply(DVec3::splat(f64::NAN))
         .is_err()
     );
+}
+
+#[test]
+fn inversion_is_independent_of_camera_units_and_source_quantization() {
+    let calibration = Calibration {
+        dmin: DVec3::new(0.8, 0.4, 0.2),
+        dmax: DVec3::new(0.002, 0.003, 0.004),
+    };
+    let response = Response {
+        toe: 2.5,
+        shoulder: 0.02,
+    };
+    let reference =
+        Inversion::new(negative(calibration, response, 0.6, Balance::default())).unwrap();
+    for scale in [1e-8, 0.25, 1., 65535., 1e8] {
+        let scaled = Calibration {
+            dmin: calibration.dmin * scale,
+            dmax: calibration.dmax * scale,
+        };
+        let inversion =
+            Inversion::new(negative(scaled, response, 0.6, Balance::default())).unwrap();
+        for sample in [
+            calibration.dmin * 1.1,
+            calibration.dmin,
+            calibration.dmax,
+            calibration.dmax * 0.1,
+            DVec3::splat(1e-12),
+            DVec3::ZERO,
+        ] {
+            close(
+                inversion.apply(sample * scale).unwrap().rgb,
+                reference.apply(sample).unwrap().rgb,
+            );
+        }
+    }
+}
+
+#[test]
+fn zero_light_has_a_finite_tangent_continuation_not_a_source_code_floor() {
+    // For toe=gamma=1 and no shoulder, the anchored inverse is (1/s - 1)/99.
+    let calibration = Calibration {
+        dmin: DVec3::ONE,
+        dmax: DVec3::splat(0.01),
+    };
+    let inversion = Inversion::new(negative(
+        calibration,
+        Response {
+            toe: 1.,
+            shoulder: 0.,
+        },
+        1.,
+        Balance::default(),
+    ))
+    .unwrap();
+    let white = 65536.;
+    let join = 1. / (1. + 99. * white);
+    let slope = white + 1. / 99.;
+    for fraction in [1., 0.75, 0.5, 0.25, 0.] {
+        close(
+            inversion.apply(DVec3::splat(join * fraction)).unwrap().rgb,
+            DVec3::splat(white + slope * (1. - fraction)),
+        );
+    }
+    let epsilon = join * 1e-5;
+    let at = inversion.apply(DVec3::splat(join)).unwrap().rgb.x;
+    let left = inversion.apply(DVec3::splat(join - epsilon)).unwrap().rgb.x;
+    let right = inversion.apply(DVec3::splat(join + epsilon)).unwrap().rgb.x;
+    assert!(((left - at) / (at - right) - 1.).abs() < 2e-5);
+}
+
+#[test]
+fn shoulder_continues_with_matching_slope_before_the_old_pole() {
+    let gamma = 0.1;
+    let shoulder = 0.02;
+    let h = shoulder / std::f64::consts::LN_10;
+    let density = gamma / (2. * h);
+    let join = (-density).exp();
+    let calibration = Calibration {
+        dmin: DVec3::ONE,
+        dmax: DVec3::splat(join),
+    };
+    let inversion = Inversion::new(negative(
+        calibration,
+        Response { toe: 2.5, shoulder },
+        gamma,
+        Balance::default(),
+    ))
+    .unwrap();
+    close(inversion.apply(calibration.dmax).unwrap().rgb, DVec3::ONE);
+    let epsilon = join * 1e-6;
+    let left = inversion.apply(DVec3::splat(join - epsilon)).unwrap().rgb.x;
+    let right = inversion.apply(DVec3::splat(join + epsilon)).unwrap().rgb.x;
+    assert!(((left - 1.) / (1. - right) - 1.).abs() < 1e-4);
+    let mut previous = 0.;
+    for i in 0..=1000 {
+        let sample = (-(i as f64) * 0.1).exp();
+        let value = inversion.apply(DVec3::splat(sample)).unwrap().rgb.x;
+        assert!(value.is_finite() && value >= previous);
+        previous = value;
+    }
+    assert!(inversion.apply(DVec3::ZERO).unwrap().rgb.x >= previous);
 }
 
 #[test]

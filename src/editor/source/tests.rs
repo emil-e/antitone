@@ -6,6 +6,8 @@ mod decoder_version;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
 #[cfg(target_os = "macos")]
+mod raw_formats;
+#[cfg(target_os = "macos")]
 mod xtrans;
 
 use std::{
@@ -32,10 +34,7 @@ fn request(name: &str) -> (DocumentScope, Request) {
         .source(document.project.order[0])
         .unwrap()
         .clone();
-    let wb = document
-        .project
-        .development()
-        .map(|development| development.fixed_wb);
+    let wb = document.project.acquisition_wb();
     let document: DocumentScope = document.into();
     let file = document.file_key(&path);
     let request = Request {
@@ -52,7 +51,7 @@ fn request(name: &str) -> (DocumentScope, Request) {
 }
 
 #[test]
-fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_gpu() {
+fn acquisition_preserves_source_identity_and_pixels_without_editor_or_gpu() {
     let (document, mut request) = request("patches.dng");
     let scheduler = source_loading::SourceLoader::new();
     request.sources = Some(scheduler.provider(Some(document.cache.clone())));
@@ -62,10 +61,6 @@ fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_
     assert_eq!(
         developed.record.development,
         document.project.sources[0].development
-    );
-    assert_eq!(
-        context.source.input_floor(),
-        developed.record.development.input_floor
     );
     let mut scan = context.scan().unwrap();
     assert!(
@@ -95,14 +90,20 @@ fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_
 
 #[test]
 fn incompatible_requests_reject_without_rewriting_document_authority() {
-    let (document, mut request) = request("patches.dng");
-    let accepted = document.project.clone();
-    request.expected.as_mut().unwrap().development.camera_model = "different camera".into();
-    let scheduler = source_loading::SourceLoader::new();
-    assert!(request.load(&scheduler, &|| false).is_err());
-    assert_eq!(document.project, accepted);
-    assert_eq!(document.cache.charges().retained, 0);
-    scheduler.close_and_wait().unwrap();
+    for conflicting_wb in [false, true] {
+        let (document, mut request) = request("patches.dng");
+        let accepted = document.project.clone();
+        if conflicting_wb {
+            request.wb = Some([2., 1., 1., 1.]);
+        } else {
+            request.expected.as_mut().unwrap().development.camera_model = "different camera".into();
+        }
+        let scheduler = source_loading::SourceLoader::new();
+        assert!(request.load(&scheduler, &|| false).is_err());
+        assert_eq!(document.project, accepted);
+        assert_eq!(document.cache.charges().retained, 0);
+        scheduler.close_and_wait().unwrap();
+    }
 }
 
 #[test]

@@ -33,7 +33,8 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
             [glam::DVec2::new(9., 13.); 3]
         );
         assert!(
-            (raw.metadata.input_floor().unwrap() / CAMERA_INPUT_FLOOR - std::f64::consts::SQRT_2)
+            (raw.metadata.precision_floor().unwrap() / CAMERA_INPUT_FLOOR
+                - std::f64::consts::SQRT_2)
                 .abs()
                 < 1e-14
         );
@@ -43,7 +44,7 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
         let file = source(order, vec![vignette(order, &padded)], false, true);
         let mut raw = RawFile::open(file.path()).unwrap();
         assert!(raw.metadata.lens_identity().unwrap().is_none());
-        assert_eq!(raw.metadata.input_floor().unwrap(), CAMERA_INPUT_FLOOR);
+        assert_eq!(raw.metadata.precision_floor().unwrap(), CAMERA_INPUT_FLOOR);
         assert!(!raw.develop_camera([1.; 4]).unwrap().is_continuous());
         for tags in [
             vec![(0x7032, 3, order.signed(&[2, 0, 8192]))],
@@ -72,11 +73,6 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
 
 #[test]
 fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor() {
-    use antitone::{
-        flat_field::FlatField,
-        project::{FlatFieldSettings, Source, SourceId},
-    };
-    use std::sync::Arc;
     let a = source(
         Order::Little,
         vec![vignette(Order::Little, &[3, 0, 8192, 16384])],
@@ -94,23 +90,12 @@ fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor
     let first = development(&a);
     let second = development(&b);
     assert_eq!(first.dimensions, second.dimensions);
-    assert_eq!(first.input_floor, second.input_floor);
-    assert_ne!(first.lens_correction, second.lens_correction);
-    let reference = Source {
-        id: SourceId(1),
-        path: "reference.ARW".into(),
-        development: first,
-        reference_only: true,
-        repairs: Default::default(),
-        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
-            Default::default(),
-        )),
-        orientation: Default::default(),
-        crop: None,
-    };
-    let map = Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::ONE; 4]).unwrap());
-    let field = FlatFieldSettings::new(&reference, map);
-    assert!(field.require_source(&second).is_err());
+    assert_eq!(a.source().precision_floor(), b.source().precision_floor());
+    assert_ne!(
+        a.source().metadata().lens_identity().unwrap(),
+        b.source().metadata().lens_identity().unwrap()
+    );
+    assert_ne!(a.pixel(32, 32).unwrap(), b.pixel(32, 32).unwrap());
 }
 
 #[test]
@@ -195,10 +180,9 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
     let base = Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.01),
-        input_floor: CAMERA_INPUT_FLOOR,
     };
-    assert_eq!(scan.input_floor, CAMERA_INPUT_FLOOR);
-    let developed_floor = scan.source().input_floor();
+    assert_eq!(scan.precision_floor, scan.source().precision_floor());
+    let developed_floor = scan.source().precision_floor();
     assert!(developed_floor > CAMERA_INPUT_FLOOR);
     assert_eq!(scan.effective_floor(), developed_floor);
     let region = antitone::raw::Rect::from([56, 56, 8, 8]);
@@ -219,7 +203,6 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
         input: InputSettings::Negative {
             dmin: Some(DVec3::splat(0.7)),
             dmax: Some(DVec3::splat(0.01)),
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Default::default(),
@@ -246,29 +229,22 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
             .image_recipe(id)
             .unwrap()
             .neutral
-            .processing_input()
-            .unwrap()
+            .input
             .calibration()
-            .unwrap()
-            .input_floor,
-        developed_floor
+            .unwrap(),
+        base
     );
     let field =
         Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::splat(3.); 4]).unwrap());
-    scan.set_flat_field(Some(field.clone())).unwrap();
+    scan.set_flat_field(Some(field.clone()));
     project.set_flat_field(Some(FlatFieldSettings::new(
         project.source(id).unwrap(),
         field,
     )));
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(
-        scan.processing_calibration(base).unwrap(),
-        recipe
-            .neutral
-            .processing_input()
-            .unwrap()
-            .calibration()
-            .unwrap()
+        (base).validate().unwrap(),
+        recipe.neutral.input.calibration().unwrap()
     );
     assert_eq!(scan.effective_floor(), developed_floor * 3.);
     recipe.neutral.require_scan(&scan).unwrap();
@@ -284,7 +260,6 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
         .unwrap();
     let mut changed = reopened.clone();
     changed.set_flat_field(None);
-    changed.source_mut(id).unwrap().development.input_floor *= 2.;
     assert!(
         changed
             .image_recipe(id)
@@ -293,12 +268,12 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
             .require_scan(&scan)
             .is_err()
     );
-    // A calibration admissible at the native floor must not bypass a developed-source floor.
-    let mut invalid = reopened;
-    if let InputSettings::Negative { dmax, .. } = &mut invalid.input {
+    // Small positive anchors remain usable independently of the measurement precision estimate.
+    let mut low_light = reopened;
+    if let InputSettings::Negative { dmax, .. } = &mut low_light.input {
         *dmax = Some(DVec3::splat(CAMERA_INPUT_FLOOR));
     }
-    assert!(invalid.validate().is_err());
-    scan.set_flat_field(None).unwrap();
+    low_light.validate().unwrap();
+    scan.set_flat_field(None);
     assert_eq!(scan.effective_floor(), developed_floor);
 }

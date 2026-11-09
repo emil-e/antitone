@@ -24,22 +24,21 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let project = editor.document.state.project.clone();
-    let wb = project.development().as_ref().unwrap().fixed_wb;
+    let wb = project.acquisition_wb();
     let calibration = project.calibration().unwrap().unwrap();
     let mut scans = Vec::new();
     let mut grades = Vec::new();
     for id in &project.order {
         // Independent source loading and scalar processing: no export request,
         // active visit or production GPU output supplies the expected pixels.
-        let scan =
-            crate::scan::Scan::open(&editor.document.source_path(*id).unwrap(), Some(wb)).unwrap();
+        let scan = crate::scan::Scan::open(&editor.document.source_path(*id).unwrap(), wb).unwrap();
         grades.push(project.source(*id).unwrap().grade_snapshot().unwrap());
         scans.push(scan);
     }
     let scalar = |source: usize, grade: usize| {
         let scan = &scans[source];
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-            scan.processing_calibration(calibration).unwrap(),
+            (calibration).validate().unwrap(),
             project.roll,
             grades[grade].clone(),
             scan.camera_to_ap1,

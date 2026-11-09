@@ -470,7 +470,7 @@ fn retired_document_source_and_development_reject_previews() {
         match stale {
             "document" => document = Document::default().into(),
             "source" => document.project.source_mut(id).unwrap().reference_only = true,
-            "development" => document.project.development_mut().unwrap().fixed_wb[0] += 0.5,
+            "development" => document.project.development_mut().unwrap().white_balance[0] = 2.,
             "cancel" => previews.cancel(),
             _ => unreachable!(),
         }
@@ -855,7 +855,6 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     );
     assert_eq!(editor.document.thumbnails.sources.proxy_count(), 0);
     assert_eq!(editor.document.state.project, original);
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_dmin(Some(glam::DVec3::splat(0.5)));
     editor.set_dmax(Some(glam::DVec3::splat(0.02)));
     editor.document.source = false;

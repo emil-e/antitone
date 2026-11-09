@@ -24,8 +24,7 @@ pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
             .correction
             .as_ref()
             .map(|correction| correction.settings.map.clone()),
-    )
-    .map_err(|error| error.to_string())?;
+    );
     Ok(scan)
 }
 
@@ -40,8 +39,7 @@ pub(super) fn capture_input(
             context
                 .correction
                 .map(|correction| correction.settings.map.clone()),
-        )
-        .map_err(|error| error.to_string())?;
+        );
         Ok(scan)
     })
 }

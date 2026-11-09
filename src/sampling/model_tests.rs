@@ -5,7 +5,6 @@ fn gamma_model_requires_anchor_information_even_inside_the_forward_model_resolut
     let negative = NegativeInput::from(crate::processing::Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.005),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     });
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 0.9));
     let fit = GammaNeutral::new(negative, matrix).unwrap();

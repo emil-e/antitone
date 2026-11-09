@@ -23,7 +23,7 @@ fn scoped_and_cacheless_providers_share_one_acquisition_contract_without_sharing
     let file = crate::raw::fixture::bayer_dng();
     let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
     let development =
-        SourceDevelopment::from_metadata(&scan.source().metadata(), scan.source().fixed_wb())
+        SourceDevelopment::from_metadata(&scan.source().metadata(), scan.source().white_balance())
             .unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
     let backend = Arc::new(Backend {

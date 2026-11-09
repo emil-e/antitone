@@ -57,6 +57,7 @@ impl SpatialSamples {
     fn response(
         &self,
         negative: NegativeInput,
+        effective_floor: f64,
         model: &mut impl ForwardModel,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Result<Option<PositiveRaster>, Error> {
@@ -64,7 +65,7 @@ impl SpatialSamples {
             .camera
             .iter()
             .zip(&self.valid)
-            .map(|(p, ok)| *ok && p.min_element() > negative.calibration.input_floor)
+            .map(|(p, ok)| *ok && p.min_element() > effective_floor)
             .collect();
         let indices: Vec<_> = (0..valid.len()).filter(|&i| valid[i]).collect();
         let points: Vec<_> = indices.iter().map(|&i| self.camera[i]).collect();
@@ -183,13 +184,10 @@ fn refine_from<S: AsRef<SpatialSamples>>(
     cancelled: &mut impl FnMut() -> bool,
     mut image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
 ) -> Result<Option<Proposal>, Error> {
-    let mut initial = proposal
+    let initial = proposal
         .input
         .negative_input()
         .expect("negative analysis seed");
-    // The proposal persists the native floor; response domains and GI admission
-    // use the common effective floor established by source acquisition.
-    initial.calibration.input_floor = effective_floor;
     // This threshold gain stays at the seed grade throughout the single GI cycle.
     // It is not a WB pre-correction or an exposure-normalization step.
     let gain = exposure_multiplier(proposal.roll.exposure)?;
@@ -199,7 +197,9 @@ fn refine_from<S: AsRef<SpatialSamples>>(
             return Ok(None);
         };
         let image = samples.as_ref();
-        let Some(PositiveRaster { rgb, valid }) = image.response(initial, model, cancelled)? else {
+        let Some(PositiveRaster { rgb, valid }) =
+            image.response(initial, effective_floor, model, cancelled)?
+        else {
             return Ok(None);
         };
         // Native-positive GI can favour saturated colours outside the log-cone domain.
@@ -247,7 +247,8 @@ fn refine_from<S: AsRef<SpatialSamples>>(
             return Ok(None);
         };
         let image = samples.as_ref();
-        let Some(PositiveRaster { rgb, valid }) = image.response(negative, model, cancelled)?
+        let Some(PositiveRaster { rgb, valid }) =
+            image.response(negative, effective_floor, model, cancelled)?
         else {
             return Ok(None);
         };

@@ -66,9 +66,8 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
         let base = Calibration {
             dmin: DVec3::new(0.28, 0.23, 0.25),
             dmax: DVec3::new(0.01, 0.005, 0.001),
-            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
         };
-        let calibration = field.processing_calibration(base).unwrap();
+        let calibration = (base).validate().unwrap();
         let mut cases = vec![(
             calculation::inspection_with_field(ProcessingParameters::source(), Some(gpu.clone())),
             scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
@@ -83,7 +82,6 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             let input = InputSettings::Negative {
                 dmin: Some(calibration.dmin),
                 dmax: Some(calibration.dmax),
-                input_floor: calibration.input_floor,
                 response,
                 gamma: DEFAULT_GAMMA,
                 balance: Balance::default(),
@@ -224,7 +222,6 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
         let base = Calibration {
             dmin: DVec3::new(0.8, 0.7, 0.9),
             dmax: DVec3::new(0.003, 0.002, 0.001),
-            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
         };
         let roll = RollSettings {
             exposure: -1.,
@@ -239,7 +236,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
         };
         for corrected in [false, true] {
             let calibration = if corrected {
-                field.processing_calibration(base).unwrap()
+                (base).validate().unwrap()
             } else {
                 base
             };
@@ -452,12 +449,10 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
         let calibration = Calibration {
             dmin: DVec3::new(0.2, 0.15, 0.1),
             dmax: DVec3::new(0.008, 0.005, 0.002),
-            input_floor: 2.2e-5,
         };
         let input = InputSettings::Negative {
             dmin: Some(calibration.dmin),
             dmax: Some(calibration.dmax),
-            input_floor: calibration.input_floor,
             response: Response::film(),
             gamma: 0.65,
             balance: Balance {
@@ -501,7 +496,6 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             let settings = InputSettings::Negative {
                 dmin: Some(calibration.dmin),
                 dmax: Some(calibration.dmax),
-                input_floor: calibration.input_floor,
                 response,
                 gamma: 0.65,
                 balance: Balance {

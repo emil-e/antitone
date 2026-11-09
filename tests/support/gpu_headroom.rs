@@ -4,10 +4,7 @@ use antitone::gpu::source::ProcessingSource;
 use antitone::{
     flat_field::FlatField,
     gpu::{flat::GpuFlatField, source::SourceGeometry},
-    processing::{
-        DEFAULT_GAMMA, InputSettings, MAX_CAMERA_SOURCE_CODE, MAX_SOURCE_GAIN, Response,
-        RollSettings,
-    },
+    processing::{DEFAULT_GAMMA, InputSettings, MAX_CAMERA_SOURCE_CODE, Response, RollSettings},
 };
 use std::sync::Arc;
 
@@ -63,7 +60,6 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
             let calibration = Calibration {
                 dmin: DVec3::splat(0.7),
                 dmax: DVec3::splat(0.01),
-                input_floor: CAMERA_INPUT_FLOOR * MAX_SOURCE_GAIN * gain.max_element(),
             };
             for response in [
                 Response {
@@ -78,7 +74,6 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                 let input = InputSettings::Negative {
                     dmin: Some(calibration.dmin),
                     dmax: Some(calibration.dmax),
-                    input_floor: calibration.input_floor,
                     response,
                     gamma: DEFAULT_GAMMA,
                     balance: Default::default(),

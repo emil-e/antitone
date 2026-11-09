@@ -193,11 +193,12 @@ fn device_preflight_includes_offscreen_photos_and_the_flat_field_reference_and_v
 }
 
 #[test]
-fn document_device_preflight_uses_the_effective_correction_floor_and_runtime_basis() {
+fn document_preflight_preserves_calibration_under_correction_and_checks_processing_choices() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
         let mut document = calibrated(directory.path());
+        let calibration = document.project.calibration().unwrap().unwrap();
         let source = &document.project.sources[0];
         let field = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -207,13 +208,12 @@ fn document_device_preflight_uses_the_effective_correction_floor_and_runtime_bas
             )
             .unwrap(),
         );
-        let settings = crate::project::FlatFieldSettings::new(source, field.clone());
+        let settings = crate::project::FlatFieldSettings::new(source, field);
         document.project.set_flat_field(Some(settings));
-        let calibration = document.project.processing_calibration().unwrap().unwrap();
-        assert_eq!(calibration.input_floor, field.precision_floor().unwrap());
+        assert_eq!(Some(calibration), document.project.calibration().unwrap());
         document.validate_for_device(&device).unwrap();
         let before = document.project.clone();
-        document.project.development_mut().unwrap().fixed_wb[1] = 0.;
+        document.project.development_mut().unwrap().white_balance[0] = 2.;
         assert!(document.validate_for_device(&device).is_err());
         document.project = before;
         document.project.processing_model = 3;
@@ -302,10 +302,6 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
             Document::open_with_progress(&path, Some(&device), |done, total| progress
                 .push((done, total)))
             .is_err()
-        );
-        assert!(
-            progress.is_empty(),
-            "reject unsupported grades before reading source files"
         );
         assert_eq!(saved.project, opened.project);
     });

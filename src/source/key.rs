@@ -14,26 +14,6 @@ pub struct SourceKey {
     pub(super) source: SourceDevelopment,
 }
 
-#[cfg(test)]
-impl SourceKey {
-    pub fn capture_with_development(
-        path: &Path,
-        source: &SourceDevelopment,
-        _development: &crate::project::Development,
-    ) -> Option<Self> {
-        Self::capture(path, source)
-    }
-
-    pub(crate) fn from_revision_with_development(
-        path: &Path,
-        file: FileKey,
-        source: &SourceDevelopment,
-        _development: &crate::project::Development,
-    ) -> Option<Self> {
-        Self::from_revision(path, file, source)
-    }
-}
-
 impl SourceKey {
     /// Capture identity when opening a source. Reuse the key for acquisitions in that session.
     pub fn new(path: &Path, source: &SourceDevelopment) -> Self {
@@ -89,20 +69,15 @@ impl SourceKey {
             return false;
         };
         let area = source.area();
-        let Ok(lens_correction) = source.metadata().lens_identity() else {
-            return false;
+        let actual = SourceDevelopment {
+            decode: source.metadata().development(source.white_balance()),
+            dimensions: [image.width, image.height],
+            active_area: [area.x, area.y, area.width, area.height],
+            camera_model: source.camera_model().to_owned(),
+            camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
         };
-        self.source
-            == SourceDevelopment {
-                decode: source.metadata().development(source.fixed_wb()),
-                lens_correction,
-                dng_development: source.metadata().dng_identity(),
-                dimensions: [image.width, image.height],
-                active_area: [area.x, area.y, area.width, area.height],
-                camera_model: source.camera_model().to_owned(),
-                camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
-                input_floor: source.input_floor(),
-            }
+        self.source.same_processing(&actual)
+            && self.source.decode.backend_version == actual.decode.backend_version
     }
 
     pub(super) fn matches_proxy(&self, proxy: &CameraPixels) -> bool {
@@ -117,7 +92,9 @@ impl SourceKey {
 
 impl PartialEq for SourceKey {
     fn eq(&self, other: &Self) -> bool {
-        self.file == other.file && self.source == other.source
+        self.file == other.file
+            && self.source.same_processing(&other.source)
+            && self.source.decode.backend_version == other.source.decode.backend_version
     }
 }
 
@@ -135,10 +112,7 @@ mod tests {
         );
         let raw = crate::raw::RawFile::open(file.path()).unwrap();
         let mut recorded = SourceDevelopment::from_metadata(&raw.metadata, [1.; 4]).unwrap();
-        assert_eq!(
-            recorded.decode.contract,
-            crate::project::DEVELOPMENT_CONTRACT
-        );
+        assert!(!recorded.decode.uses_sdk());
         recorded.decode.backend_version = "historical LibRaw".into();
         let current = SourceKey::capture(file.path(), &recorded).unwrap();
         assert_eq!(

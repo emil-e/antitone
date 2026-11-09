@@ -7,13 +7,12 @@ use crate::gpu::view::request::SourceRequest;
 fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_latest_demand() {
     let (e, pixels, base, scheduler) = fixture();
     let scan = pixels.scan().unwrap();
-    let calibration = scan
-        .processing_calibration(Calibration {
-            dmin: DVec3::splat(0.8),
-            dmax: DVec3::splat(0.2),
-            input_floor: 1. / 65535.,
-        })
-        .unwrap();
+    let calibration = (Calibration {
+        dmin: DVec3::splat(0.8),
+        dmax: DVec3::splat(0.2),
+    })
+    .validate()
+    .unwrap();
     let capture = |gamma: f64, wb: f64| {
         let mut settings = crate::processing::InputSettings::from(calibration);
         let crate::processing::InputSettings::Negative { balance, .. } = &mut settings else {

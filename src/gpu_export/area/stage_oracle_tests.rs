@@ -35,7 +35,6 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     let calibration = Calibration {
         dmin: DVec3::splat(0.8),
         dmax: DVec3::splat(0.02),
-        input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
     let grade = AdjustmentLayerSnapshot::new(vec![

@@ -15,7 +15,6 @@ fn project() -> Project {
                 0.11715123642832656,
             )),
             dmax: Some(DVec3::new(0.008061, 0.003409, 0.001442)),
-            input_floor: 1. / 65535.,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -86,7 +85,7 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
 }
 
 #[test]
-fn project_validation_rejects_shape_and_calibrated_shoulder_pole() {
+fn project_validation_checks_controls_without_rejecting_low_gamma_shoulder_combinations() {
     let mut p = project();
     if let InputSettings::Negative {
         response,
@@ -120,7 +119,7 @@ fn project_validation_rejects_shape_and_calibrated_shoulder_pole() {
             tint: 1.,
         };
     }
-    assert!(p.validate().is_err());
+    p.validate().unwrap();
     if let InputSettings::Negative { gamma, balance, .. } = &mut p.input {
         *gamma = 0.65;
         *balance = Balance::default();

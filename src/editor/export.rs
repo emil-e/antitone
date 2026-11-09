@@ -754,7 +754,7 @@ impl Editor {
             }
             .unwrap_or_else(|| {
                 let expected = expected.clone();
-                let wb = Some(expected.development.decode.fixed_wb);
+                let wb = self.document.source_wb(id);
                 Input::Acquire(Box::new(source::Request {
                     reference: self.document.exposure_slot(&self.document.exposures, id),
 

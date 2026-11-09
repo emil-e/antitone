@@ -421,10 +421,10 @@ void admit_opcodes(Host &host, dng_negative &negative, Source &source) {
             }
         }
     }
-    source.view.input_floor =
+    source.view.precision_floor =
         std::max(1.0 / 65535.0, amplification / (source.view.white - source.view.black));
-    require(std::isfinite(source.view.input_floor) && source.view.input_floor <= 256.0 / 65535.0,
-            "DNG source precision exceeds the supported processing floor");
+    require(std::isfinite(source.view.precision_floor) && source.view.precision_floor > 0,
+            "Invalid DNG sampling precision");
 }
 
 void color_basis(dng_negative &negative, const dng_vector &as_shot,

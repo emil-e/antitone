@@ -426,14 +426,14 @@ fn profile_complete_roll_area_preparation() {
                 let id = *document.project.order.last().unwrap();
                 let path = document.source_path(id).map_err(|e| e.to_string())?;
                 let expected = document.project.source(id).unwrap();
-                let wb = expected.development.decode.fixed_wb;
+                let wb = document.project.acquisition_wb();
                 let file = document.file_key(&path);
                 let source = monitor.phase("region_seed_one_source", || {
                     source::Request {
                         input: document.project.input,
                         reference: Arc::default(),
                         path,
-                        wb: Some(wb),
+                        wb,
                         expected: Some(expected.clone()),
                         sources: Some(scheduler.provider(Some(cache.clone()))),
                         file,

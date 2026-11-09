@@ -1,20 +1,17 @@
 use super::*;
 use crate::{
     exposure_reference::{ReferenceExposure, StartingExposure},
-    processing::{CAMERA_INPUT_FLOOR, InputSettings},
+    processing::InputSettings,
     project::{Development, Source, SourceDevelopment},
 };
 
 fn fixture(path: &std::path::Path) -> (Project, Metadata) {
     let development = SourceDevelopment {
         decode: Development::new("declared".into(), [1.; 4]),
-        lens_correction: None,
-        dng_development: None,
         dimensions: [64; 2],
         active_area: [0, 0, 64, 64],
         camera_model: "declared".into(),
         camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-        input_floor: CAMERA_INPUT_FLOOR,
     };
     let mut project = Project {
         input: InputSettings::Digital,

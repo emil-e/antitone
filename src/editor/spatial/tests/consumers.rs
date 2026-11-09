@@ -46,7 +46,6 @@ pub(super) fn declared(editor: &Editor) -> Metadata {
                 .development
                 .decode
                 .clone(),
-            code_scale: editor.document.spatial_code_scale(),
             common_size: CommonSize::fit(&sources),
             sources,
         }],
@@ -424,11 +423,11 @@ fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui
             );
             assert_eq!(editor.document.path.as_deref(), Some(path.as_path()));
         });
-        let (_, saved) = Project::load_with_spatial_metadata(&path).unwrap();
-        assert!(
-            saved.groups.is_empty(),
-            "the captured write cannot gain results that arrived later"
-        );
+        let saved = Project::load(&path).unwrap();
+        assert!(saved.sources.iter().all(|source| source.crop.is_none()));
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(json.get("spatial_metadata").is_none());
     });
     scheduler.close_and_wait().unwrap();
 }

@@ -47,7 +47,6 @@ fn fixture() -> (
     let calibration = Calibration {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
-        input_floor: scan.input_floor,
     };
     let grade =
         AdjustmentLayerSnapshot::new(vec![antitone::adjustment_layers::AdjustmentLayer::global(
@@ -100,7 +99,7 @@ fn repairs(
         support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
         offset: [-64, 0],
     };
-    let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
+    let input = InputSettings::negative((calibration).validate().unwrap());
     vec![Arc::new(
         antitone::repair_source::evaluate(
             &antitone::scan::ImageSource::new(scan, input).unwrap(),
@@ -137,7 +136,7 @@ fn compare_tiff(repaired: bool) {
     };
     let asset = look([-2.; 3], [2.; 3]);
     let pipeline = AdjustmentLayerPipeline::new(
-        InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
+        InputSettings::negative((calibration).validate().unwrap()),
         roll,
         grade.clone(),
         scan.camera_to_ap1,
@@ -286,7 +285,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
     let pipeline = AdjustmentLayerPipeline::new(
-        InputSettings::negative(scan.processing_calibration(calibration).unwrap()),
+        InputSettings::negative((calibration).validate().unwrap()),
         roll,
         grade.clone(),
         scan.camera_to_ap1,

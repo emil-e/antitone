@@ -157,13 +157,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
             h.step();
             h.read(|editor| assert!(editor.document_pending.is_none()));
-            let (accepted, regions) =
-                crate::project::Project::load_with_spatial_metadata(&saved).unwrap();
+            let accepted = crate::project::Project::load(&saved).unwrap();
             assert_eq!(accepted, before);
-            assert_eq!(
-                regions,
-                h.read(|editor| editor.document.capture().ready_spatial_metadata())
-            );
+
             let output = directory.path().join("draft.tiff");
             h.enter(|editor, cx| {
                 editor.export(
@@ -224,13 +220,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             });
             wait_crop(&mut h, full);
             save_existing_project(&mut h);
-            let (accepted, regions) =
-                crate::project::Project::load_with_spatial_metadata(&saved).unwrap();
+            let accepted = crate::project::Project::load(&saved).unwrap();
             assert_eq!(accepted, expected);
-            assert_eq!(
-                regions,
-                h.read(|editor| editor.document.capture().ready_spatial_metadata())
-            );
+
             h.get_by_label("crop-0.dng").click();
             h.step();
             wait_for(&mut h, |e| {

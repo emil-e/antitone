@@ -16,13 +16,10 @@ fn fixture(directory: &Path) -> PathBuf {
             reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [256, 160],
                 active_area: [12, 20, 200, 120],
                 camera_model: "authored".into(),
                 camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
 
             repairs: Default::default(),

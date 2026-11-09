@@ -397,20 +397,17 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
 #[cfg(feature = "project")]
 fn development(scan: &antitone::scan::Scan) -> antitone::project::SourceDevelopment {
     antitone::project::SourceDevelopment {
-        decode: scan.source().metadata().development(scan.fixed_wb),
-        lens_correction: scan.source().metadata().lens_identity().unwrap(),
-        dng_development: scan.source().metadata().dng_identity(),
+        decode: scan.source().metadata().development(scan.white_balance),
         dimensions: scan.source().metadata().source_dimensions().unwrap(),
         active_area: [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
         camera_model: scan.camera_model.clone(),
         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-        input_floor: scan.source().input_floor(),
     }
 }
 
 #[cfg(feature = "project")]
 #[test]
-fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_equal_dimensions() {
+fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     use antitone::{
         flat_field::FlatField,
         project::{FlatFieldSettings, Project, Save, Source, SourceId},
@@ -426,20 +423,17 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     let first_development = development(&scan);
     let second_development = development(&other);
     assert_ne!(
-        first_development.lens_correction,
-        second_development.lens_correction
+        scan.source().metadata().lens_identity().unwrap(),
+        other.source().metadata().lens_identity().unwrap()
     );
-    let mut same_without_identity = second_development.clone();
-    same_without_identity.lens_correction = first_development.lens_correction.clone();
     assert_eq!(
-        same_without_identity, first_development,
-        "only lens provenance differs in this fixture"
+        first_development, second_development,
+        "lens fingerprints are not saved photographic choices"
     );
     let mut project = Project {
         input: antitone::processing::InputSettings::Negative {
             dmin: Some(DVec3::splat(0.7)),
             dmax: Some(DVec3::splat(0.01)),
-            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             response: antitone::processing::Response::film(),
             gamma: antitone::processing::DEFAULT_GAMMA,
             balance: Default::default(),
@@ -470,9 +464,8 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
         .unwrap(),
     );
     let field = FlatFieldSettings::new(project.source(id).unwrap(), map.clone());
-    assert!(field.require_source(&second_development).is_err());
-    scan.set_flat_field(Some(map.clone())).unwrap();
-    other.set_flat_field(Some(map)).unwrap();
+    scan.set_flat_field(Some(map.clone()));
+    other.set_flat_field(Some(map));
     project.set_flat_field(Some(field));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sony.antitone");
@@ -482,15 +475,14 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     let recipe = reopened.image_recipe(id).unwrap();
     assert_eq!(recipe, project.image_recipe(id).unwrap());
     recipe.neutral.require_scan(&scan).unwrap();
-    assert!(recipe.neutral.require_scan(&other).is_err());
-    let mut missing = recipe.neutral.clone();
-    missing.source_development.lens_correction = None;
-    assert!(missing.require_scan(&scan).is_err());
+    recipe.neutral.require_scan(&other).unwrap();
+    let mut different = recipe.neutral.clone();
+    different.source_development.decode.white_balance[0] *= 2.;
+    assert!(different.require_scan(&scan).is_err());
     let mut old = reopened;
     old.set_flat_field(None);
-    old.sources[0].development.decode.contract =
-        "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2".into();
-    assert!(old.require_runtime().is_err());
+    old.sources[0].development.decode.backend_version = "older LibRaw release".into();
+    old.require_runtime().unwrap();
 }
 
 #[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
@@ -536,7 +528,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                 )
                 .unwrap(),
             );
-            scan.set_flat_field(Some(field.clone())).unwrap();
+            scan.set_flat_field(Some(field.clone()));
             Some(Arc::new(GpuFlatField::new(&device, field).unwrap()))
         } else {
             None
@@ -544,7 +536,6 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         let calibration = Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.01),
-            input_floor: scan.input_floor,
         };
         let roll = RollSettings::default();
         let grade = AdjustmentLayerSnapshot::new(
@@ -564,7 +555,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             PhotoOrientation::default(),
         )
         .unwrap();
-        let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
+        let input = InputSettings::negative((calibration).validate().unwrap());
         let scalar =
             AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
         for format in [

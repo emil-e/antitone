@@ -223,12 +223,8 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
             for selected in [None, Some(look.clone())] {
                 document.project.output.lut = selected.clone();
                 let recipe = document.project.image_recipe(id).unwrap();
-                let pipeline = Pipeline::new(
-                    recipe.neutral.processing_input().unwrap(),
-                    recipe.roll,
-                    DMat3::IDENTITY,
-                )
-                .unwrap();
+                let pipeline =
+                    Pipeline::new(recipe.neutral.input, recipe.roll, DMat3::IDENTITY).unwrap();
                 let layers = crate::adjustment_layers::AdjustmentLayerStack::new(
                     recipe.grade.layers().to_vec(),
                 )

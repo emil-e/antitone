@@ -1,7 +1,6 @@
 //! Bounded repeated real Editor input/paint/backend exercise. Offscreen, not physical paint.
 use super::observation::{self as calibration, Monitor};
 use super::*;
-use crate::project::Development;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -145,21 +144,15 @@ fn workload(
     samples: PathBuf,
 ) -> Result<()> {
     let start = Instant::now();
-    let reference = monitor.phase("switch_wb_header", || {
-        crate::raw::RawFile::open(&samples.join("DSC04397.ARW"))
-    })?;
-    let wb = reference.metadata.cam_mul;
-    drop(reference);
     let mut document = Document::default();
     for name in ["DSC04378.ARW", "DSC04393.ARW"] {
         monitor.check()?;
         let (source, raw) =
-            document::open_source(&samples.join(name), None).map_err(|e| e.to_string())?;
+            document::open_source(&samples.join(name), document.project.acquisition_wb())
+                .map_err(|e| e.to_string())?;
         calibration::source_bound(&raw.metadata)?;
         drop(raw);
-        document
-            .register_with_development(source, Development::new(crate::raw::version(), wb))
-            .map_err(|e| e.to_string())?;
+        document.register(source).map_err(|e| e.to_string())?;
     }
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();

@@ -507,13 +507,10 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
                 path,
                 development: crate::project::SourceDevelopment {
                     decode: Development::new("test-backend".into(), [1.; 4]),
-                    lens_correction: None,
-                    dng_development: None,
                     dimensions: [7040, 3072],
                     active_area: [12, 34, 7000, 3000],
                     camera_model: "test-camera".into(),
                     camera_to_ap1: matrix.to_cols_array_2d(),
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(

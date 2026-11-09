@@ -134,14 +134,14 @@ pub(super) fn with_camera_basis(editor: &mut Editor) {
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
-                    decode: development.clone(),
-                    lens_correction: None,
-                    dng_development: None,
+                    decode: Development {
+                        white_balance: [1.; 4],
+                        ..development.clone()
+                    },
                     dimensions: [900, 600],
                     active_area: [0, 0, 900, 600],
                     camera_model: "test-camera".into(),
                     camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -160,7 +160,6 @@ pub(super) fn fixture() -> Editor {
     let mut editor = Editor::state();
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor
 }
 
@@ -459,13 +458,10 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         path,
                         development: crate::project::SourceDevelopment {
                             decode: Development::new(crate::raw::version(), [1.; 4]),
-                            lens_correction: None,
-                            dng_development: None,
                             dimensions: [8704, 6144],
                             active_area: [12, 12, 8640, 5760],
                             camera_model: "test-camera".into(),
                             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                            input_floor: editor.floor(),
                         },
                         reference_only: true,
                         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -906,7 +902,6 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
 #[test]
 fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     let mut editor = fixture();
-    let floor = editor.floor();
     let id = editor
         .document
         .project
@@ -915,13 +910,10 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
             path: "test-camera.ARW".into(),
             development: crate::project::SourceDevelopment {
                 decode: Development::new(crate::raw::version(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [0, 0, 900, 600],
                 camera_model: "test-camera".into(),
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: floor,
             },
             reference_only: false,
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -992,7 +984,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         (calibration::set_gamma_balance(
             &mut editor,
             Balance {
-                warmth: 1.,
+                warmth: 1.1,
                 tint: 1.,
             }
         ))
@@ -1131,7 +1123,6 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         crate::gpu::source::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
     )
     .unwrap();
-    let floor = editor.floor();
     let development = editor
         .document
         .project
@@ -1143,14 +1134,14 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         id: SourceId(0),
         path: "current.ARW".into(),
         development: crate::project::SourceDevelopment {
-            decode: development.clone(),
-            lens_correction: None,
-            dng_development: None,
+            decode: Development {
+                white_balance: [1.; 4],
+                ..development.clone()
+            },
             dimensions: [900, 600],
             active_area: [12, 7, 864, 576],
             camera_model: "test-camera".into(),
             camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            input_floor: floor,
         },
         reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -2623,13 +2614,10 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                     path: path.into(),
                     development: crate::project::SourceDevelopment {
                         decode: Development::new(crate::raw::version(), [1.; 4]),
-                        lens_correction: None,
-                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -3288,7 +3276,6 @@ fn digital_can_be_selected_after_an_empty_negative_import_failure() {
     let negative = InputSettings::Negative {
         dmin: None,
         dmax: None,
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         response: crate::processing::Response::film(),
         gamma: crate::processing::DEFAULT_GAMMA,
         balance: Balance::default(),

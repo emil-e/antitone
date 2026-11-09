@@ -43,19 +43,9 @@ impl FrameInput {
 pub fn prepare_spatial(
     mut frames: Vec<FrameInput>,
     development: Development,
-    code_scale: f64,
     checkpoint: impl Fn() -> Result<(), String>,
 ) -> Result<Metadata, String> {
     development.validate().map_err(|e| e.to_string())?;
-    if !code_scale.is_finite() || code_scale < 1. {
-        return Err("invalid spatial camera-code scale".into());
-    }
-    if frames
-        .iter()
-        .any(|frame| frame.input.code_scale != code_scale)
-    {
-        return Err("spatial camera-code input basis differs".into());
-    }
     frames.sort_by_key(|frame| frame.input.source.0);
     if frames
         .windows(2)
@@ -93,7 +83,6 @@ pub fn prepare_spatial(
             &evidence,
             inputs,
             development.clone(),
-            code_scale,
             &checkpoint,
         )?);
     }

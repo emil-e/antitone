@@ -27,7 +27,6 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
                 .development
                 .decode
                 .clone(),
-            code_scale: sources[0].input.code_scale,
             common_size: CommonSize::fit(&sources),
             sources,
         }],
@@ -126,9 +125,12 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             .unwrap();
             let sites = statistical_sites(&scan);
             assert_eq!(sites.len(), 8190);
-            assert!(sites.iter().all(
-                |&[x, y]| scan.pixel(x, y).unwrap().min_element() > scan.source().input_floor()
-            ));
+            assert!(
+                sites
+                    .iter()
+                    .all(|&[x, y]| scan.pixel(x, y).unwrap().min_element()
+                        > scan.source().precision_floor())
+            );
             let mut expected_film = vec![];
             let mut expected_picture = vec![];
             let mut nominal_picture = 0;

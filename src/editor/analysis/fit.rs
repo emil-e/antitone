@@ -85,8 +85,11 @@ impl Fit {
         let project = &self.request.document.project;
         let id = project.order[index];
         let path = self.request.document.source_path(id)?;
-        let actual =
-            document::source_metadata(&path, &scan.source().metadata(), scan.source().fixed_wb())?;
+        let actual = document::source_metadata(
+            &path,
+            &scan.source().metadata(),
+            scan.source().white_balance(),
+        )?;
         document::verify_source(project.source(id)?, &actual)?;
         document::verify_scan(&actual, scan)?;
         Ok(actual)
@@ -131,9 +134,6 @@ impl Fit {
             .document
             .project
             .require_scan_source(&actual.development)?;
-        if let Some(correction) = &self.correction {
-            correction.settings.require_source(&actual.development)?;
-        }
         Ok(crate::scan::AnalysisInput::capture(scan, cancelled)?.map(Arc::new))
     }
 
@@ -167,6 +167,9 @@ impl Fit {
         if cancelled() {
             return Ok(false);
         }
+        let project = &self.request.document.project;
+        let record = project.source(project.order[index])?;
+        project.require_scan_source(&record.development)?;
         let active = input.area();
         if active
             != self
@@ -380,17 +383,11 @@ impl Fit {
                 return Ok(None);
             }
             let record = project.source(*id)?;
-            let continuous = record.development.lens_correction.is_some();
-            crate::gpu::parameters::CameraMatrix::require_source(self.matrix, continuous)?;
+            crate::gpu::parameters::CameraMatrix::require_source(self.matrix, true)?;
             if let Some(correction) = &self.correction {
-                correction.gpu.validate_matrix(
-                    self.matrix,
-                    if continuous {
-                        crate::processing::MAX_SOURCE_GAIN
-                    } else {
-                        1.
-                    },
-                )?;
+                correction
+                    .gpu
+                    .validate_matrix(self.matrix, crate::processing::MAX_SOURCE_GAIN)?;
                 crate::gpu::source::SourceGeometry::new(record.development.active_area, [1, 1])?;
             }
         }

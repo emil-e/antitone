@@ -18,7 +18,6 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
     let input = InputSettings::Negative {
         dmin: Some(DVec3::splat(0.8)),
         dmax: Some(DVec3::splat(0.02)),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         response: Response::film(),
         gamma: 0.75,
         balance: Default::default(),
@@ -228,7 +227,6 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
         calibration: Calibration {
             dmin: DVec3::new(0.7, 0.6, 0.5),
             dmax: DVec3::new(0.1, 0.08, 0.06),
-            input_floor: 1e-4,
         },
         gamma: 1.,
         balance: Balance::default(),
@@ -374,7 +372,6 @@ fn encoded_readouts_stop_at_the_requested_boundary_and_reject_unproven_scaling_c
     let negative = InputSettings::negative(Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
-        input_floor: 1e-4,
     });
     let program = InputTransform::new(negative, DMat3::IDENTITY).unwrap();
     let encoding = RollSettings {

@@ -46,11 +46,7 @@ fn cost_and_retirement(with_underlay: bool) {
                 .unwrap(),
             )
         });
-        scan.set_flat_field(field.clone()).unwrap();
-        let cal = field
-            .as_ref()
-            .map_or(Ok(cal), |f| f.processing_calibration(cal))
-            .unwrap();
+        scan.set_flat_field(field.clone());
         let gpu_field = field
             .as_ref()
             .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));

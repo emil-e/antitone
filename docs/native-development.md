@@ -39,7 +39,7 @@ The accepted OpenMP runtime must remain available at `.cache/native-deps/openmp-
 
 ## Repeated editor switching and busy input
 
-[`editor_switching_observation.rs`](../native/editor_switching_observation.rs) exercises production source-card input, backend/thumbnail workers and offscreen GPU callbacks. It keeps two 8704×6144 sources (`DSC04378.ARW`, `DSC04393.ARW`; WB header `DSC04397.ARW`) under 1100 MiB CPU/16 MiB GPU optional limits, with fresh temporary thumbnails. Two rapid pending replacements precede 17 accepted physical views. Native/backend workers drain before observation ends. It does not launch a window, edit samples or persist preferences.
+[`editor_switching_observation.rs`](../native/editor_switching_observation.rs) exercises production source-card input, backend/thumbnail workers and offscreen GPU callbacks. It keeps two 8704×6144 sources (`DSC04378.ARW`, `DSC04393.ARW`) under 1100 MiB CPU/16 MiB GPU optional limits, with fresh temporary thumbnails. Two rapid pending replacements precede 17 accepted physical views. Native/backend workers drain before observation ends. It does not launch a window, edit samples or persist preferences.
 
 ```sh
 ANTITONE_SWITCH_SAMPLES=/absolute/path/to/samples \

@@ -13,7 +13,6 @@ fn fixture() -> Project {
         input: InputSettings::Negative {
             dmin: Some(DVec3::splat(0.2)),
             dmax: Some(DVec3::splat(0.001)),
-            input_floor: 1. / 65535.,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Default::default(),
@@ -25,13 +24,10 @@ fn fixture() -> Project {
         path: "photo.ARW".into(),
         development: SourceDevelopment {
             decode: Development::new("test-backend".into(), [1.; 4]),
-            lens_correction: None,
-            dng_development: None,
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
             camera_model: "test-camera".into(),
             camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
-            input_floor: 1. / 65535.,
         },
         reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -68,9 +64,6 @@ fn flat_field_use_does_not_require_matching_libraw_release_provenance() {
     let original_map = project.flat_field().unwrap().clone();
     project.sources[0].development.decode.backend_version = "another LibRaw release".into();
     project.validate().unwrap();
-    original_map
-        .require_source(&project.sources[0].development)
-        .unwrap();
     assert_eq!(project.flat_field().unwrap(), &original_map);
 }
 
@@ -78,6 +71,7 @@ fn flat_field_use_does_not_require_matching_libraw_release_provenance() {
 fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() {
     let mut project = fixture();
     let correction = project.flat_field().cloned();
+    let calibration = project.calibration().unwrap();
     project.orientation.turn_clockwise();
     project.orientation.horizontal = true;
     project.sources[0].orientation.turn_counterclockwise();
@@ -94,26 +88,13 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
     let reopened = Project::load(&path).unwrap();
     assert_eq!(reopened, project);
     assert_eq!(reopened.flat_field(), correction.as_ref());
-    assert_eq!(
-        reopened.calibration().unwrap(),
-        project.calibration().unwrap()
-    );
-    assert!(
-        reopened
-            .processing_calibration()
-            .unwrap()
-            .unwrap()
-            .input_floor
-            > project.calibration().unwrap().unwrap().input_floor
-    );
+    assert_eq!(reopened.calibration().unwrap(), calibration);
     let mut disabled = project.clone();
     disabled.flat_field_mut().unwrap().enabled = false;
-    assert_eq!(
-        disabled.processing_calibration().unwrap(),
-        disabled.calibration().unwrap()
-    );
+    assert_eq!(disabled.calibration().unwrap(), calibration);
     let mut plain = project;
     plain.set_flat_field(None);
+    assert_eq!(plain.calibration().unwrap(), calibration);
     let json = serde_json::to_string(&plain).unwrap();
     assert!(!json.contains("flat_field"));
     assert_eq!(serde_json::from_str::<Project>(&json).unwrap(), plain);
@@ -123,13 +104,10 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
 fn contract_identity_geometry_and_incompatible_sources_reject() {
     let project = fixture();
     let mut changed = project.clone();
-    changed.flat_field_mut().unwrap().contract = "unknown".into();
-    assert!(changed.validate().is_err());
-    changed = project.clone();
     changed.flat_field_mut().unwrap().reference = SourceId(999);
     assert!(changed.validate().is_err());
     changed = project.clone();
-    changed.sources[0].development.decode.fixed_wb[0] += 0.1;
+    changed.sources[0].development.decode.white_balance[0] = 2.;
     assert!(changed.validate().is_err());
     changed = project.clone();
     changed.sources[0].development.camera_to_ap1[0][0] += 0.1;
@@ -137,14 +115,13 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     changed = project.clone();
     changed.flat_field_mut().unwrap().map =
         Arc::new(FlatField::from_nodes([0, 0, 10, 10], [2, 2], vec![DVec3::ONE; 4]).unwrap());
-    assert!(changed.validate().is_err());
+    changed.validate().unwrap();
     changed = project.clone();
     let mut other = changed.sources[0].clone();
     other.development.dimensions = [1024, 824];
     other.path = "other.ARW".into();
-    assert!(changed.add_source(other.clone()).is_err());
-    changed.flat_field_mut().unwrap().enabled = false;
     changed.add_source(other).unwrap();
+    changed.flat_field_mut().unwrap().enabled = false;
     changed.validate().unwrap();
     let mut json = serde_json::to_value(&project).unwrap();
     json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
@@ -152,11 +129,11 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
 }
 
 #[test]
-fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_base() {
-    use antitone::processing::{CAMERA_INPUT_FLOOR, Calibration, Inversion, Response};
+fn dense_calibration_remains_usable_with_or_without_correction() {
+    use antitone::processing::{CAMERA_INPUT_FLOOR, Inversion, Response};
 
     let directory = tempfile::tempdir().unwrap();
-    for (index, (source_gain, flat_gain)) in [
+    for (index, (anchor_scale, flat_gain)) in [
         (2. * std::f64::consts::SQRT_2, 1.),
         (1., 2. * std::f64::consts::SQRT_2),
         (2. * std::f64::consts::SQRT_2, 1.1),
@@ -166,8 +143,6 @@ fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_b
     {
         let mut project = fixture();
         project.set_flat_field(None);
-        project.sources[0].development.input_floor = CAMERA_INPUT_FLOOR * source_gain;
-        project.sources[0].development.lens_correction = (source_gain > 1.).then(|| "1".repeat(64));
         if flat_gain > 1. {
             let map = Arc::new(
                 FlatField::from_nodes([30, 30, 760, 550], [2, 2], vec![DVec3::splat(flat_gain); 4])
@@ -176,7 +151,7 @@ fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_b
             project.set_flat_field(Some(FlatFieldSettings::new(&project.sources[0], map)));
         }
 
-        let floor = CAMERA_INPUT_FLOOR * source_gain * flat_gain;
+        let floor = CAMERA_INPUT_FLOOR * anchor_scale * flat_gain;
         if let InputSettings::Negative {
             dmin,
             dmax,
@@ -195,13 +170,14 @@ fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_b
         }
         let negative = project.input.negative_input().unwrap();
         let native = negative.calibration;
-        // The shoulder pole is below the usable developed domain, but above the native floor.
-        assert!(Inversion::new(negative).is_err());
+        // Dense anchors remain usable without tying the curve domain to correction strength.
+        let expected = Inversion::new(negative)
+            .unwrap()
+            .apply(DVec3::ZERO)
+            .unwrap();
+        assert!(expected.rgb.is_finite() && expected.rgb.min_element() > 1.);
         Inversion::new(NegativeInput {
-            calibration: Calibration {
-                input_floor: floor,
-                ..native
-            },
+            calibration: native,
             ..negative
         })
         .unwrap();
@@ -214,19 +190,20 @@ fn inversion_domain_uses_each_developed_floor_and_residual_gain_not_the_native_b
         if flat_gain == 1. {
             let mut native_source = project.sources[0].clone();
             native_source.path = "native.ARW".into();
-            native_source.development.lens_correction = None;
-            native_source.development.input_floor = CAMERA_INPUT_FLOOR;
             let mut mixed = project.clone();
             mixed.add_source(native_source).unwrap();
-            assert!(
-                mixed.validate().is_err(),
-                "every source needs a valid inversion domain"
-            );
+            mixed.validate().unwrap();
+            assert_eq!(mixed.input, project.input);
             project.sources.clear();
             project.order.clear();
-            assert!(
-                project.validate().is_err(),
-                "source-less calibration retains the base domain"
+            project.scan = None;
+            project.validate().unwrap();
+            assert_eq!(
+                Inversion::new(project.input.negative_input().unwrap())
+                    .unwrap()
+                    .apply(DVec3::ZERO)
+                    .unwrap(),
+                expected
             );
         }
     }
@@ -254,7 +231,6 @@ fn digital_retains_dormant_scan_correction_without_applying_or_enforcing_it() {
     let mut other = project.sources[0].clone();
     other.path = "other-camera.ARW".into();
     other.development.camera_model = "another camera".into();
-    other.development.decode.fixed_wb = [1.; 4];
     let other_id = project.add_source(other).unwrap();
     project.validate().unwrap();
     assert!(
@@ -285,8 +261,9 @@ fn digital_retains_dormant_scan_correction_without_applying_or_enforcing_it() {
 }
 
 #[test]
-fn scan_reentry_checks_dormant_correction_geometry_before_activation() {
+fn scan_reentry_can_use_the_saved_map_with_changed_developed_dimensions() {
     let mut project = fixture();
+    let negative = project.input;
     project.input = InputSettings::Digital;
     let mut other = project.sources[0].clone();
     other.path = "larger-same-camera.ARW".into();
@@ -297,13 +274,10 @@ fn scan_reentry_checks_dormant_correction_geometry_before_activation() {
     );
     project.add_source(other).unwrap();
     project.validate().unwrap();
-    assert!(
-        project
-            .require_scan_sources()
-            .unwrap_err()
-            .to_string()
-            .contains("flat-field")
-    );
+    assert!(project.active_flat_field().is_none());
+    project.input = negative;
+    project.validate().unwrap();
+    assert!(project.active_flat_field().is_some());
     project.flat_field_mut().unwrap().enabled = false;
     project.require_scan_sources().unwrap();
 }

@@ -4,8 +4,7 @@ use crate::{
     Error,
     color::wb_matrix,
     processing::{
-        InputSettings, NegativeInput, RollSettings, exposure_multiplier, log_abs_expm1,
-        validate_camera_matrix,
+        InputSettings, NegativeInput, RollSettings, exposure_multiplier, validate_camera_matrix,
     },
 };
 use bytemuck::Zeroable;
@@ -14,11 +13,12 @@ use glam::{DMat3, DVec3, Vec4};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessingParameters {
-    pub(crate) dmin_floor: Vec4,
+    pub(crate) dmin: Vec4,
     pub(crate) gamma_mode: Vec4,
     pub(crate) anchor: Vec4,
     pub(crate) post: [Vec4; 3],
     pub(crate) shape: Vec4,
+    pub(crate) tail: [Vec4; 3],
     /// Named input stage for the shader; `STAGE_SOURCE` also means "not graded".
     pub(crate) stage: u32,
     _stage_padding: [u32; 3],
@@ -31,8 +31,8 @@ pub(crate) const STAGE_DIGITAL: u32 = 2;
 // A common ACES source-display convention, not a camera exposure calibration or JPEG fit.
 const SOURCE_PREVIEW_EXPOSURE: f64 = 1.0;
 
-pub(crate) fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
-    let headroom = fixed_wb.and_then(|wb| {
+pub(crate) fn source_preview_gain(white_balance: Option<[f64; 4]>) -> f64 {
+    let headroom = white_balance.and_then(|wb| {
         let gain = crate::processing::libraw_green_scale(wb).ok()?;
         // Bound preview gain for pathological development WB.
         (gain.is_finite() && gain <= crate::processing::MAX_EXPOSURE.exp2()).then_some(gain)
@@ -63,10 +63,11 @@ impl ProcessingParameters {
 
     pub fn source() -> Self {
         Self {
-            dmin_floor: Vec4::ZERO,
+            dmin: Vec4::ZERO,
             gamma_mode: Vec4::ZERO,
             anchor: Vec4::ZERO,
             post: matrix_columns(DMat3::IDENTITY),
+            tail: [Vec4::ZERO; 3],
             ..Self::zeroed()
         }
     }
@@ -74,16 +75,16 @@ impl ProcessingParameters {
     /// Display-only source convention; inspection EV is relative to the preview baseline.
     /// Pass WB only for LibRaw samples still on its max-normalized scale.
     /// `DevelopedSource` and SDK samples use `None`.
-    pub fn source_preview(fixed_wb: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
-        Self::source_preview_with_transform(fixed_wb, exposure, DMat3::IDENTITY)
+    pub fn source_preview(white_balance: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
+        Self::source_preview_with_transform(white_balance, exposure, DMat3::IDENTITY)
     }
 
     pub(crate) fn source_preview_with_transform(
-        fixed_wb: Option<[f64; 4]>,
+        white_balance: Option<[f64; 4]>,
         exposure: f64,
         transform: DMat3,
     ) -> Result<Self, Error> {
-        let gain = source_preview_gain(fixed_wb) * exposure_multiplier(exposure)?;
+        let gain = source_preview_gain(white_balance) * exposure_multiplier(exposure)?;
         Self::source_with_matrix(transform * gain)
     }
 
@@ -131,41 +132,17 @@ impl ProcessingParameters {
         let gain = exposure_multiplier(roll.exposure)?;
         let matrix = wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
-        let reference =
-            packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
+        let reference = packed_constants(negative.calibration.dmin, 0.)?;
         let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
-        let anchor = packed_constants(response.anchor_exponents.map(log_abs_expm1), gain.ln())?;
-        let mut packed_floor_bound = DVec3::ZERO;
-        for c in 0..3 {
-            let density = (reference[c] / reference.w).ln();
-            let denominator = gamma[c] - shoulder as f32 * density / std::f32::consts::LN_10;
-            if !denominator.is_finite() || denominator <= 0. {
-                return Err(Error::Gpu(
-                    "film response has a pole in its f32 sample domain".into(),
-                ));
-            }
-            // Scalar bounds alone can miss overflow/underflow after packing near a pole.
-            // Match the shader's ordinary-f32 floor evaluation, including folded exposure.
-            let a = toe as f32 * density / denominator;
-            let numerator = if a > 50. {
-                a
-            } else {
-                (a.exp() - 1.).abs().ln()
-            };
-            let value = ((numerator - anchor[c]) / toe as f32 + anchor.w).exp();
-            if !value.is_finite() || value < f32::MIN_POSITIVE {
-                return Err(Error::Gpu(
-                    "film response exceeds the f32 range at the packed sample floor".into(),
-                ));
-            }
-            packed_floor_bound[c] = f64::from(value);
+        let anchor = packed_constants(response.anchor_logs, gain.ln())?;
+        let mut tail = [Vec4::ZERO; 3];
+        for (output, &[density, value, slope]) in tail.iter_mut().zip(&response.tail) {
+            *output = packed_constants(DVec3::new(density, value * gain, slope * gain), 0.)?;
         }
-        let floor_bound = response.floor_bound()?;
+        let zero_light_bound = response.zero_light_bound()?;
         // Above-base continuation is bounded by |expm1(a)| <= 1 for a <= 0.
-        let negative_bound = response
-            .anchor_exponents
-            .map(|a| (-log_abs_expm1(a) / toe).exp());
-        let largest = (floor_bound.max(negative_bound) * gain).max(packed_floor_bound);
+        let negative_bound = response.anchor_logs.map(|a| (-a / toe).exp());
+        let largest = zero_light_bound.max(negative_bound) * gain;
         let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
             + camera_to_ap1.y_axis.abs() * largest.y
             + camera_to_ap1.z_axis.abs() * largest.z)
@@ -187,16 +164,18 @@ impl ProcessingParameters {
         }
         let post = CameraMatrix::new(matrix)?;
         let result = Self {
-            dmin_floor: reference,
+            dmin: reference,
             gamma_mode: gamma,
             shape: Vec4::new(toe as f32, shoulder as f32, 0., 0.),
+            tail,
             anchor,
             post: post.columns,
             stage: STAGE_NEGATIVE,
             _stage_padding: [0; 3],
         };
-        if !result.dmin_floor.is_finite()
-            || result.dmin_floor.w < f32::MIN_POSITIVE
+        // GPU arithmetic may flush subnormal references to zero before division/logarithms.
+        if !result.dmin.is_finite()
+            || result.dmin.truncate().min_element() < f32::MIN_POSITIVE
             || !result.gamma_mode.is_finite()
             || !result.anchor.is_finite()
             || result.post.iter().any(|v| !v.is_finite())

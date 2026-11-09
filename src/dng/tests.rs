@@ -10,7 +10,7 @@ mod execution;
 fn options() -> Options {
     Options {
         max_pixels: 4096,
-        fixed_wb: Some([1.; 3]),
+        white_balance: Some([1.; 3]),
     }
 }
 
@@ -41,7 +41,7 @@ fn completed_camera_source_retains_crop_orientation_and_fixed_wb() {
     let source = Source::develop(
         file.path(),
         Options {
-            fixed_wb: None,
+            white_balance: None,
             ..options()
         },
         &Cancellation::default(),
@@ -53,7 +53,7 @@ fn completed_camera_source_retains_crop_orientation_and_fixed_wb() {
     assert_eq!(source.default_crop(), [3, 5, 48, 46]);
     assert_eq!(source.tiff_orientation(), 6);
     assert_eq!(source.capture_limits(), [64., 4160.]);
-    assert_eq!(source.fixed_wb(), [2., 1., 1.5]);
+    assert_eq!(source.white_balance(), [2., 1., 1.5]);
     assert_eq!(pixel(&source, 20, 20), [0.5, 0.375, 0.75]);
     assert!(source.retained_bytes() >= (56 * 56 * 12) as u64);
     // A camera-neutral sample becomes balanced ones, then XYZ D50 without a second WB.
@@ -100,7 +100,7 @@ fn gain_order_keeps_each_sdk_clip_and_wb_is_after_opcodes_without_another_clip()
     let source = Source::develop(
         file.path(),
         Options {
-            fixed_wb: Some([2., 1., 1.5]),
+            white_balance: Some([2., 1., 1.5]),
             ..options()
         },
         &Cancellation::default(),
@@ -252,8 +252,8 @@ fn precision_floor_covers_integer_gain_rounding_before_float_linearization() {
     let file = fixture.write();
     let header = Header::read(file.path(), options(), &Cancellation::default()).unwrap();
     let source = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
-    assert_eq!(header.input_floor, 2. / 4096.);
-    assert_eq!(source.input_floor(), header.input_floor);
+    assert_eq!(header.precision_floor, 2. / 4096.);
+    assert_eq!(source.precision_floor(), header.precision_floor);
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn header_inspection_matches_development_without_reading_sensor_payload() {
     let source = Source::develop(file.path(), options(), &cancel).unwrap();
     assert_eq!(header.interpretation_id, source.interpretation_id());
     assert_eq!(header.camera_to_xyz_d50, source.camera_to_xyz_d50());
-    assert_eq!(header.input_floor, 4. / 4096.);
+    assert_eq!(header.precision_floor, 4. / 4096.);
     let mut bytes = std::fs::read(file.path()).unwrap();
     bytes.truncate(bytes.len() - 64 * 64 * 2);
     std::fs::write(file.path(), bytes).unwrap();
@@ -340,15 +340,15 @@ fn admission_rejects_unproved_sensor_domains_and_invalid_options() {
             ..options()
         },
         Options {
-            fixed_wb: Some([0., 1., 1.]),
+            white_balance: Some([0., 1., 1.]),
             ..options()
         },
         Options {
-            fixed_wb: Some([f64::NAN, 1., 1.]),
+            white_balance: Some([f64::NAN, 1., 1.]),
             ..options()
         },
         Options {
-            fixed_wb: Some([257., 1., 1.]),
+            white_balance: Some([257., 1., 1.]),
             ..options()
         },
     ] {

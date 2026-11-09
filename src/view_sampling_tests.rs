@@ -50,7 +50,7 @@ impl Source {
             ],
         )
         .unwrap();
-        self.calibration = field.processing_calibration(self.calibration).unwrap();
+        self.calibration = (self.calibration).validate().unwrap();
         let points: Vec<_> = self.pixels().collect();
         for (camera, point) in self.camera.iter_mut().zip(points) {
             *camera *= field.gain(point.map(|v| f64::from(v) + 0.5)).unwrap();
@@ -69,7 +69,6 @@ fn synthetic(kind: &str) -> Source {
     let calibration = Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
         dmax: DVec3::new(0.008, 0.004, 0.002),
-        input_floor: 1. / 65535.,
     };
     let mut camera = Vec::new();
     for y in 0..area.height {

@@ -5,7 +5,7 @@ use antitone::adjustment_layers::AdjustmentLayerSettings;
 use glam::{DMat3, DVec3};
 use {
     crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource},
-    antitone::processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
+    antitone::processing::{Calibration, RollSettings},
 };
 
 #[path = "../../../tests/support/gpu_headroom.rs"]
@@ -104,7 +104,6 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         let calibration = Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.01),
-            input_floor: CAMERA_INPUT_FLOOR,
         };
         let roll = RollSettings::default();
         let photo = AdjustmentLayerSettings {
@@ -256,7 +255,6 @@ fn integer_values_preserve_output_bits_in_native_and_continuous_transport() {
         let calibration = Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.01),
-            input_floor: CAMERA_INPUT_FLOOR,
         };
         let parameters =
             ProcessingParameters::positive(calibration, RollSettings::default(), DMat3::IDENTITY)

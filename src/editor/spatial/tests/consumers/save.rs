@@ -59,8 +59,11 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                 assert!(editor.document.state.project.analysis_regions.is_empty());
                 assert!(!editor.document.dirty());
             });
-            let (_, saved) = Project::load_with_spatial_metadata(&path).unwrap();
-            assert!(saved.groups.is_empty());
+            let saved = Project::load(&path).unwrap();
+            assert!(saved.sources.iter().all(|source| source.crop.is_none()));
+            let json: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert!(json.get("spatial_metadata").is_none());
         });
         scheduler.close_and_wait().unwrap();
     }

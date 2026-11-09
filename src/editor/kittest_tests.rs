@@ -980,9 +980,8 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
     });
 }
 
-fn scan_setup(path: &std::path::Path, fixed_wb: [f64; 4]) -> crate::project::ScanSetup {
-    let source = document::read_source(path, Some(fixed_wb)).unwrap();
-    assert_eq!(source.development.decode.fixed_wb, fixed_wb);
+fn scan_setup(path: &std::path::Path, white_balance: [f64; 4]) -> crate::project::ScanSetup {
+    let source = document::read_source(path, Some(white_balance)).unwrap();
     crate::project::ScanSetup {
         basis: crate::project::ScanBasis::new(&source),
         flat_field: None,
@@ -1074,7 +1073,6 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
             .expect("fixture save destination")
     });
     let project = harness.read(|editor| editor.document.state.project.clone());
-    let metadata = harness.read(|editor| editor.document.capture().ready_spatial_metadata());
     let request = harness.read(|editor| editor.next_request);
     native_file_action(harness, crate::platform::menu::Action::Save);
     harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
@@ -1083,9 +1081,9 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
     });
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
     harness.read(|editor| assert_eq!(editor.document.state.project, project));
-    let (accepted, regions) = crate::project::Project::load_with_spatial_metadata(&path).unwrap();
-    assert_eq!(accepted, project);
-    assert_eq!(regions, metadata);
+    assert_eq!(crate::project::Project::load(&path).unwrap(), project);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(json.get("spatial_metadata").is_none());
 }
 
 // Supply the native chooser's result; exercise the real transition guard and worker.

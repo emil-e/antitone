@@ -65,36 +65,7 @@ impl Editor {
         camera_to_ap1: glam::DMat3,
     ) -> Result<ProcessingParameters, Error> {
         let input = input.into();
-        let input = match input.calibration() {
-            Some(base) => input.with_calibration(self.processing_calibration(base)?),
-            None => input,
-        };
         ProcessingParameters::interpret(input, roll, camera_to_ap1)
-    }
-
-    pub(super) fn processing_calibration(
-        &self,
-        calibration: Calibration,
-    ) -> Result<Calibration, Error> {
-        let source_floor = self
-            .document
-            .visit
-            .current_source
-            .map(|id| {
-                self.document
-                    .state
-                    .project
-                    .source(id)
-                    .map(|s| s.development.input_floor)
-            })
-            .transpose()?
-            .unwrap_or(crate::processing::CAMERA_INPUT_FLOOR);
-        let residual_gain = self
-            .document
-            .correction
-            .as_ref()
-            .map_or(1., |c| c.maximum_gain);
-        calibration.for_source(source_floor, residual_gain)
     }
 
     pub(super) fn neutral_source_signature(
@@ -114,7 +85,7 @@ impl Editor {
                 .correction
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
-        )?;
+        );
         crate::gpu::interpretation::InputTransform::for_scan(&scan, *input)
     }
 
@@ -134,10 +105,7 @@ impl Editor {
         ) else {
             return Ok(());
         };
-        let input = match input.calibration() {
-            Some(base) => input.with_calibration(self.processing_calibration(base)?),
-            None => *input,
-        };
+        let input = *input;
         crate::gpu::photograph::admission::prepare(
             &device.limits(),
             input,
@@ -160,19 +128,7 @@ impl Editor {
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
-        let base_input = self.input();
-        let mut input = base_input;
-        if let Some(base) = input.calibration() {
-            input = input.with_calibration(
-                source.development.processing_calibration(
-                    base,
-                    self.document
-                        .correction
-                        .as_ref()
-                        .map(|c| c.settings.map.as_ref()),
-                )?,
-            );
-        }
+        let input = self.input();
         validate_source_with_matrix(
             self.document.visit.working_view.device(),
             input,
@@ -182,7 +138,7 @@ impl Editor {
         )?;
         if self.document.visit.current_source == Some(source.id) {
             self.dust_validate_snapshot(
-                base_input,
+                input,
                 self.document.project_snapshot().roll,
                 &source.grade_snapshot()?,
             )?;
@@ -285,18 +241,7 @@ impl Editor {
         for source in &self.document.state.project.sources {
             let mut candidate = source.clone();
             self.overlay_adjustment_layer_settings(&mut candidate, photo);
-            let source_input = match input.calibration() {
-                Some(base) => input.with_calibration(
-                    source.development.processing_calibration(
-                        base,
-                        self.document
-                            .correction
-                            .as_ref()
-                            .map(|c| c.settings.map.as_ref()),
-                    )?,
-                ),
-                None => input,
-            };
+            let source_input = input;
             validate_source_with_matrix(
                 self.document.visit.working_view.device(),
                 source_input,

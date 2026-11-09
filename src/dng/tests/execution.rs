@@ -18,7 +18,7 @@ fn large_fixture() -> Fixture {
 fn large_options() -> Options {
     Options {
         max_pixels: 2_000_000,
-        fixed_wb: Some([2., 1., 1.5]),
+        white_balance: Some([2., 1., 1.5]),
     }
 }
 

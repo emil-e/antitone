@@ -10,7 +10,6 @@ use std::{cell::RefCell, rc::Rc};
 pub(super) struct Correction {
     pub settings: FlatFieldSettings,
     pub gpu: Arc<GpuFlatField>,
-    pub(super) maximum_gain: f64,
 }
 
 impl Correction {
@@ -31,26 +30,15 @@ impl Correction {
         let gpu = Arc::new(GpuFlatField::new(device, settings.map.clone())?);
         for source in &document.project.sources {
             if document.project.order.contains(&source.id) {
-                settings.require_source(&source.development)?;
                 let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-                let continuous = source.development.lens_correction.is_some();
-                crate::gpu::parameters::CameraMatrix::require_source(matrix, continuous)?;
-                gpu.validate_matrix(
-                    matrix,
-                    if continuous {
-                        crate::processing::MAX_SOURCE_GAIN
-                    } else {
-                        1.
-                    },
-                )?;
+                crate::gpu::parameters::CameraMatrix::require_source(matrix, true)?;
+                gpu.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN)?;
                 SourceGeometry::new(source.development.active_area, [1, 1])?;
             }
         }
-        let maximum_gain = settings.map.bounds().1.max_element();
         Ok(Some(Arc::new(Self {
             settings: settings.clone(),
             gpu,
-            maximum_gain,
         })))
     }
 }
@@ -220,12 +208,11 @@ impl FlatTool {
             .and_then(|id| editor.document.state.project.source(id).ok())
             .cloned();
         // A retained record is either an ordered photo or the current flat-field reference;
-        // both belong to the current stage. Use its saved decode identity when present.
-        let wb = editor
-            .document
-            .state
-            .project
-            .acquisition_wb(expected.as_ref());
+        // Both belong to the current stage; reuse already-resolved header gains when available.
+        let wb = expected
+            .as_ref()
+            .and_then(|source| editor.document.source_wb(source.id))
+            .or_else(|| editor.document.project.acquisition_wb());
         let file = editor.document.file_key(&path);
         source::Request {
             reference: expected.as_ref().map_or_else(Arc::default, |source| {

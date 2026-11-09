@@ -45,21 +45,19 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
     let project = &editor.document.state.project;
     let calibration = project.calibration()?.ok_or("no installed calibration")?;
     let picture = rect(project.analysis_area.ok_or("no installed picture area")?);
-    let wb = project.development().ok_or("no development")?.fixed_wb;
+    let wb = project.acquisition_wb();
     let renderer = crate::rendering::CpuRenderer::new(OutputTarget::Srgb)?;
     let mut frames = Vec::new();
     for id in &project.order {
         let record = project.source(*id)?;
         let path = editor.document.source_path(*id)?;
-        let mut scan = Scan::open(&path, Some(wb))?;
+        let mut scan = Scan::open(&path, wb)?;
         document::verify_scan(record, &scan)?;
         if let Some(field) = project.active_flat_field() {
-            scan.set_flat_field(Some(field.map.clone()))?;
+            scan.set_flat_field(Some(field.map.clone()));
         }
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-            project
-                .input
-                .with_calibration(scan.processing_calibration(calibration)?),
+            project.input.with_calibration((calibration).validate()?),
             project.roll,
             record.grade_snapshot()?,
             scan.camera_to_ap1,

@@ -119,7 +119,7 @@ fn authored_dng_automatic_wb_uses_nonunity_as_shot_gains_without_rewriting_metad
     let automatic = Scan::open(&path, None).unwrap();
     let explicit = Scan::open(&path, Some(as_shot)).unwrap();
     let unity = Scan::open(&path, Some(WB)).unwrap();
-    assert_eq!(automatic.fixed_wb, as_shot);
+    assert_eq!(automatic.white_balance, as_shot);
     let automatic_pixels = automatic.preview_source(1024).unwrap();
     assert_eq!(automatic_pixels, explicit.preview_source(1024).unwrap());
     assert_ne!(automatic_pixels, unity.preview_source(1024).unwrap());
@@ -138,7 +138,7 @@ fn authored_dng_explicit_wb_overrides_as_shot_with_the_backend_sample_scale() {
     };
     let automatic = Scan::open(&path, None).unwrap();
     let custom_scan = Scan::open(&path, Some(custom)).unwrap();
-    assert_eq!(custom_scan.fixed_wb, custom);
+    assert_eq!(custom_scan.white_balance, custom);
     let direct = raw.develop_camera(custom).unwrap();
     for [x, y] in [[32, 32], [224, 32], [32, 96], [96, 96]] {
         assert_eq!(
@@ -254,7 +254,6 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
                 height: 32,
             })
             .unwrap(),
-        input_floor: scan.input_floor,
     }
     .validate()
     .unwrap();
@@ -292,7 +291,7 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
         for x in area.x..area.x + area.width {
             let camera = image.pixel(x, y).unwrap();
             for c in 0..3 {
-                below_floor[c] += u64::from(camera[c] < scan.input_floor);
+                below_floor[c] += u64::from(camera[c] < scan.precision_floor);
             }
             if (x - area.x).is_multiple_of(32) && (y - area.y).is_multiple_of(32) {
                 points.push((x, y, matrix * camera));
@@ -384,7 +383,6 @@ fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
                 height: 32,
             })
             .unwrap(),
-        input_floor: scan.input_floor,
     };
     let roll = antitone::processing::RollSettings::default();
     let input = InputSettings::negative(calibration);

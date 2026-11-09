@@ -67,7 +67,7 @@ impl AnalysisInput {
         }
         Ok((!cancelled()).then(|| Self {
             grid,
-            floor: scan.source.input_floor,
+            floor: scan.source.precision_floor,
             pixels: pixels.into_boxed_slice(),
         }))
     }
@@ -103,14 +103,7 @@ impl AnalysisInput {
 
     pub(crate) fn effective_floor(&self, field: Option<&FlatField>) -> Result<f64> {
         match field {
-            Some(field) => {
-                if !self.area().contains_region(Rect::from(field.area())) {
-                    return Err(Error::InvalidParameter(
-                        "view region is outside the active source area",
-                    ));
-                }
-                Ok(self.floor * field.bounds().1.max_element())
-            }
+            Some(field) => Ok(self.floor * field.bounds().1.max_element()),
             None => Ok(self.floor),
         }
     }

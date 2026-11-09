@@ -56,8 +56,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
             ],
         )
         .unwrap(),
-    )))
-    .unwrap();
+    )));
     scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
         crate::exposure_reference::StartingExposure {
             ev: 8.,
@@ -139,8 +138,7 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
             ],
         )
         .unwrap(),
-    )))
-    .unwrap();
+    )));
     let gate = SubmissionGate::default();
     let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);

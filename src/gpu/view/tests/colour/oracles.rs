@@ -133,11 +133,11 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let mut scan = scan();
         let area = scan.area;
         let correction = field(area);
-        scan.set_flat_field(Some(correction.clone())).unwrap();
+        scan.set_flat_field(Some(correction.clone()));
         let mut anchors = calibration();
         // A narrow density span makes the fixture's dark patches HDR, without clipping.
         anchors.dmax = anchors.dmin * 0.8;
-        let cal = correction.processing_calibration(anchors).unwrap();
+        let cal = (anchors).validate().unwrap();
         let input = crate::processing::NegativeInput {
             calibration: cal,
             gamma: 0.65,

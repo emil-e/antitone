@@ -64,7 +64,7 @@ impl Store {
         Ok(true)
     }
 
-    /// A save/consumer snapshot includes only ready, compatible results; it never awaits work.
+    /// A consumer snapshot includes only ready, compatible results; it never awaits work.
     pub fn snapshot(&self, project: &Project, current: &[Input]) -> Metadata {
         self.ready.matching(project, current)
     }

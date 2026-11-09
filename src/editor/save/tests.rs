@@ -296,14 +296,7 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     let accepted = document.project.clone();
     let source = document.project.order[0];
     let path = document.source_path(source).unwrap();
-    let wb = document
-        .project
-        .source(source)
-        .unwrap()
-        .development
-        .decode
-        .fixed_wb;
-    let scan = crate::scan::Scan::open(&path, Some(wb)).unwrap();
+    let scan = crate::scan::Scan::open(&path, document.project.acquisition_wb()).unwrap();
     let key = crate::source::SourceKey::capture(
         &path,
         &document.project.source(source).unwrap().development,

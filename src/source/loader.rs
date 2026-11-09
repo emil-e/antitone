@@ -523,7 +523,7 @@ impl SourceLoader {
         self.submit_request(
             Request {
                 path: key.path().to_owned(),
-                wb: Some(key.development().decode.fixed_wb),
+                wb: Some(key.development().decode.white_balance),
                 expected: None,
                 key: Some(key),
             },

@@ -21,7 +21,6 @@ fn film_exports_reopen_with_unchanged_target_and_ap0_pixels() {
     let cal = Calibration {
         dmin: DVec3::new(0.1685663501546697, 0.13359162596075455, 0.11715123642832656),
         dmax: DVec3::new(0.008061, 0.003409, 0.001442),
-        input_floor: 2.1630933622265155e-5,
     };
     let roll = RollSettings {
         exposure: 2.345678901,
@@ -30,7 +29,6 @@ fn film_exports_reopen_with_unchanged_target_and_ap0_pixels() {
     let input = InputSettings::Negative {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
-        input_floor: cal.input_floor,
         response,
         gamma: DEFAULT_GAMMA,
         balance: Balance::default(),

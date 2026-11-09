@@ -223,7 +223,7 @@ impl AuthoredPhotograph {
         limits: &wgpu::Limits,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
-        let input = recipe.neutral.processing_input()?;
+        let input = recipe.neutral.input;
         let matrix = input.positive_matrix(
             DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1),
             recipe
@@ -421,14 +421,11 @@ mod tests {
                 reference_only: false,
                 development: SourceDevelopment {
                     decode: Development::new("test".into(), [1.; 4]),
-                    lens_correction: None,
-                    dng_development: None,
                     dimensions: [624, 424],
                     active_area: [12, 12, 600, 400],
                     camera_model: "test".into(),
                     camera_to_ap1: DMat3::from_diagonal(DVec3::new(0.9, 1.1, 1.2))
                         .to_cols_array_2d(),
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 orientation: Default::default(),
                 crop: Some(crate::crop::Crop {
@@ -476,10 +473,7 @@ mod tests {
         );
         assert_ne!(recipe.roll, RollSettings::default());
         assert!(recipe.grade.layers().iter().any(|layer| layer.is_active()));
-        assert_eq!(
-            captured.input_transform().input,
-            recipe.neutral.processing_input().unwrap()
-        );
+        assert_eq!(captured.input_transform().input, recipe.neutral.input);
         assert_eq!(captured.grade().unwrap().roll, recipe.roll);
         assert_eq!(captured.snapshot(), &recipe.grade);
         let pipeline = captured.pixel_pipeline();

@@ -25,7 +25,7 @@ impl SourcePreview {
 }
 
 impl Metadata {
-    pub(crate) fn source_preview(&self, fixed_wb: [f64; 4]) -> SourcePreview {
+    pub(crate) fn source_preview(&self, white_balance: [f64; 4]) -> SourcePreview {
         let Ok(basis) = self.camera_to_ap1() else {
             return SourcePreview::default();
         };
@@ -40,7 +40,7 @@ impl Metadata {
                 as_shot: transform(header.as_shot_to_xyz_d50),
             };
         }
-        let transform = |desired| native_transform(basis, fixed_wb, desired);
+        let transform = |desired| native_transform(basis, white_balance, desired);
         SourcePreview {
             daylight: transform(self.daylight_mul),
             as_shot: transform(self.as_shot_wb()),

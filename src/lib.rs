@@ -149,7 +149,7 @@ mod spatial_observation;
 #[cfg(all(test, feature = "gpu"))]
 mod shader_validation_tests;
 
-pub const PROCESSING_MODEL_VERSION: u32 = 5;
+pub const PROCESSING_MODEL_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {

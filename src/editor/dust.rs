@@ -2857,7 +2857,6 @@ mod tests {
             input: Calibration {
                 dmin: DVec3::splat(0.5),
                 dmax: DVec3::splat(0.01),
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             }
             .into(),
         });

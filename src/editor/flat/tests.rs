@@ -8,13 +8,10 @@ fn record(path: &str) -> Source {
         path: path.into(),
         development: SourceDevelopment {
             decode: Development::new("test-backend".into(), [1.; 4]),
-            lens_correction: None,
-            dng_development: None,
             dimensions: [824, 624],
             active_area: [12, 12, 800, 600],
             camera_model: "test-camera".into(),
             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-            input_floor: 1. / 65535.,
         },
         reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -74,7 +71,6 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
     editor.document.source = false;
     editor.document.project.roll.exposure = 2.123456789;
     editor.set_dmin(Some(DVec3::splat(0.2)));
-    editor.set_floor(1. / 65535.);
     let original = editor.document.state.project.clone();
     let roll = editor.document.project.roll;
     with_application(editor, |app| {
@@ -173,7 +169,6 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
 #[test]
 fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     let mut editor = Editor::state();
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     super::super::tests::add_ready_fixture(&mut editor);
     editor.set_dmin(Some(DVec3::splat(0.2)));
     editor.set_dmax(Some(DVec3::splat(0.01)));

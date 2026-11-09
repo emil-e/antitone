@@ -480,7 +480,6 @@ fn locals_follow_unchanged_global_pipeline_and_preserve_floor_flags() {
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.02),
-        input_floor: 1. / 65535.,
     };
     let photo = AdjustmentLayerSettings {
         exposure: 1.,
@@ -748,7 +747,6 @@ fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::In
     antitone::processing::InputSettings::Negative {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
-        input_floor: cal.input_floor,
         response: antitone::processing::Response::film(),
         gamma: antitone::processing::DEFAULT_GAMMA,
         balance: antitone::color::Balance::default(),

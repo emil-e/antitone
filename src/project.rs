@@ -21,13 +21,10 @@ use std::{
 
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 18;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
-pub const DEVELOPMENT_CONTRACT: &str =
-    "libraw-camera-ahd-sony-shading-active-bilinear-f32-green-referenced-v5";
-pub const DNG_DEVELOPMENT_CONTRACT: &str = "adobe-dng-sdk-camera-post-op-wb-native-quantum-v2";
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 type Result<T> = std::result::Result<T, Error>;
 
@@ -50,84 +47,69 @@ pub struct SourceId(pub u64);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Development {
+    pub white_balance: [f64; 4],
+    pub backend: Developer,
     #[serde(default)]
     pub backend_version: String,
-    pub contract: String,
-    pub fixed_wb: [f64; 4],
-    pub inversion_space: String,
-    pub working_space: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Developer {
+    LibRaw,
+    DngSdk,
 }
 
 impl Development {
-    pub fn new(backend_version: String, fixed_wb: [f64; 4]) -> Self {
+    pub fn new(version: String, white_balance: [f64; 4]) -> Self {
         Self {
-            backend_version,
-            fixed_wb,
-            contract: DEVELOPMENT_CONTRACT.into(),
-            inversion_space: "native-camera-RGB".into(),
-            working_space: "AP1/D60".into(),
+            white_balance,
+            backend: Developer::LibRaw,
+            backend_version: version,
         }
     }
 
     #[cfg(feature = "dng-sdk")]
-    pub fn dng(fixed_wb: [f64; 4]) -> Self {
+    pub fn dng(white_balance: [f64; 4]) -> Self {
         Self {
+            white_balance,
+            backend: Developer::DngSdk,
             backend_version: crate::dng::INTERPRETATION.into(),
-            contract: DNG_DEVELOPMENT_CONTRACT.into(),
-            ..Self::new(String::new(), fixed_wb)
         }
+    }
+
+    pub fn uses_sdk(&self) -> bool {
+        matches!(self.backend, Developer::DngSdk)
+    }
+
+    pub fn version(&self) -> &str {
+        &self.backend_version
     }
 
     #[cfg(feature = "raw")]
-    pub fn for_source(source: &SourceDevelopment, wb: [f64; 4]) -> Self {
-        if source.dng_development.is_some() {
+    pub fn for_source(source: &SourceDevelopment) -> Self {
+        let mut development = source.decode.clone();
+        match development.backend {
+            Developer::LibRaw => development.backend_version = crate::raw::version(),
             #[cfg(feature = "dng-sdk")]
-            return Self::dng(wb);
+            Developer::DngSdk => development.backend_version = crate::dng::INTERPRETATION.into(),
             #[cfg(not(feature = "dng-sdk"))]
-            return Self {
-                contract: DNG_DEVELOPMENT_CONTRACT.into(),
-                ..Self::new("DNG SDK unavailable".into(), wb)
-            };
+            Developer::DngSdk => {}
         }
-        Self::new(crate::raw::version(), wb)
-    }
-
-    pub(crate) fn source_scale(&self) -> Result<f64> {
-        if self.contract == DEVELOPMENT_CONTRACT {
-            crate::processing::libraw_green_scale(self.fixed_wb)
-        } else {
-            Ok(1.)
-        }
+        development
     }
 
     fn same_processing(&self, other: &Self) -> bool {
-        self.contract == other.contract
-            && self.fixed_wb == other.fixed_wb
-            && self.inversion_space == other.inversion_space
-            && self.working_space == other.working_space
+        self.backend == other.backend && self.white_balance == other.white_balance
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
         require(
-            !self.contract.is_empty()
-                && !self.inversion_space.is_empty()
-                && !self.working_space.is_empty()
-                && self.fixed_wb.iter().all(|v| v.is_finite() && *v > 0.),
-            "invalid RAW development identity",
-        )?;
-        if self.contract == DNG_DEVELOPMENT_CONTRACT {
-            require(
-                self.fixed_wb[1] == self.fixed_wb[3]
-                    && self.fixed_wb[..3]
-                        .iter()
-                        .copied()
-                        .fold(f64::INFINITY, f64::min)
-                        == 1.
-                    && self.fixed_wb.iter().all(|v| *v <= 256.),
-                "SDK WB must use matching greens and the normalized supported camera basis",
-            )?;
-        }
-        Ok(())
+            self.white_balance
+                .iter()
+                .all(|gain| (*gain as f32).is_finite() && *gain as f32 > 0.),
+            "development white balance must be positive finite f32",
+        )
     }
 }
 
@@ -160,60 +142,42 @@ impl CameraBasis {
 pub struct SourceDevelopment {
     /// Which developer produced this source and how; acquisition is per source.
     pub decode: Development,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lens_correction: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dng_development: Option<String>,
     pub dimensions: [u32; 2],
     pub active_area: [u32; 4],
     pub camera_model: String,
     pub camera_to_ap1: [[f64; 3]; 3],
-    /// Developed-source precision, separate from project calibration's native base floor.
-    pub input_floor: f64,
 }
 
 impl SourceDevelopment {
-    /// Admission compares processing, not decoder release provenance; caches use full identity.
+    /// Captured processing arguments, excluding diagnostic version.
     pub fn same_processing(&self, other: &Self) -> bool {
         self.decode.same_processing(&other.decode)
-            && self.lens_correction == other.lens_correction
-            && self.dng_development == other.dng_development
             && self.dimensions == other.dimensions
             && self.active_area == other.active_area
             && self.camera_model == other.camera_model
             && self.camera_to_ap1 == other.camera_to_ap1
-            && self.input_floor == other.input_floor
     }
 
     /// Acquisitions and caches describe the decoder producing pixels now, not saved provenance.
     #[cfg(feature = "raw")]
     pub(crate) fn for_runtime(&self) -> Self {
         let mut source = self.clone();
-        if source.decode.contract == DEVELOPMENT_CONTRACT {
-            source.decode.backend_version = crate::raw::version();
-        }
-        #[cfg(feature = "dng-sdk")]
-        if source.decode.contract == DNG_DEVELOPMENT_CONTRACT {
-            source.decode.backend_version = crate::dng::INTERPRETATION.into();
-        }
+        source.decode = Development::for_source(self);
         source
     }
 
     #[cfg(feature = "raw")]
     pub(crate) fn from_metadata(
         metadata: &crate::raw::Metadata,
-        fixed_wb: [f64; 4],
+        white_balance: [f64; 4],
     ) -> Result<Self> {
         let area = metadata.image_area()?;
         Ok(Self {
-            decode: metadata.development(fixed_wb),
-            lens_correction: metadata.lens_identity()?,
-            dng_development: metadata.dng_identity(),
+            decode: metadata.development(white_balance),
             dimensions: metadata.source_dimensions()?,
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: metadata.camera_model(),
             camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
-            input_floor: metadata.source_input_floor(fixed_wb)?,
         })
     }
 
@@ -224,38 +188,9 @@ impl SourceDevelopment {
         }
     }
 
-    pub(crate) fn processing_calibration(
-        &self,
-        calibration: Calibration,
-        correction: Option<&crate::flat_field::FlatField>,
-    ) -> Result<Calibration> {
-        calibration.for_source(
-            self.input_floor,
-            correction.map_or(1., |field| field.bounds().1.max_element()),
-        )
-    }
-
     pub(crate) fn validate(&self) -> Result<()> {
         self.decode.validate()?;
         self.camera_basis().validate()?;
-        require(
-            self.lens_correction.as_ref().is_none_or(|identity| {
-                identity.len() == 64
-                    && identity
-                        .bytes()
-                        .all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase())
-            }),
-            "invalid source lens correction identity",
-        )?;
-        require(
-            self.dng_development.as_ref().is_none_or(|identity| {
-                identity.len() == 64
-                    && identity
-                        .bytes()
-                        .all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase())
-            }) && !(self.dng_development.is_some() && self.lens_correction.is_some()),
-            "invalid or ambiguous DNG development identity",
-        )?;
         require(
             self.dimensions.iter().all(|v| *v > 0)
                 && contains(
@@ -264,19 +199,7 @@ impl SourceDevelopment {
                 ),
             "invalid source dimensions/active area",
         )?;
-        require(
-            self.input_floor.is_finite()
-                && self.input_floor
-                    >= crate::processing::CAMERA_INPUT_FLOOR * self.decode.source_scale()?
-                && (crate::processing::CAMERA_INPUT_FLOOR
-                    ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
-                    .contains(&self.input_floor)
-                && (self.lens_correction.is_some()
-                    || self.dng_development.is_some()
-                    || self.input_floor
-                        == crate::processing::CAMERA_INPUT_FLOOR * self.decode.source_scale()?),
-            "source floor must match the supported native or lens-developed domain",
-        )
+        Ok(())
     }
 }
 
@@ -394,9 +317,6 @@ pub struct SourceAnalysis {
 #[serde(deny_unknown_fields)]
 pub struct ScanBasis {
     pub camera: CameraBasis,
-    pub contract: String,
-    pub inversion_space: String,
-    pub working_space: String,
 }
 
 impl ScanBasis {
@@ -407,13 +327,14 @@ impl ScanBasis {
     pub fn from_development(development: &SourceDevelopment) -> Self {
         Self {
             camera: development.camera_basis(),
-            contract: development.decode.contract.clone(),
-            inversion_space: development.decode.inversion_space.clone(),
-            working_space: development.decode.working_space.clone(),
         }
     }
 
     pub fn require_source(&self, source: &SourceDevelopment) -> Result<()> {
+        require(
+            source.decode.white_balance == UNITY_WB,
+            "Negative development requires unity WB",
+        )?;
         require(
             self == &Self::from_development(source),
             "sources do not share one scanning setup; use Digital for mixed sources",
@@ -421,13 +342,7 @@ impl ScanBasis {
     }
 
     fn validate(&self) -> Result<()> {
-        self.camera.validate()?;
-        require(
-            !self.contract.is_empty()
-                && !self.inversion_space.is_empty()
-                && !self.working_space.is_empty(),
-            "invalid RAW development basis",
-        )
+        self.camera.validate()
     }
 }
 
@@ -470,14 +385,6 @@ pub struct Project {
     pub analysis_area: Option<[u32; 4]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_regions: Vec<SourceAnalysis>,
-    /// Derived file payload. Runtime document owners detach this from accepted state with
-    /// `load_with_spatial_metadata`; snapshots save it separately without changing project equality.
-    #[serde(
-        default,
-        deserialize_with = "crate::spatial_metadata::read_cached",
-        skip_serializing_if = "crate::spatial_metadata::empty_or_invalid"
-    )]
-    pub spatial_metadata: Option<crate::spatial_metadata::Metadata>,
     /// Resolved source initialization accompanies a write without becoming an accepted edit.
     #[serde(
         default,
@@ -512,7 +419,6 @@ impl Default for Project {
             scan: None,
             analysis_area: None,
             analysis_regions: Vec::new(),
-            spatial_metadata: None,
             exposure_metadata: None,
         }
     }
@@ -555,13 +461,6 @@ impl Project {
         }
     }
 
-    pub fn input_floor(&self) -> Option<f64> {
-        match self.input {
-            crate::processing::InputSettings::Negative { input_floor, .. } => Some(input_floor),
-            crate::processing::InputSettings::Digital => None,
-        }
-    }
-
     pub fn set_balance(&mut self, value: Balance) {
         if let crate::processing::InputSettings::Negative { balance, .. } = self.negative_mut() {
             *balance = value;
@@ -580,14 +479,6 @@ impl Project {
         }
     }
 
-    pub fn set_input_floor(&mut self, value: Option<f64>) {
-        if let (Some(value), crate::processing::InputSettings::Negative { input_floor, .. }) =
-            (value, self.negative_mut())
-        {
-            *input_floor = value;
-        }
-    }
-
     fn negative_mut(&mut self) -> &mut crate::processing::InputSettings {
         if self.input.is_negative() {
             return &mut self.input;
@@ -595,7 +486,6 @@ impl Project {
         self.input = crate::processing::InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: crate::color::Balance::default(),
@@ -633,12 +523,10 @@ impl Project {
         self.scan.as_ref().map(|scan| &scan.basis)
     }
 
-    /// Saved sources retain their own decode identity. New Negative sources use unity WB;
-    /// Digital returns None so the decoder chooses the source's as-shot WB.
-    pub fn acquisition_wb(&self, existing: Option<&Source>) -> Option<[f64; 4]> {
-        existing
-            .map(|source| source.development.decode.fixed_wb)
-            .or_else(|| self.input.requires_scan_sources().then_some(UNITY_WB))
+    /// Negative uses unity WB; Digital resolves the source's as-shot WB at acquisition.
+    /// Balance policy for a new source or stage change; existing sources retain their resolved WB.
+    pub fn acquisition_wb(&self) -> Option<[f64; 4]> {
+        self.input.development_wb()
     }
 
     pub fn flat_field(&self) -> Option<&FlatFieldSettings> {
@@ -661,7 +549,8 @@ impl Project {
         if self.scan.is_none() {
             let development = flat_field
                 .as_ref()
-                .map(|field| field.development.clone())
+                .and_then(|field| self.source(field.reference).ok())
+                .map(|source| source.development.clone())
                 .or_else(|| {
                     self.sources
                         .first()
@@ -730,9 +619,6 @@ impl Project {
             self.ensure_scan_setup();
             if let Some(scan) = &self.scan {
                 scan.basis.require_source(&source.development)?;
-                if let Some(field) = scan.flat_field.as_ref().filter(|field| field.enabled) {
-                    field.require_source(&source.development)?;
-                }
             } else {
                 self.scan = Some(ScanSetup {
                     basis: ScanBasis::new(&source),
@@ -780,12 +666,8 @@ impl Project {
         else {
             return Ok(());
         };
-        for id in active {
-            basis.require_source(&self.source(id)?.development)?;
-        }
-        if let Some(field) = self.flat_field().filter(|field| field.enabled) {
-            basis.require_source(&field.development)?;
-            field.require_photos(self)?;
+        for id in &self.order {
+            basis.require_source(&self.source(*id)?.development)?;
         }
         Ok(())
     }
@@ -877,19 +759,6 @@ impl Project {
             .filter(|field| self.input.capabilities().flat_field && field.enabled)
     }
 
-    /// Uses the active reference's source bound when available. Without a flat
-    /// reference this is only the base calibration; rendering uses a source recipe.
-    pub fn processing_calibration(&self) -> Result<Option<Calibration>> {
-        self.calibration()?
-            .map(|calibration| match self.active_flat_field() {
-                Some(field) => field
-                    .development
-                    .processing_calibration(calibration, Some(&field.map)),
-                None => Ok(calibration),
-            })
-            .transpose()
-    }
-
     pub fn validate(&self) -> Result<()> {
         require(self.schema == SCHEMA_VERSION, "unsupported project schema")?;
         require(
@@ -965,42 +834,19 @@ impl Project {
             require(entry.areas.ready(), "incomplete accepted analysis support")?;
         }
         require(self.next_source_id > 0, "invalid source ID allocator")?;
-        if let crate::processing::InputSettings::Negative {
-            dmin,
-            dmax,
-            input_floor,
-            ..
-        } = &self.input
-        {
-            require(
-                *input_floor == crate::processing::CAMERA_INPUT_FLOOR,
-                "project base floor must be one native RGB16 code",
-            )?;
+        if let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &self.input {
             for reference in [*dmin, *dmax].into_iter().flatten() {
                 require(
                     reference
                         .to_array()
                         .iter()
-                        .all(|v| v.is_finite() && *v >= *input_floor),
+                        .all(|v| v.is_finite() && *v > 0.),
                     "invalid stored reference RGB",
                 )?;
             }
         }
         if let Some(negative) = self.input.negative_input() {
-            if self.sources.is_empty() {
-                negative.parameters()?;
-            }
-            for source in &self.sources {
-                let calibration = source.development.processing_calibration(
-                    negative.calibration,
-                    self.active_flat_field().map(|field| field.map.as_ref()),
-                )?;
-                crate::processing::NegativeInput {
-                    calibration,
-                    ..negative
-                }
-                .parameters()?;
-            }
+            negative.parameters()?;
         }
         if let Some(scan) = &self.scan {
             scan.basis.validate()?;
@@ -1013,19 +859,6 @@ impl Project {
 
     pub fn require_runtime(&self) -> Result<()> {
         self.validate()?;
-        for source in &self.sources {
-            let development = &source.development.decode;
-            let matching_backend = development.contract == DEVELOPMENT_CONTRACT;
-            #[cfg(feature = "dng-sdk")]
-            let matching_backend =
-                matching_backend || development.contract == DNG_DEVELOPMENT_CONTRACT;
-            require(
-                matching_backend
-                    && development.inversion_space == "native-camera-RGB"
-                    && development.working_space == "AP1/D60",
-                "RAW development contract differs from this runtime",
-            )?;
-        }
         require(
             self.output.contract == OUTPUT_CONTRACT,
             "output transform contract differs from this runtime",
@@ -1040,33 +873,6 @@ impl Project {
         project.prune_unreferenced_sources();
         project.validate()?;
         Ok(project)
-    }
-
-    /// Keep disposable region data outside accepted project snapshots/history. Legacy files
-    /// have no such payload; unsupported or invalid derived records are unavailable, not grades.
-    pub fn load_with_spatial_metadata(
-        path: &Path,
-    ) -> Result<(Self, crate::spatial_metadata::Metadata)> {
-        let mut project = Self::load(path)?;
-        let metadata = project
-            .spatial_metadata
-            .take()
-            .unwrap_or_default()
-            .for_project(&project);
-        Ok((project, metadata))
-    }
-
-    /// Capture ready metadata with the write, never install it into the caller's accepted state.
-    pub fn save_with_spatial_metadata(
-        &self,
-        path: &Path,
-        policy: Save,
-        metadata: &crate::spatial_metadata::Metadata,
-    ) -> Result<()> {
-        let mut snapshot = self.clone();
-        let metadata = metadata.for_project(self);
-        snapshot.spatial_metadata = (!metadata.groups.is_empty()).then_some(metadata);
-        snapshot.save(path, policy)
     }
 
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {

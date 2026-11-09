@@ -242,10 +242,8 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     .ready
                     .as_ref()
                     .unwrap()
-                    .record
-                    .development
-                    .decode
-                    .fixed_wb,
+                    .developed
+                    .white_balance(),
                 wb
             );
         });

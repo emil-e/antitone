@@ -134,7 +134,6 @@ pub(crate) fn estimate_with_model(
         return Err(Error::InvalidParameter("invalid roll analysis floor"));
     }
     let InputSettings::Negative {
-        input_floor,
         response,
         gamma,
         balance,
@@ -178,12 +177,7 @@ pub(crate) fn estimate_with_model(
         quantile(&mut values, 0.005)
     }));
     drop(picture);
-    let calibration = Calibration {
-        dmin,
-        dmax,
-        input_floor: effective_floor,
-    }
-    .validate()?;
+    let calibration = Calibration { dmin, dmax }.validate()?;
     let current = NegativeInput {
         calibration,
         response,
@@ -300,7 +294,6 @@ pub(crate) fn estimate_with_model(
         input: InputSettings::Negative {
             dmin: Some(negative.calibration.dmin),
             dmax: Some(negative.calibration.dmax),
-            input_floor,
             response: negative.response,
             gamma: negative.gamma,
             balance: negative.balance,

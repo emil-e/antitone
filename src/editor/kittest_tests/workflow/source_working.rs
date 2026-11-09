@@ -26,13 +26,10 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
             assert_eq!(editor.document.project.roll.exposure, 0.);
             assert_eq!(editor.photo_settings().exposure, 0.);
             let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
-            assert_eq!(ready.record.development.decode.fixed_wb, [4., 1., 2., 1.]);
+            assert_eq!(ready.developed.white_balance(), [4., 1., 2., 1.]);
+            assert!(!ready.record.development.decode.uses_sdk());
             assert_eq!(
-                ready.record.development.decode.contract,
-                crate::project::DEVELOPMENT_CONTRACT
-            );
-            assert_eq!(
-                ready.record.development.input_floor,
+                ready.developed.precision_floor(),
                 4. * crate::processing::CAMERA_INPUT_FLOOR
             );
             editor.document.state.project.clone()
@@ -470,8 +467,18 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                 .development
                 .clone()
         });
-        assert!(development.lens_correction.is_some());
-        assert!(development.input_floor > crate::processing::CAMERA_INPUT_FLOOR);
+        assert!(
+            h.read(|e| e
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed
+                .precision_floor())
+                > crate::processing::CAMERA_INPUT_FLOOR
+        );
         let original = h.read(|editor| {
             editor
                 .document

@@ -17,8 +17,31 @@ pub const MIN_TOE: f64 = 1.0;
 pub const MAX_TOE: f64 = 4.0;
 pub const MAX_SHOULDER: f64 = 0.02;
 
+/// Gains entering LibRaw's normalization after undoing any capture-time balance.
+#[cfg(feature = "raw")]
+pub(crate) fn libraw_effective_wb(
+    requested: [f64; 4],
+    pre_applied: Option<[f64; 3]>,
+) -> Result<[f64; 4], Error> {
+    let mut gains = requested.map(|value| value as f32);
+    if let Some(applied) = pre_applied {
+        for c in 0..3 {
+            let applied = applied[c] as f32;
+            if !applied.is_finite() || applied <= 0.00001 {
+                return Err(Error::InvalidParameter("invalid pre-applied camera WB"));
+            }
+            gains[c] /= applied;
+        }
+        gains[3] = gains[1];
+    }
+    if gains.iter().any(|value| !value.is_finite() || *value <= 0.) {
+        return Err(Error::InvalidParameter("invalid effective development WB"));
+    }
+    Ok(gains.map(f64::from))
+}
+
 /// Restores green-relative light from pinned LibRaw's highlight-safe WB normalization.
-#[cfg(any(feature = "raw", feature = "project", feature = "gpu"))]
+#[cfg(any(feature = "raw", feature = "gpu"))]
 pub(crate) fn libraw_green_scale(wb: [f64; 4]) -> Result<f64, Error> {
     let wb = wb.map(|value| value as f32);
     if wb.iter().any(|value| !value.is_finite() || *value <= 0.) {
@@ -97,43 +120,17 @@ impl Response {
 pub struct Calibration {
     pub dmin: DVec3,
     pub dmax: DVec3,
-    pub input_floor: f64,
 }
 
 impl Calibration {
-    /// Derive a processing floor once, without changing the stored native-base calibration.
-    pub(crate) fn for_source(
-        mut self,
-        source_floor: f64,
-        residual_gain: f64,
-    ) -> Result<Self, Error> {
-        if self.input_floor != CAMERA_INPUT_FLOOR
-            || !source_floor.is_finite()
-            || source_floor < CAMERA_INPUT_FLOOR
-            || !residual_gain.is_finite()
-            || residual_gain < 1.
-        {
-            return Err(Error::InvalidParameter(
-                "source calibration requires the native base floor and conservative gain bounds",
-            ));
-        }
-        self.input_floor = source_floor * residual_gain;
-        self.validate()
-    }
-
     pub fn validate(self) -> Result<Self, Error> {
-        if !self.input_floor.is_finite() || self.input_floor <= 0.0 {
-            return Err(Error::InvalidParameter(
-                "scan input floor must be finite and strictly positive",
-            ));
-        }
         for c in 0..3 {
             let dmin = self.dmin[c];
             let dmax = self.dmax[c];
             let reason = if !dmin.is_finite() || !dmax.is_finite() {
                 Some("references must be finite")
-            } else if dmax < self.input_floor || dmin <= dmax {
-                Some("require Dmin RGB > Dmax RGB >= input floor > 0")
+            } else if dmax <= 0. || dmin <= dmax {
+                Some("require Dmin RGB > Dmax RGB > 0")
             } else if log_ratio(dmin, dmax) < MIN_ANCHOR_LOG_SPAN {
                 Some("references are too close together")
             } else {
@@ -205,7 +202,6 @@ pub enum InputSettings {
     Negative {
         dmin: Option<DVec3>,
         dmax: Option<DVec3>,
-        input_floor: f64,
         response: Response,
         gamma: f64,
         balance: Balance,
@@ -215,12 +211,16 @@ pub enum InputSettings {
 }
 
 impl InputSettings {
+    /// Negative preserves unbalanced camera light; Digital resolves the RAW's as-shot WB.
+    pub fn development_wb(&self) -> Option<[f64; 4]> {
+        self.is_negative().then_some([1.; 4])
+    }
+
     /// A fresh negative interpretation over measured anchors, with the shared response prior.
     pub fn negative(calibration: Calibration) -> Self {
         Self::Negative {
             dmin: Some(calibration.dmin),
             dmax: Some(calibration.dmax),
-            input_floor: calibration.input_floor,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -233,12 +233,10 @@ impl InputSettings {
             Self::Negative {
                 dmin: Some(dmin),
                 dmax: Some(dmax),
-                input_floor,
                 ..
             } => Some(Calibration {
                 dmin: *dmin,
                 dmax: *dmax,
-                input_floor: *input_floor,
             }),
             _ => None,
         }
@@ -372,7 +370,6 @@ impl InputSettings {
             } => Self::Negative {
                 dmin: Some(calibration.dmin),
                 dmax: Some(calibration.dmax),
-                input_floor: calibration.input_floor,
                 response: *response,
                 gamma: *gamma,
                 balance: *balance,
@@ -394,7 +391,6 @@ impl From<NegativeInput> for InputSettings {
         Self::Negative {
             dmin: Some(negative.calibration.dmin),
             dmax: Some(negative.calibration.dmax),
-            input_floor: negative.calibration.input_floor,
             response: negative.response,
             gamma: negative.gamma,
             balance: negative.balance,
@@ -415,7 +411,6 @@ impl Default for InputSettings {
         Self::Negative {
             dmin: None,
             dmax: None,
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -435,10 +430,22 @@ pub fn exposure_multiplier(stops: f64) -> Result<f64, Error> {
 /// Validated coefficients and conservative bounds used to prepare the GPU response.
 #[derive(Debug, Clone)]
 pub(crate) struct NegativeParameters {
-    calibration: Calibration,
+    base: DVec3,
     gammas: DVec3,
-    pub(crate) anchor_exponents: DVec3,
+    anchor_exponents: DVec3,
+    pub(crate) anchor_logs: DVec3,
     shape: (f64, f64),
+    pub(crate) tail: [[f64; 3]; 3],
+}
+
+/// Continue shoulder acceleration with constant slope before its rational denominator can vanish.
+fn response_exponent(density: f64, gamma: f64, toe: f64, shoulder: f64) -> f64 {
+    let h = shoulder / std::f64::consts::LN_10;
+    if h * density > gamma * 0.5 {
+        4. * toe * density / gamma - toe / h
+    } else {
+        toe * density / (gamma - h * density)
+    }
 }
 
 impl NegativeInput {
@@ -448,47 +455,55 @@ impl NegativeInput {
         calibration.validate()?;
         let gammas = negative.channel_gammas()?;
         let (toe, shoulder) = negative.response.shape()?;
-        for c in 0..3 {
-            let density =
-                log_ratio(calibration.dmin[c], calibration.input_floor) / std::f64::consts::LN_10;
-            if gammas[c] - shoulder * density <= 0.0 {
-                return Err(Error::InvalidParameter(
-                    "shoulder pole falls within the scan-floor domain; reduce shoulder",
-                ));
-            }
-        }
         let anchor_exponents = DVec3::from_array(std::array::from_fn(|c| {
-            let l = log_ratio(calibration.dmin[c], calibration.dmax[c]);
-            toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10)
+            let density = log_ratio(calibration.dmin[c], calibration.dmax[c]);
+            response_exponent(density, gammas[c], toe, shoulder)
         }));
         if !anchor_exponents.is_finite() {
             return Err(Error::NumericalOverflow);
         }
+        let anchor_logs = anchor_exponents.map(log_abs_expm1);
+        let tail = std::array::from_fn(|c| {
+            // Keep the ordinary response through sixteen stops above the white anchor.
+            // Below this transmission, its tangent in camera light reaches zero finitely.
+            let log_numerator = anchor_logs[c] + toe * 16. * std::f64::consts::LN_2;
+            let exponent = if log_numerator > 50. {
+                log_numerator
+            } else {
+                log_numerator.exp().ln_1p()
+            };
+            let h = shoulder / std::f64::consts::LN_10;
+            let density = if h * exponent <= toe {
+                gammas[c] * exponent / (toe + h * exponent)
+            } else {
+                gammas[c] * (exponent + toe / h) / (4. * toe)
+            };
+            let exponent = response_exponent(density, gammas[c], toe, shoulder);
+            let value = ((log_abs_expm1(exponent) - anchor_logs[c]) / toe).exp();
+            let denominator = gammas[c] - h * density;
+            let derivative = if denominator > gammas[c] * 0.5 {
+                gammas[c] / (denominator * denominator)
+            } else {
+                4. / gammas[c]
+            };
+            [density, value, value * derivative / -(-exponent).exp_m1()]
+        });
         Ok(NegativeParameters {
-            calibration,
+            base: calibration.dmin,
             gammas,
             anchor_exponents,
+            anchor_logs,
             shape: (toe, shoulder),
+            tail,
         })
     }
 }
 
 impl NegativeParameters {
-    pub(crate) fn floor_bound(&self) -> Result<DVec3, Error> {
-        let (toe, shoulder) = self.shape;
+    #[cfg(feature = "gpu")]
+    pub(crate) fn zero_light_bound(&self) -> Result<DVec3, Error> {
         let bound = DVec3::from_array(std::array::from_fn(|channel| {
-            let density = log_ratio(self.calibration.dmin[channel], self.calibration.input_floor);
-            if toe == 1. && shoulder == 0. {
-                expm1_ratio(
-                    density / self.gammas[channel],
-                    self.anchor_exponents[channel],
-                )
-            } else {
-                let exponent = toe * density
-                    / (self.gammas[channel] - shoulder * density / std::f64::consts::LN_10);
-                ((log_abs_expm1(exponent) - log_abs_expm1(self.anchor_exponents[channel])) / toe)
-                    .exp()
-            }
+            self.tail[channel][1] + self.tail[channel][2]
         }));
         if !bound.is_finite() {
             return Err(Error::NumericalOverflow);
@@ -499,10 +514,7 @@ impl NegativeParameters {
 
 #[derive(Debug, Clone)]
 pub struct Inversion {
-    calibration: Calibration,
-    gammas: DVec3,
-    pub(crate) anchor_exponents: DVec3,
-    shape: (f64, f64),
+    parameters: NegativeParameters,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -542,12 +554,8 @@ impl Interpretation {
 
 impl Inversion {
     pub fn new(negative: impl Into<NegativeInput>) -> Result<Self, Error> {
-        let prepared = negative.into().parameters()?;
         Ok(Self {
-            calibration: prepared.calibration,
-            gammas: prepared.gammas,
-            anchor_exponents: prepared.anchor_exponents,
-            shape: prepared.shape,
+            parameters: negative.into().parameters()?,
         })
     }
 
@@ -555,26 +563,35 @@ impl Inversion {
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut rgb = DVec3::ZERO;
         let mut floored = [false; 3];
-        let (toe, shoulder) = self.shape;
+        let parameters = &self.parameters;
+        let (toe, shoulder) = parameters.shape;
         for c in 0..3 {
             if !scan[c].is_finite() {
                 return Err(Error::NonFinitePixel { channel: c });
             }
-            floored[c] = scan[c] < self.calibration.input_floor;
-            let s = scan[c].max(self.calibration.input_floor);
-            let l = log_ratio(self.calibration.dmin[c], s);
+            let [join, value, slope] = parameters.tail[c];
+            if scan[c] <= 0. {
+                floored[c] = true;
+                rgb[c] = value + slope;
+                continue;
+            }
+            let l = log_ratio(parameters.base[c], scan[c]);
+            floored[c] = l > join;
+            if l >= join {
+                rgb[c] = value + slope * (1. - (join - l).exp());
+                continue;
+            }
             rgb[c] = if toe == 1.0 && shoulder == 0.0 {
                 // The general branch round-trips through log/exp; this setting is reachable
                 // and is the neutral toe/shoulder choice, so evaluate the ratio directly.
-                expm1_ratio(l / self.gammas[c], self.anchor_exponents[c])
+                expm1_ratio(l / parameters.gammas[c], parameters.anchor_exponents[c])
             } else {
-                let a = toe * l / (self.gammas[c] - shoulder * l / std::f64::consts::LN_10);
+                let a = response_exponent(l, parameters.gammas[c], toe, shoulder);
                 if a == 0.0 {
                     0.0
                 } else {
                     // Numerical continuation for above-base noise/reference overshoots, not film radiometry.
-                    a.signum()
-                        * ((log_abs_expm1(a) - log_abs_expm1(self.anchor_exponents[c])) / toe).exp()
+                    a.signum() * ((log_abs_expm1(a) - parameters.anchor_logs[c]) / toe).exp()
                 }
             };
             if !rgb[c].is_finite() {

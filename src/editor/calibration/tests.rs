@@ -13,7 +13,6 @@ fn setup(path: &str) -> Editor {
         Calibration {
             dmin: DVec3::splat(0.2),
             dmax: DVec3::splat(0.005),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         }
         .into(),
     );
@@ -115,7 +114,6 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
         Calibration {
             dmin: image.reference(patch_at(16)).unwrap(),
             dmax: image.reference(patch_at(80)).unwrap(),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         }
         .into(),
     );
@@ -185,7 +183,6 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         Calibration {
             dmin: DVec3::splat(2.),
             dmax: DVec3::ONE,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         }
         .into(),
     );

@@ -20,24 +20,7 @@ pub use store::{Request, Store};
 #[cfg(test)]
 mod tests;
 
-pub const VERSION: u32 = 4;
-
-pub(crate) fn read_cached<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Metadata>, D::Error> {
-    // Decode only the optional derived section permissively. Accepted project fields retain
-    // their strict deserializers, and the project reader still bounds decoded JSON strings.
-    let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(serde_json::from_value::<Metadata>(value)
-        .ok()
-        .filter(|metadata| metadata.validate().is_ok()))
-}
-
-pub(crate) fn empty_or_invalid(metadata: &Option<Metadata>) -> bool {
-    metadata
-        .as_ref()
-        .is_none_or(|metadata| metadata.groups.is_empty() || metadata.validate().is_err())
-}
+pub const VERSION: u32 = 5;
 
 fn invalid(message: &'static str) -> Error {
     Error::InvalidParameter(message)
@@ -270,7 +253,6 @@ pub struct Input {
     pub development: SourceDevelopment,
     /// Identity only when correction participated in measurement; grades are never dependencies.
     pub correction: Option<[u8; 32]>,
-    pub code_scale: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -358,7 +340,6 @@ impl CommonSize {
 #[serde(deny_unknown_fields)]
 pub struct Group {
     pub development: Development,
-    pub code_scale: f64,
     pub sources: Vec<SourceRegions>,
     pub common_size: CommonSize,
 }
@@ -388,8 +369,6 @@ impl Metadata {
         for group in &self.groups {
             group.development.validate()?;
             if group.sources.is_empty()
-                || !group.code_scale.is_finite()
-                || group.code_scale < 1.
                 || group
                     .common_size
                     .extent
@@ -402,9 +381,6 @@ impl Metadata {
             let basis = &group.sources[0].input.development;
             for source in &group.sources {
                 source.input.development.validate()?;
-                if source.input.code_scale != group.code_scale {
-                    return Err(invalid("spatial input code basis differs from group"));
-                }
                 if let Some(material) = &source.material {
                     material.validate()?;
                 }

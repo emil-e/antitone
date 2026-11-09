@@ -1,8 +1,7 @@
 //! Original, uncorrected camera-code windows. This path never requests crop predictions.
 use super::*;
 use crate::{
-    project::Development, project::SourceDevelopment, raw::RawFile, rendering::OutputTarget,
-    scan::Scan, source::FileKey,
+    project::SourceDevelopment, raw::RawFile, rendering::OutputTarget, scan::Scan, source::FileKey,
 };
 use image::{Rgb, RgbImage};
 
@@ -36,16 +35,13 @@ fn verify_development(expected: &SourceDevelopment, scan: &Scan) -> Result<()> {
     let (width, height) = scan.dimensions()?;
     let area = scan.area;
     let actual = SourceDevelopment {
-        decode: Development::new("test-backend".into(), [1.; 4]),
-        lens_correction: scan.source().metadata().lens_identity()?,
-        dng_development: scan.source().metadata().dng_identity(),
+        decode: scan.source().metadata().development(scan.white_balance),
         dimensions: [width, height],
         active_area: [area.x, area.y, area.width, area.height],
         camera_model: scan.camera_model.clone(),
         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-        input_floor: scan.input_floor,
     };
-    if *expected != actual {
+    if !expected.same_processing(&actual) {
         return Err("original development differs from the recorded source".into());
     }
     Ok(())
@@ -109,18 +105,22 @@ fn capture(
     for (case_index, (case, original)) in cases.iter().zip(&originals).enumerate() {
         checkpoint()?;
         original.verify()?;
-        let wb = case
-            .project
-            .development()
-            .ok_or("fixed development WB unavailable")?
-            .fixed_wb;
+        let wb = Some(
+            case.project
+                .source(case.spec.source)?
+                .development
+                .decode
+                .white_balance,
+        );
         let scan = monitor.phase("crop-quality-original", || {
-            let raw = RawFile::open(&original.revision.path).map_err(|e| e.to_string())?;
+            let raw =
+                RawFile::open_with_wb(&original.revision.path, wb).map_err(|e| e.to_string())?;
             crate::cache_observation::source_bound(&raw.metadata)?;
-            Scan::from_raw(raw, Some(wb)).map_err(|e| e.to_string())
+            Scan::from_raw(raw, wb).map_err(|e| e.to_string())
         })?;
         checkpoint()?;
         verify_development(&case.project.source(case.spec.source)?.development, &scan)?;
+        let wb = scan.white_balance;
         let mut windows = vec![];
         for (index, &window) in case.spec.windows.iter().enumerate() {
             let region: SourceRegion = window.into();
@@ -137,7 +137,7 @@ fn capture(
             "source":case.spec.source,
             "source_locator":original.locator,
             "source_revision":original.revision,
-            "fixed_wb":wb,
+            "white_balance":wb,
             "windows":windows,
         }));
     }

@@ -707,8 +707,7 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
     assert_eq!(recipe.repairs.len(), 1);
     let pixels = e.source_context().unwrap();
     let scan = pixels.scan().unwrap();
-    let source =
-        crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap()).unwrap();
+    let source = crate::scan::ImageSource::new(&scan, recipe.neutral.input).unwrap();
     let evaluated = Arc::new(crate::repair_source::evaluate(&source, &recipe.repairs[0]).unwrap());
     let device = e.document.visit.working_view.device().unwrap();
     let resolved = crate::gpu::repairs::Snapshot(vec![

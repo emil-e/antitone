@@ -72,8 +72,8 @@ pub fn weighted_mean_iter(
 /// Per-channel mean of the 98–99.5% quantile band in linear camera RGB.
 /// The caller supplies eligible film samples pooled across the roll; this does not
 /// identify film, validate capture/camera compatibility, or establish pool adequacy.
-pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
-    if !input_floor.is_finite() || input_floor <= 0. {
+pub fn roll_dmin(pixels: &[DVec3], precision_floor: f64) -> Result<DVec3, Error> {
+    if !precision_floor.is_finite() || precision_floor <= 0. {
         return Err(Error::InvalidParameter("invalid roll sampling floor"));
     }
     if pixels.is_empty() {
@@ -84,7 +84,7 @@ pub fn roll_dmin(pixels: &[DVec3], input_floor: f64) -> Result<DVec3, Error> {
             if !value.is_finite() {
                 return Err(Error::NonFinitePixel { channel });
             }
-            if value <= input_floor {
+            if value <= precision_floor {
                 return Err(Error::UnusableSample(
                     "roll film samples contain floored inputs",
                 ));
@@ -214,10 +214,7 @@ fn fit_roll_neutral(
     let fit = GammaNeutral::new(negative, camera_to_ap1)?;
     weighted_mean_iter(scan_patch.clone().map(Ok))?;
     let total = scan_patch.clone().map(|(_, w)| w).sum::<f64>();
-    if scan_patch
-        .clone()
-        .any(|(p, _)| p.min_element() < negative.calibration.input_floor)
-    {
+    if scan_patch.clone().any(|(p, _)| p.min_element() <= 0.) {
         return Err(Error::UnusableSample(
             "gamma patch contains floored scan inputs",
         ));

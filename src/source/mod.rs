@@ -32,9 +32,7 @@ pub use loader::{Priority, SourceLoader};
 #[cfg(feature = "editor")]
 mod metadata;
 #[cfg(feature = "editor")]
-pub(crate) use metadata::{
-    metadata_development, open_source, source_metadata, verify_scan, verify_source,
-};
+pub(crate) use metadata::{open_source, source_metadata, verify_scan, verify_source};
 
 /// Acquires an owning source lease. Dropping the future retires that request;
 /// a native call already in progress keeps its inputs until it finishes.

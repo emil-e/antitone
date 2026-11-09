@@ -14,13 +14,10 @@ fn fixture() -> (Project, SourceId) {
             path: "negative.ARW".into(),
             development: SourceDevelopment {
                 decode: Development::new("0.22.0".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
                 camera_model: "test-camera".into(),
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
 

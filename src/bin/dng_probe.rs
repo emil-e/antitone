@@ -25,19 +25,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("{INTERPRETATION}");
     let cancel = Cancellation::default();
-    let mut fixed_wb = None;
+    let mut white_balance = None;
     for path in paths {
         let start = Instant::now();
         let source = Source::develop_with_threads(
             &path,
             Options {
                 max_pixels,
-                fixed_wb,
+                white_balance,
             },
             &cancel,
             threads,
         )?;
-        fixed_wb = Some(source.fixed_wb());
+        white_balance = Some(source.white_balance());
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
         let mut sum = [0_f64; 3];
@@ -64,9 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             source.tiff_orientation()
         );
         println!(
-            "capture_limits={:?} fixed_wb={:?} opcodes={:?}",
+            "capture_limits={:?} white_balance={:?} opcodes={:?}",
             source.capture_limits(),
-            source.fixed_wb(),
+            source.white_balance(),
             source.opcode_counts()
         );
         println!("camera_min={min:?} camera_max={max:?} camera_mean={mean:?}");

@@ -5,13 +5,12 @@ fn gamma_edits_reuse_active_camera_storage_and_pressure_retires_it_without_losin
     use crate::gpu::evaluation::{ImageBacking, ImageLayout, camera_source};
     let (e, input, frame_spec, scheduler) = fixture();
     let scan = input.scan().unwrap();
-    let calibration = scan
-        .processing_calibration(crate::processing::Calibration {
-            dmin: glam::DVec3::splat(0.8),
-            dmax: glam::DVec3::splat(0.2),
-            input_floor: 1. / 65535.,
-        })
-        .unwrap();
+    let calibration = (crate::processing::Calibration {
+        dmin: glam::DVec3::splat(0.8),
+        dmax: glam::DVec3::splat(0.2),
+    })
+    .validate()
+    .unwrap();
     let spec = |warmth| {
         let mut settings = crate::processing::InputSettings::from(calibration);
         if let crate::processing::InputSettings::Negative { balance, .. } = &mut settings {

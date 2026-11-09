@@ -17,9 +17,90 @@ pub(in crate::editor) struct Prepared {
 }
 
 struct CapturedSource {
-    source: crate::project::SourceId,
-    frame: Option<FrameInput>,
+    input: crate::spatial_metadata::Input,
     camera: Arc<AnalysisInput>,
+}
+
+struct GeometryFrame {
+    input: crate::spatial_metadata::Input,
+    size: [u32; 2],
+    rgb: Vec<[u16; 3]>,
+}
+
+fn geometry_frames(
+    captures: Vec<CapturedSource>,
+    checkpoint: &impl Fn() -> Result<(), String>,
+) -> Result<Vec<GeometryFrame>, Error> {
+    let code_scale = captures.iter().try_fold(1_f64, |scale, capture| {
+        capture
+            .camera
+            .effective_floor(None)
+            .map(|floor| scale.max(floor / crate::processing::CAMERA_INPUT_FLOOR))
+    })?;
+    captures
+        .into_iter()
+        .map(|capture| {
+            let (size, rgb) = geometry_preview(&capture.camera, code_scale, 768, checkpoint)?;
+            Ok(GeometryFrame {
+                input: capture.input,
+                size,
+                rgb,
+            })
+        })
+        .collect()
+}
+
+/// Geometry uses the whole uncorrected raster, including dark holder/film sites.
+/// Resample cell centres over the same active extent, rather than integer-striding
+/// a 1024-wide grid and silently changing the detector's resolution or coordinate phase.
+fn geometry_preview(
+    camera: &AnalysisInput,
+    code_scale: f64,
+    maximum: u32,
+    checkpoint: &impl Fn() -> Result<(), String>,
+) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
+    if maximum == 0 {
+        return Err(Error::InvalidParameter("preview size must be positive"));
+    }
+    let area = camera.area();
+    let scale = (f64::from(maximum) / f64::from(area.width.max(area.height))).min(1.);
+    let size = [area.width, area.height].map(|v| (f64::from(v) * scale).round().max(1.) as u32);
+    let source = camera.size();
+    let mut rgb = Vec::with_capacity((size[0] * size[1]) as usize);
+    for y in 0..size[1] {
+        checkpoint().map_err(Error::Project)?;
+        for x in 0..size[0] {
+            let pixel = if size == source {
+                camera.pixel((y * source[0] + x) as usize)?
+            } else {
+                let position: [f64; 2] = std::array::from_fn(|axis| {
+                    ((f64::from([x, y][axis]) + 0.5) * f64::from(source[axis])
+                        / f64::from(size[axis])
+                        - 0.5)
+                        .clamp(0., f64::from(source[axis] - 1))
+                });
+                let low = position.map(|v| v.floor() as u32);
+                let high: [u32; 2] =
+                    std::array::from_fn(|axis| (low[axis] + 1).min(source[axis] - 1));
+                let [dx, dy] = std::array::from_fn(|axis| position[axis] - f64::from(low[axis]));
+                let at = |x, y| camera.pixel((y * source[0] + x) as usize);
+                let [a, b, c, d] = [
+                    at(low[0], low[1])?,
+                    at(high[0], low[1])?,
+                    at(low[0], high[1])?,
+                    at(high[0], high[1])?,
+                ];
+                std::array::from_fn(|channel| {
+                    let upper = f64::from(a[channel]) * (1. - dx) + f64::from(b[channel]) * dx;
+                    let lower = f64::from(c[channel]) * (1. - dx) + f64::from(d[channel]) * dx;
+                    (upper * (1. - dy) + lower * dy) as f32
+                })
+            };
+            let codes = crate::scan::measurement_codes(pixel, code_scale)?;
+            rgb.push([codes[0], codes[1], codes[2]]);
+        }
+    }
+    Ok((size, rgb))
 }
 
 pub(in crate::editor) async fn prepare(
@@ -76,7 +157,6 @@ pub(in crate::editor) async fn prepare(
                 &cancelled,
                 input,
                 existing,
-                regions_ready,
             )
         }))
         .buffered(2);
@@ -85,14 +165,14 @@ pub(in crate::editor) async fn prepare(
             let Some(capture) = capture? else {
                 return Ok(None);
             };
-            if let Some(frame) = capture.frame {
-                frames.push(frame);
-            }
             retained.insert(
-                capture.source,
-                document.source_key(capture.source)?,
-                capture.camera,
+                capture.input.source,
+                document.source_key(capture.input.source)?,
+                capture.camera.clone(),
             );
+            if !regions_ready {
+                frames.push(capture);
+            }
             completed += 1;
             if completed < total {
                 progress(completed, total);
@@ -116,15 +196,23 @@ pub(in crate::editor) async fn prepare(
                         .map(|source| source.development.decode.clone())
                         .ok_or(Error::UnusableSample("no roll development"))
                 })?;
-            let metadata =
-                prepare_spatial(frames, development, document.spatial_code_scale(), || {
-                    if retired.is_cancelled() {
-                        Err("spatial preparation cancelled".into())
-                    } else {
-                        Ok(())
-                    }
+            let checkpoint = || {
+                if retired.is_cancelled() {
+                    Err("spatial preparation cancelled".into())
+                } else {
+                    Ok(())
+                }
+            };
+            let frames = geometry_frames(frames, &checkpoint)?
+                .into_iter()
+                .map(|frame| {
+                    checkpoint().map_err(Error::Project)?;
+                    let evidence = Evidence::observe(frame.size, &frame.rgb)?;
+                    FrameInput::new(frame.input, frame.size, frame.rgb, evidence)
                 })
-                .map_err(Error::Project)?;
+                .collect::<Result<Vec<_>, _>>()?;
+            let metadata =
+                prepare_spatial(frames, development, checkpoint).map_err(Error::Project)?;
             if metadata.matching(&document.project, &document.spatial_inputs()) != metadata {
                 return Err(Error::UnusableSample(
                     "source changed during spatial preparation",
@@ -152,8 +240,10 @@ async fn capture_source(
     cancelled: &Cancellation,
     input: crate::spatial_metadata::Input,
     existing: Option<Arc<AnalysisInput>>,
-    regions_ready: bool,
 ) -> Result<Option<CapturedSource>, Error> {
+    if let Some(camera) = existing {
+        return Ok(Some(CapturedSource { input, camera }));
+    }
     let Some(scan) = document
         .acquire_source(input.source, sources, exposures, cancelled)
         .await?
@@ -161,40 +251,25 @@ async fn capture_source(
         return Ok(None);
     };
     let stopped = cancelled.clone();
-    let id = input.source;
-    let Some(Some((frame, camera))) = background::compute(cancelled, move || {
-        let path = document.source_path(input.source)?;
-        let actual =
-            document::source_metadata(&path, &scan.source().metadata(), scan.source().fixed_wb())?;
-        document::verify_source(document.project.source(input.source)?, &actual)?;
+    let captured = input.clone();
+    let Some(Some(camera)) = background::compute(cancelled, move || {
+        let path = document.source_path(captured.source)?;
+        let actual = document::source_metadata(
+            &path,
+            &scan.source().metadata(),
+            scan.source().white_balance(),
+        )?;
+        document::verify_source(document.project.source(captured.source)?, &actual)?;
         document::verify_scan(&actual, &scan)?;
         document.project.require_scan_source(&actual.development)?;
-        let camera = match existing {
-            Some(camera) => camera,
-            None => {
-                let Some(camera) = AnalysisInput::capture(&scan, || stopped.is_cancelled())? else {
-                    return Ok(None);
-                };
-                Arc::new(camera)
-            }
-        };
-        let frame = if regions_ready {
-            None
-        } else {
-            let (w, h, pixels) = scan.measurement_preview(768, input.code_scale)?;
-            let rgb: Vec<_> = pixels.into_iter().map(|p| [p[0], p[1], p[2]]).collect();
-            let evidence = Evidence::observe([w, h], &rgb)?;
-            Some(FrameInput::new(input, [w, h], rgb, evidence)?)
-        };
-        Ok(Some((frame, camera)))
+        Ok(AnalysisInput::capture(&scan, || stopped.is_cancelled())?.map(Arc::new))
     })
     .await?
     else {
         return Ok(None);
     };
-    Ok(Some(CapturedSource {
-        source: id,
-        frame,
-        camera,
-    }))
+    Ok(Some(CapturedSource { input, camera }))
 }
+
+#[cfg(test)]
+mod tests;

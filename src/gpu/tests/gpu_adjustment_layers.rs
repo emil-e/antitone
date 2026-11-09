@@ -41,7 +41,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
         dmax: DVec3::new(0.008, 0.004, 0.002),
-        input_floor: 1. / 65535.,
     }
 }
 
@@ -482,7 +481,6 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
         let input = InputSettings::Negative {
             dmin: Some(calibration().dmin),
             dmax: Some(calibration().dmax),
-            input_floor: calibration().input_floor,
             response: Response::film(),
             gamma,
             balance: Balance::default(),
@@ -598,7 +596,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
     assert_eq!(DEFAULT_GAMMA, antitone::processing::DEFAULT_GAMMA);
     for corrected in [false, true] {
         let cal = if corrected {
-            field.processing_calibration(calibration()).unwrap()
+            (calibration()).validate().unwrap()
         } else {
             calibration()
         };
@@ -997,7 +995,6 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
     let input = InputSettings::Negative {
         dmin: Some(calibration().dmin),
         dmax: Some(calibration().dmax),
-        input_floor: calibration().input_floor,
         response: Response::film(),
         gamma: 0.65,
         balance: Balance::default(),

@@ -58,8 +58,11 @@ fn sdk_viewing_white_uses_profile_adaptation_without_repeating_development_gains
     std::fs::write(file.path(), &bytes).unwrap();
     let mut unity = crate::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
     let mut balanced = crate::scan::Scan::open(file.path(), None).unwrap();
-    assert_ne!(balanced.fixed_wb, [1.; 4]);
-    let preview = unity.source().metadata().source_preview(unity.fixed_wb);
+    assert_ne!(balanced.white_balance, [1.; 4]);
+    let preview = unity
+        .source()
+        .metadata()
+        .source_preview(unity.white_balance);
     let codes = |scan: &mut crate::scan::Scan| {
         let pixel = scan.tile_region(scan.area, 32, 32, 1, 1).unwrap()[0];
         DVec3::new(
