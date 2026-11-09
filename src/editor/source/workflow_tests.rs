@@ -240,6 +240,8 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
             .await
             .unwrap()
     });
+    editor.document.visit.working_view =
+        crate::editor::working_view::WorkingView::new(device.clone(), queue.clone());
     editor.source_services = Some(source::Services {
         developments: scheduler,
         renderers: Arc::default(),
@@ -653,42 +655,65 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
 }
 
 #[test]
-fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product() {
-    // A flat-field correction changes the source's development, so the product being acquired is
-    // already stale: the pending visit is retired and the correction acquires its own.
+fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visit() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let view = app.read(|e| e.document.visit.view);
-        assert!(app.read(|e| e.document.visit.source.pending()));
-        app.enter(|e, cx| {
-            e.start_document(
-                Preparation::Correction(e.document.capture(), e.document.visit.current_source),
-                cx,
+        let (view, selected, key) = app.read(|e| {
+            assert!(e.document.visit.source.pending());
+            (
+                e.document.visit.view,
+                e.document.visit.current_source.unwrap(),
+                e.document.visit.source.key.clone(),
             )
         });
-        let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
-        // Release the held acquisition and let the correction's own development run.
-        for _ in 0..8 {
-            let _ = release.send(());
+        app.enter(|e, cx| {
+            let mut candidate = e.document.capture();
+            let source = candidate.project.source(selected).unwrap();
+            let map = Arc::new(
+                crate::flat_field::FlatField::from_nodes(
+                    source.development.active_area,
+                    [2, 2],
+                    vec![glam::DVec3::splat(2.); 4],
+                )
+                .unwrap(),
+            );
+            let field = crate::project::FlatFieldSettings::new(source, map);
+            candidate.project.set_flat_field(Some(field));
+            e.start_correction(candidate, cx);
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while app.read(|e| e.interaction_blocked()) && std::time::Instant::now() < deadline {
+            app.pump();
+            std::thread::sleep(Duration::from_millis(1));
         }
-        app.run_until(Duration::from_secs(30), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+        let accepted_before_source = app.read(|e| e.document.correction.is_some());
+        release.send(()).unwrap();
+        assert!(
+            accepted_before_source,
+            "correction must accept without acquiring the held selected photo"
+        );
+        app.read(|e| {
+            assert!(e.document.visit.source.pending());
+            assert!(e.document.visit.canvas.ready.is_none());
+            assert_eq!(e.document.visit.source.key, key);
+            assert_eq!(e.document.visit.view, view);
+            assert_eq!(e.document.visit.current_source, Some(selected));
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.document.visit.source.pending()
         });
         app.read(|e| {
-            assert_eq!(e.id, operation);
-            // The pending acquisition is retired rather than left dangling, and the document's
-            // own product is installed.
-            assert!(!e.document.visit.source.pending());
-            assert!(e.document.visit.canvas.ready.is_some());
-            // Whether the scope survives depends on the prepared product's key, not on the
-            // preparation being a correction: this fixture has no reference frame, so the
-            // development is unchanged and the visit continues into the installed document.
-            // A correction that changes the gains changes the key and replaces the scope.
+            assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
+            assert!(e.source_context().unwrap().correction.is_some());
             assert_eq!(e.document.visit.view, view);
+            assert_eq!(e.document.visit.current_source, Some(selected));
         });
     });
     scheduler.close_and_wait().unwrap();

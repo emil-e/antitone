@@ -7,6 +7,13 @@ use crate::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+struct Change {
+    edit: editing::DocumentEdit,
+    device: wgpu::Device,
+    previous: Option<Arc<Correction>>,
+    activity: Activity,
+}
+
 pub(super) struct Correction {
     pub settings: FlatFieldSettings,
     pub gpu: Arc<GpuFlatField>,
@@ -73,18 +80,17 @@ impl Editor {
     }
 
     pub(super) fn start_correction(&mut self, candidate: Document, cx: &UiContext<'_, Self>) {
-        self.start_document_with(
-            document::Preparation::Correction(candidate, self.document.visit.current_source),
-            cx,
-            Self::correction_completed,
-        );
-    }
-
-    fn correction_completed(&mut self, result: Result<(), String>) {
-        match result {
-            Ok(()) => {}
-            Err(error) => self.correction_failed(error),
-        }
+        let change = match Change::begin(self) {
+            Ok(change) => change,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        self.document.flat_correction = cx.spawn(move |cx| async move {
+            let result = change.prepare(candidate).await;
+            change.publish(result, &cx);
+        });
     }
 
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
@@ -182,8 +188,6 @@ impl FlatTool {
         };
         let tool = Self::new(context);
 
-        editor.status = "Preparing uncorrected flat-field reference…".into();
-
         let request = Self::preview_input(editor, path);
         let task = setup(
             request,
@@ -194,10 +198,8 @@ impl FlatTool {
         );
         if let Some(task) = task {
             tool.state.borrow_mut().task = Some(task);
+            editor.status = "Preparing uncorrected flat-field reference…".into();
             tool.install(editor);
-        } else {
-            editor.status = "Application stopped".into();
-            editor.reference_failed(editor.status.clone());
         }
     }
 
@@ -414,24 +416,32 @@ impl tool::Tool for FlatTool {
                     editor.support_failed(editor.status.clone());
                     return;
                 };
+                let change = match Change::begin(editor) {
+                    Ok(change) => change,
+                    Err(error) => {
+                        editor.status = error.to_string();
+                        return;
+                    }
+                };
                 let input = CorrectionInput {
-                    services: state.services.clone(),
-                    sources: state
-                        .services
-                        .as_ref()
-                        .map(|services| services.provider(Some(editor.document.cache.clone()))),
                     region,
-                    document: editor.document.capture(),
-                    selected: editor.document.visit.current_source,
+                    document: change.edit.initial().as_ref().clone(),
                     source: source::Context {
                         source: reference.developed.clone(),
                         reference: reference.reference.clone(),
                         correction: None,
                     },
                     record: reference.record.clone(),
-                    correction: editor.document.correction.clone(),
                 };
-                correct(editor, input, cx);
+                editor.end_tool();
+                editor.document.flat_correction = cx.spawn(move |cx| async move {
+                    let result = async {
+                        let document = input.estimate().await?;
+                        change.prepare(document).await
+                    }
+                    .await;
+                    change.publish(result, &cx);
+                });
             }
             tool::Action::Dismiss => {
                 editor.status = "Flat-field setup cancelled; correction unchanged".into();
@@ -484,49 +494,72 @@ fn setup<'scope>(
     })
 }
 
-fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Editor>) {
-    let before = editor.document.state.project.clone();
+impl Change {
+    fn begin(editor: &mut Editor) -> Result<Self, Error> {
+        let edit = editor.edit_document("Correction")?;
+        let device = editor
+            .document
+            .visit
+            .working_view
+            .device()
+            .expect("correction requires the editor GPU")
+            .clone();
+        Ok(Self {
+            edit,
+            device,
+            previous: editor.document.correction.clone(),
+            activity: editor
+                .activities
+                .start(ActivityOptions::new("Applying correction…").modal()),
+        })
+    }
 
-    editor.end_tool();
-    editor.cancel_spatial();
-    editor.cancel_control_edit();
+    async fn prepare(
+        &self,
+        document: Document,
+    ) -> Result<(Document, Option<Arc<Correction>>), String> {
+        let device = self.device.clone();
+        let previous = self.previous.clone();
+        crate::background::run(move |cancelled| {
+            if cancelled.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let correction = Correction::prepare(&device, &document, previous.as_ref())?;
+            Ok((document, correction))
+        })
+        .await
+        .map_err(|_| "Correction preparation worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
+    }
 
-    let id = editor.begin_document_operation(false);
-    editor.history_pending = Some(crate::editor::history::Pending::Edit {
-        before: Box::new(before),
-        label: "Correction",
-        photo: None,
-    });
-    editor.candidate_operation.completed = Some(Editor::correction_completed);
-    let activity = editor
-        .activities
-        .start(ActivityOptions::new("Applying correction…").modal());
-    let services = input.services.clone();
-    let cancelled = Cancellation::default();
-    let retire = cancelled.cancel_on_drop();
-    let Some(task) = cx.spawn(move |cx| async move {
-        let _retire = retire;
-        let result = async {
-            let services = services.ok_or_else(|| "Correction services unavailable".to_owned())?;
-            let request = estimate(input, cancelled.clone()).await?;
-            crate::editor::document::PreparationServices(services)
-                .prepare(request, cancelled, |_, _| {})
-                .await
-        }
-        .await;
-        drop(activity);
+    fn publish(
+        mut self,
+        result: Result<(Document, Option<Arc<Correction>>), String>,
+        cx: &UiContext<'_, Editor>,
+    ) {
+        drop(self.activity);
         cx.update(|editor| {
-            if editor.document_pending == Some(id) {
-                editor.document.flat_correction = None;
-                editor.document_prepared(id, result.map(Box::new));
-                editor.acquire_working(&cx);
+            if !editor.owns_document_edit(&self.edit) {
+                return;
+            }
+            editor.document.flat_correction = None;
+            match result {
+                Ok((mut document, correction)) => {
+                    document.capture_exposure(&editor.document.exposures);
+                    self.edit.replace_snapshot(Arc::new(document));
+                    editor.commit_document(self.edit).expect("current document edit");
+                    editor.document.correction = correction;
+                    editor.observe_gamma_pivot();
+                    editor.status = "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup.".into();
+                    editor.acquire_working(cx);
+                }
+                Err(error) => {
+                    editor.status = error.clone();
+                    editor.correction_failed(error);
+                }
             }
         });
-    }) else {
-        editor.document_prepared(id, Err("Application stopped".into()));
-        return;
-    };
-    editor.document.flat_correction = Some(task);
+    }
 }
 
 fn fail(cx: &UiContext<'_, Editor>, error: String) {
@@ -538,62 +571,43 @@ fn fail(cx: &UiContext<'_, Editor>, error: String) {
 }
 
 pub(super) struct CorrectionInput {
-    pub services: Option<source::Services>,
     pub region: Rect,
-    pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     pub document: Document,
-    pub selected: Option<SourceId>,
     pub source: source::Context,
     pub record: Source,
-    pub correction: Option<Arc<crate::editor::Correction>>,
 }
 
 impl CorrectionInput {
-    fn estimate(mut self) -> Result<document::Request, Error> {
-        if self.source.correction.is_some() {
-            return Err(Error::InvalidParameter(
-                "flat-field reference must be uncorrected",
-            ));
-        }
-        let mut scan = self.source.scan()?;
-        let map = Arc::new(scan.estimate_flat_field(self.region)?);
-        let reference = self.document.register_reference(self.record)?;
-        let enabled = self
-            .document
-            .project
-            .flat_field()
-            .is_none_or(|field| field.enabled);
-        let mut settings =
-            crate::project::FlatFieldSettings::new(self.document.project.source(reference)?, map);
-        settings.enabled = enabled;
-        self.document.project.set_flat_field(Some(settings));
-        let exposures = Arc::new(crate::exposure_metadata::Store::restored(
-            &self.document.exposure_metadata,
-            |id| self.document.exposure_origin(id),
-        ));
-        Ok(document::Request {
-            work: document::Preparation::Correction(self.document, self.selected),
-            source: None,
-            sources: self.sources,
-            exposures: Some(exposures),
-            correction: self.correction,
+    async fn estimate(mut self) -> Result<Document, String> {
+        crate::background::run(move |cancelled| {
+            if cancelled.is_cancelled() {
+                return Err(Error::UnusableSample("correction retired"));
+            }
+            if self.source.correction.is_some() {
+                return Err(Error::InvalidParameter(
+                    "flat-field reference must be uncorrected",
+                ));
+            }
+            let mut scan = self.source.scan()?;
+            let map = Arc::new(scan.estimate_flat_field(self.region)?);
+            let reference = self.document.register_reference(self.record)?;
+            let enabled = self
+                .document
+                .project
+                .flat_field()
+                .is_none_or(|field| field.enabled);
+            let mut settings = crate::project::FlatFieldSettings::new(
+                self.document.project.source(reference)?,
+                map,
+            );
+            settings.enabled = enabled;
+            self.document.project.set_flat_field(Some(settings));
+            Ok(self.document)
         })
+        .await
+        .map_err(|_| "Reference estimation worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
     }
-}
-
-async fn estimate(
-    input: CorrectionInput,
-    cancelled: Cancellation,
-) -> Result<document::Request, String> {
-    crate::background::run(move |_| {
-        if cancelled.is_cancelled() {
-            return Err(Error::UnusableSample("correction retired"));
-        }
-        input.estimate()
-    })
-    .await
-    .map_err(|_| "Reference estimation worker panicked".to_owned())?
-    .map_err(|error| error.to_string())
 }
 
 async fn preview(

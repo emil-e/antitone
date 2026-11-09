@@ -34,6 +34,8 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
             .await
             .unwrap()
     });
+    editor.document.visit.working_view =
+        crate::editor::working_view::WorkingView::new(device.clone(), queue.clone());
     editor.source_services = Some(source::Services {
         developments: scheduler,
         renderers: Arc::default(),
@@ -251,14 +253,12 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             )
         });
         app.enter(|e, access| {
-            e.start_document(
-                Preparation::Correction(e.document.capture(), selected),
-                access,
-            );
+            e.start_correction(e.document.capture(), access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
+            assert_eq!(e.document.visit.current_source, selected);
             assert_eq!(e.document.visit.view, visit);
         });
         app.enter(|e, access| {
@@ -419,10 +419,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             );
             let field = FlatFieldSettings::new(source, map);
             candidate.project.set_flat_field(Some(field));
-            e.start_document(
-                Preparation::Correction(candidate, e.document.visit.current_source),
-                cx,
-            );
+            e.start_correction(candidate, cx);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (negative, scan, expected_pixels) = app.read(|e| {

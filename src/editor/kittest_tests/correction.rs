@@ -280,7 +280,7 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         harness.read(|e| {
             assert!((e.gamma() - desired).abs() < 1e-12, "{}", e.status);
             assert_eq!(e.document.state.project.input.gamma(), e.gamma());
-            assert!(e.interaction_blocked() && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document.flat_correction.is_some());
         });
         harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
         harness.read(|e| {
@@ -742,7 +742,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.files.pending() && !e.interaction_blocked() && e.document_pending.is_none()
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| {
@@ -836,7 +836,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.files.pending() && !e.interaction_blocked() && e.document_pending.is_none()
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| assert!(editor.document.correction.is_some()));

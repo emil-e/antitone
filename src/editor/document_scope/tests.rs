@@ -197,7 +197,7 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
 }
 
 #[test]
-fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it() {
+fn installing_same_document_preserves_visit_but_opening_the_same_data_replaces_it() {
     for replace in [false, true] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
@@ -207,27 +207,26 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let selected = editor.document.visit.current_source;
         let candidate = editor.document.capture();
-        let work = if replace {
-            Preparation::Open("same-data.antitone".into())
-        } else {
-            Preparation::Correction(candidate.clone(), selected)
-        };
         with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.start_document(work, cx);
-                let request = editor.document_pending.unwrap();
-                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-                editor.document_prepared(
-                    request,
-                    Ok(Box::new(Prepared {
-                        document: candidate,
-                        ready: Some(ready),
-                        selected,
-                        reuse_ready: false,
-                        correction: None,
-                        preserve_view: !replace,
-                    })),
-                );
+                if replace {
+                    editor.start_document(Preparation::Open("same-data.antitone".into()), cx);
+                    let request = editor.document_pending.unwrap();
+                    assert!(editor.interaction_blocked());
+                    editor.document_prepared(
+                        request,
+                        Ok(Box::new(Prepared {
+                            document: candidate,
+                            ready: Some(ready),
+                            selected,
+                            reuse_ready: false,
+                            correction: None,
+                            preserve_view: false,
+                        })),
+                    );
+                } else {
+                    editor.document.install(candidate);
+                }
                 if replace {
                     assert_ne!(editor.document.visit.view, view);
                 } else {

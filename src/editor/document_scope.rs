@@ -70,6 +70,7 @@ mod sampling_tests;
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub thumbnails: super::Thumbnails,
+    pub document_preview: super::editing::Preview<Document>,
     pub project_preview: super::editing::Preview<crate::project::Project>,
     pub controls_edit: Option<super::editing::ControlEdit>,
     pub gamma_pivot: super::gamma_pivot::State,
@@ -126,6 +127,11 @@ impl DocumentScope {
             .snapshot()
             .or_else(|| self.project_preview.snapshot())
             .map(Into::into)
+            .or_else(|| {
+                self.document_preview
+                    .snapshot()
+                    .map(|document| document.project.clone())
+            })
             .unwrap_or_else(|| self.state.project.clone())
     }
 
@@ -163,12 +169,17 @@ impl DocumentScope {
         self.state.accept_save(saved);
     }
 
-    pub fn install(&mut self, document: Document) {
+    pub(super) fn retire_edits(&mut self) {
+        self.document_preview = Default::default();
         self.project_preview = Default::default();
         self.visit.project_preview = Default::default();
         self.controls_edit = None;
 
         self.visit.controls_edit = None;
+    }
+
+    pub fn install(&mut self, document: Document) {
+        self.retire_edits();
         self.flat_correction = None;
         self.sampling_inputs.retain(&document);
         self.exposures.restore(&document.exposure_metadata, |id| {
@@ -253,6 +264,7 @@ impl From<Document> for DocumentScope {
         ));
         Self {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
+            document_preview: Default::default(),
             project_preview: Default::default(),
 
             controls_edit: None,

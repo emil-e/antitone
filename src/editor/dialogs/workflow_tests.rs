@@ -170,44 +170,57 @@ fn successful_save_keeps_the_unread_notice_and_waits_before_closing() {
 }
 
 #[test]
-fn stale_results_and_successful_correction_do_not_dismiss_an_unread_failure() {
-    let editor = fixture();
+fn successful_correction_does_not_dismiss_its_unread_failure() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     crate::application::test_support::with_application(editor, |app| {
+        let before = app.read(|editor| editor.document.project.clone());
         app.enter(|editor, cx| {
-            let before = editor.document.state.project.clone();
-            editor.start_correction(editor.document.capture(), cx);
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-            let id = editor.document_pending.unwrap();
-            editor.document_prepared(id + 1, Err("stale correction".into()));
-            assert!(!editor.dialogs.is_open() && editor.interaction_blocked());
-            editor.document_prepared(id, Err("unsupported GPU range".into()));
-            assert_eq!(
-                editor.dialogs.message().unwrap().title,
-                FailureCase::FlatCorrection.title()
-            );
-            assert_eq!(editor.document.state.project, before);
-            assert!(editor.document_pending.is_none());
+            let mut rejected = editor.document.capture();
+            rejected.project.roll.exposure = f64::INFINITY;
+            editor.start_correction(rejected, cx);
+            assert!(editor.interaction_blocked() && editor.document.flat_correction.is_some());
+        });
+        app.run_until(std::time::Duration::from_secs(10), |editor| {
+            editor.document.flat_correction.is_none()
+        });
+        let details = app.update(|editor| {
+            let failure = editor.dialogs.message().unwrap();
+            assert_eq!(failure.title, FailureCase::FlatCorrection.title());
+            let details = failure.details.clone();
+            assert!(!details.is_empty());
+            assert_eq!(editor.document.project, before);
             editor.clear_look();
+            assert_eq!(editor.dialogs.message().unwrap().details, details);
+            details
+        });
+        app.enter(|editor, cx| {
+            let mut candidate = editor.document.capture();
+            let photo = candidate
+                .project
+                .source(candidate.project.order[0])
+                .unwrap();
+            let map = std::sync::Arc::new(
+                crate::flat_field::FlatField::from_nodes(
+                    photo.development.active_area,
+                    [2, 2],
+                    vec![DVec3::splat(2.); 4],
+                )
+                .unwrap(),
+            );
+            let field = crate::project::FlatFieldSettings::new(photo, map);
+            candidate.project.set_flat_field(Some(field));
+            editor.start_correction(candidate, cx);
+        });
+        app.run_until(std::time::Duration::from_secs(10), |editor| {
+            editor.document.flat_correction.is_none()
+        });
+        app.update(|editor| {
+            assert!(editor.document.correction.is_some(), "{}", editor.status);
+            assert_eq!(editor.dialogs.message().unwrap().details, details);
             assert_eq!(
-                editor.dialogs.message().unwrap().details,
-                "unsupported GPU range"
+                editor.history_label(history::Direction::Undo),
+                Some("Correction")
             );
-            editor.start_correction(editor.document.capture(), cx);
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-            let id = editor.document_pending.unwrap();
-            editor.document_prepared(
-                id,
-                Ok(Box::new(Prepared {
-                    document: editor.document.capture(),
-                    ready: editor.document.visit.canvas.ready.clone(),
-                    selected: editor.document.visit.current_source,
-                    reuse_ready: true,
-                    correction: None,
-                    preserve_view: true,
-                })),
-            );
-            assert!(editor.dialogs.is_open());
-            assert_eq!(editor.document.state.project, before);
             editor.dialogs.answer_for_test("OK");
             assert!(!editor.dialogs.is_open());
         });
@@ -216,8 +229,7 @@ fn stale_results_and_successful_correction_do_not_dismiss_an_unread_failure() {
 
 #[test]
 fn rejected_support_and_accepted_state_remain_visible_until_acknowledgement() {
-    let mut editor = fixture();
-    add_ready_fixture(&mut editor);
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let reference = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
     crate::editor::tests::paused_reference_fixture(&mut editor, reference, None);
     editor.set_test_pick_region(Some(
@@ -248,19 +260,16 @@ fn rejected_support_and_accepted_state_remain_visible_until_acknowledgement() {
                 editor.dialogs.is_open(),
                 "starting a retry must retain the error"
             );
-            let id = editor.document_pending.unwrap();
-            editor.document_prepared(
-                id,
-                Ok(Box::new(Prepared {
-                    document: editor.document.capture(),
-                    ready: editor.document.visit.canvas.ready.clone(),
-                    selected: editor.document.visit.current_source,
-                    reuse_ready: true,
-                    correction: None,
-                    preserve_view: true,
-                })),
+            assert!(editor.document.flat_correction.is_some());
+        });
+        app.run_until(std::time::Duration::from_secs(10), |editor| {
+            editor.document.flat_correction.is_none()
+        });
+        app.update(|editor| {
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                FailureCase::FlatSupport.title()
             );
-            assert!(editor.dialogs.is_open());
             assert_eq!(editor.document.project, before);
             editor.dialogs.answer_for_test("OK");
             assert!(!editor.dialogs.is_open());

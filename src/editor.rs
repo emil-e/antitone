@@ -936,6 +936,8 @@ impl Editor {
         self.document.visit.interaction_action = None;
         self.document.write = save::State::default();
         self.candidate_operation = document::State::default();
+        self.document.retire_edits();
+        self.document.flat_correction = None;
         self.retire_look_selection();
         if self.dusting() {
             self.end_tool();
