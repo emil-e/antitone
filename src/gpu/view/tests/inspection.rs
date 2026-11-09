@@ -40,7 +40,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone()).unwrap();
+            scan.set_flat_field(field.clone());
             let gpu_field = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
@@ -131,8 +131,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         ],
                     )
                     .unwrap(),
-                )))
-                .unwrap();
+                )));
             }
             let field = scan.flat_field().cloned();
             let gpu_field = field
@@ -371,7 +370,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
         let detail = sources.pop().unwrap();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             let input = AuthoredPhotograph::from(
-                ProcessingParameters::source_preview(Some(scan.fixed_wb), 0.37).unwrap(),
+                ProcessingParameters::source_preview(Some(scan.white_balance), 0.37).unwrap(),
             );
             let a =
                 RenderedView::inspection(&device, detail.clone(), &input, target, None).unwrap();

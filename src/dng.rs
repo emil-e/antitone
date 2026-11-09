@@ -41,7 +41,7 @@ impl std::error::Error for Error {}
 pub struct Options {
     pub max_pixels: u32,
     /// None selects AsShotNeutral. Post-opcode gains normalize by their minimum.
-    pub fixed_wb: Option<[f64; 3]>,
+    pub white_balance: Option<[f64; 3]>,
 }
 
 /// Header/opcode-derived interpretation; inspecting it does not decode sensor pixels.
@@ -54,12 +54,12 @@ pub struct Header {
     pub orientation: u32,
     pub cfa_pattern: u32,
     pub capture_limits: [f64; 2],
-    pub fixed_wb: [f64; 3],
+    pub white_balance: [f64; 3],
     pub as_shot_wb: [f64; 3],
     pub camera_to_xyz_d50: DMat3,
     pub daylight_to_xyz_d50: DMat3,
     pub as_shot_to_xyz_d50: DMat3,
-    pub input_floor: f64,
+    pub precision_floor: f64,
     pub interpretation_id: [u8; 32],
 }
 
@@ -79,12 +79,12 @@ impl Header {
             orientation: v.orientation,
             cfa_pattern: v.cfa_pattern,
             capture_limits: [v.black, v.white],
-            fixed_wb: v.wb,
+            white_balance: v.wb,
             as_shot_wb: v.as_shot_wb,
             camera_to_xyz_d50: DMat3::from_cols_array(&v.camera_to_xyz_d50).transpose(),
             daylight_to_xyz_d50: DMat3::from_cols_array(&v.daylight_to_xyz_d50).transpose(),
             as_shot_to_xyz_d50: DMat3::from_cols_array(&v.as_shot_to_xyz_d50).transpose(),
-            input_floor: v.input_floor,
+            precision_floor: v.precision_floor,
             interpretation_id: hash_interpretation(v),
         }
     }
@@ -135,7 +135,7 @@ struct NativeView {
     wb: [f64; 3],
     as_shot_wb: [f64; 3],
     camera_to_xyz_d50: [f64; 9],
-    input_floor: f64,
+    precision_floor: f64,
     daylight_to_xyz_d50: [f64; 9],
     as_shot_to_xyz_d50: [f64; 9],
     retained_bytes: u64,
@@ -255,7 +255,7 @@ fn native_request(
     if !(1..=8).contains(&threads)
         || options.max_pixels == 0
         || options
-            .fixed_wb
+            .white_balance
             .is_some_and(|wb| wb.iter().any(|v| !v.is_finite() || *v <= 0.))
     {
         return Err(Error::Rejected(
@@ -267,7 +267,7 @@ fn native_request(
         NativeOptions {
             max_pixels: u64::from(options.max_pixels),
             threads,
-            wb: options.fixed_wb.unwrap_or([0.; 3]),
+            wb: options.white_balance.unwrap_or([0.; 3]),
             cancelled,
             cancel_context: Arc::as_ptr(&cancel.0).cast(),
         },
@@ -337,15 +337,15 @@ impl Source {
     pub fn tiff_orientation(&self) -> u32 {
         self.header.orientation
     }
-    pub fn fixed_wb(&self) -> [f64; 3] {
-        self.header.fixed_wb
+    pub fn white_balance(&self) -> [f64; 3] {
+        self.header.white_balance
     }
     /// XYZ D50 from this balanced camera basis, without a second application of WB.
     pub fn camera_to_xyz_d50(&self) -> DMat3 {
         self.header.camera_to_xyz_d50
     }
-    pub fn input_floor(&self) -> f64 {
-        self.header.input_floor
+    pub fn precision_floor(&self) -> f64 {
+        self.header.precision_floor
     }
     pub fn opcode_counts(&self) -> ([u32; 3], [u32; 3]) {
         (self.allocation.view.applied, self.allocation.view.skipped)
@@ -382,7 +382,7 @@ fn hash_interpretation(v: &NativeView) -> [u8; 32] {
     ] {
         hash.update(&field.to_le_bytes());
     }
-    for field in [v.black, v.white, v.input_floor]
+    for field in [v.black, v.white, v.precision_floor]
         .into_iter()
         .chain(v.wb)
         .chain(v.camera_to_xyz_d50)

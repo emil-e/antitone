@@ -3,7 +3,7 @@ use antitone::{
     color::Balance,
     dust_repair::{RepairOrigin, SupportMask},
     flat_field::FlatField,
-    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
+    processing::{DEFAULT_GAMMA, InputSettings, Response},
     project::{Development, FlatFieldSettings, Project, Source, SourceDevelopment, SourceId},
 };
 use std::sync::Arc;
@@ -13,7 +13,6 @@ fn project() -> (Project, SourceId) {
         input: InputSettings::Negative {
             dmin: Some(glam::DVec3::splat(0.8)),
             dmax: Some(glam::DVec3::splat(0.02)),
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -27,13 +26,10 @@ fn project() -> (Project, SourceId) {
             reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("test".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
                 camera_model: "test".into(),
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: CAMERA_INPUT_FLOOR,
             },
 
             orientation: Default::default(),
@@ -54,14 +50,7 @@ fn uncalibrated_intent_can_be_captured_without_claiming_a_positive_is_ready() {
     assert!(!project.input.ready());
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(recipe.neutral.input, project.input);
-    assert!(
-        recipe
-            .neutral
-            .processing_input()
-            .unwrap()
-            .calibration()
-            .is_none()
-    );
+    assert!(recipe.neutral.input.calibration().is_none());
 
     let captured = recipe.neutral.clone();
     project.input = InputSettings::Digital;

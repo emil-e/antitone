@@ -528,7 +528,6 @@ mod tests {
         let negative = InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),

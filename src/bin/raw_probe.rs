@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         version(),
         antitone::PROCESSING_MODEL_VERSION
     );
-    let mut fixed_wb = None;
+    let mut white_balance = None;
     for path in paths {
         let start = Instant::now();
         let mut raw = if metadata_only {
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             RawFile::open(&path)?
         };
         let metadata = raw.metadata;
-        let wb = *fixed_wb.get_or_insert_with(|| metadata.as_shot_wb());
+        let wb = *white_balance.get_or_insert_with(|| metadata.as_shot_wb());
         let matrix = metadata.camera_to_ap1()?;
         let area = metadata.image_area()?;
         println!("\nSOURCE {}", path.display());
@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
-        let floor = metadata.input_floor()?;
+        let floor = metadata.precision_floor()?;
         let mut nonpositive = [0u64; 3];
         let mut below_floor = [0u64; 3];
         let mut floored_pixels = 0u64;
@@ -288,7 +288,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let synthetic_cal = Calibration {
             dmin: DVec3::splat(0.5),
             dmax: DVec3::splat(0.002),
-            input_floor: floor,
         };
         let inversion = Inversion::new(NegativeInput {
             calibration: synthetic_cal,

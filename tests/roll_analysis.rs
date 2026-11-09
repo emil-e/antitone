@@ -21,7 +21,6 @@ fn current(gamma: f64, response: Response) -> NegativeInput {
         calibration: Calibration {
             dmin: BASE,
             dmax: BASE * 0.02,
-            input_floor: FLOOR,
         },
         response,
         gamma,
@@ -75,7 +74,6 @@ fn per_channel_development_scale_preserves_the_analyzed_positive_look() {
         calibration: Calibration {
             dmin: BASE * scale,
             dmax: BASE * 0.02 * scale,
-            input_floor: FLOOR,
         },
         ..default_current()
     };
@@ -425,7 +423,7 @@ fn isolated_hdr_sample_does_not_move_median_exposure_or_clip_working_pixels() {
         .map(|&p| (AP1_TO_XYZ * pipeline.apply(p, [0, 0]).unwrap().rgb).y)
         .collect();
     assert!(
-        y[0] > 65536.,
+        y[0] > 65536. * after.roll.exposure.exp2(),
         "y0={} y1={} cal={:?}",
         y[0],
         y[1],
@@ -535,7 +533,6 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
         calibration: Calibration {
             dmin: BASE,
             dmax: BASE * 0.02,
-            input_floor: FLOOR,
         },
         response: Response::film(),
         gamma: DEFAULT_GAMMA,

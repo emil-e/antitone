@@ -29,7 +29,6 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
     let calibration = Calibration {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
-        input_floor: scan.input_floor,
     };
     let grade =
         AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(

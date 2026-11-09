@@ -157,12 +157,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
             e.document.visit.pending_preview = Some(
                 e.document
                     .thumbnails
-                    .selected_preview(
-                        e.id,
-                        &e.document.state,
-                        source,
-                        e.document.correction.as_ref(),
-                    )
+                    .selected_preview(e.id, &e.document.state, source)
                     .unwrap()
                     .expect("selected camera preview is cached"),
             );
@@ -523,7 +518,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         ready(&mut h, 2);
 
         let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
-        let scan = Scan::open(&raw_path, Some(expected.development().unwrap().fixed_wb)).unwrap();
+        let scan = Scan::open(&raw_path, expected.acquisition_wb()).unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
             let request = h.read(|editor| crate::editor::dust::Request {
                 request: 1,
@@ -537,8 +532,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .image_recipe(source)
                     .unwrap()
                     .neutral
-                    .processing_input()
-                    .unwrap(),
+                    .input,
                 cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             let cpu = crate::editor::dust::evaluate(&scan, &request).unwrap();
@@ -594,6 +588,17 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 }
             }
         }
+        // Failed Open preserves the current view, not an older one from before reference toggling.
+        let view = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap()
+                .clone()
+        });
         let hold = crate::background::testing::pause();
         open_project(&mut h, directory.path().join("missing.antitone"));
         for _ in 0..5 {

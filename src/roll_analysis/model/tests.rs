@@ -7,7 +7,6 @@ fn ordered_batches_keep_groups_and_local_indices_even_with_empty_groups() {
     let negative = NegativeInput::from(Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.005),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     });
     let scalar = Inversion::new(negative).unwrap();
     let mut visited = Vec::new();
@@ -81,7 +80,6 @@ fn forward_model_results_cannot_silently_omit_reorder_or_invent_samples() {
     let negative = NegativeInput::from(Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.005),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     });
     for mode in 0..5 {
         assert!(

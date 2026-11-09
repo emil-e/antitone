@@ -93,7 +93,7 @@ impl Scan {
                     if !raw.is_finite() {
                         return Err(Error::NumericalOverflow);
                     }
-                    floor |= raw.min_element() <= self.source.input_floor;
+                    floor |= raw.min_element() <= self.source.precision_floor;
                 }
             }
             if floor {

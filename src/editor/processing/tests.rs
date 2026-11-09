@@ -20,13 +20,10 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         path: "local-fixture.ARW".into(),
         development: SourceDevelopment {
             decode: Development::new("test-backend".into(), [1.; 4]),
-            lens_correction: None,
-            dng_development: None,
             dimensions: [150, 100],
             active_area: [120, 73, 23, 19],
             camera_model: "test-camera".into(),
             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         },
         reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -226,116 +223,60 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
 }
 
 #[test]
-fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admission() {
+fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
     pollster::block_on(async {
         let (mut editor, device, _) = fixture().await;
         let first = editor.document.visit.current_source.unwrap();
-        editor
-            .document
-            .project
-            .source_mut(first)
-            .unwrap()
-            .adjustment_layers = None;
-        let mut shaded = editor.document.state.project.source(first).unwrap().clone();
-        shaded.id = SourceId(0);
-        shaded.path = "shaded-fixture.ARW".into();
-        shaded.development.lens_correction = Some("ab".repeat(32));
-        shaded.development.input_floor *= 4.;
-        let second = editor.document.state.project.add_source(shaded).unwrap();
-        let base = editor.calibration().unwrap();
-        assert_eq!(
-            editor.processing_calibration(base).unwrap().input_floor,
-            base.input_floor
-        );
-        let source = editor.document.state.project.source(second).unwrap();
-        let input = editor
+        let mut source = editor.document.project.source(first).unwrap().clone();
+        source.id = SourceId(0);
+        source.path = "coarser-source.ARW".into();
+        source.adjustment_layers = None;
+        let second = editor.document.project.add_source(source).unwrap();
+        let calibration = Calibration {
+            dmax: DVec3::splat(crate::processing::CAMERA_INPUT_FLOOR / 2.),
+            ..editor.calibration().unwrap()
+        };
+        editor.set_dmax(Some(calibration.dmax));
+        editor.sync_document();
+        editor.document.validate_for_device(&device).unwrap();
+        let source = editor.document.project.source(second).unwrap();
+        let actual = editor
             .positive_processing_for_source(
-                base,
+                calibration,
                 editor.document.project.roll,
                 source,
                 AdjustmentLayerSettings::default(),
             )
             .unwrap();
         let expected = ProcessingParameters::positive(
-            Calibration {
-                input_floor: base.input_floor * 4.,
-                ..base
-            },
+            calibration,
             editor.document.project.roll,
             glam::DMat3::IDENTITY,
         )
         .unwrap();
         assert_eq!(
-            bytemuck::bytes_of(&input.parameters()),
+            bytemuck::bytes_of(&actual.parameters()),
             bytemuck::bytes_of(&expected)
         );
-        let near_floor = Calibration {
-            dmax: DVec3::splat(base.input_floor * 2.),
-            ..base
-        };
-        assert!(
-            editor
-                .positive_parameters(near_floor, editor.document.project.roll)
-                .is_ok()
-        );
-        assert!(
-            editor
-                .validate_processing(
-                    near_floor,
-                    editor.document.project.roll,
-                    editor.photo_settings()
-                )
-                .is_err()
-        );
-        editor.set_dmax(Some(near_floor.dmax));
-        assert!(
-            editor
-                .validate_source_candidate(editor.document.state.project.source(second).unwrap())
-                .is_err()
-        );
-        editor.document.visit.current_source = Some(second);
-        assert_eq!(
-            editor.processing_calibration(base).unwrap().input_floor,
-            base.input_floor * 4.
-        );
-        editor.set_dmax(Some(base.dmax));
-        editor.document.state.project.order = vec![second];
-        let record = editor
-            .document
-            .state
-            .project
-            .source(second)
-            .unwrap()
-            .clone();
-        // A nonbinary bound exposes precision-floor round trips through an already scaled floor.
         let map = Arc::new(
             crate::flat_field::FlatField::from_nodes(
-                record.development.active_area,
+                source.development.active_area,
                 [2, 2],
                 vec![DVec3::splat(5.235436781787922); 4],
             )
             .unwrap(),
         );
-        editor
-            .document
-            .project
-            .set_flat_field(Some(crate::project::FlatFieldSettings::new(&record, map)));
+        let field = crate::project::FlatFieldSettings::new(source, map);
+        editor.document.project.set_flat_field(Some(field));
         editor.document.correction = Correction::prepare(&device, &editor.document, None).unwrap();
-        let recipe = editor.document.state.project.image_recipe(second).unwrap();
-        assert_eq!(
-            editor.processing_calibration(base).unwrap(),
-            recipe
-                .neutral
-                .processing_input()
-                .unwrap()
-                .calibration()
-                .unwrap()
-        );
+        editor.document.visit.current_source = Some(second);
+        let recipe = editor.document.project.image_recipe(second).unwrap();
+        assert_eq!(recipe.neutral.input.calibration(), Some(calibration));
     });
 }
 
 #[test]
-fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
+fn correction_leaves_inversion_parameters_and_captured_layer_stacks_unchanged() {
     pollster::block_on(async {
         let (mut editor, device, _) = fixture().await;
         let first = positive(&editor);
@@ -355,10 +296,12 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
         candidate.project.set_flat_field(Some(settings));
         editor.document.correction = Correction::prepare(&device, &candidate, None).unwrap();
         let corrected = positive(&editor);
-        assert_ne!(first.clone(), corrected.clone());
-        let calibration = field
-            .processing_calibration(editor.calibration().unwrap())
-            .unwrap();
+        assert_eq!(
+            first.clone(),
+            corrected.clone(),
+            "correction acts on source pixels, not on the inversion parameters"
+        );
+        let calibration = (editor.calibration().unwrap()).validate().unwrap();
         let expected = AuthoredPhotograph::from(Arc::new(
             crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),

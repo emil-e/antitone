@@ -1,4 +1,5 @@
 use super::*;
+use crate::processing::InputSettings;
 
 #[test]
 fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_them() {
@@ -80,7 +81,6 @@ fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input
     editor.load_input(InputSettings::negative(crate::processing::Calibration {
         dmin: glam::DVec3::splat(0.7),
         dmax: glam::DVec3::splat(0.01),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }));
     with_application(editor, |app| {
         start(app);
@@ -135,7 +135,6 @@ fn cancelling_measurement_waiting_for_source_withdraws_only_its_acquisition() {
     editor.load_input(InputSettings::negative(crate::processing::Calibration {
         dmin: glam::DVec3::splat(0.7),
         dmax: glam::DVec3::splat(0.01),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }));
     with_application(editor, |app| {
         start(app);

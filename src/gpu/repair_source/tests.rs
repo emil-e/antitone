@@ -27,7 +27,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field)).unwrap();
+    scan.set_flat_field(Some(field));
     let region = SourceRegion::from([area.x + 11, area.y + 13, 17, 9]);
     let needed: Vec<_> = (0..region.width * region.height)
         .map(|index| index % 3 != 0)
@@ -40,7 +40,6 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
             crate::processing::Calibration {
                 dmin: DVec3::splat(0.8),
                 dmax: DVec3::splat(0.02),
-                input_floor: scan.source().input_floor(),
             }
             .into(),
             0.,
@@ -56,7 +55,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         let reference = crate::scan::ImageSource::new(&scan, input).unwrap();
         let mut uncorrected_scan =
             Scan::with_reference(scan.source().clone(), scan.reference_exposure.clone());
-        uncorrected_scan.set_flat_field(None).unwrap();
+        uncorrected_scan.set_flat_field(None);
         let uncorrected = crate::scan::ImageSource::new(&uncorrected_scan, input).unwrap();
         let mut source = Source::new(&device, &renderer, (&queue, &gate), &scan, input).unwrap();
         source.budget.tile = [3, 2];
@@ -144,22 +143,23 @@ fn repair_inputs_ignore_unrepresentable_masked_values_but_reject_required_ones()
     let mut input = InputSettings::negative(crate::processing::Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
-        input_floor: scan.source().input_floor(),
     });
     if let InputSettings::Negative { gamma, .. } = &mut input {
         *gamma = 0.1;
     }
     let region = SourceRegion::from([scan.area.x + 16, scan.area.y + 16, 2, 2]);
-    let scalar = crate::scan::ImageSource::new(&scan, input)
-        .unwrap()
-        .sample([region.x, region.y])
-        .unwrap();
-    assert!(
-        scalar.is_finite() && !scalar.as_vec3().is_finite(),
-        "the fixture must distinguish f64 evaluation from f32 repair storage"
-    );
+    // The response itself is finite at zero. Inject an overflowing upstream operation
+    // to exercise selection of unusable pixels independently of that response formula.
     let gate = SubmissionGate::default();
     let mut source = Source::new(&device, &renderer, (&queue, &gate), &scan, input).unwrap();
+    source.image = crate::gpu::evaluation::pointwise(
+        source.image.clone(),
+        crate::gpu::evaluation::Meaning::Neutral,
+        crate::gpu::evaluation::Function::new(
+            "fn overflow(p: vec4f, pos: vec2f) -> vec4f { return vec4f(p.rgb * 1e35, p.w); }",
+            "overflow",
+        ),
+    );
     assert_eq!(
         source
             .read(region, Some(&[false; 4]), &|| false)

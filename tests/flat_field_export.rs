@@ -18,9 +18,12 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
     let mut reference = Scan::open(&root.join("samples/DSC01739.ARW"), None).unwrap();
     let support = reference.propose_flat_field_area().unwrap().unwrap();
     let map = Arc::new(reference.estimate_flat_field(support).unwrap());
-    let mut scan =
-        Scan::open(&root.join("samples/DSC01737.ARW"), Some(reference.fixed_wb)).unwrap();
-    scan.set_flat_field(Some(map)).unwrap();
+    let mut scan = Scan::open(
+        &root.join("samples/DSC01737.ARW"),
+        Some(reference.white_balance),
+    )
+    .unwrap();
+    scan.set_flat_field(Some(map));
     let a = scan.area;
     // Diagnostic anchors exercise signed/HDR export, not photographic film calibration.
     let dmin = scan
@@ -31,13 +34,12 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
             height: 256,
         })
         .unwrap();
-    let calibration = scan
-        .processing_calibration(Calibration {
-            dmin,
-            dmax: dmin * 0.1,
-            input_floor: scan.input_floor,
-        })
-        .unwrap();
+    let calibration = (Calibration {
+        dmin,
+        dmax: dmin * 0.1,
+    })
+    .validate()
+    .unwrap();
     let roll = RollSettings {
         exposure: 2.,
         ..RollSettings::default()

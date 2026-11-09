@@ -13,13 +13,10 @@ fn fixture(index: usize) -> Editor {
                     path: format!("photo-{index}.ARW").into(),
                     development: crate::project::SourceDevelopment {
                         decode: Development::new("test-backend".into(), [1.; 4]),
-                        lens_correction: None,
-                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
                         camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(

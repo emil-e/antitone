@@ -24,7 +24,6 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     editor.document.install(Document::default());
     editor.set_dmin(None);
     editor.set_dmax(None);
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -312,11 +311,7 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
             .unwrap();
     let red = directory.path().join("red-neutral.dng");
     std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
-    let red_as_shot = crate::editor::document::read_source(&red, None)
-        .unwrap()
-        .development
-        .decode
-        .fixed_wb;
+    let red_as_shot = crate::scan::Scan::open(&red, None).unwrap().white_balance;
     assert_ne!(red_as_shot, crate::project::UNITY_WB);
 
     let assert_stage_development = |e: &Editor, digital: bool| {
@@ -439,7 +434,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 &services.device,
                 &services.queue,
                 ready.path.clone(),
-                Some(ready.record.development.decode.fixed_wb),
+                e.document.project.acquisition_wb(),
                 Some(&ready.record),
                 None,
             )

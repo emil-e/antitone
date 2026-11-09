@@ -143,13 +143,10 @@ fn observe_spatial_metadata_cached_roll() {
         // This fixture identity describes old cached camera codes, not current SDK/Sony acceptance.
         let development = SourceDevelopment {
             decode: Development::new("frozen-RGB16-geometry-fixture".into(), fixed),
-            lens_correction: None,
-            dng_development: None,
             dimensions: serde_json::from_value(meta["developed_size"].clone()).unwrap(),
             active_area: serde_json::from_value(meta["active_area"].clone()).unwrap(),
             camera_model: meta["camera"].as_str().unwrap().into(),
             camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
         frames.push(
             FrameInput::new(
@@ -158,7 +155,6 @@ fn observe_spatial_metadata_cached_roll() {
                     revision: FileRevision::read(&path).unwrap(),
                     development,
                     correction: None,
-                    code_scale: 1.,
                 },
                 size,
                 rgb,
@@ -170,8 +166,7 @@ fn observe_spatial_metadata_cached_roll() {
     }
     let metadata = prepare_spatial(
         frames,
-        Development::new("frozen-RGB16-geometry-fixture".into(), wb.unwrap()),
-        1.,
+        Development::new("frozen-RGB16-geometry-fixture".into(), [1.; 4]),
         checkpoint,
     )
     .unwrap();

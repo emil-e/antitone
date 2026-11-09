@@ -1,6 +1,10 @@
 pub use crate::fixture_path::FixturePath;
 
 pub const SIDE: u32 = 64;
+const XYZ_TO_CAMERA: [f64; 9] = [
+    3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434, -0.2040259,
+    1.0572252,
+];
 
 /// Tiny authored integer-Bayer DNG; no private photographs or GPU work.
 pub fn bayer_dng() -> FixturePath {
@@ -8,16 +12,24 @@ pub fn bayer_dng() -> FixturePath {
 }
 
 pub fn bayer_dng_with_rgb(rgb: [u16; 3]) -> FixturePath {
-    bayer_dng_with_camera(
-        rgb,
-        [
-            3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434,
-            -0.2040259, 1.0572252,
-        ],
-    )
+    bayer_dng_with_camera(rgb, XYZ_TO_CAMERA)
 }
 
 pub fn bayer_dng_with_camera(rgb: [u16; 3], xyz_to_camera: [f64; 9]) -> FixturePath {
+    camera_with_neutral(rgb, xyz_to_camera, [(1, 1); 3])
+}
+
+/// Declares capture WB in the RAW itself, independently of the requested development balance.
+#[allow(dead_code)]
+pub fn bayer_dng_with_as_shot(rgb: [u16; 3], gains: [u32; 3]) -> FixturePath {
+    camera_with_neutral(rgb, XYZ_TO_CAMERA, gains.map(|gain| (1, gain)))
+}
+
+fn camera_with_neutral(
+    rgb: [u16; 3],
+    xyz_to_camera: [f64; 9],
+    neutral: [(u32, u32); 3],
+) -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
     let rational = |value: u32| [value.to_le_bytes(), 1u32.to_le_bytes()].concat();
@@ -55,7 +67,14 @@ pub fn bayer_dng_with_camera(rgb: [u16; 3], xyz_to_camera: [f64; 9]) -> FixtureP
         (50714, 5, rational(0)),
         (50717, 4, long(65535)),
         (50721, 10, matrix),
-        (50728, 5, [rational(1), rational(1), rational(1)].concat()),
+        (
+            50728,
+            5,
+            neutral
+                .into_iter()
+                .flat_map(|(n, d)| [long(n), long(d)].concat())
+                .collect(),
+        ),
         (50778, 3, short(21)),
     ];
     entries.sort_by_key(|entry| entry.0);

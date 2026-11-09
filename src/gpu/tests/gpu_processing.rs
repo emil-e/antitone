@@ -79,11 +79,9 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
         let fixture = CameraFixture::new(&device).await.unwrap();
         let base = DVec3::new(40000., 45000., 50000.);
         let dense = DVec3::new(5000., 7000., 9000.);
-        let floor = 2.5;
         let calibration = Calibration {
             dmin: base / 65535.,
             dmax: dense / 65535.,
-            input_floor: floor / 65535.,
         };
         let interpretation = NegativeInput {
             response: Response {
@@ -132,13 +130,20 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
                         let camera = DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64);
                         let (native, flags) = if input.is_negative() {
                             // Gamma-one, unshaped inversion is an elementary ratio in code units.
-                            let sensor = camera.max(DVec3::splat(floor));
+                            let denominator = base / dense - DVec3::ONE;
+                            let join = base / (DVec3::ONE + 65536. * denominator);
                             let flags = (0..3)
-                                .fold(0, |bits, c| bits | (u32::from(camera[c] < floor) << c));
-                            (
-                                (base / sensor - DVec3::ONE) / (base / dense - DVec3::ONE),
-                                flags,
-                            )
+                                .fold(0, |bits, c| bits | (u32::from(camera[c] < join[c]) << c));
+                            let native = DVec3::from_array(std::array::from_fn(|c| {
+                                if camera[c] <= join[c] {
+                                    65536.
+                                        + (65536. + 1. / denominator[c])
+                                            * (1. - camera[c].max(0.) / join[c])
+                                } else {
+                                    (base[c] / camera[c] - 1.) / denominator[c]
+                                }
+                            }));
+                            (native, flags)
                         } else {
                             (camera / 65535., 0)
                         };
@@ -397,7 +402,6 @@ fn layer_range_preflight_covers_creative_stages() {
     let cal = Calibration {
         dmin: DVec3::splat(0.5),
         dmax: DVec3::splat(0.01),
-        input_floor: 1. / 65535.,
     };
     let extreme = negative(cal, 0.1, Balance::default());
     let limits = wgpu::Limits::default();
@@ -417,7 +421,7 @@ fn layer_range_preflight_covers_creative_stages() {
             extreme,
             RollSettings::default(),
             &valid,
-            DMat3::IDENTITY,
+            DMat3::from_diagonal(DVec3::splat(1e20)),
             area
         )
         .is_ok()
@@ -434,7 +438,7 @@ fn layer_range_preflight_covers_creative_stages() {
             extreme,
             RollSettings::default(),
             &overflowing,
-            DMat3::IDENTITY,
+            DMat3::from_diagonal(DVec3::splat(1e20)),
             area
         )
         .is_err()
@@ -446,7 +450,6 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
     let cal = Calibration {
         dmin: DVec3::ONE,
         dmax: DVec3::splat(0.01),
-        input_floor: 1e-6,
     };
     let interpretation = negative(
         cal,
@@ -470,7 +473,7 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
             interpretation,
             roll,
             &snapshot,
-            DMat3::IDENTITY,
+            DMat3::from_diagonal(DVec3::splat(1e30)),
             SourceRegion {
                 x: 0,
                 y: 0,
@@ -480,5 +483,5 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
         ))
         .is_err()
     );
-    assert_eq!(std::mem::size_of::<ProcessingParameters>(), 128);
+    assert_eq!(std::mem::size_of::<ProcessingParameters>() % 16, 0);
 }

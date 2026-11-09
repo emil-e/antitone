@@ -53,7 +53,7 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
     let first = project.order.first().copied().unwrap();
     let first_path = project.source(first).unwrap().path.clone();
     let first_shot = Scan::open(&first_path, None).unwrap();
-    let as_shot_wb = first_shot.fixed_wb;
+    let as_shot_wb = first_shot.white_balance;
     assert_ne!(as_shot_wb, UNITY_WB);
     let matrix = first_shot.camera_to_ap1;
     drop(first_shot);

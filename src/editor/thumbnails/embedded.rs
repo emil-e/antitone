@@ -160,15 +160,7 @@ impl EmbeddedPreviews {
         std::mem::size_of::<SourceKey>()
             + key.file.path.capacity()
             + key.source.camera_model.capacity()
-            + key
-                .source
-                .lens_correction
-                .as_ref()
-                .map_or(0, String::capacity)
-            + key.source.decode.backend_version.capacity()
-            + key.source.decode.contract.capacity()
-            + key.source.decode.inversion_space.capacity()
-            + key.source.decode.working_space.capacity()
+            + key.source.decode.version().len()
             + 1024
             + texture.as_ref().map_or(0, |texture| {
                 let [width, height] = texture.size();

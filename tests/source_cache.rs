@@ -39,16 +39,13 @@ impl Input {
             orientation: Default::default(),
             development: SourceDevelopment {
                 decode: metadata.development(WB),
-                lens_correction: None,
-                dng_development: metadata.dng_identity(),
                 dimensions: [metadata.width, metadata.height],
                 active_area: [area.x, area.y, area.width, area.height],
                 camera_model: metadata.camera_model(),
                 camera_to_ap1: metadata.camera_to_ap1().unwrap().to_cols_array_2d(),
-                input_floor: metadata.input_floor().unwrap(),
             },
         };
-        let development = metadata.development(WB);
+        let development = metadata.development([1.; 4]);
         record.development.decode = development.clone();
         let key = SourceKey::capture(file.path(), &record.development).unwrap();
         Self {
@@ -354,7 +351,7 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
     assert!(
         SourceKey::capture(
             &directory.path().join("missing.dng"),
-            &input.record.development,
+            &input.record.development
         )
         .is_none()
     );
@@ -391,26 +388,30 @@ fn mismatched_native_basis_geometry_wb_and_processing_never_replace_working_entr
     let mut source_key = input.record.development.clone();
     source_key.camera_to_ap1[0][0] += 0.01;
     wrong_sources.push(source_key);
-    let mut source_key = input.record.development.clone();
-    source_key.input_floor *= 2.0;
-    wrong_sources.push(source_key);
     for expected in wrong_sources {
         let key = SourceKey::capture(input.file.path(), &expected).unwrap();
         assert!(store.publish(key, source.clone(), 10).is_err());
     }
-    for field in 0..5 {
+    for field in 0..3 {
         let mut development = input.development.clone();
         match field {
-            0 => development.fixed_wb[0] = 2.0,
+            0 => {}
             1 => development.backend_version.push_str(" wrong"),
-            2 => development.contract.push_str(" wrong"),
-            3 => development.inversion_space.push_str(" wrong"),
-            _ => development.working_space.push_str(" wrong"),
+            _ => {
+                development.backend = if development.uses_sdk() {
+                    antitone::project::Developer::LibRaw
+                } else {
+                    antitone::project::Developer::DngSdk
+                }
+            }
         }
         let key = SourceKey::capture(
             input.file.path(),
             &SourceDevelopment {
-                decode: development,
+                decode: Development {
+                    white_balance: if field == 0 { [2., 1., 1., 1.] } else { WB },
+                    ..development
+                },
                 ..input.record.development.clone()
             },
         )

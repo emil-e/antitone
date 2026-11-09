@@ -57,7 +57,6 @@ fn negative(gamma: f64) -> NegativeInput {
         calibration: Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.2),
-            input_floor: 1e-6,
         },
         response: Response {
             toe: 1.,

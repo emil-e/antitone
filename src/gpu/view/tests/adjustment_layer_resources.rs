@@ -134,8 +134,8 @@ fn exercise(
             )
         });
         let (cal, sources) = monitor.phase("local-acquisition", || {
-            scan.set_flat_field(field.clone())?;
-            let cal = scan.processing_calibration(basis)?;
+            scan.set_flat_field(field.clone());
+            let cal = (basis).validate()?;
             let mut frame = frame(&scan);
             frame.output = [1920, 1080];
             let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field.clone())?;

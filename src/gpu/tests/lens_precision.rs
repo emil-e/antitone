@@ -26,7 +26,7 @@ use {
     api::{
         flat_field::FlatField,
         lens::EmbeddedLensGeometry,
-        processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
+        processing::{Calibration, RollSettings},
         raw::RawFile,
         rendering::{CpuRenderer, OutputTarget},
         scan::Scan,
@@ -126,7 +126,6 @@ fn synthetic(near_base: bool) -> Dataset {
     let calibration = Calibration {
         dmin: dmin / 65535.,
         dmax: dmax / 65535.,
-        input_floor: CAMERA_INPUT_FLOOR,
     };
     let mut codes = Vec::new();
     for y in 0..size[1] {
@@ -339,17 +338,12 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
     } else {
         [gain; 4]
     };
-    let maximum_gain = nodes
-        .iter()
-        .map(|node| node.max_element())
-        .fold(1f64, f64::max);
     // The spatial field has unity gain at its centre, where the fixed reference anchors live.
     // The constant field separately controls scale invariance and corrected-path timing.
     let reference_gain = if dataset.spatial { DVec3::ONE } else { gain };
     let calibration = dataset.calibration.map(|cal| Calibration {
         dmin: cal.dmin * reference_gain,
         dmax: cal.dmax * reference_gain,
-        input_floor: cal.input_floor * maximum_gain,
     });
     let gain_at = |index: usize| {
         if !dataset.spatial {
@@ -630,7 +624,7 @@ fn supplied_raw_storage_precision_study() {
     let (train, calibration) = train_raw::load();
     println!(
         "precision real_film_calibration={calibration:?} wb={:?}; adapted-lens scans have no usable profile: borrowed Sony warps below are diagnostic resampling only, not calibrated lens correction",
-        train.fixed_wb
+        train.white_balance
     );
     for (i, profile) in profiles.iter().enumerate() {
         let geometry = EmbeddedLensGeometry::new(profile.clone(), train.area).unwrap();
@@ -652,7 +646,7 @@ fn supplied_raw_storage_precision_study() {
             }
         }
     }
-    let wb = train.fixed_wb;
+    let wb = train.white_balance;
     drop(train);
     let dense = Scan::open(&root.join("DSC04378.ARW"), Some(wb)).unwrap();
     let geometry = EmbeddedLensGeometry::new(profiles[0].clone(), dense.area).unwrap();

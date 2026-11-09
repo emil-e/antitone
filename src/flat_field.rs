@@ -2,7 +2,6 @@
 use crate::{Error, color::AP1_TO_XYZ};
 use glam::{DMat3, DVec3};
 
-pub const CONTRACT: &str = "camera-rgb-neutral-gray-local-quadratic-log-gaussian-v1";
 const MAXIMUM: usize = 256;
 const SIGMA: f64 = 6.;
 
@@ -165,16 +164,6 @@ impl FlatField {
             return Err(Error::NumericalOverflow);
         }
         Ok(floor)
-    }
-
-    pub fn processing_calibration(
-        &self,
-        calibration: crate::processing::Calibration,
-    ) -> Result<crate::processing::Calibration, Error> {
-        calibration.for_source(
-            crate::processing::CAMERA_INPUT_FLOOR,
-            self.bounds().1.max_element(),
-        )
     }
 
     pub fn gain(&self, point: [f64; 2]) -> Result<DVec3, Error> {

@@ -59,11 +59,11 @@ fn frozen_pixels_and_metadata_match_unique_development() {
     let scan = Scan::open(file.path(), Some(WB)).unwrap();
     let source = scan.source();
     assert_eq!(format!("{:?}", source.metadata()), format!("{metadata:?}"));
-    assert_eq!(source.fixed_wb(), WB);
+    assert_eq!(source.white_balance(), WB);
     assert_eq!(source.camera_model(), scan.camera_model);
     assert_eq!(source.camera_to_ap1(), scan.camera_to_ap1);
     assert_eq!(source.area(), scan.area);
-    assert_eq!(source.input_floor(), scan.input_floor);
+    assert_eq!(source.precision_floor(), scan.precision_floor);
     assert_eq!(codes(source), expected);
     let image = source.camera_image().unwrap();
     assert_eq!(
@@ -98,11 +98,11 @@ fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
         )
         .unwrap(),
     );
-    corrected.set_flat_field(Some(field)).unwrap();
+    corrected.set_flat_field(Some(field.clone()));
     assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
     assert_eq!(plain.pixel(16, 16).unwrap(), original);
-    assert_eq!(corrected.effective_floor(), 2.0 * source.input_floor());
-    assert_eq!(plain.effective_floor(), source.input_floor());
+    assert_eq!(corrected.effective_floor(), 2.0 * source.precision_floor());
+    assert_eq!(plain.effective_floor(), source.precision_floor());
     let mean = plain.reference(region()).unwrap();
     let corrected_mean = corrected.reference(region()).unwrap();
     // Plain and corrected references group their ordinary sums differently.
@@ -112,11 +112,17 @@ fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
     assert_eq!(fresh.pixel(16, 16).unwrap(), original);
     let (_, _, preview) = plain.preview_source(8).unwrap();
     assert_eq!(fresh.preview_source(8).unwrap().2, preview);
-    let invalid = Arc::new(
-        FlatField::from_nodes([area.width, area.height, 1, 1], [2, 2], vec![DVec3::ONE; 4])
-            .unwrap(),
+    let outside = Arc::new(
+        FlatField::from_nodes(
+            [area.width, area.height, 1, 1],
+            [2, 2],
+            vec![DVec3::splat(3.); 4],
+        )
+        .unwrap(),
     );
-    assert!(corrected.set_flat_field(Some(invalid)).is_err());
+    corrected.set_flat_field(Some(outside));
+    assert_eq!(corrected.pixel(16, 16).unwrap(), original);
+    corrected.set_flat_field(Some(field));
     assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
     drop(first);
     drop(source);

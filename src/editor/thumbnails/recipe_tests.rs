@@ -21,9 +21,6 @@ fn document() -> crate::editor::document_scope::DocumentScope {
         .unwrap();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
-    document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     document.into()
 }
 
@@ -56,7 +53,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     let source = document.project.source(id).unwrap().clone();
     let scan = Scan::open(
         &document.source_path(id).unwrap(),
-        Some(document.project.development().as_ref().unwrap().fixed_wb),
+        document.project.acquisition_wb(),
     )
     .unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
@@ -191,9 +188,6 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
     let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
-    document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let id = document.project.order[0];
     thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(
@@ -581,9 +575,6 @@ fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identi
     let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
-    document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let asset = |lut| Arc::new(LookAsset::new("Shared".into(), LookOrigin::Imported, lut).unwrap());
     let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
     document.project.output.lut = Some(asset(lut.clone()));
@@ -640,9 +631,6 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     document.import(&paths).unwrap();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
-    document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let selected = document.project.order[0];
     let mut editor = Editor::state();
     editor.document = editor.document.replacement(document);
@@ -745,9 +733,6 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
     document.import(&paths).unwrap();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
-    document
-        .project
-        .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     // The production look grid is 129³. A constant authored LUT makes its resource
     // footprint realistic without bringing a built-in generator or photographs into this test.
     document.project.output.lut = Some(Arc::new(

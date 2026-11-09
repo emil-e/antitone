@@ -90,13 +90,8 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone()).unwrap();
-            let cal = field
-                .as_ref()
-                .map_or(Ok(calibration()), |f| {
-                    f.processing_calibration(calibration())
-                })
-                .unwrap();
+            scan.set_flat_field(field.clone());
+            let cal = calibration();
             let gpu = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));

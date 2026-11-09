@@ -51,21 +51,11 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             "{}",
             editor.status
         );
-        assert_eq!(
-            editor
-                .document
-                .state
-                .project
-                .development()
-                .unwrap()
-                .contract,
-            crate::project::DNG_DEVELOPMENT_CONTRACT
-        );
         assert!(
             editor.document.state.project.sources[0]
                 .development
-                .dng_development
-                .is_some()
+                .decode
+                .uses_sdk()
         );
         editor.set_dmin(Some(DVec3::splat(0.75)));
         editor.set_dmax(Some(DVec3::splat(0.01)));

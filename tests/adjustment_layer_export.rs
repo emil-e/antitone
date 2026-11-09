@@ -36,7 +36,6 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.02),
-        input_floor: 1. / 65535.,
     };
     let mut project = Project {
         input: InputSettings::negative(calibration),
@@ -91,13 +90,10 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
             path: "read-only-not-loaded.ARW".into(),
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [20, 30],
                 active_area: [10, 20, 6, 6],
                 camera_model: "test-camera".into(),
                 camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: calibration.input_floor,
             },
             reference_only: false,
 

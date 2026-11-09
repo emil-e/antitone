@@ -36,7 +36,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field.clone())).unwrap();
+    scan.set_flat_field(Some(field.clone()));
     let (device, queue, renderer) = super::super::super::tests::context();
     let gate = SubmissionGate::default();
     let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
@@ -57,7 +57,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
             recipe.neutral.correction = scan.flat_field().cloned();
         })
         .unwrap();
-    let input = recipe.neutral.processing_input().unwrap();
+    let input = recipe.neutral.input;
     let scalar =
         AdjustmentLayerPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1)
             .unwrap();

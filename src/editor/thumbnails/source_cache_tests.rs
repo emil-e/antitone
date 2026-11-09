@@ -10,7 +10,7 @@ const BUDGET: u64 = 8 << 20;
 fn document(path: &std::path::Path) -> super::document_scope::DocumentScope {
     let mut document = Document::default();
     let (source, _) = document::open_source(path, Some([1.; 4])).unwrap();
-    let development = Development::for_source(&source.development, [1.; 4]);
+    let development = Development::for_source(&source.development);
     document
         .register_with_development(source, development)
         .unwrap();
@@ -20,10 +20,7 @@ fn document(path: &std::path::Path) -> super::document_scope::DocumentScope {
 }
 
 fn wb(document: &Document) -> Option<[f64; 4]> {
-    document
-        .project
-        .development()
-        .map(|development| development.fixed_wb)
+    document.project.acquisition_wb()
 }
 
 fn codes(scan: &Scan) -> Vec<[f32; 4]> {
@@ -350,7 +347,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             thumbnails.cancel();
             let cache = &document.cache;
             let file = document.file_key(&path);
-            let fixed_wb = wb(&document);
+            let white_balance = wb(&document);
             std::thread::scope(|scope| {
                 let foreground = scope.spawn(|| {
                     prepare_source_scheduled(
@@ -358,7 +355,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                         &device,
                         &queue,
                         path.clone(),
-                        fixed_wb,
+                        white_balance,
                         Some(expected),
                         None,
                         Some((cache, file.clone())),
@@ -393,7 +390,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let b = raw_fixture::bayer_dng();
         let mut document = document(a.path());
         let (record, _) = document::open_source(b.path(), Some([1.; 4])).unwrap();
-        let development = Development::for_source(&record.development, [1.; 4]);
+        let development = Development::for_source(&record.development);
         document
             .register_with_development(record, development)
             .unwrap();
@@ -535,25 +532,17 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
 }
 
 #[test]
-fn acquisition_requests_use_stage_wb_and_preserve_saved_source_wb() {
-    let file = raw_fixture::bayer_dng();
+fn acquisition_requests_resolve_registered_headers_and_defer_new_sources_to_stage_policy() {
+    let file = raw_fixture::bayer_dng_with_as_shot([8000, 16000, 24000], [2, 1, 3]);
     let mut editor = Editor::state();
-    let scan_wb = crate::project::UNITY_WB;
-    editor
-        .document
-        .register(document::read_source(file.path(), Some(scan_wb)).unwrap())
-        .unwrap();
-    editor.document.validate().unwrap();
+    editor.document.import(&[file.path().into()]).unwrap();
     let fresh = file.path().with_file_name("new-reference.dng");
-    let saved_wb = [1.5, 1., 2., 1.];
     for digital in [false, true] {
         if digital {
-            editor.document.state.project.input = crate::processing::InputSettings::Digital;
-            editor.document.state.project.sources[0].development =
-                document::read_source(file.path(), Some(saved_wb))
-                    .unwrap()
-                    .development;
-            editor.document.validate().unwrap();
+            editor
+                .document
+                .redevelop_for_input(crate::processing::InputSettings::Digital)
+                .unwrap();
         }
         for request in [
             editor.reference_preview_input(fresh.clone()),
@@ -573,7 +562,14 @@ fn acquisition_requests_use_stage_wb_and_preserve_saved_source_wb() {
             editor.reference_preview_input(file.path().to_owned()),
             editor.source_input(file.path().to_owned()),
         ] {
-            assert_eq!(request.wb, Some(if digital { saved_wb } else { scan_wb }));
+            assert_eq!(
+                request.wb,
+                Some(if digital {
+                    [2., 1., 3., 1.]
+                } else {
+                    crate::project::UNITY_WB
+                })
+            );
             assert!(request.expected.is_some());
         }
     }

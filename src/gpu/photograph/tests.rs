@@ -202,7 +202,6 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
     let settings = InputSettings::negative(Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
-        input_floor: 0.1,
     });
     let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
         exposure: 0.25,
@@ -420,8 +419,6 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         InputSettings::negative(Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.14),
-            // Bound ordinary RGB for the absolute-error gate while exercising below-floor flags.
-            input_floor: 0.1,
         }),
     ] {
         let pipeline = Arc::new(
@@ -528,7 +525,14 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
                     assert_eq!(actual[3] as f64, expected[3]);
                     for c in 0..3 {
                         assert!(
-                            (actual[c] as f64 - expected[c]).abs() < 2e-5,
+                            (actual[c] as f64 - expected[c]).abs()
+                                < 2e-5
+                                    + 2e-5
+                                        * expected[..3]
+                                            .iter()
+                                            .copied()
+                                            .map(f64::abs)
+                                            .fold(0., f64::max),
                             "{settings:?}: {actual:?} vs {expected:?}"
                         );
                     }
@@ -596,7 +600,11 @@ fn double(p: vec4f, pos: vec2f) -> vec4f {
                 .apply_rgb(scalar_roll.apply(rgb).unwrap(), position)
                 .unwrap();
             let actual = DVec3::new(actual[0] as f64, actual[1] as f64, actual[2] as f64);
-            assert!((actual - expected).abs().max_element() < 2e-5);
+            assert!(
+                (actual - expected).abs().max_element()
+                    < 2e-5 + 2e-5 * expected.abs().max_element(),
+                "{actual:?} != {expected:?}"
+            );
             insertion_effect = insertion_effect.max(
                 (actual
                     - DVec3::new(

@@ -918,7 +918,7 @@ impl SourceView {
         let preview = ready
             .developed
             .metadata()
-            .source_preview(ready.developed.fixed_wb());
+            .source_preview(ready.developed.white_balance());
         let capture = match editor
             .source_preview_parameters(preview, editor.source_exposure)
             .and_then(PhotographRequest::inspection)

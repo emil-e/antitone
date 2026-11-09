@@ -42,11 +42,10 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     fixture.lists[1].push(Opcode::gain(0.5, 1));
     let file = fixture.write();
     let scan = Scan::open(file.path(), None).unwrap();
-    assert_eq!(scan.source().input_floor(), 1. / 4096.);
+    assert_eq!(scan.source().precision_floor(), 1. / 4096.);
     let calibration = Calibration {
         dmin: DVec3::splat(0.75),
         dmax: DVec3::splat(0.01),
-        input_floor: CAMERA_INPUT_FLOOR,
     };
     let mut project = Project {
         input: InputSettings::negative(calibration),
@@ -60,9 +59,8 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     let loaded = Project::load(&project_path).unwrap();
     loaded.require_runtime().unwrap();
     let source = loaded.source(id).unwrap();
-    let scan = Scan::open(&source.path, Some(source.development.decode.fixed_wb)).unwrap();
+    let scan = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
     assert_eq!(record(file.path(), &scan).development, source.development);
-    assert_eq!(source.development.input_floor, 1. / 4096.);
     for y in scan.area.y..scan.area.y + scan.area.height {
         for x in scan.area.x..scan.area.x + scan.area.width {
             assert_eq!(
@@ -89,10 +87,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         PhotoOrientation::default(),
     )
     .unwrap();
-    let oracle_input = InputSettings::negative(Calibration {
-        input_floor: 1. / 4096.,
-        ..calibration
-    });
+    let oracle_input = InputSettings::negative(calibration);
     let oracle =
         AdjustmentLayerPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1)
             .unwrap();

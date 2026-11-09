@@ -103,7 +103,7 @@ Shared preparation captures the camera raster while each original is available, 
 
 Confirmation shares these rasters with fitting. Corrected spatial arrays and native-positive GI arrays are evaluated and released one photo at a time for each selection pass, rather than retained for the roll. Complete compatible inputs require no further original acquisition. Missing inputs are captured once for both statistics and GI; failure still aborts the complete proposal.
 
-Review needs only geometry and material classification; it does not develop RAWs or run image-based refinement. Opening a project with finished regions collects missing camera rasters when Analyze needs them, without redetecting areas; Auto-crop can use those regions without collecting pixels.
+Review needs only geometry and material classification; it does not develop RAWs or run image-based refinement. Within an open document, Auto-crop reuses ready regions without acquiring pixels; Analyze collects missing camera rasters on demand. Reopening starts without regions, and either feature can trigger shared preparation.
 
 ## Install the baseline, not a partial result
 

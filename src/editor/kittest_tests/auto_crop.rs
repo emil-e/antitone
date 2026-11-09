@@ -102,7 +102,6 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                         .development
                         .decode
                         .clone(),
-                    code_scale: e.document.spatial_code_scale(),
                     common_size: crate::spatial_metadata::CommonSize::fit(&sources),
                     sources,
                 }],

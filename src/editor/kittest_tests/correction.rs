@@ -469,17 +469,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                     .contains(&settings.reference)
             )
         });
-        let wb = harness.read(|editor| {
-            editor
-                .document
-                .project
-                .development()
-                .as_ref()
-                .unwrap()
-                .fixed_wb
-        });
-        let mut scan = Scan::open(&fixture("illuminated-patches.dng"), Some(wb)).unwrap();
-        scan.set_flat_field(Some(settings.map.clone())).unwrap();
+        let wb = harness.read(|editor| editor.document.project.acquisition_wb());
+        let mut scan = Scan::open(&fixture("illuminated-patches.dng"), wb).unwrap();
+        scan.set_flat_field(Some(settings.map.clone()));
         let [x, y, w, h] = settings.map.area();
         let mut patches = Vec::new();
         for gy in 0..9 {
@@ -744,6 +736,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             &mut harness,
             directory.path().join("correction.antitone.json"),
         );
+        wait_for(&mut harness, |editor| {
+            editor.files.pending() && editor.dialogs.is_open()
+        });
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| {
@@ -835,6 +830,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             &mut harness,
             directory.path().join("correction.antitone.json"),
         );
+        wait_for(&mut harness, |editor| {
+            editor.files.pending() && editor.dialogs.is_open()
+        });
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| {

@@ -16,7 +16,7 @@ fn photographic_reference_initialization() {
     for path in std::env::split_paths(&paths) {
         let start = Instant::now();
         let raw = crate::raw::RawFile::open(&path).unwrap();
-        let wb = raw.fixed_wb(raw.metadata.as_shot_wb());
+        let wb = raw.white_balance(raw.metadata.as_shot_wb());
         let file = raw.file.clone();
         let development = SourceDevelopment::from_metadata(&raw.metadata, wb).unwrap();
         let header_ms = start.elapsed().as_secs_f64() * 1000.;

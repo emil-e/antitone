@@ -243,7 +243,6 @@ impl Editor {
         let current = self.document.spatial_inputs();
         let scope = &mut self.document;
         let publish = paths_match
-            && scope.spatial_code_scale() == document.spatial_code_scale()
             && scope
                 .spatial
                 .publish(request, metadata, &scope.state.project, &current)

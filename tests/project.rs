@@ -2,13 +2,13 @@
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::Balance,
-    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
+    processing::{DEFAULT_GAMMA, InputSettings, Response},
     project::*,
 };
 use glam::DVec3;
 
 fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
-    let decode = Development::new("0.22.0".into(), antitone::project::UNITY_WB);
+    let decode = Development::new("0.22.0".into(), [1.; 4]);
     let mut project = Project {
         input: InputSettings::Negative {
             dmin: Some(DVec3::new(
@@ -21,7 +21,6 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
                 0.003545242472549229,
                 0.001551173905987176,
             )),
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -35,14 +34,14 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             id: SourceId(0),
             path: name.into(),
             development: SourceDevelopment {
-                decode: decode.clone(),
-                lens_correction: None,
-                dng_development: None,
+                decode: antitone::project::Development {
+                    white_balance: [1.; 4],
+                    ..decode.clone()
+                },
                 dimensions: [900, 600],
                 active_area: [12, 12, 864, 576],
                 camera_model: "test-camera".into(),
                 camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -111,11 +110,9 @@ fn libraw_release_provenance_does_not_gate_project_or_source_compatibility() {
             .backend_version
             .is_empty()
     );
-    let mut unsupported = project;
-    unsupported.input = InputSettings::Digital;
-    unsupported.sources[0].development.decode.contract = "unsupported pixel interpretation".into();
-    unsupported.validate().unwrap();
-    assert!(unsupported.require_runtime().is_err());
+    let mut encoded = serde_json::to_value(&project).unwrap();
+    encoded["sources"][0]["development"]["decode"]["backend"] = "unknown_backend".into();
+    assert!(serde_json::from_value::<Project>(encoded).is_err());
 }
 
 #[test]
@@ -738,13 +735,9 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
     project.source_mut(dmin_source_id).unwrap().path = moved.clone();
     assert_eq!(project.source(dmin_source_id).unwrap().path, moved);
     let calibration = project.calibration().unwrap();
-    project.sources[0].development.decode.contract = "different development contract".into();
-    assert!(project.require_runtime().is_err());
+    project.sources[0].development.decode.backend_version = "different decoder release".into();
+    project.require_runtime().unwrap();
     assert_eq!(project.calibration().unwrap(), calibration);
-    // A scan stage requires one shared acquisition basis, so a mixed decode contract is invalid.
-    assert!(project.validate().is_err());
-    project.sources[0].development.decode.contract = antitone::project::DEVELOPMENT_CONTRACT.into();
-    project.validate().unwrap();
     project.processing_model += 1;
     assert!(project.require_runtime().is_err());
 }
@@ -806,12 +799,11 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
         .development
         .active_area = [u32::MAX, 0, u32::MAX, 1];
     assert!(dimensions.validate().is_err());
-    for rgb in [[f64::NAN, 0.1, 0.1], [0., 0.1, 0.1], [1e-8, 0.1, 0.1]] {
+    for rgb in [[f64::NAN, 0.1, 0.1], [0., 0.1, 0.1], [-1e-8, 0.1, 0.1]] {
         let mut partial = project.clone();
         partial.input = InputSettings::Negative {
             dmin: Some(DVec3::from_array(rgb)),
             dmax: None,
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -823,35 +815,25 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
         *dmax = *dmin;
     }
     assert!(ordering.validate().is_err());
-    let mut missing_floor = project.clone();
-    if let InputSettings::Negative {
-        input_floor, dmax, ..
-    } = &mut missing_floor.input
-    {
-        *input_floor = 0.;
+    let mut uncalibrated = project.clone();
+    if let InputSettings::Negative { dmax, .. } = &mut uncalibrated.input {
         *dmax = None;
     }
-    assert!(missing_floor.validate().is_err());
+    uncalibrated.validate().unwrap();
 }
 
-fn mixed_source(path: &str, camera: &str, fixed_wb: [f64; 4], matrix: [[f64; 3]; 3]) -> Source {
-    let gains = fixed_wb.map(|gain| gain as f32);
-    let source_floor = CAMERA_INPUT_FLOOR * f64::from(gains.into_iter().fold(0_f32, f32::max))
-        / f64::from(gains[1]);
+fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) -> Source {
     let path = std::path::PathBuf::from(path);
     std::fs::write(&path, b"mixed source bytes").unwrap();
     Source {
         id: SourceId(0),
         path,
         development: SourceDevelopment {
-            decode: Development::new("0.22.0".into(), fixed_wb),
-            lens_correction: None,
-            dng_development: None,
+            decode: Development::new("0.22.0".into(), [red_gain, 1., 1., 1.]),
             dimensions: [900, 600],
             active_area: [0, 0, 900, 600],
             camera_model: camera.into(),
             camera_to_ap1: matrix,
-            input_floor: source_floor,
         },
         reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -874,7 +856,7 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
         .add_source(mixed_source(
             directory.path().join("camera-a.ARW").to_str().unwrap(),
             "camera-a",
-            [2., 1., 1.5, 1.],
+            2.,
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         ))
         .unwrap();
@@ -882,15 +864,20 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
         .add_source(mixed_source(
             directory.path().join("camera-b.ARW").to_str().unwrap(),
             "camera-b",
-            [1.4, 1., 2.1, 1.],
+            2.1,
             [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
         ))
         .unwrap();
 
     assert_eq!(project.camera_basis().unwrap().camera_model, "camera-a");
     assert_eq!(
-        project.source(second).unwrap().development.decode.fixed_wb,
-        [1.4, 1., 2.1, 1.]
+        project
+            .source(second)
+            .unwrap()
+            .development
+            .decode
+            .white_balance,
+        [2.1, 1., 1., 1.]
     );
     assert_eq!(
         project
@@ -906,10 +893,7 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
         recipe.neutral.source_development,
         project.source(second).unwrap().development
     );
-    assert_eq!(
-        recipe.neutral.processing_input().unwrap(),
-        InputSettings::Digital
-    );
+    assert_eq!(recipe.neutral.input, InputSettings::Digital);
     assert_eq!(
         project
             .image_recipe(first)
@@ -922,46 +906,47 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
     project.input = InputSettings::Negative {
         dmin: Some(DVec3::splat(0.8)),
         dmax: Some(DVec3::splat(0.02)),
-        input_floor: CAMERA_INPUT_FLOOR,
         response: Response::film(),
         gamma: DEFAULT_GAMMA,
         balance: Balance::default(),
     };
     for source in &mut project.sources {
-        source.development.decode = Development::new("0.22.0".into(), antitone::project::UNITY_WB);
-        source.development.input_floor = CAMERA_INPUT_FLOOR;
+        source.development.decode = Development::new("0.22.0".into(), [1.; 4]);
     }
     let error = project.require_scan_sources().unwrap_err();
     assert!(error.to_string().contains("one scanning setup"));
     let third = mixed_source(
         directory.path().join("camera-c.ARW").to_str().unwrap(),
         "camera-c",
-        [1., 1., 1., 1.],
+        1.,
         [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
     );
     assert!(project.add_source(third).is_err());
 }
 
 #[test]
-fn scan_basis_ignores_wb_but_compares_camera_and_development_contract() {
+fn scan_basis_depends_on_camera_coordinates_not_decoder_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let source = mixed_source(
         directory.path().join("basis.ARW").to_str().unwrap(),
         "camera-a",
-        [1.; 4],
+        1.,
         [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
     );
     let basis = antitone::project::ScanBasis::from_development(&source.development);
-    let mut other_wb = source.development.clone();
-    other_wb.decode.fixed_wb = [2., 1., 1.5, 1.];
+    let mut other_version = source.development.clone();
+    other_version
+        .decode
+        .backend_version
+        .push_str("-new-release");
     assert_eq!(
         basis,
-        antitone::project::ScanBasis::from_development(&other_wb)
+        antitone::project::ScanBasis::from_development(&other_version)
     );
-    assert!(basis.require_source(&other_wb).is_ok());
-    let mut other_contract = source.development;
-    other_contract.decode.contract = "another-development".into();
-    assert!(basis.require_source(&other_contract).is_err());
+    assert!(basis.require_source(&other_version).is_ok());
+    let mut other_basis = source.development;
+    other_basis.camera_model.push_str(" other camera");
+    assert!(basis.require_source(&other_basis).is_err());
 }
 
 #[test]
@@ -975,7 +960,7 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
         .add_source(mixed_source(
             directory.path().join("roll-a.ARW").to_str().unwrap(),
             "camera-a",
-            [1.; 4],
+            1.,
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         ))
         .unwrap();
@@ -988,7 +973,7 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
         .add_source(mixed_source(
             directory.path().join("roll-b.ARW").to_str().unwrap(),
             "camera-a",
-            [1.; 4],
+            1.,
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         ))
         .unwrap();
@@ -999,8 +984,8 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
             .add_source(mixed_source(
                 directory.path().join("camera-b.ARW").to_str().unwrap(),
                 "camera-b",
-                [1.; 4],
-                [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+                1.,
+                [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]]
             ))
             .is_err()
     );

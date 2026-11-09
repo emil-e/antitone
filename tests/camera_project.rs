@@ -1,6 +1,6 @@
 #![cfg(feature = "project")]
 use antitone::{
-    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
+    processing::{DEFAULT_GAMMA, InputSettings, Response},
     project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use glam::{DMat3, DVec3};
@@ -11,13 +11,10 @@ fn source(model: &str, matrix: DMat3) -> Source {
         path: "test.ARW".into(),
         development: SourceDevelopment {
             decode: Development::new("test-backend".into(), [1.; 4]),
-            lens_correction: None,
-            dng_development: None,
             dimensions: [900, 600],
             active_area: [0, 0, 900, 600],
             camera_model: model.into(),
             camera_to_ap1: matrix.to_cols_array_2d(),
-            input_floor: CAMERA_INPUT_FLOOR,
         },
         reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -34,7 +31,6 @@ fn project() -> Project {
         input: InputSettings::Negative {
             dmin: Some(DVec3::splat(0.2)),
             dmax: Some(DVec3::splat(0.01)),
-            input_floor: CAMERA_INPUT_FLOOR,
             response: Response::film(),
             gamma: DEFAULT_GAMMA,
             balance: Default::default(),
@@ -222,23 +218,4 @@ fn camera_basis_survives_source_removal_roundtrip_and_rejects_later_camera_subst
     mixed.order.push(SourceId(2));
     mixed.next_source_id = 3;
     assert!(mixed.validate().is_err());
-}
-
-#[test]
-fn altered_roll_or_source_base_floor_is_not_a_valid_camera_model_project() {
-    let project = project();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("invalid.antitone.json");
-    for floor in [0., CAMERA_INPUT_FLOOR * 0.5, CAMERA_INPUT_FLOOR * 2.] {
-        for source_floor in [false, true] {
-            let mut value = serde_json::to_value(&project).unwrap();
-            if source_floor {
-                value["sources"][0]["development"]["input_floor"] = floor.into();
-            } else {
-                value["input_floor"] = floor.into();
-            }
-            std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-            assert!(Project::load(&path).is_err());
-        }
-    }
 }

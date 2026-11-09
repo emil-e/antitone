@@ -38,7 +38,7 @@ pub(super) fn gamma(
         "gamma fitting requires a negative input",
     ))?;
     let negative = input
-        .with_calibration(scan.processing_calibration(calibration)?)
+        .with_calibration((calibration).validate()?)
         .negative_input()
         .ok_or(Error::InvalidParameter(
             "gamma fitting requires a negative input",

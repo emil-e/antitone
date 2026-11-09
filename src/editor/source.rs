@@ -6,7 +6,6 @@ use super::{
 };
 use crate::{
     Error,
-    processing::InputSettings,
     project::Source,
     scan::{DevelopedSource, Scan},
     source::SourceKey,
@@ -116,20 +115,12 @@ impl PartialEq for Context {
 
 impl Context {
     pub fn scan(&self) -> Result<Scan, Error> {
-        if let Some(correction) = &self.correction {
-            correction
-                .settings
-                .require_source(&document::metadata_development(
-                    &self.source.metadata(),
-                    self.source.fixed_wb(),
-                )?)?;
-        }
         let mut scan = Scan::with_reference(self.source.clone(), self.reference.clone());
         scan.set_flat_field(
             self.correction
                 .as_ref()
                 .map(|field| field.settings.map.clone()),
-        )?;
+        );
         Ok(scan)
     }
 }
@@ -236,6 +227,7 @@ impl Services {
         let capture = move || {
             request.require_live(&|| retired.is_cancelled())?;
             let key = request.load_key()?;
+            request.wb = Some(key.development().decode.white_balance);
             Ok::<_, Error>((request, key))
         };
         let captured = if needs_header {
@@ -299,21 +291,24 @@ impl Request {
                 expected.grade_snapshot()?;
                 if self
                     .wb
-                    .is_some_and(|wb| wb != expected.development.decode.fixed_wb)
+                    .is_some_and(|wb| wb != expected.development.decode.white_balance)
                 {
                     return Err(Error::Project(
-                        "source WB differs from requested development".into(),
+                        "source WB differs from accepted development".into(),
                     ));
                 }
                 expected.clone()
             }
-            None => document::open_source(&self.path, self.wb)?.0,
+            None => {
+                let (record, raw) = document::open_source(&self.path, self.wb)?;
+                return Ok(SourceKey::for_load(
+                    &self.path,
+                    raw.file.clone(),
+                    &record.development,
+                ));
+            }
         };
-        let file = if self.expected.is_none() {
-            thumbnails::FileKey::new(&self.path)
-        } else {
-            self.file.clone()
-        };
+        let file = self.file.clone();
         Ok(SourceKey::for_load(&self.path, file, &record.development))
     }
 
@@ -326,6 +321,7 @@ impl Request {
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
         let key = self.load_key()?;
+        self.wb = Some(key.development().decode.white_balance);
         let file = key.file().clone();
         let started = std::time::Instant::now();
         let provider = self
@@ -369,7 +365,8 @@ impl Request {
         self.require_live(cancelled)?;
         let tick = std::time::Instant::now();
         let source = prepared.source.clone();
-        let record = document::source_metadata(&self.path, &source.metadata(), source.fixed_wb())?;
+        let record =
+            document::source_metadata(&self.path, &source.metadata(), source.white_balance())?;
         timing.registration_seconds = tick.elapsed().as_secs_f64();
         if let Some(expected) = &self.expected {
             document::verify_source(expected, &record)?;
@@ -381,9 +378,6 @@ impl Request {
         let camera_proxy = prepared.proxy;
         scan = Scan::with_reference(prepared.source, prepared.reference);
         self.require_live(cancelled)?;
-        if let Some(correction) = &self.correction {
-            correction.settings.require_source(&record.development)?;
-        }
         let context = Context {
             source: scan.source().clone(),
             reference: scan.reference_exposure.clone(),
@@ -507,11 +501,10 @@ impl Editor {
             .find_source(&path)
             .and_then(|id| self.document.state.project.source(id).ok())
             .cloned();
-        let wb = self
-            .document
-            .state
-            .project
-            .acquisition_wb(expected.as_ref());
+        let wb = expected
+            .as_ref()
+            .and_then(|source| self.document.source_wb(source.id))
+            .or_else(|| self.document.project.acquisition_wb());
         let file = self.document.file_key(&path);
         Request {
             reference: expected.as_ref().map_or_else(Arc::default, |source| {
@@ -610,12 +603,11 @@ impl Editor {
             && !self.picking()
             && let Some(source) = self.document.visit.current_source
         {
-            match self.document.thumbnails.selected_preview(
-                self.id,
-                &self.document.state,
-                source,
-                self.document.correction.as_ref(),
-            ) {
+            match self
+                .document
+                .thumbnails
+                .selected_preview(self.id, &self.document.state, source)
+            {
                 Ok(preview) => {
                     log::debug!(request = self.id, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
                     self.document.visit.pending_preview = preview;
@@ -667,12 +659,6 @@ impl Editor {
                     height = ready.area.height;
                     "source_ready"
                 );
-                if let InputSettings::Negative { input_floor, .. } =
-                    &mut self.document.project.input
-                    && *input_floor == 0.
-                {
-                    *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-                }
                 if self.document.visit.current_source.is_none() {
                     let mut record = ready.record.clone();
                     self.overlay_adjustment_layer_settings(&mut record, self.photo_settings());
@@ -699,7 +685,7 @@ impl Editor {
                     self.document.remember_source_preview(
                         id,
                         &ready.developed.metadata(),
-                        ready.developed.fixed_wb(),
+                        ready.developed.white_balance(),
                     );
                 }
                 self.document.cache_ready(&ready);

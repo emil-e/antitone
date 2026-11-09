@@ -249,19 +249,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
     document.project.input = crate::processing::InputSettings::Digital;
     document.import(&[file.path().to_owned()]).unwrap();
     let id = document.project.order[0];
-    let native = Scan::open(
-        file.path(),
-        Some(
-            document
-                .project
-                .source(id)
-                .unwrap()
-                .development
-                .decode
-                .fixed_wb,
-        ),
-    )
-    .unwrap();
+    let native = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
     let document: crate::editor::document_scope::DocumentScope = document.into();
     crate::photo_preparation::native(
         None,

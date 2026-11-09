@@ -4,7 +4,7 @@ use crate::{
     color::Balance,
     coverage::Coverage,
     geometry::SourceRaster,
-    processing::{Calibration, InputSettings, RollSettings},
+    processing::{InputSettings, RollSettings},
     raw::{Developed, FrozenRaw, Metadata, RawFile, Rect},
     sampling,
 };
@@ -77,31 +77,31 @@ pub struct DevelopedSource {
     camera_to_ap1: DMat3,
     camera_model: String,
     area: Rect,
-    fixed_wb: [f64; 4],
+    white_balance: [f64; 4],
     source_scale: f64,
-    input_floor: f64,
+    precision_floor: f64,
 }
 
 impl DevelopedSource {
-    fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
-        let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
+    fn from_raw(mut raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
+        let wb = white_balance.unwrap_or_else(|| raw.metadata.as_shot_wb());
         raw.prepare_basis(wb)?;
         let matrix = raw.metadata.camera_to_ap1()?;
         let camera_model = raw.metadata.camera_model();
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
-        let wb = raw.fixed_wb(wb);
+        let wb = raw.white_balance(wb);
         let source_scale = raw.metadata.source_scale(wb)?;
-        let input_floor = raw.metadata.source_input_floor(wb)?;
+        let precision_floor = raw.metadata.source_precision_floor(wb)?;
         Ok(Self {
             file: raw.file.clone(),
             raw: Arc::new(raw.freeze()?),
             camera_to_ap1: matrix,
             camera_model,
             area,
-            fixed_wb: wb,
+            white_balance: wb,
             source_scale,
-            input_floor,
+            precision_floor,
         })
     }
 
@@ -136,13 +136,22 @@ impl DevelopedSource {
         self.area
     }
 
-    pub fn fixed_wb(&self) -> [f64; 4] {
-        self.fixed_wb
+    pub fn white_balance(&self) -> [f64; 4] {
+        self.white_balance
+    }
+
+    pub(crate) fn require_input(&self, input: &crate::processing::InputSettings) -> Result<()> {
+        if input.is_negative() && self.white_balance != [1.; 4] {
+            return Err(crate::Error::Raw(
+                "source white balance differs from input interpretation".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Conservative developed-source quantum before an optional measured flat field.
-    pub fn input_floor(&self) -> f64 {
-        self.input_floor
+    pub fn precision_floor(&self) -> f64 {
+        self.precision_floor
     }
 
     /// Source camera light, with LibRaw's WB-normalization scale already restored.
@@ -285,31 +294,36 @@ pub struct Scan {
     pub camera_to_ap1: DMat3,
     pub camera_model: String,
     pub area: Rect,
-    pub fixed_wb: [f64; 4],
-    /// Stored calibration's native base; `effective_floor` includes source and residual gains.
-    pub input_floor: f64,
+    pub white_balance: [f64; 4],
+    /// Sampling precision before the consumer's optional flat-field correction.
+    pub precision_floor: f64,
     flat_field: Option<Arc<FlatField>>,
     corrected_floor: f64,
 }
 
 impl Scan {
-    pub fn open(path: &Path, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
-        Self::open_with_priority(path, fixed_wb, crate::raw::DevelopmentPriority::Foreground)
+    pub fn open(path: &Path, white_balance: Option<[f64; 4]>) -> Result<Self> {
+        Self::open_with_priority(
+            path,
+            white_balance,
+            crate::raw::DevelopmentPriority::Foreground,
+        )
     }
 
     pub fn open_with_priority(
         path: &Path,
-        fixed_wb: Option<[f64; 4]>,
+        white_balance: Option<[f64; 4]>,
         priority: crate::raw::DevelopmentPriority,
     ) -> Result<Self> {
-        let mut raw = RawFile::open_with_wb(path, fixed_wb)?;
+        let mut raw = RawFile::open_with_wb(path, white_balance)?;
         raw.set_development_priority(priority);
-        Self::from_raw(raw, fixed_wb)
+        Self::from_raw(raw, white_balance)
     }
 
-    pub(crate) fn from_raw(raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
+    pub(crate) fn from_raw(raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
         Ok(Self::from_source(Arc::new(DevelopedSource::from_raw(
-            raw, fixed_wb,
+            raw,
+            white_balance,
         )?)))
     }
 
@@ -328,9 +342,9 @@ impl Scan {
             camera_to_ap1: source.camera_to_ap1,
             camera_model: source.camera_model.clone(),
             area: source.area,
-            fixed_wb: source.fixed_wb,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
-            corrected_floor: source.input_floor,
+            white_balance: source.white_balance,
+            precision_floor: source.precision_floor,
+            corrected_floor: source.precision_floor,
             flat_field: None,
             source,
         }
@@ -345,22 +359,14 @@ impl Scan {
         Ok((image.width, image.height))
     }
 
-    pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) -> Result<()> {
+    pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) {
         let floor = if let Some(field) = &field {
-            let [x, y, width, height] = field.area();
-            self.validate_area(Rect {
-                x,
-                y,
-                width,
-                height,
-            })?;
-            self.source.input_floor * field.bounds().1.max_element()
+            self.source.precision_floor * field.bounds().1.max_element()
         } else {
-            self.source.input_floor
+            self.source.precision_floor
         };
         self.flat_field = field;
         self.corrected_floor = floor;
-        Ok(())
     }
 
     pub fn propose_flat_field_area(&self) -> Result<Option<Rect>> {
@@ -487,27 +493,6 @@ impl Scan {
         self.corrected_floor
     }
 
-    /// Stored calibration remains RGB-only; correction transforms its explicit precision bound.
-    pub fn processing_calibration(&self, mut calibration: Calibration) -> Result<Calibration> {
-        if calibration.input_floor == self.corrected_floor {
-            return calibration.validate();
-        }
-        if calibration.input_floor != self.input_floor {
-            return Err(Error::InvalidParameter(
-                "scan calibration requires the native-code base floor",
-            ));
-        }
-        calibration.input_floor = self.corrected_floor;
-        calibration.validate()
-    }
-
-    pub(crate) fn refined_input(&self, input: &InputSettings) -> Result<InputSettings> {
-        match input.calibration() {
-            Some(base) => Ok(input.with_calibration(self.processing_calibration(base)?)),
-            None => Ok(*input),
-        }
-    }
-
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
         let mut camera = self.source.camera_image()?.pixel(x, y)?;
         if let Some(field) = &self.flat_field {
@@ -605,12 +590,9 @@ impl Scan {
     }
 
     pub fn roll_neutral(&mut self, region: Rect, input: &InputSettings) -> Result<Balance> {
-        let negative =
-            self.refined_input(input)?
-                .negative_input()
-                .ok_or(Error::InvalidParameter(
-                    "white-balance fitting requires a negative input",
-                ))?;
+        let negative = input.negative_input().ok_or(Error::InvalidParameter(
+            "white-balance fitting requires a negative input",
+        ))?;
         let matrix = self.camera_to_ap1;
         sampling::roll_neutral(negative, &self.patch(region)?, matrix)
     }
@@ -655,12 +637,9 @@ impl Scan {
         if let Some(region) = coverage.exact_rectangle(self.area) {
             return self.roll_neutral(region, input);
         }
-        let negative =
-            self.refined_input(input)?
-                .negative_input()
-                .ok_or(Error::InvalidParameter(
-                    "white-balance fitting requires a negative input",
-                ))?;
+        let negative = input.negative_input().ok_or(Error::InvalidParameter(
+            "white-balance fitting requires a negative input",
+        ))?;
         let matrix = self.camera_to_ap1;
         sampling::roll_neutral_weighted(negative, &self.patch_coverage(coverage)?, matrix)
     }
@@ -675,7 +654,7 @@ impl Scan {
         layer: Option<crate::adjustment_layers::AdjustmentLayer>,
     ) -> Result<Balance> {
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-            self.refined_input(input)?,
+            *input,
             roll,
             upstream,
             self.positive_matrix(input)?,
@@ -766,29 +745,6 @@ impl Scan {
         let width = (f64::from(self.area.width) * scale).round().max(1.0) as u32;
         let height = (f64::from(self.area.height) * scale).round().max(1.0) as u32;
         Ok((width, height))
-    }
-
-    /// Rounded inference evidence, normalized by one declared headroom bound for the whole roll.
-    /// Photographic samples stay in their original continuous code units.
-    #[cfg(feature = "editor")]
-    pub(crate) fn measurement_preview(
-        &self,
-        maximum: u32,
-        code_scale: f64,
-    ) -> Result<(u32, u32, Vec<[u16; 4]>)> {
-        if !code_scale.is_finite()
-            || code_scale < self.source.input_floor / crate::processing::CAMERA_INPUT_FLOOR
-        {
-            return Err(Error::Raw(
-                "region-evidence scale does not cover source headroom".into(),
-            ));
-        }
-        let (width, height, samples) = self.preview_source(maximum)?;
-        let pixels = samples
-            .into_iter()
-            .map(|p| measurement_codes(p, code_scale))
-            .collect::<Result<_>>()?;
-        Ok((width, height, pixels))
     }
 
     /// Unconverted camera samples in code units at display-grid centres; no requantization.

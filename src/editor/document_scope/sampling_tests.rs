@@ -21,7 +21,7 @@ fn grading_does_not_invalidate_original_inputs_but_development_changes_do() {
         .unwrap()
         .development
         .decode
-        .fixed_wb = [2., 1., 1., 1.];
+        .white_balance[0] = 2.;
     assert!(inputs.get(id, &document.source_key(id).unwrap()).is_none());
     inputs.retain(&document);
     assert_eq!(inputs.retained_bytes(), 0);

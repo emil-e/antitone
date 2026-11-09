@@ -20,16 +20,12 @@ fn shared_preparation_publishes_holder_safe_support_and_keeps_a_nonrecurring_dar
                     source: SourceId(i as u64 + 1),
                     revision: FileRevision::read(&path).unwrap(),
                     correction: None,
-                    code_scale: 1.,
                     development: SourceDevelopment {
                         decode: Development::new("test-backend".into(), [1.; 4]),
-                        lens_correction: None,
-                        dng_development: None,
                         dimensions: [800, 600],
                         active_area: [12, 20, 768, 512],
                         camera_model: "opening fixture".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                 };
                 FrameInput::new(
@@ -44,7 +40,6 @@ fn shared_preparation_publishes_holder_safe_support_and_keeps_a_nonrecurring_dar
         let metadata = prepare_spatial(
             frames,
             Development::new("test-backend".into(), [1.; 4]),
-            1.,
             || Ok(()),
         )
         .unwrap();

@@ -94,11 +94,13 @@ pub(crate) fn read(
     path: &std::path::Path,
     expected: &crate::project::SourceDevelopment,
 ) -> Result<Option<std::sync::Arc<Preview>>, String> {
-    let mut raw = crate::raw::RawFile::open_with_wb(path, Some(expected.decode.fixed_wb))
+    let mut raw = crate::raw::RawFile::open_with_wb(path, Some(expected.decode.white_balance))
         .map_err(|e| e.to_string())?;
-    let actual =
-        crate::project::SourceDevelopment::from_metadata(&raw.metadata, expected.decode.fixed_wb)
-            .map_err(|e| e.to_string())?;
+    let actual = crate::project::SourceDevelopment::from_metadata(
+        &raw.metadata,
+        raw.white_balance(expected.decode.white_balance),
+    )
+    .map_err(|e| e.to_string())?;
     if !actual.same_processing(expected) {
         return Err("embedded preview source differs from the requested development".into());
     }

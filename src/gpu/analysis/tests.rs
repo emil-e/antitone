@@ -11,7 +11,6 @@ fn negative() -> NegativeInput {
         calibration: Calibration {
             dmin: DVec3::new(0.14, 0.098, 0.094),
             dmax: DVec3::new(0.017, 0.0052, 0.0029),
-            input_floor: 1. / 65535.,
         },
         gamma: 0.6,
         balance: Balance::default(),
@@ -28,7 +27,7 @@ fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_
     let negative = negative();
     let kinds = [
         negative.calibration.dmin * 1.1,
-        DVec3::splat(negative.calibration.input_floor * 1.05),
+        DVec3::splat(crate::processing::CAMERA_INPUT_FLOOR * 1.05),
         DVec3::new(0.04, 0.03, 0.05),
         DVec3::new(0.018, 0.006, 0.003),
         DVec3::splat(2.),
@@ -156,7 +155,6 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
         calibration: Calibration {
             dmin: base,
             dmax: base * 0.02,
-            input_floor: 512. / 65535.,
         },
         gamma: 0.6,
         response: Response::film(),
@@ -167,7 +165,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     };
     let reference = estimate(
         &frames,
-        current.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         matrix,
         current,
         || false,
@@ -177,7 +175,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     let mut model = ResponseModel::new(&context, (&queue, &gate));
     let actual = estimate_with_model(
         &frames,
-        current.calibration.input_floor,
+        crate::processing::CAMERA_INPUT_FLOOR,
         matrix,
         current,
         &mut model,

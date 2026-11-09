@@ -2,10 +2,24 @@ use super::*;
 use crate::project::Development;
 use crate::{adjustment_layers::AdjustmentLayerSettings, color::Balance};
 
-use crate::{project::SourceDevelopment, raw::RawFile, scan::Scan};
+use crate::{project::SourceDevelopment, scan::Scan};
 
 mod admission;
 mod dust;
+
+fn acquired_scan(document: &Document, id: SourceId) -> Scan {
+    let loader = crate::source::SourceLoader::new();
+    let scan = pollster::block_on(document.acquire_source(
+        id,
+        &loader,
+        &Default::default(),
+        &Default::default(),
+    ))
+    .unwrap()
+    .unwrap();
+    loader.close_and_wait().unwrap();
+    scan
+}
 
 #[test]
 fn antitone_and_legacy_json_projects_open_and_save_in_place() {
@@ -119,13 +133,10 @@ fn fixture(directory: &Path) -> Document {
                     path,
                     development: SourceDevelopment {
                         decode: Development::new("test-backend".into(), [1.; 4]),
-                        lens_correction: None,
-                        dng_development: None,
                         dimensions: [900, 600],
                         active_area: [0, 0, 900, 600],
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -148,30 +159,28 @@ fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let raw_path = directory.path().join("red-neutral.dng");
-    std::fs::write(
-        &raw_path,
-        super::super::tests::dng_with_red_as_shot(&original),
-    )
-    .unwrap();
-    let as_shot = read_source(&raw_path, None)
-        .unwrap()
-        .development
-        .decode
-        .fixed_wb;
-    assert_ne!(as_shot, crate::project::UNITY_WB);
-
-    let mut negative = Document::default();
-    negative.import(std::slice::from_ref(&raw_path)).unwrap();
-    assert_eq!(
-        negative.project.development().unwrap().fixed_wb,
-        crate::project::UNITY_WB
-    );
-
-    let mut digital = Document::default();
-    digital.project.input = crate::processing::InputSettings::Digital;
-    digital.import(std::slice::from_ref(&raw_path)).unwrap();
-    assert_eq!(digital.project.development().unwrap().fixed_wb, as_shot);
+    let path = directory.path().join("red-neutral.dng");
+    std::fs::write(&path, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
+    for (input, expected) in [
+        (
+            crate::processing::InputSettings::default(),
+            crate::project::UNITY_WB,
+        ),
+        (crate::processing::InputSettings::Digital, [2., 1., 1., 1.]),
+    ] {
+        let mut document = Document {
+            project: Project {
+                input,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        document.import(std::slice::from_ref(&path)).unwrap();
+        assert_eq!(
+            acquired_scan(&document, document.project.order[0]).white_balance,
+            expected
+        );
+    }
 }
 
 #[test]
@@ -232,13 +241,9 @@ fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
     document.import(&[first, red]).unwrap();
     assert!(document.project.input.is_negative());
     assert_eq!(document.project.sources.len(), 2);
-    assert!(
-        document
-            .project
-            .sources
-            .iter()
-            .all(|source| source.development.decode.fixed_wb == crate::project::UNITY_WB)
-    );
+    assert!(document.project.sources.iter().all(|source| {
+        acquired_scan(&document, source.id).white_balance == crate::project::UNITY_WB
+    }));
     assert!(document.project.require_scan_sources().is_ok());
 }
 
@@ -280,18 +285,8 @@ fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_rec
         .unwrap();
     let active = document.project.order[0];
     assert_eq!(
-        document
-            .project
-            .source(active)
-            .unwrap()
-            .development
-            .decode
-            .fixed_wb,
-        read_source(&first, None)
-            .unwrap()
-            .development
-            .decode
-            .fixed_wb
+        acquired_scan(&document, active).white_balance,
+        Scan::open(&first, None).unwrap().white_balance
     );
 
     document.import(std::slice::from_ref(&removed)).unwrap();
@@ -375,7 +370,6 @@ fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
         .redevelop_for_input(crate::processing::InputSettings::Negative {
             dmin: None,
             dmax: None,
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),
@@ -386,7 +380,7 @@ fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
 }
 
 #[test]
-fn negative_import_uses_unity_wb_and_digital_open_preserves_saved_gains() {
+fn save_open_restores_accepted_development_wb_without_capture_metadata() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -397,33 +391,47 @@ fn negative_import_uses_unity_wb_and_digital_open_preserves_saved_gains() {
         super::super::tests::dng_with_red_as_shot(&original),
     )
     .unwrap();
-    let mut document = Document::default();
-    document.import(std::slice::from_ref(&raw_path)).unwrap();
-    assert_eq!(document.project.order.len(), 1);
-    assert_eq!(
-        document.project.development().as_ref().unwrap().fixed_wb,
-        crate::project::UNITY_WB
-    );
-    let custom = [2., 1., 1.5, 1.];
-    // Digital saves each source's own as-shot decode identity. Construct that accepted
-    // record rather than silently reinterpreting the source from its current file header.
-    let raw = RawFile::open_with_wb(&raw_path, Some(custom)).unwrap();
-    let actual = source_metadata(&raw_path, &raw.metadata, raw.fixed_wb(custom)).unwrap();
-    document.project.input = crate::processing::InputSettings::Digital;
-    document.project.scan = None;
-    document.project.sources[0].development = actual.development;
-    assert_eq!(document.project.acquisition_wb(None), None);
-    let project_path = directory.path().join("grade.antitone");
-    let saved = document.save(&project_path, Save::New).unwrap();
-    let mut reopened = Document::open(&project_path).unwrap();
-    assert_eq!(reopened.project, saved.project);
-    reopened.import(std::slice::from_ref(&raw_path)).unwrap();
-    assert_eq!(reopened.project.development().unwrap().fixed_wb, custom);
-    let source = reopened.project.order[0];
-    let scan = Scan::open(&reopened.source_path(source).unwrap(), Some(custom)).unwrap();
-    assert_eq!(scan.fixed_wb, custom);
-    reopened.project.development_mut().unwrap().fixed_wb[3] = 0.;
-    assert!(reopened.validate().is_err());
+    for (index, (input, expected)) in [
+        (
+            crate::processing::InputSettings::default(),
+            crate::project::UNITY_WB,
+        ),
+        (crate::processing::InputSettings::Digital, [2., 1., 1., 1.]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut document = Document::default();
+        document.project.input = input;
+        document.import(std::slice::from_ref(&raw_path)).unwrap();
+        let path = directory.path().join(format!("{index}.antitone"));
+        let saved = document.save(&path, Save::New).unwrap();
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(!json.contains("pre_applied_wb"));
+        let payload: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            payload["sources"][0]["development"]["decode"]["white_balance"],
+            serde_json::json!(expected)
+        );
+        let opened = Document::open(&path).unwrap();
+        assert_eq!(opened.project, saved.project);
+        assert_eq!(opened.project.input, input);
+        let scan = acquired_scan(&opened, opened.project.order[0]);
+        assert_eq!(scan.white_balance, expected);
+        // Decoder observations are refreshed, not used to make the project inaccessible.
+        let mut bad = opened;
+        bad.project.sources[0].development.dimensions[0] += 1;
+        bad.project.sources[0].development.camera_to_ap1[0][0] *= 1.01;
+        if input.is_negative() {
+            bad.project.reset_scan_basis();
+        }
+        bad.project.validate().unwrap();
+        let bad_path = directory.path().join(format!("{index}-bad.antitone"));
+        bad.project.save(&bad_path, Save::New).unwrap();
+        let refreshed = Document::open(&bad_path).unwrap();
+        assert_eq!(refreshed.project, saved.project);
+        assert!(!refreshed.dirty());
+    }
 }
 
 #[test]
@@ -809,19 +817,8 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
             .copy_from_slice(b"Modified Bayer patches");
     }
     std::fs::write(&other_camera, different_camera).unwrap();
-    let expected_wb = read_source(&second, None)
-        .unwrap()
-        .development
-        .decode
-        .fixed_wb;
-    assert_ne!(
-        expected_wb,
-        read_source(&first, None)
-            .unwrap()
-            .development
-            .decode
-            .fixed_wb
-    );
+    let expected_wb = Scan::open(&second, None).unwrap().white_balance;
+    assert_ne!(expected_wb, Scan::open(&first, None).unwrap().white_balance);
     assert_ne!(
         read_source(&first, None).unwrap().development.camera_model,
         read_source(&other_camera, None)
@@ -843,13 +840,7 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
         assert_eq!(document.project.order.len(), 3);
         let second_id = document.find_source(&second).unwrap();
         assert_eq!(
-            document
-                .project
-                .source(second_id)
-                .unwrap()
-                .development
-                .decode
-                .fixed_wb,
+            acquired_scan(&document, second_id).white_balance,
             expected_wb
         );
     }
@@ -858,7 +849,7 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
     existing.import(std::slice::from_ref(&first)).unwrap();
     assert!(existing.project.input.is_negative());
     assert_eq!(
-        existing.project.sources[0].development.decode.fixed_wb,
+        acquired_scan(&existing, existing.project.order[0]).white_balance,
         crate::project::UNITY_WB
     );
     existing
@@ -959,13 +950,10 @@ fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
             path: path.into(),
             development: crate::project::SourceDevelopment {
                 decode: Development::new("test-backend".into(), [1.; 4]),
-                lens_correction: None,
-                dng_development: None,
                 dimensions: [900, 600],
                 active_area: [0, 0, 900, 600],
                 camera_model: camera.into(),
                 camera_to_ap1: matrix,
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(

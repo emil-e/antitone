@@ -82,14 +82,13 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(correction.clone())).unwrap();
+    scan.set_flat_field(Some(correction.clone()));
     let field = Arc::new(GpuFlatField::new(&device, correction.clone()).unwrap());
     let base = Calibration {
         dmin: DVec3::splat(1.05),
         dmax: DVec3::splat(0.25),
-        input_floor: scan.input_floor,
     };
-    let settings = InputSettings::from(correction.processing_calibration(base).unwrap());
+    let settings = InputSettings::from((base).validate().unwrap());
     let roll = RollSettings {
         exposure: 0.,
         ..Default::default()

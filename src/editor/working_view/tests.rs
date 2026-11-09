@@ -78,7 +78,6 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         let cal = Calibration {
             dmin: DVec3::new(0.19, 0.14, 0.12),
             dmax: DVec3::new(0.008, 0.004, 0.002),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
         let first = SourceRequest::new(frame, cal, scan.camera_to_ap1, None)
             .unwrap()
@@ -215,7 +214,6 @@ fn spec(offset: f64) -> SourceRequest {
         Calibration {
             dmin: DVec3::new(0.19, 0.14, 0.12),
             dmax: DVec3::new(0.008, 0.004, 0.002),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         },
         glam::DMat3::IDENTITY,
         None,

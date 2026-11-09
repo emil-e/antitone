@@ -179,7 +179,6 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.02),
-        input_floor: 1. / 65535.,
     };
     let roll = RollSettings::default();
     let matrix = DMat3::from_cols(
@@ -338,7 +337,6 @@ fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::In
     antitone::processing::InputSettings::Negative {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
-        input_floor: cal.input_floor,
         response: antitone::processing::Response::film(),
         gamma: antitone::processing::DEFAULT_GAMMA,
         balance: antitone::color::Balance::default(),

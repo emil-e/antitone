@@ -1,17 +1,11 @@
 use super::*;
-use crate::project::Development;
 use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path) -> Request {
     let (expected, _) = source_metadata::open_source(path, Some([1.; 4])).unwrap();
     let file = crate::source::FileKey::new(path);
-    let key = SourceKey::from_revision_with_development(
-        path,
-        file.clone(),
-        &expected.development,
-        &Development::for_source(&expected.development, [1.; 4]),
-    );
+    let key = SourceKey::from_revision(path, file.clone(), &expected.development);
 
     Request {
         path: path.to_owned(),
@@ -784,7 +778,7 @@ fn joining_uses_captured_source_identity_and_development() {
     ));
     assert!(!reopened.joins(&original));
     let mut development = key.development().clone();
-    development.decode.fixed_wb[0] = 2.;
+    development.decode.white_balance = [2., 1., 1., 1.];
     let mut different_wb = original.clone();
     different_wb.key = Some(SourceKey::for_load(
         file.path(),

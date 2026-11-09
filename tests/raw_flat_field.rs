@@ -54,14 +54,14 @@ fn corrected_scan() -> (Scan, Arc<FlatField>, DVec3) {
     );
     let mut scan = Scan::open(
         &fixture("illuminated-patches.dng"),
-        Some(reference.fixed_wb),
+        Some(reference.white_balance),
     )
     .unwrap();
     assert_eq!(scan.dimensions().unwrap(), (384, 320));
     assert_eq!(scan.area, reference.area);
     assert_eq!(scan.camera_model, reference.camera_model);
     assert_eq!(scan.camera_to_ap1, reference.camera_to_ap1);
-    scan.set_flat_field(Some(map.clone())).unwrap();
+    scan.set_flat_field(Some(map.clone()));
     (scan, map, normalization)
 }
 
@@ -83,7 +83,6 @@ fn calibration(scan: &mut Scan) -> Calibration {
                 height: 32,
             })
             .unwrap(),
-        input_floor: scan.input_floor,
     }
 }
 
@@ -92,7 +91,11 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     let originals = ["bare-light.dng", "illuminated-patches.dng"]
         .map(|name| (fixture(name), fs::read(fixture(name)).unwrap()));
     let (mut scan, map, normalization) = corrected_scan();
-    let plain = Scan::open(&fixture("illuminated-patches.dng"), Some(scan.fixed_wb)).unwrap();
+    let plain = Scan::open(
+        &fixture("illuminated-patches.dng"),
+        Some(scan.white_balance),
+    )
+    .unwrap();
     let patches = [
         [3000., 3000., 3000.],
         [128., 128., 128.],
@@ -141,33 +144,35 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     assert_eq!(scan.pixel(8, 8).unwrap(), plain.pixel(8, 8).unwrap());
     assert_eq!(
         scan.effective_floor(),
-        scan.source().input_floor() * map.bounds().1.max_element()
+        scan.source().precision_floor() * map.bounds().1.max_element()
     );
-    assert!(scan.effective_floor() > scan.source().input_floor());
-    let invalid =
-        Arc::new(FlatField::from_nodes([380, 0, 16, 16], [2, 2], vec![DVec3::ONE; 4]).unwrap());
+    assert!(scan.effective_floor() > scan.source().precision_floor());
+    let partial = Arc::new(
+        FlatField::from_nodes([372, 0, 16, 16], [2, 2], vec![DVec3::splat(3.); 4]).unwrap(),
+    );
     let before = scan.pixel(32, 32).unwrap();
-    assert!(scan.set_flat_field(Some(invalid)).is_err());
-    assert_eq!(scan.flat_field().unwrap(), &map);
+    scan.set_flat_field(Some(partial));
+    assert_eq!(scan.pixel(32, 32).unwrap(), plain.pixel(32, 32).unwrap());
+    assert_eq!(
+        scan.pixel(374, 10).unwrap(),
+        plain.pixel(374, 10).unwrap() * 3.
+    );
+    scan.set_flat_field(Some(map.clone()));
     assert_eq!(scan.pixel(32, 32).unwrap(), before);
     let anchors = calibration(&mut scan);
-    assert_eq!(
-        scan.processing_calibration(anchors).unwrap().input_floor,
-        scan.effective_floor()
-    );
+    assert_eq!((anchors).validate().unwrap(), anchors);
 
     #[cfg(feature = "project")]
     {
         use antitone::{
-            processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
+            processing::{DEFAULT_GAMMA, InputSettings, Response},
             project::{FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
         };
-        let decode = scan.source().metadata().development(scan.fixed_wb);
+        let decode = scan.source().metadata().development([1.; 4]);
         let mut project = Project {
             input: InputSettings::Negative {
                 dmin: Some(anchors.dmin),
                 dmax: Some(anchors.dmax),
-                input_floor: CAMERA_INPUT_FLOOR,
                 response: Response::film(),
                 gamma: DEFAULT_GAMMA,
                 balance: Default::default(),
@@ -182,14 +187,14 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     id: SourceId(0),
                     path: fixture(name),
                     development: SourceDevelopment {
-                        decode: decode.clone(),
-                        lens_correction: None,
-                        dng_development: scan.source().metadata().dng_identity(),
+                        decode: antitone::project::Development {
+                            white_balance: scan.white_balance,
+                            ..decode.clone()
+                        },
                         dimensions: [384, 320],
                         active_area: [8, 8, 368, 304],
                         camera_model: scan.camera_model.clone(),
                         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-                        input_floor: scan.source().input_floor(),
                     },
                     reference_only,
                     adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -217,25 +222,23 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
         let reopened = Project::load(&path).unwrap();
         assert_eq!(reopened, project);
         assert_eq!(
-            reopened.processing_calibration().unwrap().unwrap(),
-            scan.processing_calibration(anchors).unwrap()
+            reopened.calibration().unwrap().unwrap(),
+            (anchors).validate().unwrap()
         );
         let mut restored = Scan::open(
             &fixture("illuminated-patches.dng"),
-            Some(reopened.sources[0].development.decode.fixed_wb),
+            reopened.acquisition_wb(),
         )
         .unwrap();
-        restored
-            .set_flat_field(Some(reopened.active_flat_field().unwrap().map.clone()))
-            .unwrap();
+        restored.set_flat_field(Some(reopened.active_flat_field().unwrap().map.clone()));
         for y in (8..312).step_by(7) {
             for x in (8..376).step_by(7) {
                 assert_eq!(restored.pixel(x, y).unwrap(), scan.pixel(x, y).unwrap());
             }
         }
-        scan.set_flat_field(None).unwrap();
+        scan.set_flat_field(None);
         assert_eq!(scan.pixel(32, 32).unwrap(), plain.pixel(32, 32).unwrap());
-        assert_eq!(scan.effective_floor(), scan.source().input_floor());
+        assert_eq!(scan.effective_floor(), scan.source().precision_floor());
     }
     for (path, original) in originals {
         assert_eq!(fs::read(path).unwrap(), original);
@@ -255,7 +258,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     let (mut scan, _, _) = corrected_scan();
     let anchors = calibration(&mut scan);
     let roll = RollSettings::default();
-    let input = InputSettings::negative(scan.processing_calibration(anchors).unwrap());
+    let input = InputSettings::negative((anchors).validate().unwrap());
     let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: scan.area.width,

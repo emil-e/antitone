@@ -177,7 +177,7 @@ impl Editor {
                     let mut recipe = captured.recipe.clone();
                     recipe.input = input;
                     recipe
-                        .processing_input()?
+                        .input
                         .negative_input()
                         .ok_or(Error::UnusableSample("gamma pivot basis changed"))
                 };
@@ -280,7 +280,7 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
             let evidence =
                 query::Evidence::capture(services, &image, region, &|| cancelled.is_cancelled())?;
             let negative = captured
-                .processing_input()?
+                .input
                 .negative_input()
                 .ok_or(Error::UnusableSample("gamma pivot basis changed"))?;
             evidence.compensate(

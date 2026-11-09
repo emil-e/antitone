@@ -43,7 +43,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.8, 0.7, 0.9),
         dmax: DVec3::new(0.003, 0.002, 0.001),
-        input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
     }
 }
 
@@ -489,7 +488,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
         for corrected in [false, true] {
             let cal = if corrected {
-                field.processing_calibration(calibration()).unwrap()
+                (calibration()).validate().unwrap()
             } else {
                 calibration()
             };
@@ -758,7 +757,7 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
         let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
         for corrected in [false, true] {
             let cal = if corrected {
-                field.processing_calibration(calibration()).unwrap()
+                (calibration()).validate().unwrap()
             } else {
                 calibration()
             };

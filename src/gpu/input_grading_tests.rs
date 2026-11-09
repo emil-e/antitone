@@ -82,7 +82,6 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
             calibration: Calibration {
                 dmin: DVec3::splat(0.8),
                 dmax: DVec3::splat(0.02),
-                input_floor: 1. / 65535.,
             },
             response: Response {
                 toe: 1.,

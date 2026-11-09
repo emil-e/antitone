@@ -33,14 +33,11 @@ fn record(path: &Path, scan: &Scan) -> Source {
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
-            decode: metadata.development(scan.source().fixed_wb()),
-            lens_correction: metadata.lens_identity().unwrap(),
-            dng_development: metadata.dng_identity(),
+            decode: metadata.development(scan.white_balance),
             dimensions: metadata.source_dimensions().unwrap(),
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: scan.camera_model.clone(),
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-            input_floor: scan.source().input_floor(),
         },
         reference_only: false,
 
@@ -67,19 +64,19 @@ fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
         file.path(),
         Options {
             max_pixels: 4096,
-            fixed_wb: Some([2., 1., 1.5]),
+            white_balance: Some([2., 1., 1.5]),
         },
         &Cancellation::default(),
     )
     .unwrap();
     let scan = Scan::open(file.path(), Some(wb)).unwrap();
-    assert_eq!(scan.fixed_wb, wb);
+    assert_eq!(scan.white_balance, wb);
     assert_eq!(scan.area, Rect::from([3, 5, 48, 46]));
-    assert_eq!(scan.source().input_floor(), 4. / 4096.);
-    assert_eq!(scan.input_floor, CAMERA_INPUT_FLOOR);
+    assert_eq!(scan.source().precision_floor(), 4. / 4096.);
+    assert_eq!(scan.precision_floor, scan.source().precision_floor());
     assert_eq!(
-        scan.source().metadata().input_floor().unwrap(),
-        header.input_floor
+        scan.source().metadata().precision_floor().unwrap(),
+        header.precision_floor
     );
     assert!(scan.source().metadata().lens_identity().unwrap().is_none());
     assert!(scan.source().metadata().dng_identity().is_some());
@@ -119,7 +116,7 @@ fn lossless_jpeg_14bit_preserves_developed_pixels_and_shared_sdk_precision() {
     .write();
     let a = Scan::open(plain.path(), None).unwrap();
     let b = Scan::open(compressed.path(), None).unwrap();
-    assert_eq!(b.source().input_floor(), 1. / 4096.);
+    assert_eq!(b.source().precision_floor(), 1. / 4096.);
     assert_eq!(a.dimensions().unwrap(), b.dimensions().unwrap());
     let (width, height) = a.dimensions().unwrap();
     for y in 0..height {
@@ -159,7 +156,7 @@ fn shared_sdk_measurements_accept_repaired_sensor_black() {
             .max_element()
             < 1e-7
     );
-    assert_eq!(scan.source().input_floor(), 2. / 4096.);
+    assert_eq!(scan.source().precision_floor(), 2. / 4096.);
 }
 
 fn uniform_source(code: u16) -> fixture_path::FixturePath {
@@ -222,10 +219,14 @@ fn zero_signal_still_fails_measurement_and_flat_field_numerical_checks() {
 }
 
 #[test]
-fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity() {
-    let file = Fixture::default().write();
-    let wb = [2., 1., 1.5, 1.];
-    let scan = Scan::open(file.path(), Some(wb)).unwrap();
+fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_distinct() {
+    let file = Fixture {
+        neutral: [(1, 2), (1, 1), (2, 3)],
+        ..Default::default()
+    }
+    .write();
+    let scan = Scan::open(file.path(), None).unwrap();
+    assert_eq!(scan.white_balance, [2., 1., 1.5, 1.]);
     let source = record(file.path(), &scan);
     let mut project = Project {
         input: InputSettings::Digital,
@@ -240,7 +241,7 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     loaded.require_runtime().unwrap();
     let reopened = Scan::open(
         &loaded.source(id).unwrap().path,
-        Some(loaded.sources[0].development.decode.fixed_wb),
+        Some(loaded.source(id).unwrap().development.decode.white_balance),
     )
     .unwrap();
     assert_eq!(
@@ -267,19 +268,20 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     );
     assert!(Arc::ptr_eq(&store.get(&current).unwrap(), scan.source()));
     let mut wrong = loaded.source(id).unwrap().development.clone();
-    wrong.decode.fixed_wb = [1.; 4];
+    wrong.decode.white_balance[0] *= 2.;
     let stale = SourceKey::capture(file.path(), &wrong).unwrap();
+    assert_ne!(stale, key);
     assert!(store.get(&stale).is_none());
     assert!(store.publish_source(stale, scan.source().clone()).is_err());
-    let legacy = antitone::project::Development::new(antitone::raw::version(), wb);
+    let legacy = antitone::project::Development::new(antitone::raw::version(), [1.; 4]);
     assert_ne!(
-        legacy.contract, loaded.sources[0].development.decode.contract,
+        legacy.backend, loaded.sources[0].development.decode.backend,
         "the DNG source keeps its own decode identity"
     );
 }
 
 #[test]
-fn sdk_flat_reference_requires_the_same_opcode_interpretation_not_just_geometry_and_floor() {
+fn sdk_flat_reference_uses_camera_coordinates_without_saved_opcode_fingerprints() {
     let plain = Fixture::default().write();
     let mut fixture = Fixture::default();
     fixture.lists[1].push(Opcode::gain(0.5, 1));
@@ -296,10 +298,6 @@ fn sdk_flat_reference_requires_the_same_opcode_interpretation_not_just_geometry_
         reference.development.camera_to_ap1,
         other.development.camera_to_ap1
     );
-    assert_eq!(
-        reference.development.input_floor,
-        other.development.input_floor
-    );
     let area = a.area;
     let map = antitone::flat_field::FlatField::from_nodes(
         [area.x, area.y, area.width, area.height],
@@ -308,21 +306,51 @@ fn sdk_flat_reference_requires_the_same_opcode_interpretation_not_just_geometry_
     )
     .unwrap();
     let settings = antitone::project::FlatFieldSettings::new(&reference, Arc::new(map));
-    settings.require_source(&reference.development).unwrap();
-    assert!(settings.require_source(&other.development).is_err());
+    assert_eq!(settings.reference, reference.id);
+    assert_eq!(
+        settings
+            .map
+            .gain([f64::from(area.x) + 0.5, f64::from(area.y) + 0.5])
+            .unwrap(),
+        DVec3::ONE
+    );
 }
 
 #[test]
-fn sdk_project_rejects_unequal_green_or_noncanonical_saved_wb_without_reinterpretation() {
+fn coarse_sampling_precision_does_not_prevent_usable_sdk_development() {
+    let mut fixture = Fixture::default();
+    let mut gain = Opcode::gain(1., 1);
+    // Only the far corner has large amplification; the conservative estimate covers the whole source.
+    let last = gain.data.len() - 4;
+    gain.data[last..].copy_from_slice(&32_f32.to_be_bytes());
+    fixture.lists[1].push(gain);
+    let file = fixture.write();
+    let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    assert_eq!(scan.source().precision_floor(), 32. / 4096.);
+    let pixel = scan.pixel(4, 6).unwrap();
+    assert!(
+        pixel.is_finite()
+            && pixel.min_element() > 0.
+            && pixel.max_element() < 1.
+            && pixel.max_element() - pixel.min_element() > 0.05,
+        "{pixel:?}"
+    );
+    let interpretation = antitone::processing::Inversion::new(antitone::processing::Calibration {
+        dmin: DVec3::splat(0.7),
+        dmax: DVec3::splat(0.001),
+    })
+    .unwrap();
+    assert!(interpretation.apply(pixel).unwrap().rgb.is_finite());
+}
+
+#[test]
+fn sdk_runtime_wb_rejects_unequal_greens_and_out_of_range_gains_and_normalizes_valid_requests() {
     let file = Fixture::default().write();
-    let scan = Scan::open(file.path(), None).unwrap();
-    let mut project = Project::default();
-    project.add_source(record(file.path(), &scan)).unwrap();
-    for wb in [[2., 1., 1.5, 0.75], [4., 2., 3., 2.], [512., 1., 1., 1.]] {
-        project.sources[0].development.decode.fixed_wb = wb;
-        assert!(project.validate().is_err());
+    for wb in [[2., 1., 1.5, 0.75], [512., 1., 1., 1.]] {
+        assert!(Scan::open(file.path(), Some(wb)).is_err());
     }
-    assert!(Scan::open(file.path(), Some([2., 1., 1.5, 0.75])).is_err());
+    let canonical = Scan::open(file.path(), Some([4., 2., 3., 2.])).unwrap();
+    assert_eq!(canonical.white_balance, [2., 1., 1.5, 1.]);
 }
 
 #[test]
@@ -358,7 +386,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         let path = Path::new(&directory).join(name);
         let started = std::time::Instant::now();
         let scan = Scan::open(&path, None).unwrap();
-        let wb = scan.fixed_wb;
+        let wb = scan.white_balance;
         let dimensions = scan.dimensions().unwrap();
         let area = scan.area;
         let point = (area.x + area.width / 2, area.y + area.height / 2);
@@ -383,7 +411,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         project.save(&destination, Save::New).unwrap();
         println!(
             "{name} dimensions={dimensions:?} area={area:?} WB={wb:?} floor={} retained_bytes={:?} cold_seconds={:.3}",
-            scan.source().input_floor(),
+            scan.source().precision_floor(),
             scan.source().retained_bytes(),
             started.elapsed().as_secs_f64()
         );
@@ -391,11 +419,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         let loaded = Project::load(&destination).unwrap();
         loaded.require_runtime().unwrap();
         let source = loaded.source(id).unwrap();
-        let reopened = Scan::open(
-            &source.path,
-            Some(loaded.sources[0].development.decode.fixed_wb),
-        )
-        .unwrap();
+        let reopened = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
         assert_eq!(record(&path, &reopened).development, source.development);
         assert_eq!(
             reopened
@@ -425,7 +449,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     let dimensions = scan.dimensions().unwrap();
     assert_eq!(dimensions, (5216, 3472));
     assert_eq!(scan.area, Rect::from([2, 2, 5212, 3468]));
-    let wb = scan.fixed_wb;
+    let wb = scan.white_balance;
     let before = scan
         .source()
         .camera_image()
@@ -446,11 +470,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     let loaded = Project::load(&destination).unwrap();
     loaded.require_runtime().unwrap();
     let source = loaded.source(id).unwrap();
-    let scan = Scan::open(
-        &source.path,
-        Some(loaded.sources[0].development.decode.fixed_wb),
-    )
-    .unwrap();
+    let scan = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
     assert_eq!(record(path, &scan).development, source.development);
     assert_eq!(
         scan.source()
@@ -462,7 +482,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     );
     println!(
         "M9 shared/project dimensions={dimensions:?} WB={wb:?} floor={} retained_bytes={:?} proxy={w}x{h}",
-        scan.source().input_floor(),
+        scan.source().precision_floor(),
         scan.source().retained_bytes()
     );
 }

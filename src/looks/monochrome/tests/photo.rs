@@ -17,8 +17,8 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
     );
     let id = project.order[0];
     let source = project.source(id).unwrap();
-    let fixed_wb = project.input.is_negative().then_some([1.; 4]);
-    let mut scan = crate::scan::Scan::open(&source.path, fixed_wb).unwrap();
+    let white_balance = project.input.is_negative().then_some([1.; 4]);
+    let mut scan = crate::scan::Scan::open(&source.path, white_balance).unwrap();
     scan.reference_exposure = project.exposure_metadata.as_ref().and_then(|m| {
         m.entries
             .iter()

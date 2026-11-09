@@ -22,13 +22,13 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         document.import(std::slice::from_ref(&path)).unwrap();
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
-        let wb = document.project.development().as_ref().unwrap().fixed_wb;
+        let wb = document.project.acquisition_wb();
         let (before, _) = prepare_source(
             &renderers,
             &device,
             &queue,
             path.clone(),
-            Some(wb),
+            wb,
             Some(source),
             None,
         )
@@ -68,16 +68,8 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
                 .get_proxy(&current.store_key_at(&path).unwrap())
                 .is_none()
         );
-        let (after, _) = prepare_source(
-            &renderers,
-            &device,
-            &queue,
-            path,
-            Some(wb),
-            Some(source),
-            None,
-        )
-        .unwrap();
+        let (after, _) =
+            prepare_source(&renderers, &device, &queue, path, wb, Some(source), None).unwrap();
         assert_eq!(after.thumbnail.unwrap().1.pixels, proxy.pixels);
     });
 }

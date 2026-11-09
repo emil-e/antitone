@@ -589,7 +589,12 @@ fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() 
         assert_eq!(e.auto_crop_margin, framing::DEFAULT_MARGIN_PERCENT);
         assert_eq!(e.document.state.project, before);
     }
-    e.document.state.project.development_mut().unwrap().fixed_wb[0] *= 1.01;
+    e.document
+        .state
+        .project
+        .development_mut()
+        .unwrap()
+        .white_balance[0] = 2.;
     let changed = e.document.state.project.clone();
     e.adjust_auto_crop_margin(2.);
     apply(&mut e);

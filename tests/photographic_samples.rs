@@ -53,7 +53,7 @@ fn photographic_tiff_pairs() {
     assert!(root.is_absolute() && output.is_absolute());
     std::fs::create_dir(&output).unwrap();
     let (train, calibration) = train_raw::load();
-    let wb = train.fixed_wb;
+    let wb = train.white_balance;
     drop(train);
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -108,9 +108,9 @@ fn photographic_tiff_pairs() {
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone()).unwrap();
+            scan.set_flat_field(field.clone());
             let gpu_field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
-            let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
+            let input = InputSettings::negative((calibration).validate().unwrap());
             for (edited, colour, density) in [
                 ("none", 0., 0.),
                 ("rgb", 0., 0.),

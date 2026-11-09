@@ -120,7 +120,6 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
         let calibration = Calibration {
             dmin: DVec3::new(0.19, 0.14, 0.12),
             dmax: DVec3::new(0.008, 0.004, 0.002),
-            input_floor: 1. / 65535.,
         };
         let roll = RollSettings::default();
         let global = AdjustmentLayerSettings::default();

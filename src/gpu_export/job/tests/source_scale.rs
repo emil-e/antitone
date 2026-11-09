@@ -11,10 +11,10 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         ([2949, 11796, 5898], 0.18_f32),
         ([5898, 23592, 11796], 0.36_f32),
     ] {
-        let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
+        let file = crate::raw::fixture::bayer_dng_with_as_shot(rgb, [4, 1, 2]);
         let scan = Scan::from_raw(
             crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
-            Some([4., 1., 2., 1.]),
+            None,
         )
         .unwrap();
         let area = scan.area;
@@ -28,14 +28,11 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
                 path: file.path().into(),
                 reference_only: false,
                 development: SourceDevelopment {
-                    decode: scan.source().metadata().development(scan.fixed_wb),
-                    lens_correction: None,
-                    dng_development: None,
+                    decode: scan.source().metadata().development(scan.white_balance),
                     dimensions: [64; 2],
                     active_area: [area.x, area.y, area.width, area.height],
                     camera_model: scan.camera_model.clone(),
                     camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-                    input_floor: scan.source().input_floor(),
                 },
                 adjustment_layers: None,
                 repairs: Default::default(),

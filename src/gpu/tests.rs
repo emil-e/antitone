@@ -59,7 +59,6 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     let calibration = Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
         dmax: DVec3::new(0.008, 0.004, 0.002),
-        input_floor: 1. / 65535.,
     };
     let (_, input) = ProcessingParameters::positive_with_bound(
         calibration,

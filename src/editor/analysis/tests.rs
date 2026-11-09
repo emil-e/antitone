@@ -55,7 +55,6 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
         crate::processing::NegativeInput::from(Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
-            input_floor: floor,
         }),
         || false,
     )
@@ -98,7 +97,6 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         let selected = editor.document.visit.current_source;
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.document.state.project.analysis_area = Some([96, 96, 320, 320]);
         editor.set_gamma(0.7);
         editor.photo_settings_mut().exposure = 0.75;
@@ -236,13 +234,10 @@ fn state() -> Editor {
                 path: "scene.ARW".into(),
                 development: SourceDevelopment {
                     decode: Development::new("test-backend".into(), [1.; 4]),
-                    lens_correction: None,
-                    dng_development: None,
                     dimensions: [824, 624],
                     active_area: [12, 12, 800, 600],
                     camera_model: "test-camera".into(),
                     camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -258,7 +253,6 @@ fn state() -> Editor {
     editor.id = 5;
     editor.next_request = 5;
     editor.document.visit.current_source = Some(id);
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_gamma(0.9);
     editor.document.project.roll.exposure = 0.;
     editor.photo_settings_mut().exposure = 1.23456789;
@@ -507,14 +501,14 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
 }
 
 #[test]
-fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
+fn failure_cancel_and_invalid_controls_preserve_all_processing_state() {
     for mode in 0..3 {
         let mut editor = state();
         let before = editor.document.state.project.clone();
         let request = capture_request(&editor);
         let mut result = outcome(&request);
         if mode == 2 {
-            result.document.project.set_gamma(0.1);
+            result.document.project.set_gamma(f64::NAN);
             result.document.project.set_balance(Balance {
                 warmth: 0.8,
                 tint: 0.8,

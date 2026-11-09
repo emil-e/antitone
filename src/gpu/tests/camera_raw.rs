@@ -24,7 +24,6 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
     let input = InputSettings::Negative {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
-        input_floor: cal.input_floor,
         response: Response::film(),
         gamma: DEFAULT_GAMMA,
         balance: Balance {

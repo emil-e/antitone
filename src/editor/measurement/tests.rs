@@ -67,7 +67,6 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
                 .register_with_development(ready.record.clone(), ready.development().clone())
                 .unwrap(),
         );
-        editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.set_dmin(Some(expected * 1.05));
         editor.set_dmax(Some(dark));
         editor.document.visit.canvas.ready = Some(ready);

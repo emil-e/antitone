@@ -7,7 +7,7 @@ use std::sync::Weak;
 pub struct CameraIdentity {
     native: Weak<FrozenRaw>,
     capture: crate::source::FileKey,
-    fixed_wb: [f64; 4],
+    white_balance: [f64; 4],
     lens_correction: bool,
     dng_interpretation: Option<String>,
     area: Rect,
@@ -24,7 +24,7 @@ impl PartialEq for CameraIdentity {
             self.native.ptr_eq(&other.native)
         };
         same_capture
-            && self.fixed_wb == other.fixed_wb
+            && self.white_balance == other.white_balance
             && self.lens_correction == other.lens_correction
             && self.dng_interpretation == other.dng_interpretation
             && self.area == other.area
@@ -50,13 +50,13 @@ impl DevelopedSource {
         CameraIdentity {
             native: Arc::downgrade(&self.raw),
             capture: self.file.clone(),
-            fixed_wb: self.fixed_wb,
+            white_balance: self.white_balance,
             lens_correction: metadata.lens_correction_enabled(),
             dng_interpretation: metadata.dng_identity(),
             area: self.area,
             matrix: self.camera_to_ap1,
             scale: self.source_scale,
-            floor: self.input_floor,
+            floor: self.precision_floor,
         }
     }
 }

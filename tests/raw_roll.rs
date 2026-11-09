@@ -49,7 +49,7 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
     let mut matrix = None;
     for (index, path) in sources.iter().enumerate() {
         let mut scan = Scan::open(path, None).unwrap();
-        assert_eq!(scan.fixed_wb, [1.; 4]);
+        assert_eq!(scan.white_balance, [1.; 4]);
         assert_eq!(scan.area, film);
         if let Some(matrix) = matrix {
             assert_eq!(scan.camera_to_ap1, matrix);
@@ -86,7 +86,6 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
         calibration: Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
-            input_floor: CAMERA_INPUT_FLOOR,
         },
         response: Response::film(),
         gamma: DEFAULT_GAMMA,

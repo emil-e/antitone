@@ -179,6 +179,76 @@ fn assert_once_per_source(counts: &SourceStarts, document: &Document) {
 }
 
 #[test]
+fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() {
+    let (scheduler, starts) = observed();
+    let editor = fixture(scheduler.clone());
+    let accepted = editor.document.state.project.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("runtime-regions.antitone");
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+        });
+        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        let ready = app.read(|editor| editor.document.spatial.ready());
+        assert_eq!(
+            ready.groups.iter().map(|g| g.sources.len()).sum::<usize>(),
+            2
+        );
+        assert!(starts.load(Ordering::SeqCst) > 0);
+        app.enter(|editor, cx| {
+            editor.finish_auto_crop(false);
+            editor.save_project(path.clone(), crate::project::Save::New, None, cx);
+        });
+        app.run_until(LIMIT, |editor| {
+            editor.document_pending.is_none() && !editor.interaction_blocked()
+        });
+        app.read(|editor| {
+            assert!(!editor.dialogs.is_open(), "{}", editor.status);
+            assert_eq!(*editor.document.spatial.ready(), *ready);
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        app.enter(|editor, cx| {
+            editor.guard_transition(crate::editor::files::Transition::Open(path.clone()), cx);
+        });
+        app.run_until(LIMIT, |editor| {
+            editor.document_pending.is_none() && !editor.interaction_blocked()
+        });
+        app.read(|editor| {
+            assert!(!editor.dialogs.is_open(), "{}", editor.status);
+            assert!(editor.document.spatial.ready().groups.is_empty());
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+        });
+        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+            let regenerated = editor.document.spatial.ready();
+            assert_eq!(
+                regenerated
+                    .groups
+                    .iter()
+                    .map(|g| g.sources.len())
+                    .sum::<usize>(),
+                2
+            );
+            assert!(
+                regenerated
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.sources)
+                    .all(|s| s.sampling_areas().ready())
+            );
+            assert_eq!(editor.document.state.project, accepted);
+            assert!(!editor.document.dirty());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_consumers_edits() {
     let (scheduler, starts, by_source) = observed_by_source();
     let editor = fixture(scheduler.clone());

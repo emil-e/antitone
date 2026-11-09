@@ -493,7 +493,6 @@ mod tests {
         let cal = Calibration {
             dmin: DVec3::new(0.14, 0.098, 0.094),
             dmax: DVec3::new(0.017, 0.0052, 0.0029),
-            input_floor: 1. / 65535.,
         };
         let truth = NegativeInput {
             calibration: cal,
@@ -558,7 +557,6 @@ mod tests {
         let cal = Calibration {
             dmin: DVec3::splat(0.5),
             dmax: DVec3::new(0.1, 0.001, 0.00002),
-            input_floor: 1. / 65535.,
         };
         let spans = (cal.dmin / cal.dmax).ln();
         let xy = opponent_coordinates((spans / (spans.x * spans.y * spans.z).cbrt()).ln());
@@ -589,7 +587,6 @@ mod tests {
         let cal = Calibration {
             dmin: DVec3::new(0.14, 0.098, 0.094),
             dmax: DVec3::new(0.017, 0.0052, 0.0029),
-            input_floor: 1. / 65535.,
         };
         let negative = NegativeInput {
             calibration: cal,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::project::{Save, Source};
+use crate::project::Source;
 use tempfile::TempDir;
 
 fn region(bounds: [f64; 4]) -> Region {
@@ -24,13 +24,10 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
         std::fs::write(&path, [i as u8; 16]).unwrap();
         let development = SourceDevelopment {
             decode: Development::new("test-backend".into(), [1.; 4]),
-            lens_correction: None,
-            dng_development: None,
             dimensions: [1300, 1960],
             active_area: [13, 29, 1280, 1920],
             camera_model: "fixture".into(),
             camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
         let id = project
             .add_source(Source {
@@ -64,7 +61,6 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
                 revision: FileRevision::read(&path).unwrap(),
                 development,
                 correction: None,
-                code_scale: 1.,
             },
             observation: Some(observation.clone()),
             picture: Some(observation),
@@ -80,7 +76,6 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
         version: VERSION,
         groups: vec![Group {
             development: project.sources[0].development.decode.clone(),
-            code_scale: 1.,
             sources,
             common_size,
         }],
@@ -285,14 +280,8 @@ fn freshness_uses_sources_and_measurement_basis_not_grade_order_or_accepted_crop
 }
 
 #[test]
-fn code_basis_and_measured_visibility_cannot_be_forged_into_reusable_dimensions() {
-    let (_dir, project, metadata, mut inputs) = fixture();
-    inputs[0].code_scale = 2.;
-    assert!(metadata.matching(&project, &inputs).groups.is_empty());
-    let mut bad = metadata.clone();
-    bad.groups[0].code_scale = 2.;
-    assert!(bad.validate().is_err());
-    let mut outside = metadata;
+fn off_camera_lines_cannot_be_forged_into_reusable_dimensions() {
+    let (_dir, _, mut outside, _) = fixture();
     outside.groups[0].sources[0]
         .observation
         .as_mut()
@@ -369,14 +358,14 @@ fn changed_group_does_not_discard_an_independent_group_and_ambiguous_inputs_are_
 }
 
 #[test]
-fn store_rejects_retired_and_foreign_requests_and_save_snapshots_do_not_replace_later_results() {
+fn store_rejects_retired_and_foreign_requests_and_snapshots_survive_later_publication() {
     let (_dir, project, metadata, inputs) = fixture();
     let accepted = project.clone();
     let mut store = Store::default();
     let old = store.begin().unwrap();
     assert!(
         store.snapshot(&project, &inputs).groups.is_empty(),
-        "pending work is not saveable output"
+        "pending work does not produce ready regions"
     );
     let current = store.begin().unwrap();
     assert!(
@@ -426,84 +415,6 @@ fn store_rejects_retired_and_foreign_requests_and_save_snapshots_do_not_replace_
     assert_eq!(
         saved.groups.len(),
         1,
-        "retiring publication does not invalidate captured write data"
+        "retiring publication does not invalidate captured data"
     );
-}
-
-#[test]
-fn project_roundtrip_separates_accepted_state_and_reusable_metadata_without_waiting_for_work() {
-    let (dir, project, metadata, inputs) = fixture();
-    let accepted = project.clone();
-    let path = dir.path().join("saved.antitone");
-    project
-        .save_with_spatial_metadata(&path, Save::New, &metadata)
-        .unwrap();
-    let (loaded, restored) = Project::load_with_spatial_metadata(&path).unwrap();
-    assert_eq!(loaded, accepted);
-    assert!(loaded.spatial_metadata.is_none());
-    assert_eq!(restored.matching(&loaded, &inputs), metadata);
-    assert_eq!(project, accepted);
-    assert!(
-        project
-            .save_with_spatial_metadata(&path, Save::New, &Metadata::default())
-            .is_err()
-    );
-    assert_eq!(
-        Project::load_with_spatial_metadata(&path).unwrap().1,
-        metadata,
-        "failed no-clobber save damaged existing metadata"
-    );
-    project
-        .save(&dir.path().join("legacy.antitone"), Save::New)
-        .unwrap();
-    let (legacy, empty) =
-        Project::load_with_spatial_metadata(&dir.path().join("legacy.antitone")).unwrap();
-    assert_eq!(legacy, project);
-    assert!(empty.groups.is_empty());
-}
-
-#[test]
-fn invalid_or_unsupported_derived_payload_is_discardable_but_accepted_unknown_fields_are_not() {
-    let (dir, project, metadata, _) = fixture();
-    let path = dir.path().join("saved.antitone");
-    project
-        .save_with_spatial_metadata(&path, Save::New, &metadata)
-        .unwrap();
-    let original: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    for mut payload in [
-        serde_json::json!({"version":999,"groups":[]}),
-        {
-            let mut old = serde_json::to_value(&metadata).unwrap();
-            old["version"] = serde_json::json!(2);
-            old
-        },
-        {
-            let mut old = serde_json::to_value(&metadata).unwrap();
-            old["version"] = serde_json::json!(3);
-            for group in old["groups"].as_array_mut().unwrap() {
-                for source in group["sources"].as_array_mut().unwrap() {
-                    source.as_object_mut().unwrap().remove("sampling");
-                }
-            }
-            old
-        },
-        serde_json::json!({"unexpected":true}),
-        serde_json::to_value(&metadata).unwrap(),
-    ] {
-        if payload["version"] == VERSION {
-            payload["groups"][0]["sources"][0]["observation"]["boundaries"][0]["plane"] =
-                serde_json::json!([0., 0., 1.]);
-        }
-        let mut file = original.clone();
-        file["spatial_metadata"] = payload;
-        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
-        let (loaded, metadata) = Project::load_with_spatial_metadata(&path).unwrap();
-        assert_eq!(loaded, project);
-        assert!(metadata.groups.is_empty());
-    }
-    let mut bad = original;
-    bad["unknown_accepted_setting"] = serde_json::json!(true);
-    std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
-    assert!(Project::load_with_spatial_metadata(&path).is_err());
 }

@@ -29,7 +29,6 @@ fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_di
         let input = InputSettings::negative(Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.2),
-            input_floor: 0.01,
         });
         for (region, expected) in [
             (area, 16. / 31.),

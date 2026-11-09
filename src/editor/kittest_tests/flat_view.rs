@@ -52,7 +52,7 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
                         reference
                             .developed
                             .metadata()
-                            .source_preview(reference.developed.fixed_wb()),
+                            .source_preview(reference.developed.white_balance()),
                         editor.source_exposure,
                     )
                     .unwrap();

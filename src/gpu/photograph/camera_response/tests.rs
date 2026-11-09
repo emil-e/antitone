@@ -21,7 +21,7 @@ impl Source for CameraLight {
 }
 
 #[test]
-fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
+fn native_response_preserves_finite_zero_light_signed_values_and_continuation_flags() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let gate = crate::gpu::submission::SubmissionGate::default();
@@ -34,7 +34,6 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
         calibration: Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.14),
-            input_floor: 1e-6,
         },
         gamma: 0.125,
         response: Response::film(),
@@ -59,9 +58,9 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
         domain.finite().unwrap()
     );
     assert_eq!(readout.image.domain().grid, domain.grid);
-    assert!(
-        readout.decode_gain > 1.,
-        "the endpoint must need folded range"
+    assert_eq!(
+        readout.decode_gain, 1.,
+        "the finite response does not need a separate numerical encoding"
     );
 
     let scalar = Inversion::new(negative).unwrap();
@@ -126,9 +125,16 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
             "{index}: {decoded:?} != {:?}",
             expected.rgb
         );
-        assert_eq!(actual[3] as u32, if index == 0 { 1 } else { 0 });
+        let flags = expected
+            .floored
+            .iter()
+            .enumerate()
+            .fold(0u32, |mask, (c, continued)| {
+                mask | (u32::from(*continued) << c)
+            });
+        assert_eq!(actual[3] as u32, flags);
     }
 
-    assert!(f64::from(actual[0][0]) * readout.decode_gain > f64::from(f32::MAX));
+    assert!(actual[0][0].is_finite() && actual[0][0] > 65536.);
     assert!(actual[1][0] > 0. && actual[1][1] < 0. && actual[1][2] < 0.);
 }

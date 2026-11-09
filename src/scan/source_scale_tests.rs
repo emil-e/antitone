@@ -60,7 +60,7 @@ fn source_reads_restore_green_scale_without_rewriting_native_rgb16() {
         }
         assert_eq!(view.is_continuous(), gain != 1.);
         assert_eq!(
-            scan.source.input_floor(),
+            scan.source.precision_floor(),
             crate::processing::CAMERA_INPUT_FLOOR * gain
         );
         assert_eq!(
@@ -155,8 +155,8 @@ fn source_normalization_scales_continuous_lens_samples_and_their_precision_toget
         .unwrap();
     assert_eq!(normalized, original.map(|value| value * 4.));
     assert_eq!(
-        scan.source.input_floor(),
-        scan.source.metadata().input_floor().unwrap() * 4.
+        scan.source.precision_floor(),
+        scan.source.metadata().precision_floor().unwrap() * 4.
     );
 }
 
@@ -172,8 +172,8 @@ fn sdk_developed_samples_are_not_rescaled_by_the_libraw_gain() {
         native.pixel_samples(32, 32).unwrap()
     );
     assert_eq!(
-        scan.source.input_floor(),
-        scan.source.metadata().input_floor().unwrap()
+        scan.source.precision_floor(),
+        scan.source.metadata().precision_floor().unwrap()
     );
     let ap1 = crate::processing::InputPipeline::new(InputSettings::Digital, scan.camera_to_ap1)
         .unwrap()

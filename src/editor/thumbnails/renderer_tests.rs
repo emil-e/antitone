@@ -171,15 +171,14 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             )
             .unwrap(),
         );
-        scan.set_flat_field(Some(field.clone())).unwrap();
+        scan.set_flat_field(Some(field.clone()));
         let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
-        let calibration = scan
-            .processing_calibration(Calibration {
-                dmin: DVec3::new(0.28, 0.23, 0.25),
-                dmax: DVec3::new(0.01, 0.005, 0.001),
-                input_floor: scan.input_floor,
-            })
-            .unwrap();
+        let calibration = (Calibration {
+            dmin: DVec3::new(0.28, 0.23, 0.25),
+            dmax: DVec3::new(0.01, 0.005, 0.001),
+        })
+        .validate()
+        .unwrap();
         let roll = RollSettings::default();
         let photo = AdjustmentLayerSettings::default();
         let pipeline = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
@@ -359,7 +358,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             &device,
             &queue,
             paths[2].clone(),
-            Some(document.project.development().as_ref().unwrap().fixed_wb),
+            document.project.acquisition_wb(),
             Some(source),
             None,
         )
@@ -383,7 +382,6 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),
                 dmax: DVec3::new(0.01, 0.005, 0.001),
-                input_floor: scan.input_floor,
             },
             RollSettings::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),

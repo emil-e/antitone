@@ -241,8 +241,7 @@ fn corner_trend_is_not_mistaken_for_dust() {
 }
 
 #[test]
-fn corrected_camera_precision_bound_uses_maximum_gain_without_resampling_calibration() {
-    use crate::processing::Calibration;
+fn measurement_precision_accounts_for_the_largest_gain_and_identity_outside_support() {
     let nodes = vec![
         DVec3::new(0.8, 1.3, 0.9),
         DVec3::new(1.4, 0.9, 1.1),
@@ -256,26 +255,6 @@ fn corrected_camera_precision_bound_uses_maximum_gain_without_resampling_calibra
         .map(|g| g.max_element() / 65535.)
         .fold(base, f64::max);
     assert_eq!(field.precision_floor().unwrap(), expected);
-    let calibration = Calibration {
-        dmin: DVec3::splat(0.2),
-        dmax: DVec3::splat(0.01),
-        input_floor: base,
-    };
-    let corrected = field.processing_calibration(calibration).unwrap();
-    assert_eq!(corrected.dmin, calibration.dmin);
-    assert_eq!(corrected.dmax, calibration.dmax);
-    assert_eq!(corrected.input_floor, expected);
-    assert!(field.processing_calibration(corrected).is_err());
-    let unusable = Calibration {
-        dmax: DVec3::splat(base),
-        ..calibration
-    };
-    assert!(field.processing_calibration(unusable).is_err());
-    let identity = FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::ONE; 4]).unwrap();
-    assert_eq!(
-        identity.processing_calibration(calibration).unwrap(),
-        calibration
-    );
     let attenuating =
         FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::splat(0.8); 4]).unwrap();
     assert_eq!(attenuating.precision_floor().unwrap(), base);

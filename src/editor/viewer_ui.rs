@@ -19,7 +19,7 @@ impl Editor {
                 ready
                     .developed
                     .metadata()
-                    .source_preview(ready.developed.fixed_wb()),
+                    .source_preview(ready.developed.white_balance()),
                 exposure,
             );
         }

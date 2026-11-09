@@ -793,13 +793,10 @@ fn fixture() -> Editor {
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
                     decode: Development::new("test-backend".into(), [1.; 4]),
-                    lens_correction: None,
-                    dng_development: None,
                     dimensions: [900, 600],
                     active_area: [0, 0, 900, 600],
                     camera_model: "test-camera".into(),
                     camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
@@ -813,7 +810,6 @@ fn fixture() -> Editor {
         )
         .unwrap();
     editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
-    editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
     editor
@@ -1052,7 +1048,6 @@ fn new_resets_development_and_replaces_the_previous_document() {
                 e.document.state.project.development().is_none()
                     && e.document.visit.current_source.is_none()
             );
-            assert_eq!(e.floor(), crate::processing::CAMERA_INPUT_FLOOR);
             assert!(!e.document.dirty());
             assert!(e.dmin().is_none());
             assert!(e.id > previous);
@@ -1088,14 +1083,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
             editor.load(source_path, cx);
             let wb = request.wb;
             let expected = &request.expected;
-            assert_eq!(
-                wb,
-                editor
-                    .document
-                    .project
-                    .development()
-                    .map(|value| value.fixed_wb)
-            );
+            assert_eq!(wb, editor.document.project.acquisition_wb());
             assert!(expected.is_some());
             assert_eq!(editor.document.state.project, before);
             assert!(!editor.document.dirty());

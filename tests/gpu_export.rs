@@ -51,7 +51,6 @@ fn source() -> (
     let calibration = Calibration {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
-        input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
     let grade = AdjustmentLayerSnapshot::new(
@@ -350,10 +349,10 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                 .unwrap(),
             )
         });
-        scan.set_flat_field(field.clone()).unwrap();
+        scan.set_flat_field(field.clone());
         let gpu_field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
         let scalar = AdjustmentLayerPipeline::new(
-            scan.processing_calibration(calibration).unwrap(),
+            (calibration).validate().unwrap(),
             roll,
             grade.clone(),
             scan.camera_to_ap1,

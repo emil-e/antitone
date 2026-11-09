@@ -59,6 +59,7 @@ pub struct NativeMetadata {
     rgb_cam: [f64; 9],
     pub vendor: VendorMetadata,
     lens_disabled: u32,
+    as_shot_wb_applied: u32,
 }
 
 /// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
@@ -125,12 +126,17 @@ impl Metadata {
     }
 
     #[cfg(feature = "project")]
-    pub fn development(&self, wb: [f64; 4]) -> crate::project::Development {
+    pub fn development(&self, white_balance: [f64; 4]) -> crate::project::Development {
         #[cfg(feature = "dng-sdk")]
         if self.sdk.is_some() {
-            return crate::project::Development::dng(wb);
+            return crate::project::Development::dng(white_balance);
         }
-        crate::project::Development::new(version(), wb)
+        crate::project::Development::new(version(), white_balance)
+    }
+
+    pub(crate) fn pre_applied_wb(&self) -> Option<[f64; 3]> {
+        (!self.uses_sdk() && self.as_shot_wb_applied != 0)
+            .then(|| [self.cam_mul[0], self.cam_mul[1], self.cam_mul[2]])
     }
 
     pub fn make(&self) -> String {
@@ -220,32 +226,30 @@ impl Metadata {
     }
 
     /// Original-code precision amplified conservatively by development; never a clipping limit.
-    pub fn input_floor(&self) -> Result<f64, Error> {
+    pub fn precision_floor(&self) -> Result<f64, Error> {
         #[cfg(feature = "dng-sdk")]
         if let Some(header) = self.sdk {
-            return Ok(header.input_floor);
+            return Ok(header.precision_floor);
         }
         Ok(crate::processing::CAMERA_INPUT_FLOOR
             * self.lens_geometry()?.map_or(1., |g| g.maximum_gain()))
     }
 
-    pub(crate) fn source_scale(&self, fixed_wb: [f64; 4]) -> Result<f64, Error> {
+    pub(crate) fn source_scale(&self, white_balance: [f64; 4]) -> Result<f64, Error> {
         if self.uses_sdk() {
             Ok(1.)
         } else {
-            crate::processing::libraw_green_scale(fixed_wb)
+            let effective =
+                crate::processing::libraw_effective_wb(white_balance, self.pre_applied_wb())?;
+            crate::processing::libraw_green_scale(effective)
         }
     }
 
-    pub(crate) fn source_input_floor(&self, fixed_wb: [f64; 4]) -> Result<f64, Error> {
-        let floor = self.input_floor()? * self.source_scale(fixed_wb)?;
-        if !floor.is_finite()
-            || !(crate::processing::CAMERA_INPUT_FLOOR
-                ..=crate::processing::CAMERA_INPUT_FLOOR * crate::processing::MAX_SOURCE_GAIN)
-                .contains(&floor)
-        {
+    pub(crate) fn source_precision_floor(&self, white_balance: [f64; 4]) -> Result<f64, Error> {
+        let floor = self.precision_floor()? * self.source_scale(white_balance)?;
+        if !floor.is_finite() || floor <= 0. {
             return Err(Error::Raw(
-                "source normalization exceeds the supported precision range".into(),
+                "source precision is not finite and positive".into(),
             ));
         }
         Ok(floor)
@@ -513,7 +517,7 @@ impl RawFile {
     fn open_mode(
         source_path: &Path,
         lens_correction: bool,
-        fixed_wb: Option<[f64; 4]>,
+        white_balance: Option<[f64; 4]>,
     ) -> Result<Self, Error> {
         let file = crate::source::FileKey::new(source_path);
         let path = CString::new(source_path.as_os_str().as_encoded_bytes())
@@ -549,14 +553,14 @@ impl RawFile {
         if lens_correction && unsafe { antitone_raw_is_dng(raw.handle.as_ptr()) } != 0 {
             let header = crate::dng::Header::read(
                 source_path,
-                sdk_options(fixed_wb)?,
+                sdk_options(white_balance)?,
                 &crate::dng::Cancellation::default(),
             )
             .map_err(|e| Error::Raw(e.to_string()))?;
             raw.set_dng_header(header);
         }
         #[cfg(not(feature = "dng-sdk"))]
-        let _ = fixed_wb;
+        let _ = white_balance;
         raw.metadata.lens_disabled = u32::from(!lens_correction);
         raw.correction = raw.metadata.lens_geometry()?;
         Ok(raw)
@@ -632,10 +636,10 @@ impl RawFile {
         Ok(())
     }
 
-    pub(crate) fn fixed_wb(&self, requested: [f64; 4]) -> [f64; 4] {
+    pub(crate) fn white_balance(&self, requested: [f64; 4]) -> [f64; 4] {
         #[cfg(feature = "dng-sdk")]
         if let Some(header) = self.metadata.sdk {
-            let [r, g, b] = header.fixed_wb;
+            let [r, g, b] = header.white_balance;
             return [r, g, b, g];
         }
         requested
@@ -686,15 +690,22 @@ impl RawFile {
         Ok(())
     }
 
-    pub fn develop_camera(&mut self, fixed_wb: [f64; 4]) -> Result<Developed<'_>, Error> {
-        self.develop(fixed_wb, 0)
+    pub fn develop_camera(&mut self, white_balance: [f64; 4]) -> Result<Developed<'_>, Error> {
+        self.develop(white_balance, 0)
     }
 
-    pub fn develop_srgb_reference(&mut self, fixed_wb: [f64; 4]) -> Result<Developed<'_>, Error> {
-        self.develop(fixed_wb, 1)
+    pub fn develop_srgb_reference(
+        &mut self,
+        white_balance: [f64; 4],
+    ) -> Result<Developed<'_>, Error> {
+        self.develop(white_balance, 1)
     }
 
-    fn develop(&mut self, fixed_wb: [f64; 4], output_color: c_int) -> Result<Developed<'_>, Error> {
+    fn develop(
+        &mut self,
+        white_balance: [f64; 4],
+        output_color: c_int,
+    ) -> Result<Developed<'_>, Error> {
         #[cfg(feature = "dng-sdk")]
         if self.metadata.sdk.is_some() {
             if output_color != 0 {
@@ -704,7 +715,7 @@ impl RawFile {
             }
             let source = crate::dng::Source::develop_with_threads(
                 &self.path,
-                sdk_options(Some(fixed_wb))?,
+                sdk_options(Some(white_balance))?,
                 &crate::dng::Cancellation::default(),
                 self.call_threads() as u32,
             )
@@ -721,7 +732,7 @@ impl RawFile {
             self.unpacked = true;
             return self.camera_image();
         }
-        if fixed_wb
+        if white_balance
             .iter()
             .any(|v| !v.is_finite() || *v <= 0.0 || *v > f32::MAX as f64)
         {
@@ -742,7 +753,7 @@ impl RawFile {
         let code = unsafe {
             antitone_raw_develop(
                 self.handle.as_ptr(),
-                fixed_wb.as_ptr(),
+                white_balance.as_ptr(),
                 output_color,
                 threads,
                 view.as_mut_ptr(),
@@ -837,7 +848,7 @@ impl RawFile {
         #[cfg(feature = "dng-sdk")]
         if let Some(source) = &self.dng_source {
             let [width, height] = source.dimensions();
-            let [r, g, b] = source.fixed_wb();
+            let [r, g, b] = source.white_balance();
             return Ok(Developed {
                 pixels: &[],
                 continuous: Some(source.camera_rgb()),
@@ -1098,7 +1109,7 @@ fn sdk_options(wb: Option<[f64; 4]>) -> Result<crate::dng::Options, Error> {
     }
     Ok(crate::dng::Options {
         max_pixels: u32::MAX,
-        fixed_wb: wb.map(|[r, g, b, _]| [r, g, b]),
+        white_balance: wb.map(|[r, g, b, _]| [r, g, b]),
     })
 }
 
@@ -1381,7 +1392,7 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<NativeMetadata>(), 656);
+        assert_eq!(size_of::<NativeMetadata>(), 664);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<NativeView>(), 64);
         #[cfg(feature = "editor")]
@@ -1696,8 +1707,6 @@ mod tests {
                 assert_eq!(second.pixel_samples(x, y).unwrap(), value, "{path}");
             }
         }
-        // sRAW/mRAW is decimated pre-demosaiced output, not CFA sensor data: rejected.
-        assert!(RawFile::open(Path::new("samples/raw-downloads/canon/6d-sraw.CR2")).is_err());
     }
 
     #[test]

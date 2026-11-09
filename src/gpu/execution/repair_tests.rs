@@ -43,7 +43,6 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
             Calibration {
                 dmin: DVec3::splat(0.8),
                 dmax: DVec3::splat(0.01),
-                input_floor: 1. / 65535.,
             },
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(

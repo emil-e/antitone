@@ -108,7 +108,6 @@ pub(in super::super::super) fn run(
     evidence: &[Evidence],
     inputs: Vec<Input>,
     development: Development,
-    code_scale: f64,
     checkpoint: impl Fn() -> Result<(), String>,
 ) -> Result<Group, String> {
     checkpoint()?;
@@ -230,7 +229,6 @@ pub(in super::super::super) fn run(
     checkpoint()?;
     Ok(Group {
         development,
-        code_scale,
         sources,
         common_size,
     })

@@ -32,11 +32,11 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
     let mut input = InputSettings::negative(Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
-        input_floor: 1e-6,
     });
     if let InputSettings::Negative { gamma, .. } = &mut input {
         *gamma = 0.125;
     }
+    let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
     let layers = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     assert!(
         AuthoredPhotograph::validate(
@@ -44,17 +44,17 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
             input,
             RollSettings::default(),
             &layers,
-            DMat3::IDENTITY,
+            matrix,
             region
         )
         .is_err(),
         "the fixture must need a scaled readout, not just an ordinary neutral raster"
     );
-    let scalar = crate::processing::InputPipeline::new(input, DMat3::IDENTITY).unwrap();
+    let scalar = crate::processing::InputPipeline::new(input, matrix).unwrap();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let gate = crate::gpu::submission::SubmissionGate::default();
 
-    for raw in [DVec3::ZERO, DVec3::new(0.008, 0.016, 0.024)] {
+    for raw in [DVec3::ZERO, DVec3::new(0.07, 0.08, 0.09)] {
         let codes = (raw * 65535.).as_vec3();
         let camera = source(Arc::new(Codes {
             domain: Domain {
@@ -67,7 +67,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
         let readout = PhotographGraph::neutral_readout(
             camera,
             None,
-            InputTransform::new(input, DMat3::IDENTITY).unwrap(),
+            InputTransform::new(input, matrix).unwrap(),
         )
         .unwrap();
         assert!(readout.decode_gain > 1.);

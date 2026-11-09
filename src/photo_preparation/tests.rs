@@ -19,51 +19,63 @@ fn unsupported_geometry_and_tiny_or_dark_references_abstain_instead_of_inventing
     let mut preview =
         Preview::srgb_fixture(image::RgbImage::from_pixel(4, 4, image::Rgb([89; 3])), 0);
     assert_eq!(
-        estimate(&proxy, &preview, 1. / 65535.),
+        estimate(&proxy, &preview),
         ReferenceExposure::Unavailable(Unavailable::IncomparableFraming)
     );
     preview.rgb = image::RgbImage::from_pixel(6, 4, image::Rgb([89; 3]));
     assert_eq!(
-        estimate(&proxy, &preview, 1. / 65535.),
+        estimate(&proxy, &preview),
         ReferenceExposure::Unavailable(Unavailable::InsufficientSamples)
     );
     preview.rgb = image::RgbImage::new(96, 64);
     assert_eq!(
-        estimate(&proxy, &preview, 1. / 65535.),
+        estimate(&proxy, &preview),
         ReferenceExposure::Unavailable(Unavailable::InsufficientSamples)
     );
     preview.capture_flip = 9;
     assert_eq!(
-        estimate(&proxy, &preview, 1. / 65535.),
+        estimate(&proxy, &preview),
         ReferenceExposure::Unavailable(Unavailable::UnsupportedOrientation)
+    );
+}
+
+#[test]
+fn positive_low_signal_matches_the_same_preview_without_a_decoder_precision_threshold() {
+    let reference =
+        Preview::srgb_fixture(image::RgbImage::from_pixel(96, 64, image::Rgb([89; 3])), 0);
+    let normal = flat(96, 64);
+    let mut dim = flat(96, 64);
+    for pixel in Arc::make_mut(&mut dim.pixels) {
+        for value in &mut pixel[..3] {
+            *value *= 2_f32.powi(-16);
+        }
+    }
+    assert!(f64::from(dim.pixels[0][0]) / 65535. < crate::processing::CAMERA_INPUT_FLOOR);
+    let ReferenceExposure::Matched(normal) = estimate(&normal, &reference) else {
+        panic!("normal positive control must meter");
+    };
+    let ReferenceExposure::Matched(dim) = estimate(&dim, &reference) else {
+        panic!("positive samples below one nominal decoder code remain usable");
+    };
+    assert!((dim.ev - normal.ev - 16.).abs() < 1e-9);
+    let mut zero = flat(96, 64);
+    Arc::make_mut(&mut zero.pixels).fill([0.; 4]);
+    assert_eq!(
+        estimate(&zero, &reference),
+        ReferenceExposure::Unavailable(Unavailable::InsufficientSamples)
     );
 }
 
 #[test]
 fn negative_preparation_does_not_require_a_file_preview_or_an_exposure_memo() {
     let proxy_data = Arc::new(flat(96, 64));
-    let development = development();
     let prepared = proxy(
         &OnceLock::new(),
-        &development,
         InputSettings::default(),
         &proxy_data,
         Ok(None),
     );
     assert!(prepared.reference.is_none());
-}
-
-fn development() -> SourceDevelopment {
-    SourceDevelopment {
-        decode: crate::project::Development::new(crate::raw::version(), [1.; 4]),
-        lens_correction: None,
-        dng_development: None,
-        dimensions: [96, 64],
-        active_area: [0, 0, 96, 64],
-        camera_model: "controlled".into(),
-        camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-        input_floor: 1. / 65535.,
-    }
 }
 
 #[cfg(feature = "ocio-reference")]
@@ -136,7 +148,7 @@ fn quantized_reference_matches_known_gain_through_rotations_and_symmetric_letter
         let mut boxed = image::RgbImage::new(rgb.width(), rgb.height() + 20);
         image::imageops::replace(&mut boxed, &rgb, 0, 10);
         for rgb in [rgb, boxed] {
-            let result = estimate(&proxy, &Preview::srgb_fixture(rgb, flip), 1. / 65535.);
+            let result = estimate(&proxy, &Preview::srgb_fixture(rgb, flip));
             let ReferenceExposure::Matched(value) = result else {
                 panic!("flip={flip} {result:?}");
             };
@@ -150,7 +162,7 @@ fn quantized_reference_matches_known_gain_through_rotations_and_symmetric_letter
 fn native_adobe_preview_recovers_known_gain_through_the_same_aces_inverse() {
     let desired = 0.7;
     let (proxy, preview) = control(desired, true);
-    let ReferenceExposure::Matched(value) = estimate(&proxy, &preview, 1. / 65535.) else {
+    let ReferenceExposure::Matched(value) = estimate(&proxy, &preview) else {
         panic!("the authored Adobe RGB preview must provide usable samples");
     };
     // Same neutral ACES response and 8-bit error budget as the sRGB control above.
@@ -165,18 +177,12 @@ fn a_recorded_unavailable_baseline_is_not_replaced_when_preview_support_improves
         0,
     ));
     assert!(matches!(
-        estimate(&data, &preview, 1. / 65535.),
+        estimate(&data, &preview),
         ReferenceExposure::Matched(_)
     ));
     let recorded = ReferenceExposure::Unavailable(Unavailable::NoUsablePreview);
     let memo = OnceLock::from(recorded.clone());
-    let prepared = proxy(
-        &memo,
-        &development(),
-        InputSettings::Digital,
-        &data,
-        Ok(Some(preview)),
-    );
+    let prepared = proxy(&memo, InputSettings::Digital, &data, Ok(Some(preview)));
     assert_eq!(prepared.reference, Some(recorded));
 }
 
@@ -197,7 +203,6 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
     let memo = OnceLock::new();
     let prepared = proxy(
         &memo,
-        &development(),
         InputSettings::Digital,
         &data,
         Ok(store.get_preview(&file)),
@@ -209,7 +214,6 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
     let changed = Arc::new(flat(96, 64));
     let prepared = proxy(
         &memo,
-        &development(),
         InputSettings::Digital,
         &changed,
         Err("recorded exposure must not be recalculated".into()),

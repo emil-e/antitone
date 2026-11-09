@@ -80,7 +80,7 @@ impl SourceInterpretation {
 impl InputTransform {
     #[cfg(feature = "project")]
     pub(crate) fn from_recipe(recipe: &crate::image_recipe::NeutralRecipe) -> Result<Self, Error> {
-        let input = recipe.processing_input()?;
+        let input = recipe.input;
         let matrix = input.positive_matrix(
             DMat3::from_cols_array_2d(&recipe.source_development.camera_to_ap1),
             recipe.reference.as_ref().map(|reference| reference.ev()),
@@ -110,7 +110,6 @@ impl InputTransform {
 
     #[cfg(feature = "raw")]
     pub(crate) fn for_scan(scan: &crate::scan::Scan, input: InputSettings) -> Result<Self, Error> {
-        let input = scan.refined_input(&input)?;
         Self::new(input, scan.positive_matrix(&input)?)
     }
 
@@ -147,7 +146,6 @@ mod tests {
         let input = crate::processing::InputSettings::Negative {
             dmin: Some(glam::DVec3::splat(0.8)),
             dmax: Some(glam::DVec3::splat(0.02)),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: 0.75,
             balance: Default::default(),

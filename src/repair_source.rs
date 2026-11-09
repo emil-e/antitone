@@ -130,7 +130,7 @@ fn resolve_matching(
     applicable: impl Fn(&Repair) -> Result<bool, Error>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     recipe.neutral.require_scan(scan)?;
-    let source = ImageSource::new(scan, recipe.neutral.processing_input()?)?;
+    let source = ImageSource::new(scan, recipe.neutral.input)?;
     resolve_selected(recipe, execution, applicable, |repair, execution| {
         evaluate_with(&source, repair, execution)
     })
@@ -162,20 +162,18 @@ fn resolve_selected(
 impl crate::image_recipe::NeutralRecipe {
     /// The consumer owns the immutable source lease and freshness fence, not the selected viewer.
     pub fn require_scan(&self, scan: &Scan) -> Result<(), Error> {
+        scan.source().require_input(&self.input)?;
         let (width, height) = scan.dimensions()?;
         let area = scan.area;
         let actual = crate::project::SourceDevelopment {
             decode: scan
                 .source()
                 .metadata()
-                .development(scan.source().fixed_wb()),
-            lens_correction: scan.source().metadata().lens_identity()?,
-            dng_development: scan.source().metadata().dng_identity(),
+                .development(scan.source().white_balance()),
             dimensions: [width, height],
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: scan.camera_model.clone(),
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-            input_floor: scan.source().input_floor(),
         };
         if !self.source_development.same_processing(&actual)
             || self.correction.as_ref() != scan.flat_field()

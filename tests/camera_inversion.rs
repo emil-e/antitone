@@ -13,7 +13,6 @@ fn calibration() -> Calibration {
     Calibration {
         dmin: DVec3::new(0.75, 0.48, 0.22),
         dmax: DVec3::new(0.003, 0.006, 0.008),
-        input_floor: 1. / 65535.,
     }
 }
 
@@ -38,7 +37,6 @@ fn input(negative: NegativeInput) -> InputSettings {
     InputSettings::Negative {
         dmin: Some(negative.calibration.dmin),
         dmax: Some(negative.calibration.dmax),
-        input_floor: negative.calibration.input_floor,
         response: negative.response,
         gamma: negative.gamma,
         balance: negative.balance,
@@ -114,7 +112,6 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
     let mixed_calibration = Calibration {
         dmin: matrix() * cal.dmin,
         dmax: matrix() * cal.dmax,
-        ..cal
     };
     let mixed = Inversion::new(negative(
         mixed_calibration,
@@ -235,7 +232,6 @@ fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches()
     let cal = Calibration {
         dmin: DVec3::new(0.14, 0.098, 0.094),
         dmax: DVec3::new(0.017, 0.0052, 0.0029),
-        input_floor: 1. / 65535.,
     };
     let truth = negative(
         cal,
@@ -251,7 +247,7 @@ fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches()
     let points: [_; 90] = std::array::from_fn(|i| {
         let y = 2_f64.powf(-7. + i as f64 / 89. * 6.8);
         let p = forward(cal, truth, target * y);
-        assert!(p.min_element() >= cal.input_floor);
+        assert!(p.min_element() > 0.);
         assert!(
             (matrix() * inverse.apply(p).unwrap().rgb - DVec3::splat(y))
                 .abs()
@@ -278,7 +274,6 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
     let cal = Calibration {
         dmin: DVec3::splat(0.001),
         dmax: DVec3::splat(0.001 * (1. - 1.1e-6)),
-        input_floor: 0.001 * (1. - 1.1e-6),
     };
     let result = antitone::gpu::parameters::ProcessingParameters::positive(
         negative(

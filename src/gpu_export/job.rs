@@ -44,7 +44,7 @@ pub(crate) fn write(
         job.scan.source(),
     )?;
     let mut scan = prepared.scan();
-    scan.set_flat_field(job.scan.flat_field().cloned())?;
+    scan.set_flat_field(job.scan.flat_field().cloned());
     job.recipe.neutral.require_scan(&scan)?;
     let plan = crate::image_recipe::quality::original_plan(job.recipe)?;
     let repairs = timed!(

@@ -16,7 +16,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
     document.import(&[file.path().to_owned()]).unwrap();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
-    let scan = Scan::open(file.path(), Some(source.development.decode.fixed_wb)).unwrap();
+    let scan = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
     let camera = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let loader = source_loading::SourceLoader::new();
@@ -84,7 +84,7 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let document: super::super::document_scope::DocumentScope = document.into();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
-    let scan = Scan::open(file.path(), Some(source.development.decode.fixed_wb)).unwrap();
+    let scan = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
     let pixels = Arc::downgrade(&proxy);
     let cache = Arc::downgrade(&document.cache);
@@ -200,7 +200,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     for id in &ids {
         let source = document.project.source(*id).unwrap();
         let path = document.source_path(*id).unwrap();
-        let scan = Scan::open(&path, Some(source.development.decode.fixed_wb)).unwrap();
+        let scan = Scan::open(&path, document.project.acquisition_wb()).unwrap();
         thumbnails.seed(
             source,
             document.file_key(&path),

@@ -16,21 +16,17 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
     let (width, height) = scan.dimensions().unwrap();
     let a = scan.area;
     let mut source_development = SourceDevelopment {
-        decode: Development::new("test-backend".into(), [1.; 4]),
-        lens_correction: scan.source().metadata().lens_identity().unwrap(),
-        dng_development: scan.source().metadata().dng_identity(),
+        decode: scan.source().metadata().development(scan.white_balance),
         dimensions: [width, height],
         active_area: [a.x, a.y, a.width, a.height],
         camera_model: scan.camera_model.clone(),
         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-        input_floor: scan.source().input_floor(),
     };
-    source_development.decode = Development::for_source(&source_development, [1.; 4]);
+    source_development.decode = Development::for_source(&source_development);
     let mut project = Project {
         input: crate::processing::InputSettings::Negative {
             dmin: Some(DVec3::splat(0.8)),
             dmax: Some(DVec3::splat(0.02)),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Default::default(),
@@ -79,13 +75,11 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
             vec![DVec3::splat(0.065535); 4],
         )
         .unwrap(),
-    )))
-    .unwrap();
+    )));
     let (mut project, id) = fixture(&scan);
     project.input = InputSettings::negative(crate::processing::Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
-        input_floor: scan.source().input_floor(),
     });
     if let InputSettings::Negative { gamma, .. } = &mut project.input {
         *gamma = 0.1;
@@ -96,19 +90,19 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
             recipe.neutral.correction = scan.flat_field().cloned();
         })
         .unwrap();
-    let input = recipe.neutral.processing_input().unwrap();
+    let input = recipe.neutral.input;
     let matrix = scan.positive_matrix(&input).unwrap();
     assert!(
         AuthoredPhotograph::new(
             &device.limits(),
-            input,
+            InputSettings::default(),
             RollSettings::default(),
             recipe.grade.clone(),
             matrix,
             area
         )
         .is_err(),
-        "the fixture must reject eager parameter-wide neutral admission"
+        "an uncalibrated source cannot supply a positive neutral image"
     );
     let actual_local = crate::scan::ImageSource::new(&scan, input)
         .unwrap()
@@ -116,7 +110,7 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         .unwrap();
     assert!(
         actual_local.as_vec3().is_finite(),
-        "the local repair value is representable even though the parameter-wide neutral bound is not"
+        "the calibrated positive must provide useful local repair input"
     );
 
     let gate = SubmissionGate::default();
@@ -144,12 +138,14 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         },
     })
     .unwrap();
+    let mut repair_free = recipe.clone();
+    repair_free.neutral.input = InputSettings::default();
     let repairs = crate::gpu::repair_source::resolve_plan(
         &device,
         &renderer,
         (&queue, &gate),
         &scan,
-        &recipe,
+        &repair_free,
         &plan,
         &mut Execution::default(),
     )
@@ -199,8 +195,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     assert_eq!(recipe.repairs.len(), 2);
     assert!(
         crate::repair_source::evaluate(
-            &crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap())
-                .unwrap(),
+            &crate::scan::ImageSource::new(&scan, recipe.neutral.input).unwrap(),
             &recipe.repairs[1]
         )
         .is_err(),
@@ -295,7 +290,8 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         .source_mut(id)
         .unwrap()
         .development
-        .input_floor *= 2.;
+        .decode
+        .white_balance[0] *= 2.;
     let stale = stale_project.image_recipe(id).unwrap();
     assert!(
         write(

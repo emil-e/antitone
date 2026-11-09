@@ -253,7 +253,7 @@ fn session_child() {
             std::path::Path::new("/nonexistent/antitone-log-test.dng"),
             antitone::dng::Options {
                 max_pixels: 1024,
-                fixed_wb: None
+                white_balance: None
             },
             &antitone::dng::Cancellation::default()
         )

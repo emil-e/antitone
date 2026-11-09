@@ -15,16 +15,12 @@ fn inputs() -> (tempfile::TempDir, Vec<Input>) {
                 source: SourceId(id),
                 revision: FileRevision::read(&path).unwrap(),
                 correction: None,
-                code_scale: 1.,
                 development: SourceDevelopment {
                     decode: crate::project::Development::new("test-backend".into(), [1.; 4]),
-                    lens_correction: None,
-                    dng_development: None,
                     dimensions: [1300, 1000],
                     active_area: [11, 17, 1280, 960],
                     camera_model: "fixture".into(),
                     camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
             }
         })
@@ -102,7 +98,6 @@ fn run(frames: Vec<FrameInput>) -> Metadata {
     prepare_spatial(
         frames,
         Development::new("test-backend".into(), [1.; 4]),
-        1.,
         || Ok(()),
     )
     .unwrap()
@@ -372,7 +367,6 @@ fn preparation_is_source_keyed_and_cancelled_work_has_no_partial_result() {
         let result = prepare_spatial(
             frames(&inputs, "complete"),
             Development::new("test-backend".into(), [1.; 4]),
-            1.,
             || {
                 calls.set(calls.get() + 1);
                 if calls.get() >= stop {

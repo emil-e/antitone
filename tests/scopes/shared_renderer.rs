@@ -29,13 +29,12 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     )
                     .unwrap(),
                 );
-                let calibration = field
-                    .processing_calibration(Calibration {
-                        dmin: DVec3::new(0.8, 0.7, 0.9),
-                        dmax: DVec3::new(0.003, 0.002, 0.001),
-                        input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
-                    })
-                    .unwrap();
+                let calibration = (Calibration {
+                    dmin: DVec3::new(0.8, 0.7, 0.9),
+                    dmax: DVec3::new(0.003, 0.002, 0.001),
+                })
+                .validate()
+                .unwrap();
                 let parameters = calculation::photograph_with_field(
                     &device.limits(),
                     calibration,

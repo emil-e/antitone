@@ -7,7 +7,7 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
         let id = editor.document.visit.current_source.unwrap();
         (
             document.source_path(id).unwrap(),
-            document.project.development().as_ref().unwrap().fixed_wb,
+            document.project.acquisition_wb(),
             document.project.input,
             document.project.roll,
             document
@@ -18,7 +18,7 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
                 .unwrap(),
         )
     });
-    let scan = Scan::open(&path, Some(wb)).unwrap();
+    let scan = Scan::open(&path, wb).unwrap();
     let point = [
         scan.area.x + scan.area.width / 2,
         scan.area.y + scan.area.height / 2,
@@ -103,7 +103,7 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
 }
 
 #[test]
-fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_the_document() {
+fn low_gamma_with_shoulder_is_usable_and_numeric_edits_update_the_document() {
     tools::calibrated_harness(|mut harness| {
         harness.update(|editor| {
             let crate::processing::InputSettings::Negative { response, .. } =
@@ -123,17 +123,15 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
                 )
                 .unwrap();
         });
-        let before = harness.read(|editor| editor.document.state.project.clone());
         stage(&mut harness, "Roll");
         enter_numeric(&mut harness, "Gamma", "0.1");
         harness.read(|editor| {
             assert!(
-                editor.status.starts_with("Edit rejected:"),
+                !editor.status.starts_with("Edit rejected:"),
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.document.project.input, before.input);
+            assert_eq!(editor.document.project.input.gamma(), 0.1);
         });
         enter_numeric(&mut harness, "Gamma", "0.7");
         harness.read(|editor| {
@@ -163,15 +161,15 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 "{}",
                 editor.status
             );
-            assert!(
-                editor
-                    .document
-                    .state
-                    .project
-                    .sources
-                    .iter()
-                    .all(|source| source.development.decode.fixed_wb == crate::project::UNITY_WB)
-            );
+            assert!(editor.document.state.project.sources.iter().all(|source| {
+                Scan::open(
+                    &editor.document.source_path(source.id).unwrap(),
+                    editor.document.project.acquisition_wb(),
+                )
+                .unwrap()
+                .white_balance
+                    == crate::project::UNITY_WB
+            }));
         });
         let mut scan = Scan::open(&paths[0], Some(crate::project::UNITY_WB)).unwrap();
         harness.update(|e| {
@@ -267,11 +265,13 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             assert_eq!(
                 editor
                     .document
-                    .project
-                    .development()
+                    .visit
+                    .canvas
+                    .ready
                     .as_ref()
                     .unwrap()
-                    .fixed_wb,
+                    .developed
+                    .white_balance(),
                 crate::project::UNITY_WB
             )
         });
@@ -300,8 +300,8 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                     .ready
                     .as_ref()
                     .unwrap()
-                    .development()
-                    .fixed_wb,
+                    .developed
+                    .white_balance(),
                 crate::project::UNITY_WB
             )
         });
@@ -373,34 +373,17 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 .proxy
                 .clone()
         });
-        for (name, id, missing) in [
-            ("changed", ids[1], false),
-            ("missing", ids[1], true),
-            ("incompatible", ids[2], false),
-        ] {
+        for (name, id) in [("missing-selected", ids[1]), ("missing-offscreen", ids[2])] {
             let mut rejected = adjusted.clone();
-            if missing {
-                rejected.source_mut(id).unwrap().path = directory.path().join("missing.dng");
-            } else {
-                rejected.source_mut(id).unwrap().development.dimensions[0] += 1;
-            }
+            rejected.source_mut(id).unwrap().path = directory.path().join("missing.dng");
             let path = directory.path().join(format!("{name}.antitone.json"));
             rejected.save(&path, crate::project::Save::New).unwrap();
             open_project(&mut harness, path);
             wait_for(&mut harness, |e| {
                 !e.interaction_blocked() && e.document_pending.is_none()
             });
-            harness.read(|editor| {
-                assert!(
-                    editor.status.contains(if missing {
-                        "missing.dng"
-                    } else {
-                        "development identity differs"
-                    }),
-                    "{}",
-                    editor.status
-                )
-            });
+            harness
+                .read(|editor| assert!(editor.status.contains("missing.dng"), "{}", editor.status));
             harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
             harness.read(|editor| {

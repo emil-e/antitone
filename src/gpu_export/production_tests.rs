@@ -54,7 +54,6 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
         input: Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
-            input_floor: scan.input_floor,
         }
         .into(),
         roll: RollSettings::default(),

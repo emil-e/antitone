@@ -198,7 +198,6 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
     let base = Calibration {
         dmin: DVec3::new(0.8, 0.7, 0.9),
         dmax: DVec3::new(0.003, 0.002, 0.001),
-        input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
     };
     let roll = antitone::processing::RollSettings {
         exposure: 1.2,
@@ -213,7 +212,7 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
     };
     for corrected in [false, true] {
         let calibration = if corrected {
-            field.processing_calibration(base).unwrap()
+            (base).validate().unwrap()
         } else {
             base
         };

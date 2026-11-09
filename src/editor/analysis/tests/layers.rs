@@ -40,7 +40,6 @@ fn proposal(document: &Document) -> roll_analysis::Proposal {
         input: crate::processing::InputSettings::Negative {
             dmin: Some(DVec3::new(0.8, 0.4, 0.2)),
             dmax: Some(DVec3::new(0.04, 0.02, 0.01)),
-            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             response: crate::processing::Response::film(),
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Default::default(),

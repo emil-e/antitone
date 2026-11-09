@@ -80,7 +80,7 @@ pub(crate) fn resolve_plan(
                 renderer,
                 gpu,
                 scan,
-                recipe.neutral.processing_input()?,
+                recipe.neutral.input,
             )?);
         }
         crate::dust_repair::evaluate_image(repair, scan.area, source.as_mut().unwrap(), execution)

@@ -25,6 +25,7 @@ struct AntitoneRawMetadata {
     double cam_mul[4], daylight_mul[4], rgb_cam[9];
     AntitoneRawVendorMetadata vendor;
     uint32_t lens_disabled;
+    uint32_t as_shot_wb_applied;
 };
 
 struct AntitoneRawView {

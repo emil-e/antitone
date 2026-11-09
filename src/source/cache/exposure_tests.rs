@@ -27,7 +27,7 @@ fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
     let original = scan.source().clone();
     let pixels = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let development =
-        SourceDevelopment::from_metadata(&original.metadata(), original.fixed_wb()).unwrap();
+        SourceDevelopment::from_metadata(&original.metadata(), original.white_balance()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
     let cache = Arc::new(SourceCache::new(64 << 20));
     cache.publish_source(key.clone(), original.clone()).unwrap();

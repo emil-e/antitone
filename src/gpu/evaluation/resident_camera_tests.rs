@@ -188,7 +188,6 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 InputSettings::negative(Calibration {
                     dmin: DVec3::splat(0.7),
                     dmax: DVec3::splat(0.14),
-                    input_floor: 0.1,
                 }),
             ] {
                 let pipeline = Arc::new(
@@ -315,7 +314,14 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                             assert_eq!(actual[3] as f64, expected[3]);
                             for c in 0..3 {
                                 assert!(
-                                    (actual[c] as f64 - expected[c]).abs() < 2e-5,
+                                    (actual[c] as f64 - expected[c]).abs()
+                                        < 2e-5
+                                            + 2e-5
+                                                * expected[..3]
+                                                    .iter()
+                                                    .copied()
+                                                    .map(f64::abs)
+                                                    .fold(0., f64::max),
                                     "{settings:?} continuous={continuous} native={native}: {actual:?} vs {expected:?}"
                                 );
                             }

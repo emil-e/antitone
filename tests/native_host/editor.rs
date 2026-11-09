@@ -10,12 +10,11 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let metadata = antitone::raw::RawFile::open(&path)?.metadata;
     let area = metadata.image_area()?;
-    let decode = metadata.development(metadata.as_shot_wb());
+    let decode = metadata.development([1.; 4]);
     let mut project = Project {
         input: antitone::processing::InputSettings::Negative {
             dmin: Some(glam::DVec3::splat(3000. / 4031.)),
             dmax: Some(glam::DVec3::splat(128. / 4031.)),
-            input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             response: antitone::processing::Response::film(),
             gamma: antitone::processing::DEFAULT_GAMMA,
             balance: Default::default(),
@@ -27,13 +26,10 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
         path,
         development: SourceDevelopment {
             decode,
-            lens_correction: None,
-            dng_development: metadata.dng_identity(),
             dimensions: [metadata.width, metadata.height],
             active_area: [area.x, area.y, area.width, area.height],
             camera_model: metadata.camera_model(),
             camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
-            input_floor: metadata.input_floor()?,
         },
         reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(

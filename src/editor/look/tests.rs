@@ -28,7 +28,6 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
     e.document = Document::default().into();
     e.set_dmin(None);
     e.set_dmax(None);
-    e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance

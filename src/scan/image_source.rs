@@ -28,7 +28,7 @@ impl PartialEq for ImageIdentity {
 
 impl ImageSource<'_> {
     pub fn new(scan: &Scan, input: impl Into<InputSettings>) -> Result<ImageSource<'_>> {
-        let input = scan.refined_input(&input.into())?;
+        let input = input.into();
         let matrix = scan.positive_matrix(&input)?;
         let pipeline = InputPipeline::new(input, matrix)?;
         let identity = ImageIdentity {

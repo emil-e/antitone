@@ -35,34 +35,13 @@ pub struct ImageRecipe {
     pub repairs: Vec<Repair>,
 }
 
-impl NeutralRecipe {
-    pub fn processing_input(&self) -> Result<InputSettings, Error> {
-        match self.input.calibration() {
-            Some(base) => Ok(self.input.with_calibration(
-                self.source_development
-                    .processing_calibration(base, self.correction.as_deref())?,
-            )),
-            None => Ok(self.input),
-        }
-    }
-}
-
 impl ImageRecipe {
     /// Conservative cache charge including referenced correction payload, without deduplicating Arcs.
     pub fn retained_bytes(&self) -> usize {
         let development = &self.neutral.source_development.decode;
         std::mem::size_of::<Self>()
-            + development.backend_version.capacity()
-            + development.contract.capacity()
-            + development.inversion_space.capacity()
-            + development.working_space.capacity()
+            + development.version().len()
             + self.neutral.source_development.camera_model.capacity()
-            + self
-                .neutral
-                .source_development
-                .lens_correction
-                .as_ref()
-                .map_or(0, String::capacity)
             + self
                 .neutral
                 .correction

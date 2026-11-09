@@ -5,7 +5,6 @@ use super::{
 };
 use crate::{
     Error,
-    processing::InputSettings,
     project::{Project, Save, Source, SourceId},
     raw::Metadata,
 };
@@ -15,9 +14,7 @@ use std::{
     sync::Arc,
 };
 
-pub(super) use crate::source::{
-    metadata_development, open_source, source_metadata, verify_scan, verify_source,
-};
+pub(super) use crate::source::{open_source, source_metadata, verify_scan, verify_source};
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn failure(error: impl std::fmt::Display) -> Error {
@@ -25,7 +22,6 @@ fn failure(error: impl std::fmt::Display) -> Error {
 }
 
 #[derive(Clone)]
-
 pub(super) struct Document {
     pub project: super::editing::ProjectVersion,
     pub path: Option<PathBuf>,
@@ -96,6 +92,13 @@ impl Document {
             })
             .map(|(_, file)| file.clone())
             .unwrap_or_else(|| crate::source::FileKey::unversioned(path))
+    }
+
+    pub(super) fn source_wb(&self, id: SourceId) -> Option<[f64; 4]> {
+        self.project
+            .source(id)
+            .ok()
+            .map(|source| source.development.decode.white_balance)
     }
 
     pub fn source_key(&self, id: SourceId) -> Result<crate::source::SourceKey> {
@@ -177,10 +180,10 @@ impl Document {
         &mut self,
         id: SourceId,
         metadata: &Metadata,
-        fixed_wb: [f64; 4],
+        white_balance: [f64; 4],
     ) {
         self.source_previews
-            .insert(id, metadata.source_preview(fixed_wb));
+            .insert(id, metadata.source_preview(white_balance));
     }
 
     pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
@@ -190,14 +193,14 @@ impl Document {
             .unwrap_or_default()
     }
 
-    fn read_source_preview(
+    fn inspect_source(
         path: &Path,
         wb: Option<[f64; 4]>,
     ) -> Result<(Source, crate::raw::SourcePreview)> {
         let (source, raw) = open_source(path, wb)?;
         let preview = raw
             .metadata
-            .source_preview(source.development.decode.fixed_wb);
+            .source_preview(source.development.decode.white_balance);
         Ok((source, preview))
     }
 
@@ -268,11 +271,14 @@ impl Document {
 
     pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
         let expected = self.project.source(id)?;
-        let (actual, preview) = Self::read_source_preview(
+        let (actual, preview) = Self::inspect_source(
             &self.source_path(id)?,
-            Some(expected.development.decode.fixed_wb),
+            Some(expected.development.decode.white_balance),
         )?;
-        verify_source(expected, &actual)?;
+        if expected.development.decode.backend_version != actual.development.decode.backend_version
+        {
+            log::debug!(recorded = expected.development.decode.version(), current = actual.development.decode.version(); "source_decoder_changed");
+        }
         self.project.source_mut(id)?.development = actual.development;
         self.source_previews.insert(id, preview);
         Ok(())
@@ -282,19 +288,8 @@ impl Document {
         self.project != self.saved
     }
 
-    pub fn spatial_code_scale(&self) -> f64 {
-        self.project
-            .sources
-            .iter()
-            .filter(|source| !source.reference_only)
-            .fold(1f64, |scale, source| {
-                scale.max(source.development.input_floor / crate::processing::CAMERA_INPUT_FLOOR)
-            })
-    }
-
     /// Measurement omits the roll flat-field; embedded camera correction remains source interpretation.
     pub fn spatial_inputs(&self) -> Vec<crate::spatial_metadata::Input> {
-        let code_scale = self.spatial_code_scale();
         self.project
             .sources
             .iter()
@@ -305,7 +300,6 @@ impl Document {
                     revision: self.file_key(&self.source_path(source.id).ok()?).revision?,
                     development: source.development.clone(),
                     correction: None,
-                    code_scale,
                 })
             })
             .collect()
@@ -363,19 +357,6 @@ impl Document {
                 crate::gpu::lut3d::Lut::require_limits(&device.limits(), asset.lut())?;
             }
         }
-        for source in &self.project.sources {
-            if source
-                .development
-                .decode
-                .fixed_wb
-                .iter()
-                .any(|value| !(*value as f32).is_finite() || *value as f32 <= 0.)
-            {
-                return Err(failure(
-                    "saved RAW white balance cannot be represented by the developer",
-                ));
-            }
-        }
         Ok(())
     }
 
@@ -389,17 +370,7 @@ impl Document {
                 continue;
             }
             {
-                let refined = match input.calibration() {
-                    Some(base) => input.with_calibration(
-                        source.development.processing_calibration(
-                            base,
-                            self.project
-                                .active_flat_field()
-                                .map(|field| field.map.as_ref()),
-                        )?,
-                    ),
-                    None => input,
-                };
+                let refined = input;
                 super::processing::validate_source_with_matrix(
                     device,
                     refined,
@@ -423,7 +394,7 @@ impl Document {
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Self> {
         let path = absolute(path)?;
-        let (mut project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
+        let mut project = Project::load(&path)?;
         let exposure_metadata = project
             .exposure_metadata
             .take()
@@ -434,14 +405,13 @@ impl Document {
             saved: project.clone(),
             project,
             path: Some(path),
-            spatial_metadata: Arc::new(spatial_metadata),
+            spatial_metadata: Arc::default(),
             exposure_metadata: Arc::new(exposure_metadata),
             source_previews: Default::default(),
             source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
         };
-        document.validate_with_device(device)?;
         document.capture_source_files()?;
         let total = document.project.order.len();
         progress(0, total);
@@ -449,7 +419,9 @@ impl Document {
             document.refresh_source(id)?;
             progress(index + 1, total);
         }
-        document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
+        if document.project.input.is_negative() {
+            document.project.reset_scan_basis();
+        }
 
         document.validate_with_device(device)?;
         document.saved = document.project.clone();
@@ -470,7 +442,7 @@ impl Document {
         let mut developments = Vec::with_capacity(active.len());
         for id in active {
             let path = self.source_path(id)?;
-            let (source, preview) = Self::read_source_preview(&path, wb)?;
+            let (source, preview) = Self::inspect_source(&path, wb)?;
             developments.push((id, source.development, preview));
         }
         for (id, development, preview) in developments {
@@ -515,7 +487,7 @@ impl Document {
                         .input
                         .requires_scan_sources()
                         .then_some(crate::project::UNITY_WB);
-                    let (source, preview) = Self::read_source_preview(path, wb)?;
+                    let (source, preview) = Self::inspect_source(path, wb)?;
                     self.project.order.push(id);
                     self.project.source_mut(id)?.development = source.development;
                     self.source_previews.insert(id, preview);
@@ -530,8 +502,8 @@ impl Document {
                     ),
                 );
             } else {
-                let wb = self.project.acquisition_wb(None);
-                let (mut source, mut preview) = Self::read_source_preview(path, wb)?;
+                let wb = self.project.acquisition_wb();
+                let (mut source, mut preview) = Self::inspect_source(path, wb)?;
                 // A fresh scan import may contain sources that cannot share one acquisition
                 // basis. In that case choose Digital for the batch; the first source remains
                 // valid in its own as-shot basis. An existing calibrated Negative project is
@@ -545,7 +517,7 @@ impl Document {
                     // Every ordered source now belongs to Digital, including one that was
                     // already present before this batch. Reacquire all of them in as-shot WB.
                     self.redevelop_for_input(crate::processing::InputSettings::Digital)?;
-                    (source, preview) = Self::read_source_preview(path, None)?;
+                    (source, preview) = Self::inspect_source(path, None)?;
                 }
                 let id = self.register(source)?;
                 self.source_previews.insert(id, preview);
@@ -574,18 +546,9 @@ impl Document {
         self.project
             .require_scan_source(&source.development)
             .is_err()
-            || self.project.flat_field().is_some_and(|field| {
-                field.enabled && field.require_source(&source.development).is_err()
-            })
     }
 
     pub fn register(&mut self, source: Source) -> Result<SourceId> {
-        if let crate::processing::InputSettings::Negative { input_floor, .. } =
-            &mut self.project.input
-            && *input_floor == 0.
-        {
-            *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-        }
         let id = self.project.add_source(source)?;
         let path = self.source_path(id)?;
         self.source_files.insert(
@@ -654,7 +617,7 @@ impl Document {
         let mut snapshot = candidate.project.clone();
         let exposure = self.exposure_metadata.for_project(&self.project);
         snapshot.exposure_metadata = (!exposure.entries.is_empty()).then_some(exposure);
-        snapshot.save_with_spatial_metadata(&path, policy, &metadata)?;
+        snapshot.save(&path, policy)?;
         candidate.spatial_metadata = Arc::new(metadata);
         candidate.rebase_source_files(self.path.as_deref(), Some(&path));
         candidate.path = Some(path);
@@ -900,7 +863,7 @@ fn source_request(
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
     let expected = document.project.source(id)?.clone();
-    let wb = Some(expected.development.decode.fixed_wb);
+    let wb = document.source_wb(id);
     let file = document.file_key(&path);
     Ok(source::Request {
         reference: exposures.map_or_else(
@@ -1184,14 +1147,6 @@ impl Editor {
                             .position(|candidate| *candidate == id)
                     })
                     .unwrap_or(0);
-
-                if let InputSettings::Negative { input_floor, .. } =
-                    &mut self.document.project.input
-                    && *input_floor == 0.
-                {
-                    *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-                    self.document.state.project.input = self.document.project.input;
-                }
                 self.refresh_adjustment_layer_selection();
                 self.document.clear_crop_edit();
                 self.document.visit.canvas.last_layout = None;

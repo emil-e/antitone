@@ -20,7 +20,6 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
     document.cache.set_budget(64 << 20);
     let before = document.project.clone();
     let first_id = document.project.order[0];
-    let first_record = document.project.source(first_id).unwrap().clone();
     let requests = Arc::new(AtomicUsize::new(0));
     let observed = requests.clone();
     let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
@@ -34,7 +33,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
         file: document.file_key(first.path()),
         input: document.project.input,
         path: first.path().to_owned(),
-        wb: Some(first_record.development.decode.fixed_wb),
+        wb: document.project.acquisition_wb(),
         expected: Some(document.project.source(first_id).unwrap().clone()),
         sources: Some(scheduler.provider(Some(document.cache.clone()))),
         correction: None,
@@ -135,7 +134,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         file: editor.document.file_key(second.path()),
         input: InputSettings::Digital,
         path: second.path().to_owned(),
-        wb: Some(expected.development.decode.fixed_wb),
+        wb: editor.document.project.acquisition_wb(),
         sources: Some(
             source_loading::SourceLoader::new().provider(Some(editor.document.cache.clone())),
         ),

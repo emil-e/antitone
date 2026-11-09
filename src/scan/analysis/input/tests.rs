@@ -120,7 +120,7 @@ fn captured_sites_preserve_the_native_floor_and_do_not_read_excluded_pixels() {
         .pixel(scan.area.x + 12, scan.area.y + 12)
         .unwrap()
         .min_element();
-    Arc::make_mut(&mut scan.source).input_floor = f64::from_bits(pixel.to_bits() - 1);
+    Arc::make_mut(&mut scan.source).precision_floor = f64::from_bits(pixel.to_bits() - 1);
     let mut input = AnalysisInput::capture(&scan, || false).unwrap().unwrap();
     assert!(input.above_native_floor(0).unwrap());
     input.pixels[0][0] = f32::NAN;

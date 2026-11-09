@@ -27,7 +27,6 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
                 .development
                 .decode
                 .clone(),
-            code_scale: sources[0].input.code_scale,
             common_size: CommonSize::fit(&sources),
             sources,
         }],

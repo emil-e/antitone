@@ -40,7 +40,6 @@ fn metadata(document: &Document, inset: f64) -> Metadata {
         version: VERSION,
         groups: vec![Group {
             development: document.project.sources[0].development.decode.clone(),
-            code_scale: document.spatial_code_scale(),
             common_size: CommonSize::fit(&sources),
             sources,
         }],
@@ -69,7 +68,7 @@ fn authored() -> DocumentScope {
 }
 
 #[test]
-fn automatic_regions_save_and_reopen_without_entering_accepted_state_or_dirty_prompts() {
+fn automatic_regions_stay_in_memory_and_reopen_without_evidence_or_precision_fields() {
     let mut scope = authored();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("regions.antitone");
@@ -88,11 +87,19 @@ fn automatic_regions_save_and_reopen_without_entering_accepted_state_or_dirty_pr
     scope.capture().save(&path, Save::Replace).unwrap();
     let reopened = Document::open(&path).unwrap();
     assert_eq!(reopened.project, accepted);
-    assert!(reopened.project.spatial_metadata.is_none());
-    assert_eq!(*reopened.spatial_metadata, regions);
+    let payload: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(payload.get("spatial_metadata").is_none());
+    assert!(
+        payload["sources"][0]["development"]
+            .get("precision_floor")
+            .is_none()
+    );
+    assert!(reopened.spatial_metadata.groups.is_empty());
+    assert_eq!(*scope.spatial.ready(), regions);
     assert!(!reopened.dirty());
     let restored: DocumentScope = reopened.into();
-    assert_eq!(*restored.spatial.ready(), regions);
+    assert!(restored.spatial.ready().groups.is_empty());
 }
 
 #[test]
@@ -106,39 +113,42 @@ fn a_captured_save_excludes_later_regions_and_completion_preserves_the_live_resu
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("captured.antitone");
     let saved = captured.save(&path, Save::New).unwrap();
-    assert_eq!(*Document::open(&path).unwrap().spatial_metadata, first);
+    assert!(
+        Document::open(&path)
+            .unwrap()
+            .spatial_metadata
+            .groups
+            .is_empty()
+    );
     scope.accept_save(saved);
     assert!(!scope.dirty());
     assert_eq!(*scope.capture().spatial_metadata, second);
     scope.capture().save(&path, Save::Replace).unwrap();
-    assert_eq!(*Document::open(&path).unwrap().spatial_metadata, second);
+    assert!(
+        Document::open(&path)
+            .unwrap()
+            .spatial_metadata
+            .groups
+            .is_empty()
+    );
 }
 
 #[test]
-fn reopening_discards_derived_data_when_the_captured_file_identity_differs() {
-    use std::io::Write;
-    let dir = tempfile::tempdir().unwrap();
-    let original =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    let raw = dir.path().join("input.dng");
-    std::fs::copy(original, &raw).unwrap();
-    let mut document = Document::default();
-    document.import(std::slice::from_ref(&raw)).unwrap();
-    let mut scope: DocumentScope = document.into();
+fn accepted_crop_and_analysis_area_survive_without_automatic_evidence() {
+    let mut scope = authored();
+    let id = scope.project.order[0];
+    let [x, y, width, height] = scope.project.source(id).unwrap().development.active_area;
+    let area = [x + 1, y + 1, width - 2, height - 2];
+    scope.project.source_mut(id).unwrap().crop = Some(crate::crop::Crop::from_region(area.into()));
+    scope.project.analysis_area = Some(area);
     let regions = metadata(&scope.capture(), 8.);
-    publish(&mut scope, regions.clone());
-    let project = scope.project.clone();
-    let destination = dir.path().join("saved.antitone");
-    let written = scope.capture().save(&destination, Save::New).unwrap();
-    assert_eq!(*written.spatial_metadata, regions);
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(&raw)
-        .unwrap()
-        .write_all(b"new capture identity before reopening")
-        .unwrap();
-    let reopened = Document::open(&destination).unwrap();
-    assert_eq!(reopened.project, project);
+    publish(&mut scope, regions);
+    let accepted = scope.project.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("accepted.antitone");
+    scope.capture().save(&path, Save::New).unwrap();
+    let reopened = Document::open(&path).unwrap();
+    assert_eq!(reopened.project, accepted);
     assert!(reopened.spatial_metadata.groups.is_empty());
 }
 
@@ -185,5 +195,11 @@ fn save_as_rebases_paths_without_rebinding_region_identity_or_replacing_publicat
             .unwrap()
     );
     assert_eq!(*scope.capture().spatial_metadata, regions);
-    assert_eq!(*Document::open(&path).unwrap().spatial_metadata, regions);
+    assert!(
+        Document::open(&path)
+            .unwrap()
+            .spatial_metadata
+            .groups
+            .is_empty()
+    );
 }

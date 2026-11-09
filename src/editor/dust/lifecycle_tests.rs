@@ -866,11 +866,10 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field)).unwrap();
+    scan.set_flat_field(Some(field));
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.16),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     };
     let repair = Repair {
         id: RepairId(1),

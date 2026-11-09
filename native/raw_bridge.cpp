@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cmath>
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__linux__) || defined(_WIN32)
@@ -16,7 +17,7 @@
 #include <windows.h>
 #endif
 
-static_assert(sizeof(AntitoneRawMetadata) == 656);
+static_assert(sizeof(AntitoneRawMetadata) == 664);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
 static_assert(sizeof(AntitoneRawView) == 64);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
@@ -256,7 +257,7 @@ AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &captu
     const auto offset = raw.get_internal_data_pointer()->unpacker_data.data_offset;
     const AntitoneRawSonyLens *selected = nullptr;
     for (const auto &page : capture.pages) {
-        if (page.photometric != 32803 || page.data_offset != offset)
+        if ((page.photometric != 32803 && page.photometric != 6) || page.data_offset != offset)
             continue;
         if (selected) {
             AntitoneRawSonyLens ambiguous{};
@@ -280,6 +281,7 @@ void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
     std::snprintf(out.model, sizeof out.model, "%s", d.idata.model);
     std::snprintf(out.decoder, sizeof out.decoder, "%s", decoder.decoder_name);
     out.lens_disabled = 0;
+    out.as_shot_wb_applied = c.as_shot_wb_applied;
     out.width = s.width;
     out.height = s.height;
     out.raw_width = s.raw_width;
@@ -393,9 +395,18 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     raw->set_exifparser_handler(nullptr, nullptr);
     if (check(code, error, size))
         return nullptr;
-    if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters) {
-        std::snprintf(error, size, "RAW development requires a three-color CFA source");
+    if (raw->imgdata.idata.colors != 3) {
+        std::snprintf(error, size, "RAW development requires three camera color channels");
         return nullptr;
+    }
+    if (raw->imgdata.color.as_shot_wb_applied) {
+        for (int c = 0; c < 3; ++c) {
+            const auto gain = raw->imgdata.color.cam_mul[c];
+            if (!std::isfinite(gain) || gain <= 0.00001f) {
+                std::snprintf(error, size, "Pre-balanced RAW has no usable as-shot white balance");
+                return nullptr;
+            }
+        }
     }
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, capture.lens);
@@ -499,6 +510,10 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     auto &p = raw.imgdata.params;
     for (int c = 0; c < 4; ++c)
         p.user_mul[c] = static_cast<float>(wb[c]);
+    // LibRaw undoes baked-in WB on RGB only. Its unused fourth gain still participates
+    // in maximum-gain normalization, so give it the effective green, not unadjusted WB.
+    if (raw.imgdata.color.as_shot_wb_applied)
+        p.user_mul[3] = p.user_mul[1] / raw.imgdata.color.cam_mul[1];
     p.output_color = output_color;
     p.output_bps = 16;
     p.gamm[0] = p.gamm[1] = 1.0;

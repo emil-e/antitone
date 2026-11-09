@@ -20,19 +20,19 @@ developed camera RGB
 
 ## Start with the camera's measurements
 
-LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development identity. Negative always develops with unity WB, so the scanner's as-shot setting cannot change the inversion basis; Digital develops each source with its as-shot WB. The native developer still enforces its supported sensor domain.
+LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development identity and resolved WB baseline. Negative chooses unity WB, so the scanner's as-shot setting cannot change the inversion basis; Digital initially chooses each source's as-shot WB. Redevelopment reuses the accepted balance. The native developer still enforces its supported sensor domain.
 
-Negative uses one shared scan basis: the camera interpretation and developer contract must match, while WB is determined by the stage rather than stored in that basis. Digital admits mixed cameras and per-source as-shot WB. Crossing input stages redevelops active sources for the target stage and updates their recorded identities. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
+Negative uses one shared camera basis for its RGB calibration. Digital admits mixed cameras and per-source WB. Crossing input stages resolves new WB baselines for the target stage, redevelops active sources and updates their recorded identities. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
 
-The LibRaw input gate admits three-colour CFA RAWs, including Bayer and Fujifilm X-Trans RAF. LibRaw owns demosaicing: quality 3 selects AHD for Bayer and three-pass interpolation for X-Trans. Both feed the same developed camera-RGB pipeline. Non-CFA sources such as decimated sRAW/mRAW remain outside this gate.
+LibRaw supplies three-channel camera RGB from both CFA and non-CFA RAWs, including reduced-size Sony YCbCr. CFA layout is a decoder concern: quality 3 selects AHD for Bayer and three-pass interpolation for X-Trans; already-interpolated sources bypass demosaicing. Admission requires three camera colour channels and usable interpretation metadata, rather than a CFA pattern.
 
-LibRaw's highlight-safe development divides WB gains by their maximum. [Immutable source reads](../src/scan.rs) restore `max(WB) / green(WB)` in floating point before camera conversion, retaining above-one headroom and scaling the precision floor with the signal. CPU sampling, proxies, GPU views, repairs and exports share these samples. Unity-WB Negative and direct SDK DNG keep their existing scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
+LibRaw undoes any declared capture-time WB before applying the requested balance. Its highlight-safe development divides the resulting effective gains by their maximum; for pre-balanced sources, the unused fourth RGB slot shares effective green. [Immutable source reads](../src/scan.rs) restore `max(effective WB) / green(effective WB)` in floating point before camera conversion, retaining above-one headroom and scaling the precision floor with the signal. CPU sampling, proxies, GPU views, repairs and exports share these samples. Direct SDK DNG keeps its own scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
 
 Negative inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. An optional [flat-field map](flat-field.md) corrects scan illumination in these camera coordinates before inversion.
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Saved SDK compatibility](projects.md#compatibility-is-about-the-processing-basis) is separate from source-file freshness.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#compatibility-is-about-the-processing-basis) keeps accepted development choices while refreshing decoder observations.
 
 ### Embedded Sony lens correction
 
@@ -40,7 +40,7 @@ Sony RAW development automatically applies available embedded vignetting, distor
 
 The current binding reconstructs one conservative valid rectangle at unchanged pixel pitch from the active image geometry; distortion and red/blue CA scales combine at the radial knots before interpolation. Shading multiplies each original developed sample **before** bilinear reconstruction (`2^(0.5 - 2^(v/8192 - 1))` at the knots, interpolated then reciprocated) — this is the [darktable 5.6.2 v2](https://github.com/darktable-org/darktable/blob/release-5.6.2/src/iop/lens.cc) interpretation; [RawTherapee 5.12](https://github.com/RawTherapee/RawTherapee/blob/5.12/rtengine/lensmetadata.cc) instead interpolates reciprocal gains, agreeing at knots but not between them. Neither decoder inspection nor these public interpretations proves exact vendor output.
 
-Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant RGB16 development; absent or all-zero profiles keep the native integer source. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) require matching lens development, and [projects](projects.md#compatibility-is-about-the-processing-basis) retain its identity.
+Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant RGB16 development; absent or all-zero profiles keep the native integer source. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) estimate residual illumination in those coordinates, and [projects](projects.md#compatibility-is-about-the-processing-basis) reuse accepted WB with the current decoder.
 
 ## Digital starting brightness
 
@@ -61,7 +61,15 @@ Consequently, Dmin's measured value must be greater than Dmax's in each channel.
 
 Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. Toe 1 with no shoulder removes that shaping; gamma still sets the curve's contrast between the anchors.
 
-New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured film gamma: using one common value leaves stock/process contrast differences available. Analyze fits relative channel balance while preserving the selected global gamma. The anchors are not clipping limits — samples can lie beyond them, and the input precision floor prevents interpreting values below the developed scan's precision as reliable density.
+New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured film gamma: using one common value leaves stock/process contrast differences available. Analyze fits relative channel balance while preserving the selected global gamma. The anchors are not clipping limits: samples beyond film base retain signed outputs, and denser samples retain above-one highlights. Calibration and inversion use camera-light ratios independently of decoder quantization; sampling precision is a separate measurement estimate.
+
+### Finite continuation beyond the calibrated range
+
+For each channel, let `B` be Dmin, `W` be Dmax, `s` be transmitted camera light, `g` be gamma, `t` be Toe and `h = Shoulder / ln(10)`. The response uses density `l = ln(B/s)` and exponent `q = t*l/(g-h*l)`, normalized so `B` maps to zero and `W` to one. Signed `expm1(q)` with a `1/t` power gives the toe shape; with Toe 1 and Shoulder 0 this reduces to an anchored power ratio.
+
+Two continuations make the response useful outside calibration. Before the shoulder denominator can vanish, at `l = g/(2*h)`, its exponent continues along the matching tangent `q = 4*t*l/g - t/h`. Value and slope agree at the join. At a positive response of `2^16`, the curve switches to its tangent in transmitted light, reaching a finite value at zero; nonpositive samples use that endpoint. Sixteen stops beyond the white anchor is a practical extrapolation choice, not a sensor-precision estimate or a clip at one. The joins and coefficients depend only on calibration and curve settings.
+
+Coefficients are prepared once. Ordinary GPU pixels retain built-in f32 logs/exponentials; the continuations use branches and basic arithmetic, with no iterative solve or higher-precision GPU path. Scalar/GPU checks cover the anchors, matching slopes, zero light and camera-unit scaling.
 
 ## Curve balance is not white balance
 
@@ -71,7 +79,7 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 
 | Adjustment | Role |
 | --- | --- |
-| Development WB | Unity for Negative; each source's as-shot for Digital |
+| Development WB | Saved per source; initially unity for Negative or as-shot for Digital |
 | Gamma balance | Changes the native-channel inversion curves |
 | Roll WB | Shared photographic colour balance after inversion |
 | Layer WB | Photographic colour balance at that layer's position after Roll WB |
@@ -160,7 +168,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **5**. Negative calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **6**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

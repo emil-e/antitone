@@ -19,7 +19,6 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
     let negative: InputSettings = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.01),
-        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     }
     .into();
     let before = evaluate(&ImageSource::new(&scan, negative).unwrap(), &repair).unwrap();

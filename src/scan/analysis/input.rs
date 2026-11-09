@@ -67,7 +67,7 @@ impl AnalysisInput {
         }
         Ok((!cancelled()).then(|| Self {
             grid,
-            floor: scan.source.input_floor,
+            floor: scan.source.precision_floor,
             pixels: pixels.into_boxed_slice(),
         }))
     }

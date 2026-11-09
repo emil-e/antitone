@@ -201,13 +201,10 @@ mod tests {
             },
             source: SourceDevelopment {
                 decode: Development::new("test".into(), [1.; 4]),
-                lens_correction: Some("00".repeat(32)),
-                dng_development: None,
                 dimensions: [2, 1],
                 active_area: [0, 0, 2, 1],
                 camera_model: "test".into(),
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
         };
         let proxy = Proxy {
@@ -244,7 +241,7 @@ mod tests {
             budget: LIMIT,
         };
         assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
-        key.source.decode.fixed_wb[0] = 2.;
+        key.source.decode.white_balance = [2., 1., 1., 1.];
         assert!(cache.load(&key).unwrap().is_none());
     }
 
@@ -289,7 +286,7 @@ mod tests {
         changed.file.path = "/other-card/fixture.ARW".into();
         assert!(cache.load(&changed).unwrap().is_none());
         changed = key.clone();
-        changed.source.lens_correction = Some("11".repeat(32));
+        changed.source.decode.white_balance[0] *= 2.;
         assert!(cache.load(&changed).unwrap().is_none());
         changed.file.revision = None;
         assert!(cache.load(&changed).is_err());

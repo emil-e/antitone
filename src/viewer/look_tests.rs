@@ -41,7 +41,6 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
             Calibration {
                 dmin: DVec3::splat(0.7),
                 dmax: DVec3::splat(0.003),
-                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
             RollSettings::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
