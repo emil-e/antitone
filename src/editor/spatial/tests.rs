@@ -54,12 +54,14 @@ fn observed_by_source() -> (source_loading::SourceLoader, Arc<AtomicUsize>, Sour
     (scheduler, count, sources)
 }
 
-fn confirm_without_native(
+fn confirm_with_cached_camera_evidence(
     app: &mut TestApplication<'_, Editor>,
-    scheduler: &source_loading::SourceLoader,
+    starts: &AtomicUsize,
 ) {
-    assert!(app.read(|e| e.document.sampling_inputs.retained_bytes() > 0));
-    scheduler.close_and_wait().unwrap();
+    let retained = app.read(|e| e.document.sampling_inputs.retained_bytes());
+    assert!(retained > 0);
+    let metadata = app.read(|e| e.document.spatial.ready());
+    let acquired = starts.load(Ordering::SeqCst);
     app.enter(|editor, cx| editor.confirm_analysis_review(cx));
     app.run_until(LIMIT, |editor| {
         !editor.interaction_blocked() && editor.document.analysis_operation().is_none()
@@ -67,6 +69,83 @@ fn confirm_without_native(
     app.read(|editor| {
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
         assert_eq!(editor.document.project.analysis_regions.len(), 2);
+        assert!(Arc::ptr_eq(&editor.document.spatial.ready(), &metadata));
+        assert_eq!(editor.document.sampling_inputs.retained_bytes(), retained);
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            acquired,
+            "confirmation must use cached camera evidence, not develop originals again"
+        );
+    });
+}
+
+#[test]
+fn edited_review_uses_cached_camera_evidence_after_the_native_worker_closes_and_undo_restores_grade()
+ {
+    let (scheduler, starts) = observed();
+    let mut editor = fixture(scheduler.clone());
+    editor.photo_settings_mut().exposure = 0.75;
+    let accepted = editor.document.project.clone();
+    with_application(editor, |app| {
+        app.enter(|e, cx| e.request_analysis(cx));
+        app.run_until(LIMIT, |e| e.document.analysis_review().is_some());
+        assert!(app.read(|e| e.document.sampling_inputs.retained_bytes() > 0));
+        let acquired = starts.load(Ordering::SeqCst);
+        assert!(
+            acquired > 0,
+            "preparation must actually develop missing sources"
+        );
+        app.update(|e| {
+            let areas = &mut e.document.analysis_review_mut().unwrap().approved.entries[0].areas;
+            areas.edit_picture(crate::coverage::Coverage::rectangle(
+                crate::geometry::SourceRegion::from([112, 112, 288, 288]),
+            ));
+        });
+        let reviewed = app.read(|e| {
+            e.document
+                .analysis_review()
+                .unwrap()
+                .approved
+                .entries
+                .clone()
+        });
+        scheduler.close_and_wait().unwrap();
+        confirm_with_cached_camera_evidence(app, &starts);
+        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        app.read(|e| {
+            assert_ne!(e.document.project, accepted);
+            assert_eq!(e.document.project.analysis_regions, reviewed);
+        });
+        app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
+        app.read(|e| assert_eq!(e.document.project, accepted));
+    });
+}
+
+#[test]
+fn missing_cached_camera_evidence_and_an_unavailable_worker_preserve_the_entire_prior_grade() {
+    let (scheduler, _) = observed();
+    let mut editor = fixture(scheduler.clone());
+    editor.photo_settings_mut().exposure = 0.75;
+    let accepted = editor.document.project.clone();
+    let undo = editor.history_label(history::Direction::Undo);
+    with_application(editor, |app| {
+        app.enter(|e, cx| e.request_analysis(cx));
+        app.run_until(LIMIT, |e| e.document.analysis_review().is_some());
+        assert!(app.read(|e| e.document.sampling_inputs.retained_bytes() > 0));
+        app.update(|e| e.document.sampling_inputs = Default::default());
+        scheduler.close_and_wait().unwrap();
+        app.enter(|e, cx| e.confirm_analysis_review(cx));
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
+        app.read(|e| {
+            assert!(
+                e.status.contains("RAW development worker stopped"),
+                "{}",
+                e.status
+            );
+            assert_eq!(e.document.project, accepted);
+            assert_eq!(e.history_label(history::Direction::Undo), undo);
+        });
     });
 }
 
@@ -184,8 +263,11 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
-        confirm_without_native(app, &scheduler);
-        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        confirm_with_cached_camera_evidence(app, &starts);
+        assert!(Arc::ptr_eq(
+            &app.read(|editor| editor.document.spatial.ready()),
+            &regions
+        ));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -251,8 +333,11 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
             editor.request_analysis(cx);
         });
         app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
-        confirm_without_native(app, &scheduler);
-        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        confirm_with_cached_camera_evidence(app, &starts);
+        assert!(Arc::ptr_eq(
+            &app.read(|editor| editor.document.spatial.ready()),
+            &regions
+        ));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -293,7 +378,7 @@ fn restored_regions_collect_missing_sampling_pixels_without_replacing_finished_d
         });
         assert!(
             starts.load(Ordering::SeqCst) > before,
-            "missing patches must actually be recollected with zero optional RAW retention"
+            "missing camera rasters must actually be recollected with zero optional RAW retention"
         );
     });
     scheduler.close_and_wait().unwrap();

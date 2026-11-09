@@ -9,7 +9,7 @@ use std::{
 use {super::evaluation, crate::gpu::submission::SubmissionGate};
 
 mod sampling;
-pub(crate) use sampling::CameraSampler;
+pub(crate) use sampling::{CameraSampler, CameraWindow};
 
 #[cfg(test)]
 mod tests;

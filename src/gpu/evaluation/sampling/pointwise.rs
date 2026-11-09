@@ -1,5 +1,7 @@
 //! The same authored pixel function can consume a raster or a callable image.
 use super::*;
+#[cfg(test)]
+mod tests;
 
 impl Sampled {
     pub(crate) fn map(
@@ -149,24 +151,62 @@ fn resources(module: &naga::Module, symbols: &[&str]) -> Result<Vec<u32>, Error>
 
 fn link(
     function: Function,
-    symbols: &[&str],
+    symbols: &[&'static str],
     prefix: &str,
     next_slot: &mut u32,
     fragment: &mut Fragment,
 ) -> Result<(String, Vec<(u32, Binding)>), Error> {
+    // Only shader structure is reusable. Captured values are lowered afresh for
+    // every plan, including candidates with the same code but different uniforms.
+    let cached = function.linked.lock().unwrap().clone().filter(|cached| {
+        cached.source == function.code
+            && cached.symbols == symbols
+            && cached.prefix == prefix
+            && cached.first_slot == *next_slot
+    });
+    let linked = match cached {
+        Some(linked) => linked,
+        None => {
+            let linked = Arc::new(compile_link(&function, symbols, prefix, *next_slot)?);
+            *function.linked.lock().unwrap() = Some(linked.clone());
+            linked
+        }
+    };
+    if function
+        .bindings
+        .iter()
+        .any(|(slot, _)| !linked.declared.contains(slot))
+    {
+        return Err(Error::InvalidParameter(
+            "pointwise capture has no shader resource",
+        ));
+    }
+    let bindings = linked
+        .captures
+        .iter()
+        .map(|&(source, target)| {
+            let binding = function
+                .bindings
+                .iter()
+                .find(|(slot, _)| *slot == source)
+                .ok_or(Error::InvalidParameter(
+                    "pointwise calculation lacks a captured resource",
+                ))?;
+            Ok((target, binding.1.lower(fragment)))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    *next_slot = linked.next_slot;
+    Ok((linked.code.to_string(), bindings))
+}
+
+fn compile_link(
+    function: &Function,
+    symbols: &[&'static str],
+    prefix: &str,
+    first_slot: u32,
+) -> Result<super::super::contract::FunctionLink, Error> {
     let mut module = parse(&function.code)?;
     module.entry_points.clear();
-    for (slot, _) in &function.bindings {
-        if !module.global_variables.iter().any(|(_, v)| {
-            v.binding
-                .as_ref()
-                .is_some_and(|b| b.group == 0 && b.binding == *slot)
-        }) {
-            return Err(Error::InvalidParameter(
-                "pointwise capture has no shader resource",
-            ));
-        }
-    }
     let used = resources(&module, symbols)?;
     let types = module
         .types
@@ -191,7 +231,9 @@ fn link(
     for (_, value) in module.functions.iter_mut() {
         rename(&mut value.name, prefix);
     }
-    let mut bindings = Vec::new();
+    let mut next_slot = first_slot;
+    let mut declared = Vec::new();
+    let mut captures = Vec::new();
     for (_, value) in module.global_variables.iter_mut() {
         rename(&mut value.name, prefix);
         if let Some(binding) = &mut value.binding {
@@ -200,17 +242,11 @@ fn link(
                     "pointwise resources require group zero",
                 ));
             }
-            let slot = *next_slot;
-            *next_slot += 1;
+            declared.push(binding.binding);
+            let slot = next_slot;
+            next_slot += 1;
             if used.contains(&binding.binding) {
-                let resource = function
-                    .bindings
-                    .iter()
-                    .find(|(s, _)| *s == binding.binding)
-                    .ok_or(Error::InvalidParameter(
-                        "pointwise calculation lacks a captured resource",
-                    ))?;
-                bindings.push((slot, resource.1.lower(fragment)));
+                captures.push((binding.binding, slot));
             }
             binding.binding = slot;
         }
@@ -227,7 +263,16 @@ fn link(
         naga::back::wgsl::WriterFlags::EXPLICIT_TYPES,
     )
     .map_err(|error| Error::Gpu(format!("pointwise library WGSL: {error}")))?;
-    Ok((code, bindings))
+    Ok(super::super::contract::FunctionLink {
+        source: function.code.clone(),
+        symbols: symbols.to_vec(),
+        prefix: prefix.to_owned(),
+        first_slot,
+        next_slot,
+        declared,
+        captures,
+        code: code.into(),
+    })
 }
 
 fn rename(name: &mut Option<String>, prefix: &str) {

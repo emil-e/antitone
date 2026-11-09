@@ -8,6 +8,7 @@ use crate::{
 };
 
 type Bands = Vec<[Vec<DVec3>; 3]>;
+type Scores = std::collections::HashMap<[u64; 2], f64>;
 const NONPOSITIVE_CONES: &str = "tonal band mean has nonpositive Bradford responses";
 
 fn bands(
@@ -130,15 +131,41 @@ fn evaluate_with_model(
     Ok(Some(score))
 }
 
+fn evaluate_cached(
+    negative: NegativeInput,
+    matrix: DMat3,
+    bands: &Bands,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+    scores: &mut Scores,
+) -> Result<Option<f64>, Error> {
+    if cancelled() {
+        return Ok(None);
+    }
+    let key = [
+        negative.balance.warmth.to_bits(),
+        negative.balance.tint.to_bits(),
+    ];
+    if let Some(&score) = scores.get(&key) {
+        return Ok(Some(score));
+    }
+    let score = evaluate_with_model(negative, matrix, bands, model, cancelled)?;
+    if let Some(value) = score {
+        scores.insert(key, value);
+    }
+    Ok(score)
+}
+
 fn search(
     negative: NegativeInput,
     matrix: DMat3,
     bands: &Bands,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
+    scores: &mut Scores,
 ) -> Result<Option<(Balance, f64)>, Error> {
     let mut best = negative;
-    let Some(mut score) = evaluate_with_model(best, matrix, bands, model, cancelled)? else {
+    let Some(mut score) = evaluate_cached(best, matrix, bands, model, cancelled, scores)? else {
         return Ok(None);
     };
     let mut step = 0.125;
@@ -166,12 +193,13 @@ fn search(
                     return Err(Error::UnusableSample("gamma drift search did not converge"));
                 }
                 let candidate = NegativeInput { balance, ..base };
-                let value = match evaluate_with_model(candidate, matrix, bands, model, cancelled) {
-                    Ok(Some(value)) => value,
-                    Ok(None) => return Ok(None),
-                    Err(Error::UnusableSample(NONPOSITIVE_CONES)) => continue,
-                    Err(error) => return Err(error),
-                };
+                let value =
+                    match evaluate_cached(candidate, matrix, bands, model, cancelled, scores) {
+                        Ok(Some(value)) => value,
+                        Ok(None) => return Ok(None),
+                        Err(Error::UnusableSample(NONPOSITIVE_CONES)) => continue,
+                        Err(error) => return Err(error),
+                    };
                 if value < score {
                     score = value;
                     best = candidate;
@@ -228,8 +256,11 @@ pub(super) fn fit_with_model(
     ];
     let mut winner = Balance::default();
     let mut score = f64::INFINITY;
-    for seed in seeds {
-        if seed.validate().is_err() {
+    // Evidence, calibration and matrix stay fixed across starts in this fit. Reuse
+    // exact candidate losses, not rounded controls or an approximate response model.
+    let mut scores = Scores::new();
+    for (index, &seed) in seeds.iter().enumerate() {
+        if seeds[..index].contains(&seed) || seed.validate().is_err() {
             continue;
         }
         let (candidate, value) = match search(
@@ -241,6 +272,7 @@ pub(super) fn fit_with_model(
             &bands,
             model,
             cancelled,
+            &mut scores,
         ) {
             Ok(Some(result)) => result,
             Ok(None) => return Ok(None),
@@ -276,6 +308,184 @@ mod tests {
             let density = gammas[c] * u / (toe + shoulder * u / std::f64::consts::LN_10);
             cal.dmin[c] * (-density).exp()
         }))
+    }
+
+    struct Count(usize);
+    impl ForwardModel for Count {
+        fn read(
+            &mut self,
+            negative: NegativeInput,
+            points: &[DVec3],
+            cancelled: &mut dyn FnMut() -> bool,
+            consume: &mut dyn FnMut(usize, DVec3) -> Result<(), Error>,
+        ) -> Result<bool, Error> {
+            self.0 += 1;
+            super::super::model::ScalarReference.read(negative, points, cancelled, consume)
+        }
+    }
+
+    #[test]
+    fn exact_revisited_candidates_reuse_their_loss_without_hiding_cancellation() {
+        let negative = NegativeInput {
+            calibration: Calibration {
+                dmin: DVec3::ONE,
+                dmax: DVec3::splat(0.01),
+                input_floor: 1. / 65535.,
+            },
+            response: Response {
+                toe: 1.,
+                shoulder: 0.,
+            },
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        };
+        let points = vec![
+            (0..90)
+                .map(|i| DVec3::splat(0.03 + 0.003 * i as f64))
+                .collect(),
+        ];
+        let bands = bands(
+            negative,
+            DMat3::IDENTITY,
+            &points,
+            &mut super::super::model::ScalarReference,
+            &mut || false,
+        )
+        .unwrap()
+        .unwrap();
+        let candidates = [
+            negative,
+            NegativeInput {
+                balance: Balance {
+                    warmth: 0.2,
+                    tint: 0.1,
+                },
+                ..negative
+            },
+        ];
+        let mut direct = Count(0);
+        let expected: Vec<_> = candidates
+            .iter()
+            .map(|&n| {
+                evaluate_with_model(n, DMat3::IDENTITY, &bands, &mut direct, &mut || false).unwrap()
+            })
+            .collect();
+        assert_ne!(expected[0], expected[1], "candidate-key positive control");
+        let mut actual = Count(0);
+        let mut scores = Scores::new();
+        for index in [0, 1, 0, 1] {
+            assert_eq!(
+                evaluate_cached(
+                    candidates[index],
+                    DMat3::IDENTITY,
+                    &bands,
+                    &mut actual,
+                    &mut || false,
+                    &mut scores
+                )
+                .unwrap(),
+                expected[index]
+            );
+        }
+        assert!(actual.0 > 0);
+        assert_eq!(
+            actual.0, direct.0,
+            "revisited candidates must not repeat forward reads"
+        );
+        assert_eq!(
+            evaluate_cached(
+                negative,
+                DMat3::IDENTITY,
+                &bands,
+                &mut actual,
+                &mut || true,
+                &mut scores
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(actual.0, direct.0);
+    }
+
+    #[test]
+    fn identical_starting_balances_do_not_repeat_forward_model_work() {
+        let points = vec![
+            (0..90)
+                .map(|i| DVec3::splat(0.03 + 0.003 * i as f64))
+                .collect(),
+        ];
+        for balance in [
+            Balance::default(),
+            Balance {
+                warmth: 0.2,
+                tint: 0.1,
+            },
+        ] {
+            let negative = NegativeInput {
+                calibration: Calibration {
+                    dmin: DVec3::ONE,
+                    dmax: DVec3::splat(0.01),
+                    input_floor: 1. / 65535.,
+                },
+                response: Response {
+                    toe: 1.,
+                    shoulder: 0.,
+                },
+                gamma: DEFAULT_GAMMA,
+                balance,
+            };
+            // Equal channel spans make the anchor and zero starts identical.
+            let mut reference = Count(0);
+            let bands = bands(
+                NegativeInput {
+                    balance: Balance::default(),
+                    ..negative
+                },
+                DMat3::IDENTITY,
+                &points,
+                &mut reference,
+                &mut || false,
+            )
+            .unwrap()
+            .unwrap();
+            let mut starts = vec![balance];
+            if balance != Balance::default() {
+                starts.push(Balance::default());
+            }
+            let mut winner = (Balance::default(), f64::INFINITY);
+            for seed in starts {
+                let result = search(
+                    NegativeInput {
+                        balance: seed,
+                        ..negative
+                    },
+                    DMat3::IDENTITY,
+                    &bands,
+                    &mut reference,
+                    &mut || false,
+                    &mut Scores::new(),
+                )
+                .unwrap()
+                .unwrap();
+                if result.1 < winner.1 {
+                    winner = result;
+                }
+            }
+            let mut actual = Count(0);
+            let fitted =
+                fit_with_model(negative, DMat3::IDENTITY, &points, &mut actual, &mut || {
+                    false
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(fitted, winner.0);
+            assert!(
+                actual.0 > 0 && actual.0 <= reference.0,
+                "duplicate starts repeated model work: {} > {}",
+                actual.0,
+                reference.0
+            );
+        }
     }
 
     #[test]

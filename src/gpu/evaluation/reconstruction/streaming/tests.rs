@@ -53,6 +53,7 @@ impl Operation for Square {
     }
     fn pointwise(&self) -> Option<Function> {
         Some(Function {
+            linked: Default::default(),
             code:
                 "fn square(p: vec4f, position: vec2f) -> vec4f { return vec4f(p.rgb*p.rgb,p.w); }"
                     .into(),

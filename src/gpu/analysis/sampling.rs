@@ -1,23 +1,26 @@
-//! Original-coordinate camera-light samples for the statistical roll analysis.
-
+//! Original-coordinate camera samples from the shared, source-owned analysis raster.
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::{
     gpu::{flat::GpuFlatField, source::ProcessingSource},
     renderer::GpuRenderer,
-    scan::{AnalysisSamples, DevelopedSource, Scan},
+    scan::{AnalysisInput, AnalysisSamples},
 };
 
+#[cfg(test)]
+use crate::scan::Scan;
+
+mod spatial;
+pub(crate) use spatial::CameraWindow;
 #[cfg(test)]
 mod tests;
 
 const BUDGET: evaluation::Budget = evaluation::Budget {
-    tile: [8, 8192],
+    tile: [1, 8192],
     scratch_bytes: 32 << 20,
 };
 
 pub(crate) struct CameraSampler<'a> {
-    input: Input<'a>,
+    input: Arc<AnalysisInput>,
     floor: f64,
     context: &'a evaluation::Context,
     queue: &'a wgpu::Queue,
@@ -25,109 +28,72 @@ pub(crate) struct CameraSampler<'a> {
     field: Option<Arc<GpuFlatField>>,
 }
 
-enum Input<'a> {
-    Native(&'a Scan),
-    Retained(Arc<crate::scan::AnalysisInput>),
-}
-
-enum Pixels {
-    Native(Arc<DevelopedSource>),
-    Retained {
-        input: Arc<crate::scan::AnalysisInput>,
-        indices: Vec<usize>,
-    },
-}
-
-struct CameraFootprints {
-    source: Pixels,
-    origins: Arc<[[u32; 2]]>,
+struct CameraSites {
+    input: Arc<AnalysisInput>,
+    indices: Arc<[usize]>,
     domain: evaluation::Domain,
 }
 
-impl evaluation::Source for CameraFootprints {
+impl evaluation::Source for CameraSites {
     fn domain(&self) -> evaluation::Domain {
         self.domain
     }
 
     fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         let region = region.source()?;
-        let mut pixels = Vec::with_capacity((region.width * region.height) as usize);
-        match &self.source {
-            Pixels::Native(source) => {
-                let image = source.camera_image()?;
-                for y in region.y..region.y + region.height {
-                    let origin = self.origins[(y / 8) as usize];
-                    for x in region.x..region.x + region.width {
-                        pixels.push(image.pixel_samples(origin[0] + x, origin[1] + y % 8)?);
-                    }
-                }
-            }
-            Pixels::Retained { input, indices } => {
-                for y in region.y..region.y + region.height {
-                    let patch = input.pixels(indices[(y / 8) as usize]);
-                    for x in region.x..region.x + region.width {
-                        pixels.push(patch[((y % 8) * 8 + x) as usize]);
-                    }
-                }
-            }
-        }
-
+        let pixels = (region.y..region.y + region.height)
+            .map(|y| self.input.pixel(self.indices[y as usize]))
+            .collect::<Result<Vec<_>, _>>()?;
         ProcessingSource::validate_continuous(&pixels)?;
-
         Ok(pixels)
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct Footprint {
-    centre: DVec3,
-    floor: bool,
-    cells: u8,
-}
-
 impl<'a> CameraSampler<'a> {
+    #[cfg(test)]
     pub(crate) fn new(
         device: &'a wgpu::Device,
         renderer: &'a GpuRenderer,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
-        scan: &'a Scan,
+        scan: &Scan,
     ) -> Result<Self, Error> {
-        let field = scan
-            .flat_field()
-            .cloned()
-            .map(|field| GpuFlatField::new(device, field).map(Arc::new))
-            .transpose()?;
-
-        if let Some(field) = &field {
-            field.validate_matrix(glam::DMat3::IDENTITY, crate::processing::MAX_SOURCE_GAIN)?;
-        }
-
-        Ok(Self {
-            input: Input::Native(scan),
-            floor: scan.effective_floor(),
-            context: renderer.evaluation(),
-            queue: gpu.0,
-            submissions: gpu.1,
-            field,
-        })
+        let input = AnalysisInput::capture(scan, || false)?
+            .ok_or(Error::UnusableSample("camera capture cancelled"))?;
+        Self::retained(
+            device,
+            renderer,
+            gpu,
+            Arc::new(input),
+            scan.flat_field().cloned(),
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn retained(
         device: &'a wgpu::Device,
         renderer: &'a GpuRenderer,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
-        input: Arc<crate::scan::AnalysisInput>,
+        input: Arc<AnalysisInput>,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let floor = input.effective_floor(field.as_deref())?;
         let field = field
-            .map(|field| GpuFlatField::new(device, field).map(Arc::new))
+            .map(|f| GpuFlatField::new(device, f).map(Arc::new))
             .transpose()?;
+        Self::captured(renderer, gpu, input, field)
+    }
+
+    pub(crate) fn captured(
+        renderer: &'a GpuRenderer,
+        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        input: Arc<AnalysisInput>,
+        field: Option<Arc<GpuFlatField>>,
+    ) -> Result<Self, Error> {
+        let floor = input.effective_floor(field.as_ref().map(|f| f.field().as_ref()))?;
         if let Some(field) = &field {
             field.validate_matrix(glam::DMat3::IDENTITY, crate::processing::MAX_SOURCE_GAIN)?;
         }
         Ok(Self {
-            input: Input::Retained(input),
+            input,
             floor,
             context: renderer.evaluation(),
             queue: gpu.0,
@@ -140,36 +106,29 @@ impl<'a> CameraSampler<'a> {
         self.floor
     }
 
-    fn gathered(&self, origins: Vec<[u32; 2]>) -> Result<Arc<evaluation::ImageNode>, Error> {
-        let height = u32::try_from(origins.len())
+    fn gathered(&self, indices: Vec<usize>) -> Result<Arc<evaluation::ImageNode>, Error> {
+        let count = u32::try_from(indices.len())
             .ok()
-            .and_then(|count| count.checked_mul(8))
-            .filter(|height| *height > 0)
-            .ok_or(Error::InvalidParameter("invalid camera footprint batch"))?;
+            .filter(|v| *v > 0)
+            .ok_or(Error::InvalidParameter("invalid camera sample batch"))?;
+        let positions = indices
+            .iter()
+            .map(|&i| self.input.position(i))
+            .collect::<Result<Vec<_>, _>>()?;
         let domain = evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], [8, height])),
+            bounds: Some(evaluation::CellRegion::new([0, 0], [1, count])),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: evaluation::Meaning::CameraCodes,
         };
-        let codes = evaluation::source(Arc::new(CameraFootprints {
-            source: match &self.input {
-                Input::Native(scan) => Pixels::Native(scan.source().clone()),
-                Input::Retained(input) => Pixels::Retained {
-                    indices: origins
-                        .iter()
-                        .map(|&origin| input.patch_index(origin))
-                        .collect::<Result<_, _>>()?,
-                    input: input.clone(),
-                },
-            },
-            origins: origins.clone().into(),
+        let codes = evaluation::source(Arc::new(CameraSites {
+            input: self.input.clone(),
+            indices: indices.into(),
             domain,
         }));
-
-        crate::gpu::photograph::PhotographGraph::camera_footprints(
+        crate::gpu::photograph::PhotographGraph::camera_samples(
             codes,
             self.field.clone(),
-            &origins,
+            &positions,
         )
     }
 
@@ -180,24 +139,47 @@ impl<'a> CameraSampler<'a> {
         inside: impl FnMut(crate::geometry::SourceRegion) -> bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<AnalysisSamples>, Error> {
-        let plan = match &self.input {
-            Input::Native(scan) => scan.analysis_plan(area, budget, inside, &mut cancelled)?,
-            Input::Retained(input) => input.plan(area, budget, inside, &mut cancelled)?,
-        };
-        let Some(mut plan) = plan else {
+        let Some(selected) = self.input.select(area, budget, inside, &mut cancelled)? else {
             return Ok(None);
         };
-
-        if plan.footprints.is_empty() {
-            return Ok(Some(plan.samples));
+        let mut result = AnalysisSamples {
+            attempted: selected.len(),
+            ..Default::default()
+        };
+        let mut indices = Vec::with_capacity(selected.len());
+        for index in selected {
+            if cancelled() {
+                return Ok(None);
+            }
+            if self.input.above_native_floor(index)? {
+                indices.push(index);
+            } else {
+                result.rejected_floor += 1;
+            }
         }
+        if indices.is_empty() {
+            return Ok(Some(result));
+        }
+        let Some(pixels) = self.read_centres(indices, &mut cancelled)? else {
+            return Ok(None);
+        };
+        for pixel in pixels {
+            if pixel.min_element() > self.floor {
+                result.pixels.push(pixel);
+            } else {
+                result.rejected_floor += 1;
+            }
+        }
+        Ok(Some(result))
+    }
 
-        let origins = plan
-            .footprints
-            .iter()
-            .map(|footprint| [footprint.region.x, footprint.region.y])
-            .collect();
-        let image = self.gathered(origins)?;
+    fn read_centres(
+        &self,
+        indices: Vec<usize>,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<Vec<DVec3>>, Error> {
+        let count = indices.len();
+        let image = self.gathered(indices)?;
         let request = self.context.request(
             image.clone(),
             evaluation::Region {
@@ -206,72 +188,49 @@ impl<'a> CameraSampler<'a> {
             },
             BUDGET,
         )?;
-        let floor = self.floor as f32;
-        let mut footprints = vec![Footprint::default(); plan.footprints.len()];
-        let cancelled = RefCell::new(&mut cancelled);
+        let cancelled = RefCell::new(cancelled);
         let interrupted = Cell::new(false);
-
-        // The index raster contains only selected original cells. Its sideband origins preserve
-        // physical correction coordinates without transferring the intervening sensor pixels.
+        let mut output = Vec::with_capacity(count);
         let result = self.context.read(
             self.queue,
             self.submissions,
             &request,
-            || {
-                let mut predicate = cancelled.borrow_mut();
-                interrupted.get() || (**predicate)()
-            },
+            || interrupted.get() || (**cancelled.borrow_mut())(),
             |block, pixels| {
                 let block = block.source()?;
-                for (index, pixel) in pixels.iter().enumerate() {
-                    let mut predicate = cancelled.borrow_mut();
-                    if (**predicate)() {
+                if block.x != 0
+                    || block.width != 1
+                    || block.y as usize != output.len()
+                    || pixels.len() != block.height as usize
+                {
+                    return Err(Error::InvalidParameter(
+                        "camera sample response changed order",
+                    ));
+                }
+                for pixel in pixels {
+                    if (**cancelled.borrow_mut())() {
                         interrupted.set(true);
                         return Ok(());
                     }
-                    drop(predicate);
-
-                    let x = block.x + index as u32 % block.width;
-                    let y = block.y + index as u32 / block.width;
-                    let state = &mut footprints[(y / 8) as usize];
-
-                    if !pixel[..3].iter().all(|value| value.is_finite()) {
+                    let rgb = DVec3::new(
+                        f64::from(pixel[0]),
+                        f64::from(pixel[1]),
+                        f64::from(pixel[2]),
+                    );
+                    if !rgb.is_finite() {
                         return Err(Error::NumericalOverflow);
                     }
-
-                    state.floor |= pixel[..3].iter().any(|value| *value <= floor);
-                    state.cells += 1;
-
-                    if [x, y % 8] == [4, 4] {
-                        state.centre = DVec3::new(
-                            f64::from(pixel[0]),
-                            f64::from(pixel[1]),
-                            f64::from(pixel[2]),
-                        );
-                    }
+                    output.push(rgb);
                 }
                 Ok(())
             },
         )?;
-
-        if result.is_none() {
+        if result.is_none() || interrupted.get() {
             return Ok(None);
         }
-
-        for state in footprints {
-            if state.cells != 64 {
-                return Err(Error::InvalidParameter(
-                    "analysis footprint lacks camera cells",
-                ));
-            }
-
-            if state.floor {
-                plan.samples.rejected_floor += 1;
-            } else {
-                plan.samples.pixels.push(state.centre);
-            }
+        if output.len() != count {
+            return Err(Error::InvalidParameter("camera response omitted samples"));
         }
-
-        Ok(Some(plan.samples))
+        Ok(Some(output))
     }
 }

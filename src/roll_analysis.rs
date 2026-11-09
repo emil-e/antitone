@@ -12,7 +12,16 @@ use crate::{
 };
 
 mod gamma;
+mod gi;
+mod grayness;
 mod model;
+
+#[cfg(feature = "editor")]
+pub(crate) use gi::estimate_spatial_with_provider;
+pub use gi::{SpatialFrameSamples, SpatialSamples, estimate_spatial};
+
+/// Current spatial evidence resolution, independent of output/rendering resolution.
+pub const GRAYNESS_LONG_EDGE: usize = 512;
 
 pub(crate) use model::ForwardModel;
 use model::SampleBatch;
@@ -35,6 +44,14 @@ pub struct FrameStatistics {
     pub balance_eligible: usize,
     pub balance_samples: usize,
     pub exposure_samples: usize,
+    pub grayness: Option<GraynessStatistics>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraynessStatistics {
+    pub gamma_samples: usize,
+    pub wb_samples: usize,
+    pub wb_rejection: Option<String>,
 }
 
 /// A transient proposal, not an installed grade. References are RGB-only; the
@@ -248,45 +265,33 @@ pub(crate) fn estimate_with_model(
         wb: neutral_wb(sampling::mean(&means)?)?,
         ..RollSettings::default()
     };
-    let post = wb_matrix(roll.wb)? * camera_to_ap1;
-    let mut luminances: Vec<Vec<f64>> = frames.iter().map(|_| Vec::new()).collect();
-    if !picture_batch.read(model, negative, cancelled, |frame, _, positive| {
-        let y = (AP1_TO_XYZ * (post * positive)).y;
-        if !y.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
-        if y > 1e-8 {
-            luminances[frame].push(y);
-        }
-        Ok(())
-    })? {
+    let Some((exposure, exposure_counts)) = meter(
+        &picture_batch,
+        negative,
+        camera_to_ap1,
+        roll.wb,
+        model,
+        cancelled,
+    )?
+    else {
         return Ok(None);
-    }
+    };
 
-    let mut frame_medians = Vec::with_capacity(frames.len());
     let mut statistics = Vec::with_capacity(frames.len());
     for (index, frame) in frames.iter().enumerate() {
         if cancelled() {
             return Ok(None);
-        }
-        let luminances = &mut luminances[index];
-        if luminances.is_empty() {
-            return Err(Error::UnusableSample(
-                "analysis frame has no positive exposure samples",
-            ));
         }
         statistics.push(FrameStatistics {
             film_samples: frame.film.len(),
             picture_samples: frame.picture.len(),
             balance_eligible: eligible[index].len(),
             balance_samples: balance_count,
-            exposure_samples: luminances.len(),
+            exposure_samples: exposure_counts[index],
+            grayness: None,
         });
-        frame_medians.push(quantile(luminances, 0.5));
     }
-    let roll_key = quantile(&mut frame_medians, 0.5);
-    roll.exposure = 0.18_f64.log2() - roll_key.log2();
-    exposure_multiplier(roll.exposure)?;
+    roll.exposure = exposure;
     let photos = vec![AdjustmentLayerSettings::default(); frames.len()];
     if cancelled() {
         return Ok(None);
@@ -304,4 +309,46 @@ pub(crate) fn estimate_with_model(
         photos,
         frames: statistics,
     }))
+}
+
+fn meter(
+    picture: &SampleBatch,
+    negative: NegativeInput,
+    matrix: DMat3,
+    wb: Balance,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<(f64, Vec<usize>)>, Error> {
+    let post = wb_matrix(wb)? * matrix;
+    let mut luminances = vec![Vec::new(); picture.groups.len()];
+    if !picture.read(model, negative, cancelled, |frame, _, positive| {
+        let y = (AP1_TO_XYZ * (post * positive)).y;
+        if !y.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        if y > 1e-8 {
+            luminances[frame].push(y);
+        }
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+    let mut medians = Vec::with_capacity(luminances.len());
+    let mut counts = Vec::with_capacity(luminances.len());
+    for values in &mut luminances {
+        if cancelled() {
+            return Ok(None);
+        }
+        if values.is_empty() {
+            return Err(Error::UnusableSample(
+                "analysis frame has no positive exposure samples",
+            ));
+        }
+        counts.push(values.len());
+        medians.push(quantile(values, 0.5));
+    }
+    let key = quantile(&mut medians, 0.5);
+    let ev = 0.18_f64.log2() - key.log2();
+    exposure_multiplier(ev)?;
+    Ok(Some((ev, counts)))
 }

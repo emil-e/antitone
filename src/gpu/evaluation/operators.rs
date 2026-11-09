@@ -166,6 +166,7 @@ pub fn interpret(
         input,
         Meaning::Neutral,
         Function {
+            linked: Default::default(),
             code: include_str!("matrix.wgsl").into(),
             symbol: "evaluation_interpret",
             bindings: vec![(18, Shared::Buffer(constants).into())],

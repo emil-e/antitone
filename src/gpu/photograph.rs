@@ -204,15 +204,6 @@ impl PhotographGraph {
         window(inspect(neutral, parameters)?, output.finite()?)
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn camera_footprints(
-        source: Arc<ImageNode>,
-        field: Option<Arc<GpuFlatField>>,
-        origins: &[[u32; 2]],
-    ) -> Result<Arc<ImageNode>, Error> {
-        Self::camera_patches(source, field, origins, [8, 8])
-    }
-
     /// Individually selected original cells, retaining their physical correction coordinates.
     #[cfg(feature = "editor")]
     pub(crate) fn camera_samples(

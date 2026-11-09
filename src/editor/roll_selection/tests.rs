@@ -55,13 +55,9 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
     let document = editor.document.capture();
     let scan = crate::scan::Scan::open(&document.source_path(id).unwrap(), Some([1.; 4])).unwrap();
     let input = std::sync::Arc::new(
-        crate::scan::AnalysisInput::capture(
-            &scan,
-            crate::roll_analysis::MAX_SAMPLES_PER_FRAME,
-            || false,
-        )
-        .unwrap()
-        .unwrap(),
+        crate::scan::AnalysisInput::capture(&scan, || false)
+            .unwrap()
+            .unwrap(),
     );
     let weak = std::sync::Arc::downgrade(&input);
     editor

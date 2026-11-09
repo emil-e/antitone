@@ -1,5 +1,4 @@
-//! Captured roll sampling and fitting. Native awaits retain no blocking worker;
-//! each measured source is released before only bounded statistics advance.
+//! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::renderer::GpuRenderer;
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
@@ -41,20 +40,16 @@ impl Fit {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderer: Arc<GpuRenderer>,
-        mut request: Request,
-        input: source::Context,
+        request: Request,
+        correction: Option<Arc<Correction>>,
     ) -> Result<Self, Error> {
-        let scan = input.scan()?;
-        if request.areas.is_none() && request.local_support && request.film.is_none() {
-            request.film = scan.propose_flat_field_area()?;
-        }
         request.document.validate_for_device(&device)?;
         analysis::verify(&request)?;
         let project = &request.document.project;
         if project.order.is_empty() || !project.order.contains(&request.selected) {
             return Err(Error::UnusableSample("no selected roll photo"));
         }
-        if project.active_flat_field() != input.correction.as_ref().map(|c| &c.settings) {
+        if project.active_flat_field() != correction.as_ref().map(|c| &c.settings) {
             return Err(Error::UnusableSample(
                 "analysis correction snapshot changed",
             ));
@@ -73,7 +68,7 @@ impl Fit {
             queue,
             renderer,
             request: Arc::new(request),
-            correction: input.correction,
+            correction,
             matrix,
             support,
             film: None,
@@ -83,7 +78,7 @@ impl Fit {
     }
 
     fn needs_support(&self) -> bool {
-        self.request.areas.is_none() && self.support.is_none()
+        self.request.areas.is_none() && self.request.local_support && self.support.is_none()
     }
 
     fn verify_scan(&self, index: usize, scan: &Scan) -> Result<Source, Error> {
@@ -97,8 +92,8 @@ impl Fit {
         Ok(actual)
     }
 
-    fn observe_support(&mut self, index: usize, scan: Scan) -> Result<(), Error> {
-        self.verify_scan(index, &scan)?;
+    fn observe_support(&mut self, index: usize, scan: &Scan) -> Result<(), Error> {
+        self.verify_scan(index, scan)?;
         self.support = scan.propose_flat_field_area()?;
         Ok(())
     }
@@ -125,37 +120,45 @@ impl Fit {
         Ok(())
     }
 
-    fn sample(
-        &mut self,
+    fn capture_input(
+        &self,
         index: usize,
-        mut scan: Scan,
+        scan: &Scan,
         cancelled: impl Fn() -> bool,
-    ) -> Result<bool, Error> {
-        if cancelled() {
-            return Ok(false);
-        }
-        let actual = self.verify_scan(index, &scan)?;
+    ) -> Result<Option<Arc<crate::scan::AnalysisInput>>, Error> {
+        let actual = self.verify_scan(index, scan)?;
         self.request
             .document
             .project
             .require_scan_source(&actual.development)?;
         if let Some(correction) = &self.correction {
             correction.settings.require_source(&actual.development)?;
-            scan.set_flat_field(Some(correction.settings.map.clone()))?;
         }
-        let renderer = self.renderer.clone();
-        let queue = self.queue.clone();
-        let device = self.device.clone();
-        let sampler = crate::gpu::analysis::CameraSampler::new(
-            &device,
-            &renderer,
-            (&queue, &renderer.submissions),
-            &scan,
-        )?;
-        self.sample_camera(index, scan.area, &sampler, cancelled)
+        Ok(crate::scan::AnalysisInput::capture(scan, cancelled)?.map(Arc::new))
     }
 
-    fn sample_retained(
+    #[cfg(test)]
+    fn sample(
+        &mut self,
+        index: usize,
+        scan: Scan,
+        retained: Option<Arc<crate::scan::AnalysisInput>>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<bool, Error> {
+        let input = match retained {
+            Some(input) => input,
+            None => {
+                let Some(input) = self.capture_input(index, &scan, &cancelled)? else {
+                    return Ok(false);
+                };
+                input
+            }
+        };
+        drop(scan);
+        self.sample_input(index, input, cancelled)
+    }
+
+    fn sample_input(
         &mut self,
         index: usize,
         input: Arc<crate::scan::AnalysisInput>,
@@ -164,22 +167,28 @@ impl Fit {
         if cancelled() {
             return Ok(false);
         }
-        let project = &self.request.document.project;
-        let record = project.source(project.order[index])?;
-        project.require_scan_source(&record.development)?;
-        if let Some(correction) = &self.correction {
-            correction.settings.require_source(&record.development)?;
-        }
         let active = input.area();
+        if active
+            != self
+                .request
+                .document
+                .project
+                .source(self.request.document.project.order[index])?
+                .development
+                .active_area
+                .into()
+        {
+            return Err(Error::InvalidParameter(
+                "captured camera grid differs from source",
+            ));
+        }
         let renderer = self.renderer.clone();
         let queue = self.queue.clone();
-        let device = self.device.clone();
-        let sampler = crate::gpu::analysis::CameraSampler::retained(
-            &device,
+        let sampler = crate::gpu::analysis::CameraSampler::captured(
             &renderer,
             (&queue, &renderer.submissions),
             input,
-            self.correction.as_ref().map(|c| c.settings.map.clone()),
+            self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
         self.sample_camera(index, active, &sampler, cancelled)
     }
@@ -265,10 +274,32 @@ impl Fit {
             return Ok(false);
         };
         require_picture(&picture)?;
+        let area = match frame_areas {
+            Some(areas) => crate::scan_regions::Areas::coverage(
+                areas
+                    .picture
+                    .ok_or(Error::UnusableSample("no GI picture area"))?,
+            )?
+            .clipped_bounds(active)?,
+            None => self.picture.expect("legacy picture geometry"),
+        };
+        let Some(spatial) = sampler.window(
+            area,
+            |f| {
+                frame_areas.is_none_or(|areas| areas.contains_footprint(f, active, true))
+                    && on_film(f)
+                    && inside_film(f, &picture_planes, 0.)
+            },
+            &cancelled,
+        )?
+        else {
+            return Ok(false);
+        };
         self.owned.push(FrameMeasurements {
             floor: sampler.effective_floor(),
             film,
             picture,
+            spatial,
         });
         Ok(true)
     }
@@ -293,13 +324,21 @@ impl Fit {
             self.renderer.evaluation(),
             (&self.queue, &self.renderer.submissions),
         );
-        let Some(proposal) = roll_analysis::estimate_with_model(
+        let Some(proposal) = roll_analysis::estimate_spatial_with_provider(
             &frames,
             floor,
             self.matrix,
             project.input,
             &mut model,
             &mut || cancelled(),
+            |index, stopped| {
+                self.owned[index].spatial.read(
+                    &self.renderer,
+                    (&self.queue, &self.renderer.submissions),
+                    self.correction.as_ref().map(|c| c.gpu.clone()),
+                    stopped,
+                )
+            },
         )?
         else {
             return Ok(None);
@@ -308,6 +347,21 @@ impl Fit {
             self.owned.iter().map(|frame| frame.film.pixels.len()).sum(),
             &proposal.frames,
         )?;
+        let wb_rejections: Vec<_> = proposal
+            .frames
+            .iter()
+            .zip(&project.order)
+            .filter_map(|(frame, id)| {
+                frame
+                    .grayness
+                    .as_ref()
+                    .and_then(|gi| gi.wb_rejection.as_ref())
+                    .map(|reason| (*id, reason.clone()))
+            })
+            .collect();
+        for (source, reason) in &wb_rejections {
+            log::debug!(source = source.0, reason = reason.as_str(); "analysis_wb_abstained");
+        }
         let mut candidate = proposed_document(&request.document, proposal, self.picture)?;
         if let Some(approved) = &request.areas {
             candidate
@@ -346,6 +400,7 @@ impl Fit {
         Ok(Some(Outcome {
             document: candidate,
             frames: frames.len(),
+            wb_rejections,
             support: self.film.expect("film geometry"),
         }))
     }
@@ -355,7 +410,7 @@ impl Fit {
     pub(super) async fn run(
         mut self,
         sources: Arc<dyn SourceProvider>,
-        sampling_inputs: SamplingInputs,
+        mut sampling_inputs: SamplingInputs,
         exposures: Arc<crate::exposure_metadata::Store>,
         cancelled: Cancellation,
         mut progress: impl FnMut(usize, usize),
@@ -364,28 +419,31 @@ impl Fit {
         if self.needs_support() {
             progress(0, total);
             for index in 0..total {
+                let source = self.request.document.project.order[index];
                 let Some(scan) = self
                     .request
                     .document
-                    .acquire_source(
-                        self.request.document.project.order[index],
-                        sources.as_ref(),
-                        &exposures,
-                        &cancelled,
-                    )
+                    .acquire_source(source, sources.as_ref(), &exposures, &cancelled)
                     .await?
                 else {
                     return Ok(None);
                 };
-                let Some(next) = background::compute(&cancelled, move || {
-                    self.observe_support(index, scan)?;
-                    Ok(self)
+                let retired = cancelled.clone();
+                let Some(Some((next, input))) = background::compute(&cancelled, move || {
+                    self.observe_support(index, &scan)?;
+                    let Some(input) =
+                        self.capture_input(index, &scan, || retired.is_cancelled())?
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(Some((self, input)))
                 })
                 .await?
                 else {
                     return Ok(None);
                 };
                 self = next;
+                sampling_inputs.insert(source, self.request.document.source_key(source)?, input);
                 if !self.needs_support() {
                     break;
                 }
@@ -405,15 +463,11 @@ impl Fit {
             }
             progress(index, total);
             let source = state.request.document.project.order[index];
-            let retained = if state.request.areas.is_some() {
-                sampling_inputs.get(source, &state.request.document.source_key(source)?)
-            } else {
-                None
-            };
+            let input = sampling_inputs.get(source, &state.request.document.source_key(source)?);
             let retired = cancelled.clone();
-            let measured = if let Some(input) = retained {
+            let measured = if let Some(input) = input {
                 background::compute(&cancelled, move || {
-                    let keep = state.sample_retained(index, input, || retired.is_cancelled())?;
+                    let keep = state.sample_input(index, input, || retired.is_cancelled())?;
                     Ok((state, keep))
                 })
                 .await?
@@ -427,7 +481,13 @@ impl Fit {
                     return Ok(None);
                 };
                 background::compute(&cancelled, move || {
-                    let keep = state.sample(index, scan, || retired.is_cancelled())?;
+                    let Some(input) =
+                        state.capture_input(index, &scan, || retired.is_cancelled())?
+                    else {
+                        return Ok((state, false));
+                    };
+                    drop(scan);
+                    let keep = state.sample_input(index, input, || retired.is_cancelled())?;
                     Ok((state, keep))
                 })
                 .await?

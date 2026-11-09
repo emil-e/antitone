@@ -35,6 +35,7 @@ impl EffectDefinition for NeighbourEffect {
             neighbourhood,
             input.domain().meaning,
             evaluation::Function {
+                linked: Default::default(),
                 code: r#"
 fn independent_source_bias(pixel: vec4f, position: vec2f) -> vec4f {
     return vec4f(pixel.rgb + vec3f(position.x * 0.000001 + position.y * 0.000002), pixel.w);

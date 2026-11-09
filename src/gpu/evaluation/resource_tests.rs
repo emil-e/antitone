@@ -14,6 +14,7 @@ fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
         resident::raster_input(domain),
         Meaning::Graded,
         Function {
+            linked: Default::default(),
             code: r#"
 fn mark(p: vec4f, position: vec2f) -> vec4f {
     return vec4f(position, 0.25, p.w);

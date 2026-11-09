@@ -74,35 +74,45 @@ fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_
         },
         ..negative
     };
-    let mut difference: f64 = 0.;
-    model
-        .read(
-            changed,
-            &points[..3],
-            &mut || false,
-            &mut |index, actual| {
-                difference = difference.max((actual - first[index]).abs().max_element());
-                Ok(())
-            },
-        )
-        .unwrap();
+    let mut read = |candidate, points: &[DVec3]| {
+        let mut values = Vec::new();
+        assert!(
+            model
+                .read(candidate, points, &mut || false, &mut |index, actual| {
+                    assert_eq!(index, values.len());
+                    values.push(actual);
+                    Ok(())
+                })
+                .unwrap()
+        );
+        assert_eq!(
+            values.len(),
+            points.len(),
+            "every requested response must be delivered"
+        );
+        values
+    };
+    let changed_response = read(changed, &points[..3]);
+    let difference = changed_response
+        .iter()
+        .zip(&first)
+        .map(|(a, b)| (*a - *b).abs().max_element())
+        .fold(0_f64, f64::max);
     assert!(
         difference > 0.01,
         "the fixture must distinguish candidate parameters"
     );
     assert_eq!(context.programs.len(), programs);
-    model
-        .read(
-            negative,
-            &points[..3],
-            &mut || false,
-            &mut |index, actual| {
-                assert_eq!(actual, first[index]);
-                Ok(())
-            },
-        )
-        .unwrap();
+    assert_eq!(read(negative, &points[..3]), first);
     assert_eq!(context.programs.len(), programs);
+    let reordered = [points[4], points[2], points[0]];
+    let expected = Inversion::new(changed).unwrap();
+    for (actual, point) in read(changed, &reordered).into_iter().zip(reordered) {
+        let expected = expected.apply(point).unwrap().rgb;
+        assert!(
+            (actual - expected).abs().max_element() < 2e-5 * expected.abs().max_element().max(1.)
+        );
+    }
 }
 
 #[test]
