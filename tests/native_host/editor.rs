@@ -31,7 +31,6 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
             camera_model: metadata.camera_model(),
             camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
         },
-        reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
             Default::default(),
         )),

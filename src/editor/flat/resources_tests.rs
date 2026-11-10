@@ -17,8 +17,12 @@ fn fixture() -> Editor {
         )
         .unwrap(),
     );
-    let settings = FlatFieldSettings::new(source, map);
-    editor.document.project.set_flat_field(Some(settings));
+    let settings = FlatFieldSettings::new(source.path.clone(), map);
+    editor
+        .document
+        .project
+        .set_flat_field(Some(settings))
+        .unwrap();
     for id in editor.document.project.order.clone() {
         let source = editor.document.project.source_mut(id).unwrap();
         source.crop = Some(crate::crop::Crop {
@@ -129,4 +133,51 @@ fn cancelling_export_while_it_awaits_correction_preserves_another_consumers_depe
         ));
     });
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn import_does_not_await_or_cancel_the_live_correction_observer() {
+    use crate::application::test_support::with_application;
+    use std::{cell::Cell, rc::Rc, time::Duration};
+    let mut editor = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let added = directory.path().join("added.dng");
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng"),
+        &added,
+    )
+    .unwrap();
+    let (resources, _started, release) = hold_preparation(&mut editor);
+    let completed = Rc::new(Cell::new(false));
+    with_application(editor, |app| {
+        let observed = completed.clone();
+        app.enter(|editor, cx| {
+            // A live presentation waiter on the real, gated correction dependency.
+            // Its marker isolates continuation lifetime from rendering behaviour.
+            editor.document.correction_restore = cx.spawn(move |cx| async move {
+                let correction = resources.acquire().await.unwrap().unwrap();
+                cx.update(|editor| {
+                    assert_eq!(
+                        editor.document.project.active_flat_field().unwrap().map,
+                        correction.settings.map
+                    );
+                    editor.document.correction_restore = None;
+                    observed.set(true);
+                });
+            });
+            editor.add_raws(vec![added], cx);
+        });
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.importing.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.document.project.sources.len(), 3);
+            assert!(editor.document.correction.pending());
+            assert!(editor.document.correction_restore.is_some());
+            assert!(!completed.get());
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |_| completed.get());
+        app.read(|editor| assert!(editor.document.correction.prepared().is_some()));
+    });
 }

@@ -228,7 +228,6 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
                     Some(selected),
                     crate::editor::history::Direction::Undo,
                 ),
-                source: None,
                 correction: None,
                 sources: Some(
                     editor
@@ -239,7 +238,6 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
                 ),
             },
             device,
-            |_, _| {},
         )
     };
     assert!(

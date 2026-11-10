@@ -19,9 +19,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
         .collect();
     editor_harness_with_thumbnails(true, |mut h, _capture| {
         h.enter(|editor, cx| editor.add_raws(paths, cx));
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         h.update(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));

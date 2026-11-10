@@ -67,23 +67,13 @@ fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
         .source_mut(first)
         .unwrap()
         .adjustment_layers = Some(local_records());
-    for (name, ordered) in [
-        ("offscreen.ARW", true),
-        ("retired.ARW", false),
-        ("reference.ARW", false),
-    ] {
+    for (name, ordered) in [("offscreen.ARW", true), ("retired.ARW", false)] {
         let mut source = editor.document.state.project.source(first).unwrap().clone();
         source.id = SourceId(0);
         source.path = name.into();
-        source.reference_only = name == "reference.ARW";
         let id = editor.document.state.project.add_source(source).unwrap();
         if !ordered {
-            editor
-                .document
-                .state
-                .project
-                .order
-                .retain(|source| *source != id);
+            editor.document.project.remove_from_filmstrip(id).unwrap();
         }
     }
     let before = editor.document.state.project.clone();

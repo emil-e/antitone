@@ -39,7 +39,6 @@ fn record(path: &Path, scan: &Scan) -> Source {
             camera_model: scan.camera_model.clone(),
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
         },
-        reference_only: false,
 
         repairs: Default::default(),
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -305,8 +304,11 @@ fn sdk_flat_reference_uses_camera_coordinates_without_saved_opcode_fingerprints(
         vec![DVec3::ONE; 4],
     )
     .unwrap();
-    let settings = antitone::project::FlatFieldSettings::new(&reference, Arc::new(map));
-    assert_eq!(settings.reference, reference.id);
+    let settings = antitone::project::FlatFieldSettings::new(reference.path.clone(), Arc::new(map));
+    assert_eq!(
+        settings.reference_name,
+        plain.path().file_name().unwrap().to_string_lossy()
+    );
     assert_eq!(
         settings
             .map

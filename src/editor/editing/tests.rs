@@ -19,7 +19,7 @@ fn document_edits_share_admission_and_publish_registered_source_metadata_with_hi
             .unwrap()
             .clone();
         record.path = path.clone();
-        let reference = document.register_reference(record).unwrap();
+        let reference = document.register(record).unwrap();
         let record = document.project.source(reference).unwrap();
         let map = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -29,21 +29,14 @@ fn document_edits_share_admission_and_publish_registered_source_metadata_with_hi
             )
             .unwrap(),
         );
-        let field = crate::project::FlatFieldSettings::new(record, map);
-        document.project.set_flat_field(Some(field));
+        let field = crate::project::FlatFieldSettings::new(record.path.clone(), map);
+        document.project.set_flat_field(Some(field)).unwrap();
         reference
     });
     assert_eq!(editor.document.project, before);
     std::fs::remove_file(&path).unwrap();
     editor.commit_document(edit).unwrap();
-    assert!(
-        editor
-            .document
-            .project
-            .source(reference)
-            .unwrap()
-            .reference_only
-    );
+    assert!(editor.document.project.order.contains(&reference));
     assert_eq!(
         editor.document.file_key(&path),
         expected,

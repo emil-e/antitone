@@ -401,9 +401,7 @@ fn current(key: &SourceKey, document: &Document) -> bool {
         .source(key.id)
         .ok()
         .zip(document.source_path(key.id).ok())
-        .is_some_and(|(source, path)| {
-            !source.reference_only && SourceKey::new(source, document.file_key(&path)) == *key
-        })
+        .is_some_and(|(source, path)| SourceKey::new(source, document.file_key(&path)) == *key)
 }
 
 #[cfg(test)]

@@ -499,9 +499,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                 });
             }
             harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-            wait_for(&mut harness, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            wait_opened_photo(&mut harness);
             harness.update(|editor| {
                 assert!(
                     editor.document.visit.canvas.ready.is_some(),

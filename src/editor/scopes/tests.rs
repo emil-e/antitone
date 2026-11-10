@@ -512,7 +512,6 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
                     camera_model: "test-camera".into(),
                     camera_to_ap1: matrix.to_cols_array_2d(),
                 },
-                reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                     Default::default(),
                 )),

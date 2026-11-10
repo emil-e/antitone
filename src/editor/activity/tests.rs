@@ -18,7 +18,7 @@ fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardo
                         cx,
                     );
                 } else {
-                    editor.add_raws(vec!["one.ARW".into(), "two.ARW".into()], cx);
+                    editor.start_document(Preparation::Input(editor.document.capture(), None), cx);
                 }
                 assert!(editor.interaction_blocked() && editor.document_pending.is_some());
                 let id = editor.document_pending.unwrap();
@@ -31,7 +31,7 @@ fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardo
                 if save {
                     editor.save_result(id, Err("cannot save".into()), cx);
                 } else {
-                    editor.document_prepared(id, Err("cannot import".into()));
+                    editor.document_prepared(id, Err("cannot prepare input".into()));
                 }
                 assert!(editor.document_pending.is_none());
                 assert_eq!(editor.document.state.project, before);

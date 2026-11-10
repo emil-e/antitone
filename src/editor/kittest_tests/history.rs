@@ -445,7 +445,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
         h.enter(|editor, cx| {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
-        wait_for(&mut h, |e| !e.interaction_blocked());
+        wait_opened_photo(&mut h);
         h.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

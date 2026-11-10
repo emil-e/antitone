@@ -58,7 +58,11 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .document
             .state
             .project
-            .set_flat_field(Some(crate::project::FlatFieldSettings::new(&source, map)));
+            .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                source.path.clone(),
+                map,
+            )))
+            .unwrap();
         editor.document.correction = Correction::prepare(&device, &editor.document, None)
             .unwrap()
             .into();
@@ -97,7 +101,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             &editor.active_canvas().preview_rendered.as_ref().unwrap().2
         ));
 
-        editor.document.state.project.set_flat_field(None);
+        editor.document.state.project.set_flat_field(None).unwrap();
         editor.document.correction = None.into();
         editor
             .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)

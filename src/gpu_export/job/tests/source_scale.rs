@@ -26,7 +26,6 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
             .add_source(Source {
                 id: SourceId(0),
                 path: file.path().into(),
-                reference_only: false,
                 development: SourceDevelopment {
                     decode: scan.source().metadata().development(scan.white_balance),
                     dimensions: [64; 2],

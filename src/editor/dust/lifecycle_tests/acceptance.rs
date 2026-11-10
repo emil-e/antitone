@@ -708,8 +708,8 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
     let field = Arc::new(
         crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1.2); 4]).unwrap(),
     );
-    let settings = crate::project::FlatFieldSettings::new(record, field);
-    e.document.project.set_flat_field(Some(settings));
+    let settings = crate::project::FlatFieldSettings::new(record.path.clone(), field);
+    e.document.project.set_flat_field(Some(settings)).unwrap();
     e.document.correction = crate::editor::Correction::prepare(
         &e.source_services.as_ref().unwrap().device,
         &e.document.capture(),

@@ -30,7 +30,6 @@ impl Input {
         let mut record = Source {
             id: SourceId(1),
             path: file.path().into(),
-            reference_only: false,
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
                 Default::default(),
             )),
@@ -338,7 +337,6 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
     let mut input = Input::new();
     let before = input.key.clone();
     input.record.id = SourceId(99);
-    input.record.reference_only = true;
     input.record.adjustment_layers.as_mut().unwrap().layers[0]
         .adjustment
         .photo

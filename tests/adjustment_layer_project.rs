@@ -43,7 +43,6 @@ fn fixture() -> (Project, SourceId) {
                 camera_model: "test-camera".into(),
                 camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
             },
-            reference_only: false,
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
                 AdjustmentLayerSettings::default(),
             )),

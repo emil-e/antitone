@@ -304,7 +304,10 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
         app.enter(|editor, cx| {
             editor.load("not-opened.dng".into(), cx);
             editor.start_document(
-                Preparation::Import(editor.document.capture(), vec![], None),
+                Preparation::Input(
+                    editor.document.capture(),
+                    editor.document.visit.current_source,
+                ),
                 cx,
             );
             let operation = editor.document_pending;
@@ -586,7 +589,10 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                 e.load(path, cx);
 
                 let view = e.document.visit.view;
-                e.start_document(Preparation::Import(e.document.capture(), vec![], None), cx);
+                e.start_document(
+                    Preparation::Input(e.document.capture(), e.document.visit.current_source),
+                    cx,
+                );
                 let operation = e.document_pending.unwrap();
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
@@ -678,8 +684,8 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
                 )
                 .unwrap(),
             );
-            let field = crate::project::FlatFieldSettings::new(source, map);
-            candidate.project.set_flat_field(Some(field));
+            let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+            candidate.project.set_flat_field(Some(field)).unwrap();
             e.start_correction(candidate, cx);
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(5);

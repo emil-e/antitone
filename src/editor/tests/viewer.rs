@@ -645,7 +645,6 @@ fn flat_fixture(editor: &mut Editor) {
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let mut record = ready.record.clone();
     record.path = "light.ARW".into();
-    record.reference_only = true;
     let reference = Ready {
         reference: None,
         developed: ready.developed.clone(),

@@ -42,7 +42,9 @@ fn documented_states_render() {
         harness.step();
         harness.enter(|editor, cx| editor.add_raws(scans, cx));
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.interaction_blocked()
+                && e.document_pending.is_none()
+                && !e.document.visit.source.pending()
         });
         harness.read(|editor| {
             assert!(

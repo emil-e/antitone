@@ -11,7 +11,6 @@ fn digital(gain: f64) -> Project {
         .add_source(Source {
             id: SourceId(0),
             path: "source.arw".into(),
-            reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [gain, 1., 1., 1.]),
                 dimensions: [64; 2],

@@ -176,7 +176,10 @@ impl Editor {
                 .expect("accepted correction")
                 .enabled = enabled;
         } else {
-            candidate.project.set_flat_field(None);
+            candidate
+                .project
+                .set_flat_field(None)
+                .expect("clearing correction");
         }
         self.start_correction(candidate, cx);
     }
@@ -250,20 +253,12 @@ impl Editor {
                 }
                 ui.add_enabled_ui(available, |ui| {
                     if let Some(settings) = self.document.state.project.flat_field() {
-                        let path = self.document.source_path(settings.reference).ok();
+                        let name = settings.reference_name.clone();
                         let mut enabled = settings.enabled;
                         if ui.add_enabled(!self.tool_interacting(), egui::Checkbox::new(&mut enabled, "Enabled")).changed() {
                             self.change_correction(Some(enabled), cx);
                         }
-                        let name = path
-                            .as_ref()
-                            .and_then(|p| p.file_name())
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "Reference RAW".into());
-                        let response = ui.add(egui::Label::new(name).truncate());
-                        if let Some(path) = path {
-                            response.on_hover_text(path.display().to_string());
-                        }
+                        ui.add(egui::Label::new(name).truncate());
                     } else if presentation::TextAction::new("Set up…")
                         .help("Choose a film-free RAW of the light source from the same scanning setup.")
                         .show(ui)
@@ -676,6 +671,7 @@ impl Change {
                     document.capture_exposure(&editor.document.exposures);
                     self.edit.replace_snapshot(Arc::new(document));
                     editor.commit_document(self.edit).expect("current document edit");
+                    editor.document.correction_restore = None;
                     editor.document.correction = correction.into();
                     editor.observe_gamma_pivot();
                     editor.status = "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup.".into();
@@ -718,18 +714,23 @@ impl CorrectionInput {
             }
             let mut scan = self.source.scan()?;
             let map = Arc::new(scan.estimate_flat_field(self.region)?);
-            let reference = self.document.register_reference(self.record)?;
+            self.document
+                .project
+                .require_scan_source(&self.record.development)?;
+            if self.document.project.scan.is_none() {
+                self.document.project.scan = Some(crate::project::ScanSetup {
+                    basis: crate::project::ScanBasis::from_development(&self.record.development),
+                    flat_field: None,
+                });
+            }
             let enabled = self
                 .document
                 .project
                 .flat_field()
                 .is_none_or(|field| field.enabled);
-            let mut settings = crate::project::FlatFieldSettings::new(
-                self.document.project.source(reference)?,
-                map,
-            );
+            let mut settings = crate::project::FlatFieldSettings::new(self.record.path, map);
             settings.enabled = enabled;
-            self.document.project.set_flat_field(Some(settings));
+            self.document.project.set_flat_field(Some(settings))?;
             Ok(self.document)
         })
         .await

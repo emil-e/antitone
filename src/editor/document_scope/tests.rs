@@ -156,7 +156,10 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.start_document(
-                crate::editor::Preparation::Import(editor.document.capture(), vec![], None),
+                crate::editor::Preparation::Input(
+                    editor.document.capture(),
+                    editor.document.visit.current_source,
+                ),
                 cx,
             );
             let request = editor.document_pending.unwrap();

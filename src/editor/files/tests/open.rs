@@ -323,13 +323,16 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
         )
         .unwrap(),
     );
-    let settings = crate::project::FlatFieldSettings::new(&record, map);
-    saved.project.set_flat_field(Some(settings.clone()));
+    let settings = crate::project::FlatFieldSettings::new(record.path.clone(), map);
+    saved
+        .project
+        .set_flat_field(Some(settings.clone()))
+        .unwrap();
     saved.project.remove_from_filmstrip(reference).unwrap();
     saved = saved
         .save(saved.path.as_ref().unwrap(), Save::Replace)
         .unwrap();
-    std::fs::remove_file(saved.source_path(reference).unwrap()).unwrap();
+    std::fs::remove_file(&record.path).unwrap();
     let loader = source_loading::SourceLoader::new();
     let editor = editor(
         loader.clone(),

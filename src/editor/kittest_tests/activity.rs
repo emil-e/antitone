@@ -26,9 +26,7 @@ fn render_case(harness: &mut Harness<'_, Editor>, name: &str) {
 fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_style() {
     editor_harness(|mut harness, _capture| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
 
         let before = harness.read(|editor| editor.document.state.project.clone());

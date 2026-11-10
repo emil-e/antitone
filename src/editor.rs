@@ -96,7 +96,7 @@ mod canvas_view;
 mod gamma_pivot;
 use document::Preparation;
 #[cfg(test)]
-use document::{Prepared, Request as DocumentRequest};
+use document::Request as DocumentRequest;
 mod export;
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
@@ -889,9 +889,8 @@ impl Editor {
                 return;
             }
         };
-        if self.document.project.input.is_negative() != target.is_negative()
-            && !self.document.state.project.sources.is_empty()
-        {
+        let stage_changed = self.document.project.input.is_negative() != target.is_negative();
+        if stage_changed && !self.document.state.project.sources.is_empty() {
             // Crossing stages changes every active source's decode WB, so it is an atomic
             // document operation rather than an input-only edit.
 
@@ -912,10 +911,19 @@ impl Editor {
             self.status = error.to_string();
             return;
         }
-        draft.update(|project| project.input = target);
+        draft.update(|project| {
+            project.input = target;
+            if stage_changed {
+                project.set_flat_field(None).expect("clearing correction");
+            }
+        });
         if let Err(error) = self.commit_project(draft) {
             self.status = error.to_string();
             return;
+        }
+        if stage_changed {
+            self.document.correction_restore = None;
+            self.document.correction = Default::default();
         }
         self.document.source = !target.ready();
     }
@@ -953,21 +961,6 @@ impl Editor {
         self.document_pending = Some(id);
         self.status = "Preparing project…".into();
         id
-    }
-
-    fn add_raws(&mut self, paths: Vec<PathBuf>, cx: &UiContext<'_, Self>) {
-        let reuse = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .and(self.document.visit.current_source)
-            .map(|source| (self.id, source));
-        self.start_document(
-            Preparation::Import(self.document.capture(), paths, reuse),
-            cx,
-        );
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {

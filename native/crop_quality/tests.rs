@@ -13,7 +13,6 @@ fn fixture(directory: &Path) -> PathBuf {
         .add_source(Source {
             id: SourceId(0),
             path: "unavailable.ARW".into(),
-            reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [1.; 4]),
                 dimensions: [256, 160],
@@ -124,37 +123,20 @@ fn censored_labels_flag_proposals_but_do_not_override_the_normal_evidence_gate()
 }
 
 #[test]
-fn retained_evidence_does_not_make_a_removed_or_reference_source_a_photo_proposal() {
+fn retained_evidence_does_not_make_a_removed_photo_a_proposal() {
     let directory = tempfile::tempdir().unwrap();
     let path = fixture(directory.path());
     let (mut cases, margins) = load(&path, &mut Inputs::default()).unwrap();
     let id = cases[0].spec.source;
-    let ordinary = cases[0].project.clone();
     assert!(proposal(&cases[0]).is_ok());
-    let source = cases[0].project.source(id).unwrap();
-    let map = std::sync::Arc::new(
-        crate::flat_field::FlatField::from_nodes(
-            source.development.active_area,
-            [2, 2],
-            vec![glam::DVec3::ONE; 4],
-        )
-        .unwrap(),
-    );
-    let field = crate::project::FlatFieldSettings::new(source, map);
-    cases[0].project.set_flat_field(Some(field));
     cases[0].project.remove_from_filmstrip(id).unwrap();
     cases[0].project.validate().unwrap();
-    assert!(!cases[0].project.order.contains(&id));
-    assert!(cases[0].project.source(id).unwrap().reference_only);
-    assert_eq!(
-        report(&cases, &margins).unwrap()["cases"][0]["proposals"][0]["status"],
-        "abstain"
-    );
-    cases[0].project = ordinary;
-    cases[0].project.source_mut(id).unwrap().reference_only = true;
-    cases[0].project.validate().unwrap();
-    assert!(cases[0].project.order.contains(&id));
+    assert!(cases[0].project.source(id).is_err());
     assert!(proposal(&cases[0]).is_err());
+    assert!(
+        report(&cases, &margins).is_err(),
+        "a report cannot retain metadata for a removed photo"
+    );
 }
 
 #[test]

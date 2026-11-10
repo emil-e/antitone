@@ -107,7 +107,7 @@ Cancel signals the workflow's cooperative cancellation token. Export and Analyze
 
 ## Export photographs
 
-File → **Export…** writes Selected photos or All photos in filmstrip order; non-filmstrip source/reference records are excluded. Choose an existing destination folder, TIFF or EXR, and format-specific output settings. TIFF offers sRGB/Display P3 with 16-bit RGB and lossless Deflate; EXR has fixed scene-linear AP0 and half/full float precision. [Colour and output](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains the different rendering semantics.
+File → **Export…** writes Selected photos or All photos in filmstrip order. Choose an existing destination folder, TIFF or EXR, and format-specific output settings. TIFF offers sRGB/Display P3 with 16-bit RGB and lossless Deflate; EXR has fixed scene-linear AP0 and half/full float precision. [Colour and output](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains the different rendering semantics.
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 
@@ -169,7 +169,7 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 - Plain click makes that photo active, retaining or replacing the selection; arrow navigation uses the same rule.
 - Cmd-click toggles membership without changing the active photo; Shift-click selects the contiguous range from the last plain-click anchor; Shift–Cmd–A reduces the selection to the active photo.
 
-**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. An accepted flat-field reference survives as a reference-only record until correction is cleared. Undo restores the removed records. The next active position is the old index in the shortened roll rather than the next surviving identity.
+**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old index in the shortened roll rather than the next surviving identity.
 
 ## Responsiveness and optional caches
 

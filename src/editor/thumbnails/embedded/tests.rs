@@ -469,7 +469,7 @@ fn retired_document_source_and_development_reject_previews() {
             .0;
         match stale {
             "document" => document = Document::default().into(),
-            "source" => document.project.source_mut(id).unwrap().reference_only = true,
+            "source" => document.project.remove_from_filmstrip(id).unwrap(),
             "development" => document.project.development_mut().unwrap().white_balance[0] = 2.,
             "cancel" => previews.cancel(),
             _ => unreachable!(),

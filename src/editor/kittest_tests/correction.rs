@@ -33,8 +33,8 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
                 )
                 .unwrap(),
             );
-            let settings = crate::project::FlatFieldSettings::new(reference, map);
-            document.project.set_flat_field(Some(settings));
+            let settings = crate::project::FlatFieldSettings::new(reference.path.clone(), map);
+            document.project.set_flat_field(Some(settings)).unwrap();
             document
                 .save(
                     &directory.path().join("unavailable-correction.antitone"),
@@ -361,7 +361,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
 fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_another_paint() {
     editor_harness(|mut harness, _| {
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.interaction_blocked());
+        wait_opened_photo(&mut harness);
         harness.update(|e| {
             let mut scan = e.source_context().unwrap().scan().unwrap();
             e.set_dmin(Some(
@@ -457,9 +457,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
     std::fs::copy(fixture("bare-light.dng"), &reference).unwrap();
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert!(editor.active_canvas().ready.is_some(), "{}", editor.status));
         let before = harness.read(|editor| editor.document.state.project.clone());
         let selected = harness.read(|editor| editor.document.visit.current_source);
@@ -607,24 +605,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             [accepted.x, accepted.y, accepted.width, accepted.height]
         );
         harness.read(|editor| {
-            assert!(
-                editor
-                    .document
-                    .project
-                    .source(settings.reference)
-                    .unwrap()
-                    .reference_only
-            )
-        });
-        harness.read(|editor| {
-            assert!(
-                !editor
-                    .document
-                    .state
-                    .project
-                    .order
-                    .contains(&settings.reference)
-            )
+            assert!(editor.document.find_source(&reference).is_none());
         });
         let wb = harness.read(|editor| editor.document.project.acquisition_wb());
         let mut scan = Scan::open(&fixture("illuminated-patches.dng"), wb).unwrap();
@@ -889,7 +870,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         harness.read(|editor| assert!(editor.document.correction.prepared().is_none()));
         let mut cleared = saved.clone();
-        cleared.set_flat_field(None);
+        cleared.set_flat_field(None).unwrap();
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         open_project(
             &mut harness,
@@ -976,13 +957,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                 editor.status
             );
             let mut expected = cleared.clone();
-            let mut reference = saved.source(settings.reference).unwrap().clone();
-            reference.id = SourceId(expected.next_source_id);
-            expected.next_source_id += 1;
             let reapplied = editor.document.state.project.flat_field().cloned().unwrap();
-            assert_eq!(reapplied.reference, reference.id);
-            expected.sources.push(reference);
-            expected.set_flat_field(Some(reapplied));
+            assert_eq!(reapplied.reference_name, settings.reference_name);
+            expected.set_flat_field(Some(reapplied)).unwrap();
             expected.validate().unwrap();
             assert_eq!(editor.document.state.project, expected);
         });

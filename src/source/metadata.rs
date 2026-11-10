@@ -44,7 +44,6 @@ pub(crate) fn source_metadata(
         id: SourceId(0),
         path: absolute(path)?,
         development: metadata_development(metadata, white_balance)?,
-        reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             Default::default(),
         )),

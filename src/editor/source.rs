@@ -667,13 +667,6 @@ impl Editor {
                 if let Some(notice) = self.document.visit.return_notice.take() {
                     self.status = notice;
                 }
-                if let Some(id) = self.document.visit.current_source {
-                    self.document.remember_source_preview(
-                        id,
-                        &ready.developed.metadata(),
-                        ready.developed.white_balance(),
-                    );
-                }
                 self.document.cache_ready(&ready);
                 self.document.visit.canvas.ready = Some(*ready);
             }

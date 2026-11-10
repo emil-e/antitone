@@ -1086,7 +1086,10 @@ fn failed_candidates_preserve_repairs_and_new_retires_them_and_late_work() {
                 e.schedule_dust(e.dust_signature().unwrap(), cx);
                 let request = captured_request(e);
                 if fail_first {
-                    e.start_document(Preparation::Import(e.document.capture(), vec![], None), cx);
+                    e.start_document(
+                        Preparation::Input(e.document.capture(), e.document.visit.current_source),
+                        cx,
+                    );
                     let id = e.document_pending.unwrap();
                     e.document_prepared(id, Err("not prepared".into()));
                     assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);

@@ -439,9 +439,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             cx,
         )
     });
-    wait_for(&mut harness, |editor| {
-        !editor.interaction_blocked() && editor.document_pending.is_none()
-    });
+    wait_opened_photo(&mut harness);
     harness.read(|editor| {
         assert!(
             editor.document.visit.canvas.ready.is_some(),
@@ -568,9 +566,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     let mut harness = app_harness(&state, editor, renderer);
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
-    wait_for(&mut harness, |editor| {
-        !editor.interaction_blocked() && editor.document_pending.is_none()
-    });
+    wait_opened_photo(&mut harness);
     harness.read(|editor| {
         assert!(
             editor.document.visit.canvas.ready.is_some(),
@@ -856,9 +852,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -1150,9 +1144,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

@@ -130,7 +130,6 @@ pub(super) fn fixture() -> Document {
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
                     },
-                    reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                         AdjustmentLayerSettings::default(),
                     )),
@@ -355,8 +354,8 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     let map = Arc::new(
         crate::flat_field::FlatField::from_nodes(a, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
     );
-    let settings = crate::project::FlatFieldSettings::new(source, map);
-    document.project.set_flat_field(Some(settings));
+    let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+    document.project.set_flat_field(Some(settings)).unwrap();
     let corrected = key(&document, id);
     assert_ne!(corrected, plain);
     assert_eq!(corrected.source, plain.source);
@@ -367,7 +366,7 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     assert_eq!(corrected, recreated);
     document.project.flat_field_mut().unwrap().enabled = false;
     assert_eq!(key(&document, id), plain);
-    document.project.set_flat_field(None);
+    document.project.set_flat_field(None).unwrap();
     assert_eq!(key(&document, id), plain);
 }
 
@@ -780,10 +779,11 @@ fn source_thumbnails_use_each_photos_viewing_white_and_share_canvas_exposure() {
     let red = directory.path().join("red.dng");
     std::fs::write(&neutral, &original).unwrap();
     std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
-    let mut document = Document::default();
-    document.import(&[neutral, red]).unwrap();
-    let mut editor = Editor::state();
-    *editor.document = document;
+    let mut editor = super::super::tests::complete_document_operation(
+        Editor::state(),
+        Duration::from_secs(15),
+        |editor, cx| editor.add_raws(vec![neutral, red], cx),
+    );
     let ids = editor.document.state.project.order.clone();
     let before = editor.document.state.project.clone();
     let keys = ids

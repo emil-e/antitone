@@ -10,9 +10,7 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
 ) -> R {
     editor_harness_with_thumbnails(thumbnails, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -511,9 +509,7 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
 fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
     editor_harness(|mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

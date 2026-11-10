@@ -53,25 +53,16 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
     #[derive(Clone, Copy)]
     enum Admission {
         Publish,
-        Import,
         OtherPicker,
     }
     for layer_pick in [false, true] {
-        for admission in [
-            Admission::Publish,
-            Admission::Import,
-            Admission::OtherPicker,
-        ] {
-            let import = matches!(admission, Admission::Import);
+        for admission in [Admission::Publish, Admission::OtherPicker] {
             let publish = matches!(admission, Admission::Publish);
             let replacement = if layer_pick {
                 crate::editor::PickerCase::Gamma
             } else {
                 crate::editor::PickerCase::Wb
             };
-            let directory = tempfile::tempdir().unwrap();
-            let added = directory.path().join("added.dng");
-            std::fs::copy(path("patches.dng"), &added).unwrap();
             let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
 
             let source = editor.document.visit.current_source.unwrap();
@@ -143,18 +134,12 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
                 });
 
                 app.enter(|editor, cx| {
-                    if import {
-                        editor.add_raws(vec![added], cx);
-                    } else if !publish {
+                    if !publish {
                         editor.begin_test_picker(replacement, cx);
                     }
                 });
                 let _ = release.send(());
-                if import {
-                    app.run_until(Duration::from_secs(15), |editor| {
-                        !editor.interaction_blocked() && editor.document_pending.is_none()
-                    });
-                } else if publish {
+                if publish {
                     app.run_until(Duration::from_secs(5), |_| published.get());
                 } else {
                     app.pump();
@@ -168,19 +153,14 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
                         editor.balance()
                     };
                     assert_eq!(actual, if publish { value } else { before });
-                    if !import && !publish {
+                    if !publish {
                         assert_eq!(editor.test_pick(), Some(replacement.display()));
                         assert!(!editor.interaction_blocked());
                     }
-                    assert_eq!(
-                        editor.document.project.order.len(),
-                        if import { 2 } else { 1 }
-                    );
+                    assert_eq!(editor.document.project.order.len(), 1);
                     assert_eq!(
                         editor.history_label(crate::editor::history::Direction::Undo),
-                        if import {
-                            Some("Import photos")
-                        } else if publish {
+                        if publish {
                             Some("Calibration pick")
                         } else {
                             undo.as_deref()
@@ -243,7 +223,9 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         let (accepted, selected, visit) = app.read(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order.len(), 1);
@@ -399,7 +381,9 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.enter(|e, cx| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(glam::DVec3::splat(0.6)));
@@ -419,8 +403,8 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 )
                 .unwrap(),
             );
-            let field = FlatFieldSettings::new(source, map);
-            candidate.project.set_flat_field(Some(field));
+            let field = FlatFieldSettings::new(source.path.clone(), map);
+            candidate.project.set_flat_field(Some(field)).unwrap();
             e.start_correction(candidate, cx);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
@@ -655,7 +639,7 @@ fn failed_open_preserves_the_accepted_document_history_and_pixels() {
 }
 
 #[test]
-fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_new_work() {
+fn queued_import_is_retired_by_document_replacement() {
     let scheduler = source_loading::SourceLoader::new();
     let e = editor(scheduler.clone());
     let hold = crate::background::testing::pause();
@@ -664,14 +648,12 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
             e.add_raws(vec![path("patches.dng")], access);
         });
         app.pump();
-        let old = app.read(|e| e.document_pending.unwrap());
+        assert!(app.read(|e| e.document.importing.is_some() && e.editing()));
         app.enter(|e, _| {
             e.new_project();
         });
         app.pump();
-        app.update(|e| {
-            e.document_prepared(old, Err("stale".into()));
-        });
+
         app.read(|e| {
             assert!(e.document_pending.is_none());
             assert!(e.activities.view().is_none());
@@ -689,7 +671,7 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
 }
 
 #[test]
-fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_retirement() {
+fn accepted_import_can_retire_its_loading_visit_before_native_cleanup() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
@@ -709,15 +691,18 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
     });
     let e = editor(scheduler.clone());
     with_application(e, |app| {
-        let accepted = app.read(|e| e.document.state.project.clone());
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
         });
         app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() > 0);
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
         app.read(|e| {
-            assert_eq!(e.document.state.project, accepted);
-            assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
+            assert_eq!(e.document.project.sources.len(), 1);
+            assert_eq!(
+                e.history_label(history::Direction::Undo),
+                Some("Import photos")
+            );
+            assert!(e.document.visit.canvas.ready.is_none() && !e.interaction_blocked());
         });
         app.enter(|e, _| {
             e.new_project();

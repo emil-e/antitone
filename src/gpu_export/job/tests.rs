@@ -38,7 +38,6 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
         .add_source(Source {
             id: SourceId(0),
             path: "fixture.dng".into(),
-            reference_only: false,
             development: source_development,
 
             orientation: Default::default(),

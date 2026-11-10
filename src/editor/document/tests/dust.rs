@@ -2,7 +2,7 @@ use super::*;
 use crate::dust_repair::{RepairId, RepairOrigin, SupportMask};
 
 #[test]
-fn save_as_with_unavailable_relative_flat_field_reference_adopts_the_written_baseline() {
+fn save_as_keeps_the_reference_filename_and_adopts_the_written_baseline() {
     let directory = tempfile::tempdir().unwrap();
     let document = fixture(directory.path());
     let reference = document.project.sources[0].clone();
@@ -18,8 +18,10 @@ fn save_as_with_unavailable_relative_flat_field_reference_adopts_the_written_bas
     document
         .project
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-            &reference, map,
-        )));
+            reference.path.clone(),
+            map,
+        )))
+        .unwrap();
     let other = document.project.order[1];
     document.project.remove_from_filmstrip(other).unwrap();
     document
@@ -27,13 +29,9 @@ fn save_as_with_unavailable_relative_flat_field_reference_adopts_the_written_bas
         .remove_from_filmstrip(reference.id)
         .unwrap();
     assert!(document.project.order.is_empty());
-    assert_eq!(document.project.sources.len(), 1);
+    assert!(document.project.sources.is_empty());
     let original = directory.path().join("project.antitone");
     let mut document = document.save(&original, Save::New).unwrap();
-    for source in &mut document.project.sources {
-        source.path = PathBuf::from(source.path.file_name().unwrap());
-    }
-    let mut document = document.save(&original, Save::Replace).unwrap();
     for name in ["one.ARW", "two.ARW"] {
         std::fs::remove_file(directory.path().join(name)).unwrap();
     }
@@ -46,8 +44,8 @@ fn save_as_with_unavailable_relative_flat_field_reference_adopts_the_written_bas
     document.accept_save(saved);
     assert!(!document.dirty());
     assert_eq!(
-        document.project.source(reference.id).unwrap().path,
-        PathBuf::from("../one.ARW")
+        document.project.flat_field().unwrap().reference_name,
+        "one.ARW"
     );
     assert_eq!(
         Document::open(document.path.as_deref().unwrap())

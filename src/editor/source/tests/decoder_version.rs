@@ -97,9 +97,11 @@ fn open_keeps_recorded_development_and_map_when_the_reference_is_unavailable() {
         )
         .unwrap(),
     );
-    let settings =
-        FlatFieldSettings::new(document.project.source(reference_id).unwrap(), map.clone());
-    document.project.set_flat_field(Some(settings));
+    let settings = FlatFieldSettings::new(
+        document.project.source(reference_id).unwrap().path.clone(),
+        map.clone(),
+    );
+    document.project.set_flat_field(Some(settings)).unwrap();
     document
         .project
         .remove_from_filmstrip(reference_id)
@@ -126,7 +128,7 @@ fn open_keeps_recorded_development_and_map_when_the_reference_is_unavailable() {
     );
     assert_eq!(opened.project.roll.exposure, 0.375);
     assert_eq!(opened.project.active_flat_field().unwrap().map, map);
-    assert!(opened.project.source(reference_id).unwrap().reference_only);
+    assert!(opened.project.source(reference_id).is_err());
 }
 
 #[test]
@@ -177,8 +179,9 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     )
                     .unwrap(),
                 );
-                let field = FlatFieldSettings::new(document.project.source(id).unwrap(), map);
-                document.project.set_flat_field(Some(field));
+                let field =
+                    FlatFieldSettings::new(document.project.source(id).unwrap().path.clone(), map);
+                document.project.set_flat_field(Some(field)).unwrap();
             }
             let baseline = ReferenceExposure::Matched(StartingExposure {
                 ev: 0.5,

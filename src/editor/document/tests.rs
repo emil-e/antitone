@@ -138,7 +138,6 @@ fn fixture(directory: &Path) -> Document {
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
                     },
-                    reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                         AdjustmentLayerSettings::default(),
                     )),
@@ -198,7 +197,11 @@ fn source_viewing_metadata_is_rebuilt_lazily_after_open_and_save_as() {
     )
     .unwrap();
     let mut document = Document::default();
-    document.import(&[raw_path]).unwrap();
+    let previews = document
+        .import_with_progress(&[raw_path], &Default::default(), |_, _| {})
+        .unwrap();
+    let mut document: crate::editor::document_scope::DocumentScope = document.into();
+    document.source_previews.extend(previews);
     let id = document.project.order[0];
     let preview = document.source_preview(document.project.source(id).unwrap());
     assert_ne!(
@@ -219,10 +222,20 @@ fn source_viewing_metadata_is_rebuilt_lazily_after_open_and_save_as() {
         .save(&other_directory.join("second.antitone"), Save::New)
         .unwrap();
     let reopened = Document::open(other.path.as_ref().unwrap()).unwrap();
-    for mut document in [opened, other, reopened] {
+    for document in [opened, other, reopened] {
+        let mut document: crate::editor::document_scope::DocumentScope = document.into();
         let accepted = document.project.clone();
+        assert_eq!(
+            document
+                .source_preview(document.project.source(id).unwrap())
+                .transform(SourceWhiteBalance::AsShot),
+            glam::DMat3::IDENTITY
+        );
         let scan = acquired_scan(&document, id);
-        document.remember_source_preview(id, &scan.source().metadata(), scan.white_balance);
+        document.source_previews.insert(
+            document.source_key(id).unwrap(),
+            scan.source().metadata().source_preview(scan.white_balance),
+        );
         let actual = document.source_preview(document.project.source(id).unwrap());
         for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
             assert_eq!(actual.transform(white), preview.transform(white));
@@ -305,7 +318,7 @@ fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_rec
 }
 
 #[test]
-fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
+fn stage_redevelopment_clears_correction_without_removing_independent_photos() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -319,69 +332,42 @@ fn stage_redevelopment_clears_flat_field_and_removes_its_reference_record() {
     )
     .unwrap();
     let mut document = Document::default();
-    document.import(std::slice::from_ref(&photo)).unwrap();
-    let reference = read_source(&reference, Some([1.; 4])).unwrap();
-    let reference_id = document.register_reference(reference.clone()).unwrap();
-    let source = document.project.source(document.project.order[0]).unwrap();
+    document.import(&[photo, reference.clone()]).unwrap();
+    let ids = document.project.order.clone();
+    let record = document.project.source(ids[1]).unwrap();
     let map = std::sync::Arc::new(
         crate::flat_field::FlatField::from_nodes(
-            source.development.active_area,
+            record.development.active_area,
             [2, 2],
             vec![glam::DVec3::ONE; 4],
         )
         .unwrap(),
     );
-    let field = crate::project::FlatFieldSettings::new(
-        document.project.source(reference_id).unwrap(),
-        map.clone(),
-    );
-    document.project.set_flat_field(Some(field));
-    assert!(document.project.flat_field().is_some());
-    assert!(document.project.source(reference_id).is_ok());
-
+    let settings = crate::project::FlatFieldSettings::new(reference, map);
     document
-        .redevelop_for_input(crate::processing::InputSettings::Digital)
+        .project
+        .set_flat_field(Some(settings.clone()))
         .unwrap();
-    assert!(document.project.flat_field().is_none());
-    assert!(document.project.source(reference_id).is_err());
-    assert!(document.project.order.iter().all(|id| *id != reference_id));
-
-    let refreshed = read_source(&reference.path, None).unwrap();
-    let new_reference_id = document.register_reference(refreshed.clone()).unwrap();
-    assert_ne!(new_reference_id, reference_id);
-    assert_eq!(
+    let negative = document.project.input;
+    for target in [crate::processing::InputSettings::Digital, negative] {
         document
             .project
-            .source(new_reference_id)
-            .unwrap()
-            .development,
-        refreshed.development
-    );
-    assert!(
-        document
-            .project
-            .source(new_reference_id)
-            .unwrap()
-            .reference_only
-    );
-    assert!(!document.project.order.contains(&new_reference_id));
-
-    let settings = crate::project::FlatFieldSettings::new(
-        document.project.source(new_reference_id).unwrap(),
-        map,
-    );
-    document.project.set_flat_field(Some(settings));
-    document
-        .redevelop_for_input(crate::processing::InputSettings::Negative {
-            dmin: None,
-            dmax: None,
-            response: crate::processing::Response::film(),
-            gamma: crate::processing::DEFAULT_GAMMA,
-            balance: Balance::default(),
-        })
-        .unwrap();
-    assert!(document.project.flat_field().is_none());
-    assert!(document.project.source(new_reference_id).is_err());
+            .set_flat_field(Some(settings.clone()))
+            .unwrap();
+        document.redevelop_for_input(target).unwrap();
+        assert!(document.project.flat_field().is_none());
+        assert_eq!(document.project.order, ids);
+        assert_eq!(document.project.sources.len(), 2);
+        for id in &ids {
+            let record = document.project.source(*id).unwrap();
+            assert_eq!(
+                record.development,
+                read_source(&record.path, target.development_wb())
+                    .unwrap()
+                    .development
+            );
+        }
+    }
 }
 
 #[test]
@@ -451,7 +437,7 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
 }
 
 #[test]
-fn file_progress_reports_only_completed_reads_including_duplicates() {
+fn import_progress_counts_completed_requests_and_skips_duplicate_reads() {
     let raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let directory = tempfile::tempdir().unwrap();
     let one = directory.path().join("one.dng");
@@ -463,7 +449,7 @@ fn file_progress_reports_only_completed_reads_including_duplicates() {
     document
         .import_with_progress(
             &[one.clone(), two.clone(), one.clone()],
-            None,
+            &crate::cancellation::Cancellation::default(),
             |done, total| progress.push((done, total)),
         )
         .unwrap();
@@ -477,8 +463,11 @@ fn file_progress_reports_only_completed_reads_including_duplicates() {
     progress.clear();
     assert!(
         Document::default()
-            .import_with_progress(&[one, two], None, |done, total| progress
-                .push((done, total)))
+            .import_with_progress(
+                &[one, two],
+                &crate::cancellation::Cancellation::default(),
+                |done, total| progress.push((done, total))
+            )
             .is_err()
     );
     assert_eq!(progress, [(0, 2), (1, 2)]);
@@ -670,8 +659,10 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
     document
         .project
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-            &reference, map,
-        )));
+            reference.path.clone(),
+            map,
+        )))
+        .unwrap();
     let ordered = document.project.order[0];
     document.project.remove_from_filmstrip(ordered).unwrap();
     document
@@ -679,13 +670,10 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
         .remove_from_filmstrip(reference.id)
         .unwrap();
     assert!(document.project.order.is_empty());
-    assert_eq!(document.project.sources.len(), 1);
-    assert!(
-        document
-            .project
-            .source(reference.id)
-            .unwrap()
-            .reference_only
+    assert!(document.project.sources.is_empty());
+    assert_eq!(
+        document.project.flat_field().unwrap().reference_name,
+        "two.ARW"
     );
     let path = directory.path().join("references.antitone.json");
     let saved = document.save(&path, Save::New).unwrap();
@@ -702,55 +690,48 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
 }
 
 #[test]
-fn explicit_import_captures_a_restored_reference_when_promoting_it_to_a_photo() {
+fn correction_provenance_can_be_imported_and_removed_as_an_independent_photo() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let photo = directory.path().join("photo.dng");
     let reference = directory.path().join("reference.dng");
     std::fs::copy(&fixture, &photo).unwrap();
-    std::fs::copy(&fixture, &reference).unwrap();
     let mut document = Document::default();
     document.import(std::slice::from_ref(&photo)).unwrap();
-    let record = read_source(&reference, Some([1.; 4])).unwrap();
-    let id = document.register_reference(record.clone()).unwrap();
+    let area = document.project.sources[0].development.active_area;
     let map = std::sync::Arc::new(
-        crate::flat_field::FlatField::from_nodes(
-            record.development.active_area,
-            [2, 2],
-            vec![glam::DVec3::ONE; 4],
-        )
-        .unwrap(),
+        crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
     );
-    let settings =
-        crate::project::FlatFieldSettings::new(document.project.source(id).unwrap(), map);
-    document.project.set_flat_field(Some(settings));
+    let settings = crate::project::FlatFieldSettings::new(reference.clone(), map);
+    document
+        .project
+        .set_flat_field(Some(settings.clone()))
+        .unwrap();
     let destination = directory.path().join("reference.antitone");
     document.save(&destination, Save::New).unwrap();
-    std::fs::remove_file(&reference).unwrap();
     let mut reopened = Document::open(&destination).unwrap();
-    assert!(reopened.project.source(id).unwrap().reference_only);
-    assert!(
-        reopened
-            .file_key(&reopened.source_path(id).unwrap())
-            .revision
-            .is_none()
-    );
+    assert_eq!(reopened.project.sources.len(), 1);
+    assert!(reopened.find_source(&reference).is_none());
     std::fs::copy(&fixture, &reference).unwrap();
     reopened.import(std::slice::from_ref(&reference)).unwrap();
-    assert!(!reopened.project.source(id).unwrap().reference_only);
-    assert!(reopened.project.order.contains(&id));
-    assert!(
-        reopened
-            .file_key(&reopened.source_path(id).unwrap())
-            .revision
-            .is_some()
-    );
+    let id = reopened.find_source(&reference).unwrap();
+    assert_eq!(reopened.project.sources.len(), 2);
+    assert!(reopened.file_key(&reference).revision.is_some());
     assert!(
         reopened
             .spatial_inputs()
             .iter()
             .any(|input| input.source == id)
     );
+    assert_eq!(reopened.project.flat_field(), Some(&settings));
+    reopened.project.remove_from_filmstrip(id).unwrap();
+    assert!(reopened.project.source(id).is_err());
+    assert_eq!(reopened.project.flat_field(), Some(&settings));
+    reopened.import(std::slice::from_ref(&reference)).unwrap();
+    let reimported = reopened.find_source(&reference).unwrap();
+    assert_ne!(reimported, id);
+    reopened.project.set_flat_field(None).unwrap();
+    assert!(reopened.project.source(reimported).is_ok());
 }
 
 #[test]
@@ -961,7 +942,6 @@ fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
                 camera_model: camera.into(),
                 camera_to_ap1: matrix,
             },
-            reference_only: false,
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                 AdjustmentLayerSettings::default(),
             )),

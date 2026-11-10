@@ -21,7 +21,7 @@ use std::{
 
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 18;
+pub const SCHEMA_VERSION: u32 = 19;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
@@ -213,7 +213,6 @@ pub struct Source {
     pub id: SourceId,
     pub path: PathBuf,
     pub development: SourceDevelopment,
-    pub reference_only: bool,
 
     pub repairs: crate::dust_repair::RepairSet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -371,7 +370,7 @@ pub struct Project {
     pub processing_model: u32,
     pub next_source_id: u64,
     pub sources: Vec<Source>,
-    // Ordered photos; the accepted flat-field reference may remain outside this list.
+    // Filmstrip order, containing every registered photo exactly once.
     pub order: Vec<SourceId>,
     pub roll: RollSettings,
     /// How source samples become a positive (per stage; owns the negative calibration).
@@ -534,57 +533,18 @@ impl Project {
     }
 
     pub fn flat_field_mut(&mut self) -> Option<&mut FlatFieldSettings> {
-        self.ensure_scan_setup();
         self.scan.as_mut().and_then(|scan| scan.flat_field.as_mut())
     }
 
-    pub fn set_flat_field(&mut self, flat_field: Option<FlatFieldSettings>) {
-        if flat_field.is_none() {
-            if let Some(scan) = &mut self.scan {
-                scan.flat_field = None;
-            }
-            self.prune_unreferenced_sources();
-            return;
-        }
-        if self.scan.is_none() {
-            let development = flat_field
-                .as_ref()
-                .and_then(|field| self.source(field.reference).ok())
-                .map(|source| source.development.clone())
-                .or_else(|| {
-                    self.sources
-                        .first()
-                        .map(|source| source.development.clone())
-                });
-            if let Some(development) = development {
-                self.scan = Some(ScanSetup {
-                    basis: ScanBasis::from_development(&development),
-                    flat_field: None,
-                });
-            }
+    pub fn set_flat_field(&mut self, flat_field: Option<FlatFieldSettings>) -> Result<()> {
+        if flat_field.is_some() {
+            self.ensure_scan_setup();
+            require(self.scan.is_some(), "correction requires a scan basis")?;
         }
         if let Some(scan) = &mut self.scan {
             scan.flat_field = flat_field;
         }
-        self.prune_unreferenced_sources();
-    }
-
-    /// Keep only ordered photos and the source referenced by the accepted flat field. A
-    /// retained reference stays available to process and save the accepted correction, but is
-    /// marked reference-only while outside the filmstrip. Other removed records disappear with
-    /// their analysis support.
-    fn prune_unreferenced_sources(&mut self) {
-        let ordered: HashSet<_> = self.order.iter().copied().collect();
-        let reference = self.flat_field().map(|field| field.reference);
-        for source in &mut self.sources {
-            if !ordered.contains(&source.id) {
-                source.reference_only = true;
-            }
-        }
-        self.sources
-            .retain(|source| ordered.contains(&source.id) || reference == Some(source.id));
-        self.analysis_regions
-            .retain(|entry| ordered.contains(&entry.source));
+        Ok(())
     }
 
     fn ensure_scan_setup(&mut self) {
@@ -638,21 +598,9 @@ impl Project {
         Ok(id)
     }
 
-    /// Sources that participate in the active roll or its accepted correction. An unreferenced
-    /// nonordered record is not part of accepted state and does not reach a stage switch.
-    pub fn active_source_ids(&self) -> Vec<SourceId> {
-        let mut ids = self.order.clone();
-        if let Some(reference) = self.flat_field().map(|field| field.reference)
-            && !ids.contains(&reference)
-        {
-            ids.push(reference);
-        }
-        ids
-    }
-
     /// Assert the shared scanning setup required by scan-based input stages.
     pub fn require_scan_sources(&self) -> Result<()> {
-        let active = self.active_source_ids();
+        let active = &self.order;
         let Some(basis) = self
             .scan
             .as_ref()
@@ -677,7 +625,7 @@ impl Project {
             .as_ref()
             .map(|scan| scan.basis.clone())
             .or_else(|| {
-                self.active_source_ids()
+                self.order
                     .first()
                     .and_then(|id| self.source(*id).ok())
                     .map(ScanBasis::new)
@@ -720,21 +668,12 @@ impl Project {
         }
     }
 
-    /// Remove a photo from the filmstrip and erase its source record unless an accepted flat
-    /// field still references it. Undo restores a removal through the document history snapshot.
+    /// Delete the photo and its analysis support; correction provenance is independent.
     pub fn remove_from_filmstrip(&mut self, id: SourceId) -> Result<()> {
         self.source(id)?;
         self.order.retain(|candidate| *candidate != id);
-        self.prune_unreferenced_sources();
-        Ok(())
-    }
-
-    /// Remove a source from the ordered filmstrip without deleting its record. Reference
-    /// registration needs this while the accepted correction has not yet been installed.
-    #[cfg(feature = "editor")]
-    pub(crate) fn remove_from_order(&mut self, id: SourceId) -> Result<()> {
-        self.source(id)?;
-        self.order.retain(|candidate| *candidate != id);
+        self.sources.retain(|source| source.id != id);
+        self.analysis_regions.retain(|entry| entry.source != id);
         Ok(())
     }
 
@@ -810,6 +749,10 @@ impl Project {
                 "invalid/duplicate ordered source ID",
             )?;
         }
+        require(
+            ordered.len() == ids.len(),
+            "source is absent from filmstrip",
+        )?;
         if let Some(region) = self.analysis_area {
             require(
                 region[2] >= 8 && region[3] >= 8,
@@ -851,7 +794,7 @@ impl Project {
         if let Some(scan) = &self.scan {
             scan.basis.validate()?;
             if let Some(field) = &scan.flat_field {
-                field.validate(self)?;
+                field.validate()?;
             }
         }
         Ok(())
@@ -867,10 +810,7 @@ impl Project {
 
     pub fn load(path: &Path) -> Result<Self> {
         let input = BufReader::new(json::bounded_strings(File::open(path).map_err(failure)?));
-        let mut project: Self = serde_json::from_reader(input).map_err(failure)?;
-        // Files may contain nonordered source records. Keep only ordered photos and the
-        // accepted flat-field reference before validation.
-        project.prune_unreferenced_sources();
+        let project: Self = serde_json::from_reader(input).map_err(failure)?;
         project.validate()?;
         Ok(project)
     }

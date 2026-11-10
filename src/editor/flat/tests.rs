@@ -13,7 +13,6 @@ fn record(path: &str) -> Source {
             camera_model: "test-camera".into(),
             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
         },
-        reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             Default::default(),
         )),
@@ -38,8 +37,12 @@ fn document_replacement_retires_unpolled_correction_resources_without_a_late_err
             )
             .unwrap(),
         );
-        let settings = crate::project::FlatFieldSettings::new(source, map);
-        editor.document.project.set_flat_field(Some(settings));
+        let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+        editor
+            .document
+            .project
+            .set_flat_field(Some(settings))
+            .unwrap();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.restore_correction(cx);
@@ -89,23 +92,24 @@ fn removed_reference_preview_does_not_reuse_a_deleted_record() {
 }
 
 #[test]
-fn reference_registration_does_not_add_a_photo_or_hide_an_existing_one() {
+fn correction_provenance_does_not_register_or_retain_photos() {
     let mut document = Document::default();
-    let development = Development::new(crate::raw::version(), [1.; 4]);
-    let photo = document
-        .register_with_development(record("photo.ARW"), development.clone())
+    let photo = document.register(record("photo.ARW")).unwrap();
+    let sources = document.project.sources.clone();
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes([12, 12, 800, 600], [2, 2], vec![DVec3::ONE; 4])
+            .unwrap(),
+    );
+    let settings = FlatFieldSettings::new("light.ARW", map);
+    document
+        .project
+        .set_flat_field(Some(settings.clone()))
         .unwrap();
-    let same = document
-        .register_reference_with_development(record("photo.ARW"), development.clone())
-        .unwrap();
-    assert_eq!(same, photo);
+    assert_eq!(document.project.sources, sources);
     assert_eq!(document.project.order, vec![photo]);
-    assert!(!document.project.source(photo).unwrap().reference_only);
-    let reference = document
-        .register_reference_with_development(record("light.ARW"), development)
-        .unwrap();
-    assert_eq!(document.project.order, vec![photo]);
-    assert!(document.project.source(reference).unwrap().reference_only);
+    document.project.remove_from_filmstrip(photo).unwrap();
+    assert!(document.project.sources.is_empty());
+    assert_eq!(document.project.flat_field(), Some(&settings));
 }
 
 #[test]
@@ -262,7 +266,6 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     let area = ready.area;
     let mut reference = ready.clone();
     reference.record.path = "light.ARW".into();
-    reference.record.reference_only = true;
     reference.path = reference.record.path.clone();
     reference.file = thumbnails::FileKey::new(&reference.path);
     let region = Rect {
@@ -372,7 +375,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             (Thumbnails::default()).with_sources(editor.document.cache.clone());
         with_application(editor, |app| {
             app.enter(|e, cx| e.add_raws(vec![root.join("illuminated-patches.dng")], cx));
-            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
+            app.run_until(Duration::from_secs(60), |e| {
+                !e.interaction_blocked() && !e.document.visit.source.pending()
+            });
             assert!(app.read(|e| e.document.visit.canvas.ready.is_some()));
             let selected = app.read(|e| e.document.visit.current_source);
             let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
@@ -474,14 +479,8 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 assert_eq!((e.dmin(), e.dmax()), rgb);
                 assert_eq!(e.document.visit.current_source, selected);
                 let settings = e.document.state.project.flat_field().cloned().unwrap();
-                assert!(
-                    e.document
-                        .state
-                        .project
-                        .source(settings.reference)
-                        .unwrap()
-                        .reference_only
-                );
+                assert_eq!(e.document.project.sources.len(), original.sources.len());
+                assert_eq!(settings.reference_name, "bare-light.dng");
                 settings
             });
             let directory = tempfile::tempdir().unwrap();
@@ -535,8 +534,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 );
             });
             let mut missing = accepted;
-            missing.source_mut(settings.reference).unwrap().path =
-                directory.path().join("unavailable.dng");
+            missing.flat_field_mut().unwrap().reference_name = "unavailable.dng".into();
             let path = directory.path().join("missing-reference.antitone.json");
             missing.save(&path, crate::project::Save::New).unwrap();
             app.enter(|e, cx| e.open_project(path, cx));
