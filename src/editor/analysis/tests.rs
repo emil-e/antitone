@@ -165,7 +165,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(60),
-            |editor, cx| editor.start_document(Preparation::Open(path), cx),
+            |editor, cx| editor.open_project(path, cx),
         );
         assert_eq!(editor.document.state.project, accepted);
         editor.document.state.project.analysis_area = Some([96, 96, 8, 8]);

@@ -30,13 +30,12 @@ impl Editor {
         }
         self.document.history.finish_group();
         self.history_pending = None;
-        let id = self.begin_document_operation(false);
+        let id = self.begin_document_operation();
         self.document.write.response = Some(send);
         let activity = self
             .activities
             .start(ActivityOptions::new("Saving project…").modal());
 
-        self.new_project_pending = false;
         let device = self
             .source_services
             .as_ref()

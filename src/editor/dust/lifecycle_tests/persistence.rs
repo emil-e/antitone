@@ -207,9 +207,9 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
                 .document
                 .save(&path, crate::project::Save::Replace)
                 .unwrap();
-            let reopened = Document::open(&path);
-            // The synthetic source is deliberately not a RAW. Project decoding still restores failed intent.
-            assert!(reopened.is_err());
+            let reopened = Document::open(&path).unwrap();
+            assert_eq!(reopened.project, saved.project);
+            assert!(!reopened.dirty());
             assert_eq!(crate::project::Project::load(&path).unwrap(), saved.project);
             assert!(saved.project.source(source).unwrap().repairs.repairs()[0].enabled);
         });

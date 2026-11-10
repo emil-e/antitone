@@ -111,7 +111,7 @@ fn document_replacement_retires_the_continuation_but_not_the_unanswered_dialog()
                 cx,
             );
             assert!(e.dialogs.is_open());
-            e.start_document(Preparation::New, cx);
+            e.new_project();
         });
         app.run_until(Duration::from_secs(30), |e| {
             e.document_pending.is_none() && !e.interaction_blocked()

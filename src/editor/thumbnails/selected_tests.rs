@@ -399,12 +399,13 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 editor.load(b.clone(), cx);
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert_eq!(editor.document.visit.current_source, Some(b_id));
-                editor.start_document(Preparation::New, cx);
+                editor.new_project();
                 assert!(
                     editor.document.visit.pending_preview.is_none()
                         && editor.document.visit.canvas.selection_timing.is_none()
                 );
-                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+                assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+                assert!(editor.document.project.sources.is_empty());
             });
         });
     });
@@ -485,8 +486,9 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                         ),
                     ),
                 ));
-                editor.document.correction =
-                    Correction::prepare(&device, &editor.document, None).unwrap();
+                editor.document.correction = Correction::prepare(&device, &editor.document, None)
+                    .unwrap()
+                    .into();
                 let before = editor.document.state.project.clone();
                 editor.load(path, cx);
                 assert_eq!(editor.document.state.project, before);
@@ -499,7 +501,7 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                     .proxy
                     .clone();
                 editor.document.state.project.set_flat_field(None);
-                editor.document.correction = None;
+                editor.document.correction = None.into();
                 editor.validate_pending_preview();
                 assert!(
                     proxy.same_source(

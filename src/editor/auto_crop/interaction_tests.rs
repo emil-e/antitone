@@ -121,7 +121,7 @@ fn replacing_the_document_retires_a_preparing_batch_and_its_publication_rights()
             if polled {
                 app.pump();
             }
-            app.enter(|editor, cx| editor.start_document(Preparation::New, cx));
+            app.enter(|editor, _| editor.new_project());
             app.run_until(LIMIT, |editor| !editor.interaction_blocked());
             assert!(state.upgrade().is_none());
             app.pump();

@@ -233,8 +233,8 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
     editor.activities.freeze_time();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.start_document(Preparation::Open("project.json".into()), cx);
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+            editor.open_project("project.json".into(), cx);
+            assert!(editor.interaction_blocked() && editor.files.opening());
             let context = egui::Context::default();
             app_frame(editor, &context, vec![]);
             assert!(
@@ -250,7 +250,7 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
                     .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
                     .is_some()
             );
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.files.opening());
         });
     });
 }

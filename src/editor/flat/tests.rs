@@ -24,6 +24,49 @@ fn record(path: &str) -> Source {
 }
 
 #[test]
+fn document_replacement_retires_unpolled_correction_resources_without_a_late_error() {
+    for replace in [false, true] {
+        let mut editor = Editor::state();
+        let id = editor.document.register(record("photo.ARW")).unwrap();
+        editor.document.project.reset_scan_basis();
+        let source = editor.document.project.source(id).unwrap();
+        let map = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                source.development.active_area,
+                [2, 2],
+                vec![DVec3::ONE; 4],
+            )
+            .unwrap(),
+        );
+        let settings = crate::project::FlatFieldSettings::new(source, map);
+        editor.document.project.set_flat_field(Some(settings));
+        with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.restore_correction(cx);
+                if replace {
+                    editor.new_project();
+                }
+            });
+            app.pump();
+            app.read(|editor| {
+                assert_eq!(
+                    editor.document.correction.error().is_none(),
+                    replace,
+                    "the surviving owner reports missing GPU resources; a retired owner cannot"
+                );
+                assert!(!editor.document.correction.pending());
+                assert!(editor.document.correction.prepared().is_none());
+                assert_eq!(
+                    editor.document.project.active_flat_field().is_none(),
+                    replace
+                );
+                assert!(!editor.interaction_blocked() && editor.activities.view().is_none());
+            });
+        });
+    }
+}
+
+#[test]
 fn removed_reference_preview_does_not_reuse_a_deleted_record() {
     let mut editor = Editor::state();
     let reference = editor.document.register(record("light.ARW")).unwrap();
@@ -410,7 +453,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.enter(|e, cx| e.apply_flat_edit(cx));
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             let settings = app.read(|e| {
-                assert!(e.document.correction.is_some(), "{}", e.status);
+                assert!(e.document.correction.prepared().is_some(), "{}", e.status);
                 assert_eq!(
                     e.adjustment_layer_target(),
                     adjustment_layers::Target::Layer(selected_layer)
@@ -447,14 +490,14 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, original, "{}", e.status);
-                assert!(e.document.correction.is_none());
+                assert!(e.document.correction.prepared().is_none());
             });
             app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, accepted, "{}", e.status);
                 assert_eq!(
-                    e.document.correction.as_ref().unwrap().settings.map,
+                    e.document.correction.prepared().unwrap().settings.map,
                     settings.map
                 );
             });
@@ -478,12 +521,16 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             assert!(!app.read(|e| e.document.dirty()));
-            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
-            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
+            app.enter(|e, cx| e.open_project(path, cx));
+            app.run_until(Duration::from_secs(60), |e| {
+                !e.files.opening()
+                    && !e.document.correction.pending()
+                    && !e.document.visit.source.pending()
+            });
             app.read(|e| {
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(
-                    e.document.correction.as_ref().unwrap().settings.map,
+                    e.document.correction.prepared().unwrap().settings.map,
                     settings.map
                 );
             });
@@ -492,12 +539,16 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 directory.path().join("unavailable.dng");
             let path = directory.path().join("missing-reference.antitone.json");
             missing.save(&path, crate::project::Save::New).unwrap();
-            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
-            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
+            app.enter(|e, cx| e.open_project(path, cx));
+            app.run_until(Duration::from_secs(60), |e| {
+                !e.files.opening()
+                    && !e.document.correction.pending()
+                    && !e.document.visit.source.pending()
+            });
             app.read(|e| {
                 assert_eq!(e.document.state.project, missing);
                 assert_eq!(
-                    e.document.correction.as_ref().unwrap().settings.map,
+                    e.document.correction.prepared().unwrap().settings.map,
                     settings.map
                 );
                 assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);

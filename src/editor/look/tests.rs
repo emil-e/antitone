@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{FailureCase, Preparation, document::Document, tests::fixture},
+    editor::{FailureCase, document::Document, tests::fixture},
     looks::Lut3D,
 };
 use std::{sync::Mutex, time::Duration};
@@ -409,14 +409,14 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
     with_application(e, |app| {
         app.enter(|e, access| e.select_look(Source::Loaded(asset(0.9)), access));
         app.pump();
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
         let operation = app.read(|e| e.document_pending);
         app.read(|e| {
             assert_eq!(e.document_pending, operation);
-            assert!(e.interaction_blocked());
-            assert_eq!(e.document.state.project.output.lut, Some(previous.clone()));
+            assert!(!e.interaction_blocked());
+            assert!(e.document.state.project.output.lut.is_none());
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
@@ -536,14 +536,13 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
 }
 
 #[test]
-fn opening_either_oversized_colour_slot_preserves_the_current_document() {
+fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
     for slot in [Slot::Lut, Slot::FilmAndPaper] {
         let (mut e, scheduler) = editor_with_limits(wgpu::Limits {
             max_storage_buffer_binding_size: 1024,
             ..Default::default()
         });
         e.document.state.project.output.lut = Some(asset(0.2));
-        let before = e.document.state.project.clone();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("candidate.antitone");
         let make = |size| {
@@ -576,21 +575,32 @@ fn opening_either_oversized_colour_slot_preserves_the_current_document() {
         slot.set(&mut candidate, Some(make(3)));
         candidate.save(&path, crate::project::Save::New).unwrap();
         let device = &e.source_services.as_ref().unwrap().device;
-        assert!(Document::open_with_progress(&path, Some(device), |_, _| {}).is_ok());
+        Document::open(&path)
+            .unwrap()
+            .validate_for_device(device)
+            .unwrap();
         slot.set(&mut candidate, Some(make(5)));
         candidate
             .save(&path, crate::project::Save::Replace)
             .unwrap();
-        assert!(Document::open_with_progress(&path, Some(device), |_, _| {}).is_err());
+        let opened = Document::open(&path).unwrap();
+        assert!(opened.validate_for_device(device).is_err());
         with_application(e, |app| {
-            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
+            app.enter(|e, cx| e.open_project(path, cx));
             app.run_until(Duration::from_secs(15), |e| {
                 !e.interaction_blocked() && e.document_pending.is_none()
             });
             app.read(|e| {
-                assert_eq!(e.document.state.project, before);
-                assert!(e.document.path.is_none());
-                assert!(e.status.contains("limits"), "{}", e.status);
+                assert_eq!(e.document.state.project, opened.project);
+                assert_eq!(e.document.path, opened.path);
+                assert!(!e.document.dirty());
+                assert!(
+                    e.document
+                        .validate_for_device(&e.source_services.as_ref().unwrap().device)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("limits")
+                );
             });
         });
         scheduler.close_and_wait().unwrap();

@@ -185,7 +185,7 @@ fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
 }
 
 #[test]
-fn source_viewing_metadata_survives_save_as_and_is_rebuilt_on_open() {
+fn source_viewing_metadata_is_rebuilt_lazily_after_open_and_save_as() {
     use crate::raw::SourceWhiteBalance;
     let directory = tempfile::tempdir().unwrap();
     let raw_path = directory.path().join("red.dng");
@@ -219,11 +219,15 @@ fn source_viewing_metadata_survives_save_as_and_is_rebuilt_on_open() {
         .save(&other_directory.join("second.antitone"), Save::New)
         .unwrap();
     let reopened = Document::open(other.path.as_ref().unwrap()).unwrap();
-    for document in [&opened, &other, &reopened] {
+    for mut document in [opened, other, reopened] {
+        let accepted = document.project.clone();
+        let scan = acquired_scan(&document, id);
+        document.remember_source_preview(id, &scan.source().metadata(), scan.white_balance);
         let actual = document.source_preview(document.project.source(id).unwrap());
         for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
             assert_eq!(actual.transform(white), preview.transform(white));
         }
+        assert_eq!(document.project, accepted);
         assert!(!document.dirty());
     }
 }
@@ -419,7 +423,7 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         assert_eq!(opened.project.input, input);
         let scan = acquired_scan(&opened, opened.project.order[0]);
         assert_eq!(scan.white_balance, expected);
-        // Decoder observations are refreshed, not used to make the project inaccessible.
+        // Observations are accepted as metadata; source compatibility is checked on acquisition.
         let mut bad = opened;
         bad.project.sources[0].development.dimensions[0] += 1;
         bad.project.sources[0].development.camera_to_ap1[0][0] *= 1.01;
@@ -429,9 +433,20 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         bad.project.validate().unwrap();
         let bad_path = directory.path().join(format!("{index}-bad.antitone"));
         bad.project.save(&bad_path, Save::New).unwrap();
-        let refreshed = Document::open(&bad_path).unwrap();
-        assert_eq!(refreshed.project, saved.project);
-        assert!(!refreshed.dirty());
+        let reopened = Document::open(&bad_path).unwrap();
+        assert_eq!(reopened.project, bad.project);
+        assert!(!reopened.dirty());
+        let loader = crate::source::SourceLoader::new();
+        assert!(
+            pollster::block_on(reopened.acquire_source(
+                reopened.project.order[0],
+                &loader,
+                &Default::default(),
+                &Default::default()
+            ))
+            .is_err()
+        );
+        loader.close_and_wait().unwrap();
     }
 }
 
@@ -456,19 +471,9 @@ fn file_progress_reports_only_completed_reads_including_duplicates() {
     assert_eq!(document.project.order.len(), 2);
     let project = directory.path().join("project.json");
     let saved = document.save(&project, Save::New).unwrap();
-    progress.clear();
-    let opened =
-        Document::open_with_progress(&project, None, |done, total| progress.push((done, total)))
-            .unwrap();
-    assert_eq!(progress, [(0, 2), (1, 2), (2, 2)]);
-    assert_eq!(opened.project, saved.project);
+    assert_eq!(Document::open(&project).unwrap().project, saved.project);
     std::fs::remove_file(&two).unwrap();
-    progress.clear();
-    assert!(
-        Document::open_with_progress(&project, None, |done, total| progress.push((done, total)))
-            .is_err()
-    );
-    assert_eq!(progress, [(0, 2), (1, 2)]);
+    assert_eq!(Document::open(&project).unwrap().project, saved.project);
     progress.clear();
     assert!(
         Document::default()

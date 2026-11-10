@@ -83,7 +83,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
 }
 
 #[test]
-fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
+fn source_navigation_retires_measurement_independently_of_photographic_validation() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let hold = crate::background::testing::pause();
@@ -98,6 +98,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         });
         app.pump();
         let (view, path) = app.read(|editor| {
+            assert!(editor.measurement_pending() && editor.interaction_blocked());
             (
                 editor.document.visit.view,
                 editor
@@ -113,17 +114,16 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         });
         app.enter(|editor, cx| {
             editor.set_gamma(0.);
-            editor.load("next.dng".into(), cx);
+            editor.load(path, cx);
         });
+        app.read(|editor| assert!(editor.document.visit.interaction_action.is_none()));
+        app.pump();
         app.read(|editor| {
-            assert_eq!(editor.document.visit.view, view);
-            assert!(editor.measurement_pending());
-            assert!(editor.interaction_blocked());
-            assert_eq!(editor.id, view);
-            assert_eq!(
-                editor.document.visit.canvas.ready.as_ref().unwrap().path,
-                path
-            );
+            assert_ne!(editor.document.visit.view, view);
+            assert!(!editor.measurement_pending());
+            assert!(!editor.interaction_blocked());
+            assert_eq!(editor.id, editor.document.visit.view);
+            assert!(editor.document.visit.canvas.ready.is_none());
         });
     });
     drop(hold);

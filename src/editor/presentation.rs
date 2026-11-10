@@ -8,7 +8,7 @@ mod dialogs;
 pub(super) use dialogs::{DecisionDialog, DialogChoice, escape_requested, focus_default, modal};
 
 mod feedback;
-pub(super) use feedback::{ContextualStatus, FeedbackDialog, Severity, StatusLevel};
+pub(super) use feedback::{ContextualStatus, FeedbackDialog, Severity, StatusLevel, status_icon};
 
 mod progress;
 pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};

@@ -74,7 +74,7 @@ impl Editor {
                         && self
                             .document
                             .correction
-                            .as_ref()
+                            .prepared()
                             .map(|correction| &correction.settings.map)
                             == anchor.recipe.correction.as_ref()
                 })

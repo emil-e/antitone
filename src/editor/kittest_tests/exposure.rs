@@ -352,18 +352,25 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
 }
 
 #[test]
-fn cold_open_admits_selected_layers_only_after_source_normalization() {
+fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_positive() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
         project::{AdjustmentLayers, Save},
     };
     let file = crate::exposure_fixture::neutral_dng(1.3);
+    let other = crate::exposure_fixture::neutral_dng(0.);
+    let other_name = "supported.dng";
     let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("unsupported.dng");
+    let second = directory.path().join(other_name);
+    std::fs::copy(file.path(), &first).unwrap();
+    std::fs::copy(other.path(), &second).unwrap();
     let path = directory.path().join("unprepared.antitone");
     let mut document = Document::default();
     document.project.input = crate::processing::InputSettings::Digital;
-    document.import(&[file.path().to_owned()]).unwrap();
+    document.import(&[first, second]).unwrap();
     let id = document.project.order[0];
+    let other_id = document.project.order[1];
     document.project.roll.exposure = 16.;
     let mut layers = AdjustmentLayers::default();
     for exposure in [16., 16., 16., 16., 16., 16., 5.5] {
@@ -392,15 +399,70 @@ fn cold_open_admits_selected_layers_only_after_source_normalization() {
             .exposure_metadata
             .is_none()
     );
-    Document::open(&path).expect("header-only Open defers this unresolved numerical domain");
+    let accepted =
+        Document::open(&path).expect("metadata Open defers this unresolved numerical domain");
     editor_harness(|mut h, _| {
         open_project(&mut h, path.clone());
+        wait_opened_photo(&mut h);
+        h.step();
+        assert!(h.output().shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text.starts_with("Positive preview unavailable:")
+        )), "the production view must report rejected rendering before nonpublication is checked");
         h.read(|editor| {
+            assert_eq!(editor.document.state.project, accepted.project);
+            assert_eq!(editor.document.visit.current_source, Some(id));
             assert!(
-                editor.document.state.project.order.is_empty(),
-                "the unsafe normalized selected grade must not replace the accepted document"
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
             );
-            assert!(editor.document.visit.current_source.is_none());
+            assert!(
+                editor
+                    .validate_document_candidate(&editor.document)
+                    .is_err(),
+                "resolved normalization must expose the unsupported numerical domain"
+            );
+            assert!(
+                editor.canvas_frame.displayed.is_none(),
+                "an unsafe positive must not be published"
+            );
+        });
+        h.get_by_label(other_name).scroll_to_me();
+        h.try_run_realtime().unwrap();
+        h.get_by_label(other_name).click();
+        h.step();
+        wait_opened_photo(&mut h);
+        h.read(|editor| {
+            assert_eq!(
+                editor.document.visit.current_source,
+                Some(other_id),
+                "one unsupported positive must not veto navigation to another photo"
+            );
+            assert_eq!(editor.document.state.project, accepted.project);
+            assert!(!editor.document.dirty());
+        });
+        super::workflow::wait_settled(&mut h);
+        h.get_by_label("unsupported.dng").click();
+        h.step();
+        wait_opened_photo(&mut h);
+        h.update(|editor| editor.document.project.roll.exposure = 0.);
+        h.step();
+        super::workflow::wait_settled(&mut h);
+        h.read(|editor| {
+            editor
+                .validate_document_candidate(&editor.document)
+                .unwrap();
+            assert!(
+                !editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .spec
+                    .is_inspection(),
+                "the same resolved source can display a supported positive"
+            );
         });
     });
 }

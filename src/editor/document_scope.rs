@@ -82,7 +82,8 @@ pub(super) struct DocumentScope {
     pub roll_selection: super::RollSelection,
 
     pub export: super::export::State,
-    pub correction: Option<Arc<super::Correction>>,
+    pub correction: super::flat::Resources,
+    pub correction_restore: Option<async_executor::Task<()>>,
     pub flat_correction: Option<async_executor::Task<()>>,
     pub hosted_tool: super::tool::Slot,
     pub state: Document,
@@ -181,6 +182,7 @@ impl DocumentScope {
     pub fn install(&mut self, document: Document) {
         self.retire_edits();
         self.flat_correction = None;
+        self.correction_restore = None;
         self.sampling_inputs.retain(&document);
         self.exposures.restore(&document.exposure_metadata, |id| {
             document.exposure_origin(id)
@@ -268,7 +270,8 @@ impl From<Document> for DocumentScope {
             project_preview: Default::default(),
 
             controls_edit: None,
-            correction: None,
+            correction: Default::default(),
+            correction_restore: None,
             flat_correction: None,
             hosted_tool: Default::default(),
             selected: 0,

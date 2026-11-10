@@ -166,7 +166,7 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
     for tab in [1, 2] {
         let editor = fixture();
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
+            app.enter(|editor, _| {
                 editor.tab = tab;
                 editor
                     .preferences
@@ -181,27 +181,9 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
                     .sections
                     .insert("roll-gamma-balance".into(), false);
                 let before = editor.preferences.clone();
-                editor.start_document(Preparation::New, cx);
-                let id = editor.document_pending.unwrap();
-                assert_eq!(editor.tab, tab);
-                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-                editor.document_prepared(id + 1, Err("stale".into()));
-                assert_eq!(editor.tab, tab);
-                assert_eq!(editor.document_pending, Some(id));
-                assert!(editor.new_project_pending);
-                editor.document_prepared(
-                    id,
-                    Ok(Box::new(Prepared {
-                        document: Document::default(),
-                        ready: None,
-                        selected: None,
-                        reuse_ready: false,
-                        correction: None,
-                        preserve_view: false,
-                    })),
-                );
+                editor.new_project();
                 assert_eq!(editor.tab, 0);
-                assert!(!editor.new_project_pending);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.preferences.sections["roll-calibration"]);
                 assert!(!editor.preferences.sections["photo-white-balance"]);
                 assert!(!editor.preferences.sections["roll-gamma-balance"]);
@@ -255,35 +237,33 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
 }
 
 #[test]
-fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
+fn failed_open_and_successful_import_preserve_the_selected_tab() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
+        let before = app.update(|editor| {
             editor.tab = 2;
-            let before = editor.document.state.project.clone();
-            editor.start_document(Preparation::New, cx);
-            editor.document_prepared(editor.document_pending.unwrap(), Err("failed".into()));
+            editor.document.state.project.clone()
+        });
+        app.enter(|editor, cx| editor.open_project("missing-project.antitone".into(), cx));
+        app.run_until(Duration::from_secs(10), |editor| !editor.files.opening());
+        app.read(|editor| {
             assert_eq!(editor.tab, 2);
             assert_eq!(editor.document.state.project, before);
-            assert!(!editor.new_project_pending);
-            for work in [
-                Preparation::Open("project.json".into()),
-                Preparation::Import(Document::default(), vec![], None),
-            ] {
-                editor.start_document(work, cx);
-                editor.document_prepared(
-                    editor.document_pending.unwrap(),
-                    Ok(Box::new(Prepared {
-                        document: Document::default(),
-                        ready: None,
-                        selected: None,
-                        reuse_ready: false,
-                        correction: None,
-                        preserve_view: false,
-                    })),
-                );
-                assert_eq!(editor.tab, 2);
-            }
+        });
+        app.enter(|editor, cx| {
+            editor.start_document(Preparation::Import(Document::default(), vec![], None), cx);
+            editor.document_prepared(
+                editor.document_pending.unwrap(),
+                Ok(Box::new(Prepared {
+                    document: Document::default(),
+                    ready: None,
+                    selected: None,
+                    reuse_ready: false,
+                    correction: None,
+                    preserve_view: false,
+                })),
+            );
+            assert_eq!(editor.tab, 2);
         });
     });
 }

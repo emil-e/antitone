@@ -564,7 +564,13 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.read(|editor| assert!(editor.document.flat_edit().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));

@@ -376,13 +376,20 @@ impl Editor {
             && self.input().ready()
             && (!self.has_hosted_tool() || self.fullscreen.is_some())
             && !self.masking();
-        ui.add_enabled_ui(inspecting, |ui| {
+        let correction_ready =
+            !self.document.correction.pending() && self.document.correction.error().is_none();
+        let can_toggle = correction_ready || !self.document.source;
+        ui.add_enabled_ui(inspecting && can_toggle, |ui| {
             icons::toggle(
                 ui,
                 icons::Icon::Source,
                 &mut self.document.source,
                 "View source",
-                "Switch between the positive grade and developed source.",
+                if can_toggle {
+                    "Switch between the positive grade and developed source."
+                } else {
+                    "Disable or replace flat-field correction to view the positive."
+                },
             );
         });
         if !self.canvas_inspection() && self.document.visit.working_view.enabled() {

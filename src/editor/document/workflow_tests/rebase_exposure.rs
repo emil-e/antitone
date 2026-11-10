@@ -65,7 +65,7 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
         let mut leases = Vec::new();
         with_application(editor(loader.clone()), |app| {
             for path in paths {
-                app.enter(|e, cx| e.start_document(Preparation::Open(path.clone()), cx));
+                app.enter(|e, cx| e.open_project(path.clone(), cx));
                 app.run_until(Duration::from_secs(15), |e| {
                     !e.interaction_blocked() && !e.document.visit.source.pending()
                 });
@@ -131,7 +131,7 @@ fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
 
     let loader = source_loading::SourceLoader::new();
     with_application(editor(loader.clone()), |app| {
-        app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
+        app.enter(|e, cx| e.open_project(project, cx));
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 mod rebase_exposure;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, document::Document, source, source_loading, tests::fixture},
+    editor::{document::Document, source, source_loading, tests::fixture},
 };
 use std::{
     path::{Path, PathBuf},
@@ -193,7 +193,7 @@ fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished(
 }
 
 #[test]
-fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
+fn ordinary_photo_loading_seeds_the_fresh_opened_document_cache() {
     let scheduler = source_loading::SourceLoader::new();
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("opened.antitone");
@@ -203,8 +203,10 @@ fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
         let (snapshot, previous) =
             app.read(|e| (e.document.capture(), Arc::downgrade(&e.document.cache)));
         snapshot.save(&project, crate::project::Save::New).unwrap();
-        app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.enter(|e, cx| e.open_project(project, cx));
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.files.opening() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert!(previous.upgrade().is_none());
             assert!(!previous.ptr_eq(&Arc::downgrade(&e.document.cache)));
@@ -283,8 +285,8 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             assert!(e.document.visit.canvas.ready.is_some());
         });
         let cache = app.read(|e| Arc::downgrade(&e.document.cache));
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
@@ -423,7 +425,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (negative, scan, expected_pixels) = app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             let (uncorrected, _) = crate::editor::prepare_source(
@@ -451,7 +453,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 e.document.visit.canvas.ready.as_ref().unwrap(),
                 e.document
                     .correction
-                    .as_ref()
+                    .prepared()
                     .map(|correction| correction.gpu.clone()),
             )
         });
@@ -469,7 +471,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         });
         app.pump();
         app.read(|e| {
-            assert!(e.interaction_blocked() && e.document.correction.is_some());
+            assert!(e.interaction_blocked() && e.document.correction.prepared().is_some());
             assert_eq!(
                 e.document.project.input, negative,
                 "old interpretation stays accepted until preparation completes"
@@ -483,7 +485,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert!(e.document.correction.is_none() && !e.document.source);
+            assert!(e.document.correction.prepared().is_none() && !e.document.source);
             assert!(
                 e.source_context()
                     .unwrap()
@@ -502,7 +504,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 e.document.visit.canvas.ready.as_ref().unwrap(),
                 e.document
                     .correction
-                    .as_ref()
+                    .prepared()
                     .map(|correction| correction.gpu.clone()),
             );
             assert_eq!(actual.len(), expected_pixels.len());
@@ -516,7 +518,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.project.input, negative, "{}", e.status);
-            assert!(e.document.correction.is_some() && !e.document.source);
+            assert!(e.document.correction.prepared().is_some() && !e.document.source);
             assert_eq!(e.document.state.project.scan, scan);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
@@ -528,7 +530,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert!(e.document.correction.is_none());
+            assert!(e.document.correction.prepared().is_none());
             e.request_input(e.negative_input(), cx);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
@@ -536,7 +538,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             assert!(
                 e.document.project.input.is_negative()
                     && e.document.source
-                    && e.document.correction.is_none(),
+                    && e.document.correction.prepared().is_none(),
                 "{}",
                 e.status
             );
@@ -597,8 +599,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 }
 
 #[test]
-fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_history_and_pixels()
-{
+fn failed_open_preserves_the_accepted_document_history_and_pixels() {
     let scheduler = source_loading::SourceLoader::new();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("candidate.antitone");
@@ -609,9 +610,11 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
         .unwrap();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, access| {
-            e.start_document(Preparation::Open(destination.clone()), access);
+            e.open_project(destination.clone(), access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.files.opening() && !e.document.visit.source.pending()
+        });
         let (snapshot, visit, native, store) = app.update(|e| {
             let before = e.history_snapshot();
             e.document.project.roll.exposure = 0.25;
@@ -631,10 +634,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
             )
         });
         app.enter(|e, access| {
-            e.start_document(
-                Preparation::Open(directory.path().join("missing.antitone")),
-                access,
-            );
+            e.open_project(directory.path().join("missing.antitone"), access);
         });
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
@@ -665,18 +665,17 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
         });
         app.pump();
         let old = app.read(|e| e.document_pending.unwrap());
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
-        let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
         app.update(|e| {
             e.document_prepared(old, Err("stale".into()));
         });
         app.read(|e| {
-            assert_eq!(e.document_pending, Some(current));
-            assert!(e.activities.view().unwrap().measured.is_none());
-            assert!(e.interaction_blocked());
+            assert!(e.document_pending.is_none());
+            assert!(e.activities.view().is_none());
+            assert!(!e.interaction_blocked());
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
@@ -720,12 +719,12 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
         });
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
         app.pump();
         assert_eq!(scheduler.waiter_count(), 0);
-        assert!(app.read(|e| e.interaction_blocked()));
+        assert!(app.read(|e| !e.interaction_blocked()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         assert_eq!(count.load(Ordering::Relaxed), 1);

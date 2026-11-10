@@ -44,6 +44,7 @@ impl Editor {
     pub(super) fn capture_source_context(
         &self,
     ) -> Result<impl Future<Output = Result<Context, String>> + use<>, String> {
+        let correction = self.document.correction.clone();
         let ready = self.source_context();
         let request = if ready.is_none() {
             let id = self
@@ -69,11 +70,14 @@ impl Editor {
         // Keep acquisition state off callers' stacks, including the already-ready fast path.
         Ok(Box::pin(async move {
             let _retire = retire;
-            if let Some(ready) = ready {
-                return Ok(ready);
-            }
-            let (services, request) = request.expect("captured selected source");
-            services.acquire(request, cancelled).await
+            let mut context = if let Some(ready) = ready {
+                ready
+            } else {
+                let (services, request) = request.expect("captured selected source");
+                services.acquire(request, cancelled.clone()).await?
+            };
+            context.correction = correction.acquire().await?;
+            Ok(context)
         }))
     }
 
@@ -93,7 +97,7 @@ impl Editor {
         Some(Context {
             source: ready.developed.clone(),
             reference: ready.reference.clone(),
-            correction: self.document.correction.clone(),
+            correction: self.document.correction.prepared().cloned(),
         })
     }
 }
@@ -515,17 +519,13 @@ impl Editor {
             path,
             wb,
             expected,
-            correction: self.document.correction.clone(),
+            correction: self.document.correction.prepared().cloned(),
             file,
             sources: self.source_provider(),
         }
     }
 
     pub(super) fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
-        if let Err(error) = self.validate_document_candidate(&self.document.state) {
-            self.status = format!("Source not changed: {error}");
-            return;
-        }
         let started = std::time::Instant::now();
         let selecting_photo = !self.picking();
         self.seed_thumbnail();
@@ -557,7 +557,8 @@ impl Editor {
         self.document.visit.canvas.ready = None;
         self.document.visit.canvas.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
-        self.document.source = !self.document.project.input.ready();
+        self.document.source =
+            !self.document.project.input.ready() || self.document.correction.error().is_some();
         self.status = "Developing full-resolution RAW…".into();
 
         let activity = self

@@ -265,7 +265,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     });
     harness.step();
     let before = harness.read(|editor| editor.document.state.project.clone());
-    let correction = harness.read(|editor| editor.document.correction.clone());
+    let correction = harness.read(|editor| editor.document.correction.prepared().cloned());
     show_confirmation(harness);
     draw_picture(harness, picture);
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
@@ -384,7 +384,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         if let Some(correction) = correction {
             assert!(Arc::ptr_eq(
                 &correction,
-                editor.document.correction.as_ref().unwrap()
+                editor.document.correction.prepared().unwrap()
             ));
         } else {
             assert!(
@@ -795,7 +795,13 @@ fn analyze_widgets_keep_real_correction_and_both_settled_targets() {
         wait_for(&mut harness, |editor| {
             !editor.interaction_blocked() && editor.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            )
+        });
         exercise_analyze(
             &mut harness,
             Rect {

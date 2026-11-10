@@ -2,6 +2,8 @@ use super::*;
 use crate::application::test_support::with_application;
 use crate::project::Development;
 
+mod open;
+
 #[test]
 fn project_save_names_use_antitone_without_duplicating_legacy_suffixes() {
     assert_eq!(project_save_name(None), "Untitled.antitone");
@@ -146,8 +148,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .1
             .center();
         click(app, &context, discard);
-        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.files.pending());
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(!e.dialogs.is_open() && !e.document.dirty());
@@ -917,7 +918,10 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     let active = editor.id;
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.start_document(Preparation::Open("candidate.json".into()), cx);
+            editor.start_document(
+                Preparation::Import(editor.document.capture(), vec![], None),
+                cx,
+            );
             let id = editor.document_pending.unwrap();
             editor.document_prepared(id + 1, Err("stale candidate".into()));
             editor.source_result(active, Err("old load".into()));
@@ -1040,7 +1044,7 @@ fn new_resets_development_and_replaces_the_previous_document() {
     let editor = fixture();
     let previous = editor.id;
     with_application(editor, |app| {
-        app.enter(|e, cx| e.start_document(Preparation::New, cx));
+        app.enter(|e, _| e.new_project());
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.update(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());

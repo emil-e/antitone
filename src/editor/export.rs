@@ -197,8 +197,25 @@ impl Services {
                     .await
             }
         };
-        let input = match input {
+        let mut input = match input {
             Ok(input) => input,
+            Err(_) if cancelled.is_cancelled() => {
+                return ControlFlow::Break(PhotoResult::Cancelled);
+            }
+            Err(error) => {
+                return ControlFlow::Break(PhotoResult::Finished(Outcome::Failed { path, error }));
+            }
+        };
+        input.correction = match futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Err("Export cancelled".to_owned())
+            },
+            photo.correction.acquire(),
+        )
+        .await
+        {
+            Ok(correction) => correction,
             Err(_) if cancelled.is_cancelled() => {
                 return ControlFlow::Break(PhotoResult::Cancelled);
             }
@@ -540,6 +557,7 @@ pub(super) enum Input {
 
 pub(super) struct Photo {
     pub input: Input,
+    pub correction: super::flat::Resources,
     pub recipe: ImageRecipe,
     pub path: PathBuf,
 }
@@ -766,10 +784,11 @@ impl Editor {
                     path: source_path,
                     wb,
                     expected: Some(expected),
-                    correction: self.document.correction.clone(),
+                    correction: self.document.correction.prepared().cloned(),
                 }))
             });
             photos.push(Photo {
+                correction: self.document.correction.clone(),
                 input,
                 path,
                 recipe: self.document.image_recipe(id)?,

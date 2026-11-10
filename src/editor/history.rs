@@ -40,7 +40,6 @@ pub(super) enum Pending {
         label: &'static str,
         photo: Option<SourceId>,
     },
-    Reset,
     Restore {
         direction: Direction,
         cleanup: Option<bool>,
@@ -209,7 +208,6 @@ impl Editor {
 
     pub(super) fn history_prepared(&mut self, pending: Option<Pending>) {
         match pending {
-            Some(Pending::Reset) => self.document.history = History::default(),
             Some(Pending::Edit {
                 before,
                 label,

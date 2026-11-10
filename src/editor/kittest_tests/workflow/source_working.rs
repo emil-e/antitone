@@ -3,6 +3,76 @@ use crate::gpu::parameters::ProcessingParameters;
 use crate::raw::sony_fixture as sony;
 
 #[test]
+fn opened_missing_photo_keeps_its_card_error_and_another_card_can_be_selected() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.dng");
+    let available = directory.path().join("available.dng");
+    for path in [&missing, &available] {
+        std::fs::copy(fixture("patches.dng"), path).unwrap();
+    }
+    let mut document = Document::default();
+    document
+        .import(&[missing.clone(), available.clone()])
+        .unwrap();
+    let saved = document
+        .save(
+            &directory.path().join("missing-photo.antitone"),
+            crate::project::Save::New,
+        )
+        .unwrap();
+    std::fs::remove_file(missing).unwrap();
+    editor_harness_with_thumbnails(true, |mut harness, _| {
+        harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
+        wait_for(&mut harness, |editor| {
+            !editor.files.opening() && !editor.document.visit.source.pending()
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while harness.query_by_label("Photo error").is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "missing photo must report an error on its card"
+            );
+            harness.step();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(harness.output().shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Photo unavailable"
+        )));
+        assert!(
+            harness
+                .get_by_label("missing.dng")
+                .accesskit_node()
+                .description()
+                .unwrap()
+                .contains("Thumbnail unavailable")
+        );
+        harness.read(|editor| {
+            assert_eq!(editor.document.state.project, saved.project);
+            assert_eq!(
+                editor.document.visit.current_source,
+                Some(saved.project.order[0])
+            );
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(!editor.document.dirty() && !editor.dialogs.is_open());
+        });
+        save_capture(&harness.render().unwrap(), "open-missing-photo-offscreen");
+        harness.get_by_label("available.dng").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            !editor.document.visit.source.pending() && editor.document.visit.canvas.ready.is_some()
+        });
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.visit.current_source,
+                Some(saved.project.order[1])
+            );
+            assert_eq!(editor.document.state.project, saved.project);
+            assert!(!editor.document.dirty());
+        });
+    });
+}
+
+#[test]
 fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_controls() {
     let file = sony::source_with_as_shot(sony::Order::Little, vec![], [4, 1, 2]);
     let directory = tempfile::tempdir().unwrap();

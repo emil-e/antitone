@@ -97,8 +97,6 @@ mod gamma_pivot;
 use document::Preparation;
 #[cfg(test)]
 use document::{Prepared, Request as DocumentRequest};
-#[cfg(all(test, feature = "raw", feature = "export"))]
-mod ab_probe_tests;
 mod export;
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
@@ -227,7 +225,6 @@ pub struct Editor {
     menus: menu::Menus,
     submissions: crate::platform::SubmissionGate,
     scopes: Scopes,
-    reset_repairs_pending: bool,
     fullscreen: Option<FullscreenView>,
     canvas_frame: canvas::Frame,
     // Running physical work outlives logical cancellation.
@@ -246,7 +243,6 @@ pub struct Editor {
     tab: usize,
     preferences: preferences::Preferences,
     preference_store: Option<preferences::Store>,
-    new_project_pending: bool,
     document: DocumentScope,
     candidate_operation: document::State,
     history_pending: Option<history::Pending>,
@@ -325,9 +321,8 @@ impl Editor {
     pub fn open_initial(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
         if files::is_raw_path(&path) {
             self.add_raws(vec![path], cx);
-            self.new_project_pending = self.document_pending.is_some();
         } else {
-            self.start_document(Preparation::Open(path), cx);
+            self.open_project(path, cx);
         }
     }
 
@@ -348,7 +343,6 @@ impl Editor {
             source_services: None,
             source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             scopes: Scopes::default(),
-            reset_repairs_pending: false,
             fullscreen: None,
             canvas_frame: Default::default(),
             started: false,
@@ -368,7 +362,6 @@ impl Editor {
             tab: 0,
             preferences: preferences::Preferences::default(),
             preference_store: None,
-            new_project_pending: false,
             history_pending: None,
 
             document,
@@ -387,7 +380,7 @@ impl Editor {
                 self.apply_preferences(preferences);
                 self.preference_store = Some(store);
                 self.persist_preferences();
-                if self.document_pending.is_none() || self.new_project_pending {
+                if !self.files.opening() {
                     self.preferences
                         .sections
                         .insert("roll-calibration".into(), true);
@@ -932,7 +925,7 @@ impl Editor {
         self.next_request
     }
 
-    pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
+    pub(super) fn begin_document_operation(&mut self) -> u64 {
         self.document.visit.interaction_action = None;
         self.document.write = save::State::default();
         self.candidate_operation = document::State::default();
@@ -942,7 +935,6 @@ impl Editor {
         if self.dusting() {
             self.end_tool();
         }
-        self.reset_repairs_pending = replacement;
         if self
             .document
             .analysis_operation()

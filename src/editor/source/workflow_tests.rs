@@ -206,7 +206,7 @@ fn unregistered_source_requests_defer_file_identity_until_preparation() {
 
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, Prepared, document::Document, source, source_loading},
+    editor::{Preparation, document::Document, source, source_loading},
 };
 use std::{
     path::PathBuf,
@@ -303,7 +303,10 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.load("not-opened.dng".into(), cx);
-            editor.start_document(Preparation::New, cx);
+            editor.start_document(
+                Preparation::Import(editor.document.capture(), vec![], None),
+                cx,
+            );
             let operation = editor.document_pending;
             let activity = editor.activities.view().unwrap().title;
             let view = editor.request_id();
@@ -553,13 +556,8 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
         await_native(app, &starts);
         let (view, accepted) =
             app.read(|e| (e.document.visit.view, e.document.state.project.clone()));
-        app.enter(|e, cx| {
-            e.start_document(
-                Preparation::Open(directory.path().join("missing.antitone")),
-                cx,
-            )
-        });
-        assert!(app.read(|e| e.document_pending.is_some() && e.interaction_blocked()));
+        app.enter(|e, cx| e.open_project(directory.path().join("missing.antitone"), cx));
+        assert!(app.read(|e| e.files.opening() && e.interaction_blocked()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| {
             e.document_pending.is_none()
@@ -588,7 +586,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                 e.load(path, cx);
 
                 let view = e.document.visit.view;
-                e.start_document(Preparation::Open("not-prepared.antitone".into()), cx);
+                e.start_document(Preparation::Import(e.document.capture(), vec![], None), cx);
                 let operation = e.document_pending.unwrap();
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
@@ -689,7 +687,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
             app.pump();
             std::thread::sleep(Duration::from_millis(1));
         }
-        let accepted_before_source = app.read(|e| e.document.correction.is_some());
+        let accepted_before_source = app.read(|e| e.document.correction.prepared().is_some());
         release.send(()).unwrap();
         assert!(
             accepted_before_source,
@@ -727,22 +725,8 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         start(app);
         await_native(app, &starts);
         let store = app.read(|e| Arc::downgrade(&e.document.cache));
-        app.enter(|e, cx| e.start_document(Preparation::New, cx));
-        let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
-        app.update(|editor| {
-            editor.document_prepared(
-                operation,
-                Ok(Box::new(Prepared {
-                    document: Document::default(),
-                    ready: None,
-                    selected: None,
-                    reuse_ready: false,
-                    correction: None,
-                    preserve_view: false,
-                })),
-            )
-        });
+        app.enter(|e, _| e.new_project());
+        assert!(app.read(|e| !e.interaction_blocked() && e.document_pending.is_none()));
         app.pump();
         assert!(store.upgrade().is_none());
         assert_eq!(scheduler.waiter_count(), 0);

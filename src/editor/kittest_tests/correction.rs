@@ -14,6 +14,157 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
 }
 
 #[test]
+fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() {
+    super::tools::calibrated_harness(|mut harness| {
+        let directory = tempfile::tempdir().unwrap();
+        let other = directory.path().join("another.dng");
+        std::fs::copy(fixture("patches.dng"), &other).unwrap();
+        let saved = harness.read(|editor| {
+            let mut document = editor.document.capture();
+            document.import(&[other]).unwrap();
+            let id = document.project.order[0];
+            let reference = document.project.source(id).unwrap();
+            // Structurally valid saved gains exceed the runtime corrected-camera domain.
+            let map = Arc::new(
+                crate::flat_field::FlatField::from_nodes(
+                    reference.development.active_area,
+                    [2, 2],
+                    vec![DVec3::splat(1e37); 4],
+                )
+                .unwrap(),
+            );
+            let settings = crate::project::FlatFieldSettings::new(reference, map);
+            document.project.set_flat_field(Some(settings));
+            document
+                .save(
+                    &directory.path().join("unavailable-correction.antitone"),
+                    crate::project::Save::New,
+                )
+                .unwrap()
+        });
+        harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
+        wait_for(&mut harness, |editor| {
+            !editor.files.opening()
+                && !editor.document.correction.pending()
+                && !editor.document.visit.source.pending()
+        });
+        harness.update(|editor| {
+            assert_eq!(editor.document.state.project, saved.project);
+            assert!(!editor.document.dirty());
+            assert!(editor.document.correction.prepared().is_none() && editor.document.source);
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            );
+            editor.scopes.visible = false;
+            editor.tab = 0;
+        });
+        set_layout(&mut harness, egui::vec2(800., 600.), 270.);
+        harness.get_by_label("Correction error").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        wait_settled(&mut harness);
+        let error = harness.get_by_label("Correction error");
+        assert!(
+            error
+                .accesskit_node()
+                .description()
+                .unwrap()
+                .contains("corrected camera values exceed the f32 range")
+        );
+        assert!(
+            !harness
+                .get_by_label("Enabled")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert_eq!(
+            harness.get_by_label("Enabled").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness.read(|editor| {
+            assert!(
+                editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .spec
+                    .is_inspection()
+            )
+        });
+        save_capture(
+            &harness.render().unwrap(),
+            "correction-resource-unavailable-offscreen",
+        );
+        harness.get_by_label("View source").click();
+        harness.get_by_label("another.dng").click();
+        harness.step();
+        wait_opened_photo(&mut harness);
+        wait_settled(&mut harness);
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.visit.current_source,
+                Some(saved.project.order[1])
+            );
+            assert_eq!(editor.document.state.project, saved.project);
+            assert!(
+                editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .spec
+                    .is_inspection()
+            );
+            let source = editor
+                .document
+                .project
+                .source(saved.project.order[1])
+                .unwrap();
+            let recipe = editor
+                .positive_recipe_for_source(
+                    editor.input(),
+                    editor.document.project.roll,
+                    source,
+                    editor.photo_settings(),
+                )
+                .unwrap();
+            assert_eq!(
+                recipe.neutral.correction,
+                saved
+                    .project
+                    .active_flat_field()
+                    .map(|settings| settings.map.clone()),
+                "resource failure must not erase accepted intent from a positive recipe"
+            );
+        });
+        assert!(
+            harness
+                .get_by_label("View source")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Enabled").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            !editor.editing() && !editor.interaction_blocked()
+        });
+        harness.read(|editor| {
+            assert!(!editor.document.project.flat_field().unwrap().enabled);
+            assert!(editor.document.dirty());
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+        assert!(harness.query_by_label("Correction error").is_none());
+    });
+}
+
+#[test]
 fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products_untouched() {
     super::tools::calibrated_harness(|mut harness| {
         harness.update(|e| {
@@ -239,7 +390,7 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         harness.get_by_label("Apply").click();
         harness.step();
         harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
-        harness.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+        harness.read(|e| assert!(e.document.correction.prepared().is_some(), "{}", e.status));
         harness.set_size(egui::vec2(1100., 1100.));
         harness.update(|e| {
             e.preferences
@@ -422,7 +573,13 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));
         harness.read(|editor| assert_eq!(editor.document.state.project.dmin(), before.dmin()));
         harness.read(|editor| assert_eq!(editor.document.state.project.dmax(), before.dmax()));
@@ -649,7 +806,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             wait_for(&mut harness, |e| {
                 !e.interaction_blocked() && e.document_pending.is_none()
             });
-            harness.read(|editor| assert_eq!(editor.document.correction.is_some(), enabled));
+            harness.read(|editor| {
+                assert_eq!(editor.document.correction.prepared().is_some(), enabled)
+            });
             harness.read(|editor| assert!(editor.document.source));
             harness.read(|editor| assert_eq!(editor.source_exposure, 2.));
             harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
@@ -728,7 +887,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.correction.is_none()));
+        harness.read(|editor| assert!(editor.document.correction.prepared().is_none()));
         let mut cleared = saved.clone();
         cleared.set_flat_field(None);
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
@@ -741,13 +900,11 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| {
-            !e.files.pending() && !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| {
             assert_eq!(
-                editor.document.correction.as_ref().unwrap().settings.map,
+                editor.document.correction.prepared().unwrap().settings.map,
                 settings.map
             )
         });
@@ -813,7 +970,11 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.step();
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
-            assert!(editor.document.correction.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            );
             let mut expected = cleared.clone();
             let mut reference = saved.source(settings.reference).unwrap().clone();
             reference.id = SourceId(expected.next_source_id);
@@ -835,11 +996,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| {
-            !e.files.pending() && !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
-        harness.read(|editor| assert!(editor.document.correction.is_some()));
+        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
         harness
             .get_by_label("Reset Flat-field correction")
             .scroll_to_me();
@@ -849,7 +1008,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, cleared);
-            assert!(editor.document.correction.is_none());
+            assert!(editor.document.correction.prepared().is_none());
             assert!(editor.active_canvas().ready.is_some());
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
         });

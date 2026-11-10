@@ -676,10 +676,10 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                     && e.document_pending.is_none()
                     && e.document.export.operation.is_none()
             );
-            e.start_document(Preparation::New, cx);
+            e.new_project();
             assert!(!e.document.auto_crop.reviewing());
-            assert_eq!(e.document.state.project, before);
-            assert!(e.interaction_blocked() && e.document_pending.is_some());
+            assert!(e.document.state.project.sources.is_empty());
+            assert!(!e.interaction_blocked() && e.document_pending.is_none());
         });
     });
 }

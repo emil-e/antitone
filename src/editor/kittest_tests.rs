@@ -1086,6 +1086,17 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
     assert!(json.get("spatial_metadata").is_none());
 }
 
+// Consumer fixtures wait for the initial visit too; metadata acceptance has separate coverage.
+fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
+    wait_for(harness, |editor| {
+        !editor.files.pending()
+            && !editor.interaction_blocked()
+            && editor.document_pending.is_none()
+            && !editor.document.visit.source.pending()
+            && !editor.document.correction.pending()
+    });
+}
+
 // Supply the native chooser's result; exercise the real transition guard and worker.
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
     harness.enter(|editor, cx| editor.guard_transition(files::Transition::Open(path), cx));

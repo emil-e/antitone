@@ -424,8 +424,8 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         editor,
         Duration::from_secs(60),
         |editor, cx| {
-            editor.start_document(Preparation::Open("missing.antitone".into()), cx);
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+            editor.open_project("missing.antitone".into(), cx);
+            assert!(editor.interaction_blocked() && editor.files.opening());
         },
     );
     assert_eq!(editor.document.history.undo.len(), 1);
@@ -433,14 +433,10 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
     editor = crate::editor::tests::complete_document_operation(
         editor,
         Duration::from_secs(60),
-        |editor, cx| {
-            editor.start_document(Preparation::New, cx);
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-            assert_eq!(
-                editor.document.history.undo.len(),
-                1,
-                "dispatch is not acceptance"
-            );
+        |editor, _| {
+            editor.new_project();
+            assert!(!editor.interaction_blocked());
+            assert!(editor.document.history.undo.is_empty());
         },
     );
     assert!(editor.document.history.undo.is_empty());
