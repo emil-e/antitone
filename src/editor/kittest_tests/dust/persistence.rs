@@ -435,9 +435,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         });
         h.read(|editor| assert!(editor.document.state.project.sources.is_empty()));
         open_project(&mut h, path.clone());
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| assert!(!editor.document.dirty()));
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), None));
@@ -603,7 +601,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         open_project(&mut h, directory.path().join("missing.antitone"));
         for _ in 0..5 {
             h.step();
-            h.read(|editor| assert!(editor.document_pending.is_some()));
+            h.read(|editor| assert!(editor.files.opening()));
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &view,
@@ -669,9 +667,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             !e.interaction_blocked() && e.document_pending.is_none()
         });
         open_project(&mut h, path);
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         ready(&mut h, 2);
         for (before, after) in
             h.read(|editor| evaluated.iter().zip(editor.dust_evaluations(signature)))

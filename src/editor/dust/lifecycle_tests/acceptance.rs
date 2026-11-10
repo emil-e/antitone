@@ -715,7 +715,8 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         &e.document.capture(),
         None,
     )
-    .unwrap();
+    .unwrap()
+    .into();
     let photo = e.source_context().unwrap();
     assert!(photo.correction.is_some());
     let signature = e.dust_signature().unwrap();

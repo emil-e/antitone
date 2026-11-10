@@ -82,9 +82,9 @@ impl Editor {
         let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
         scan.set_flat_field(
             self.document
-                .correction
-                .as_ref()
-                .map(|correction| correction.settings.map.clone()),
+                .project
+                .active_flat_field()
+                .map(|correction| correction.map.clone()),
         );
         crate::gpu::interpretation::InputTransform::for_scan(&scan, *input)
     }
@@ -168,11 +168,6 @@ impl Editor {
                     .filter(|repair| repair.enabled)
                     .collect();
             }
-            recipe.neutral.correction = self
-                .document
-                .correction
-                .as_ref()
-                .map(|correction| correction.settings.map.clone());
         })
     }
 

@@ -1,7 +1,7 @@
 //! Document snapshots, candidate preparation and transactional editor installation.
 use super::{
-    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, RollSelection, dust,
-    history, source,
+    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, RollSelection, history,
+    source,
 };
 use crate::{
     Error,
@@ -383,16 +383,7 @@ impl Document {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_progress(path, None, |_, _| {})
-    }
-
-    pub fn open_with_progress(
-        path: &Path,
-        device: Option<&wgpu::Device>,
-        mut progress: impl FnMut(usize, usize),
-    ) -> Result<Self> {
         let path = absolute(path)?;
         let mut project = Project::load(&path)?;
         let exposure_metadata = project
@@ -412,19 +403,9 @@ impl Document {
             #[cfg(test)]
             fixture_directory: None,
         };
+        document.validate_with_device(None)?;
+        // Best-effort cache freshness only: missing files do not reject metadata.
         document.capture_source_files()?;
-        let total = document.project.order.len();
-        progress(0, total);
-        for (index, id) in document.project.order.clone().into_iter().enumerate() {
-            document.refresh_source(id)?;
-            progress(index + 1, total);
-        }
-        if document.project.input.is_negative() {
-            document.project.reset_scan_basis();
-        }
-
-        document.validate_with_device(device)?;
-        document.saved = document.project.clone();
         Ok(document)
     }
 
@@ -702,8 +683,6 @@ mod workflow_tests;
 
 pub(super) enum Preparation {
     Import(Document, Vec<PathBuf>, Option<(u64, SourceId)>),
-    Open(PathBuf),
-    New,
     Input(Document, Option<SourceId>),
     History(Document, Option<SourceId>, history::Direction),
 }
@@ -767,11 +746,6 @@ pub(super) fn candidate(
             document.import_with_progress(&paths, Some(device), &mut progress)?;
             (document, reuse)
         }
-        Preparation::Open(path) => (
-            Document::open_with_progress(&path, Some(device), progress)?,
-            None,
-        ),
-        Preparation::New => (Document::default(), None),
         Preparation::Input(mut document, _) => {
             let target = document.project.input;
             document.redevelop_for_input(target)?;
@@ -959,7 +933,6 @@ impl Editor {
         self.cancel_control_edit();
 
         self.history_pending = match &work {
-            Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
             Preparation::Import(..) | Preparation::Input(..) => Some(history::Pending::Edit {
                 before: Box::new(self.document.state.project.clone()),
                 label: if matches!(&work, Preparation::Import(..)) {
@@ -976,19 +949,15 @@ impl Editor {
         };
         self.cancel_active_tool();
         self.document.visit.masks.cancel();
-        let id =
-            self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
+        let id = self.begin_document_operation();
         let activity = self.activities.start(
             ActivityOptions::new(match &work {
                 Preparation::Import(..) => "Importing RAWs…",
-                Preparation::Open(_) => "Opening project…",
-                Preparation::New => "Creating project…",
                 Preparation::Input(..) => "Switching input stage…",
                 Preparation::History(..) => "Restoring edit…",
             })
             .modal(),
         );
-        self.new_project_pending = matches!(work, Preparation::New);
         let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
             self.document
                 .visit
@@ -999,17 +968,15 @@ impl Editor {
         } else {
             None
         };
-        let cache = (!matches!(work, Preparation::New | Preparation::Open(_)))
-            .then(|| self.document.cache.clone());
         let request = Request {
-            exposures: cache.as_ref().map(|_| self.document.exposures.clone()),
+            exposures: Some(self.document.exposures.clone()),
             sources: self
                 .source_services
                 .as_ref()
-                .map(|services| services.provider(cache)),
+                .map(|services| services.provider(Some(self.document.cache.clone()))),
             work,
             source,
-            correction: self.document.correction.clone(),
+            correction: self.document.correction.prepared().cloned(),
         };
         let source = self.source_services.clone();
         let progress = activity.reporter();
@@ -1046,7 +1013,6 @@ impl Editor {
         }
         self.candidate_operation = State::default();
 
-        let new_project = std::mem::take(&mut self.new_project_pending);
         let pending_history = self.history_pending.take();
         self.document_pending = None;
 
@@ -1055,40 +1021,23 @@ impl Editor {
                 let input_changed = self.document.project.input.is_negative()
                     != prepared.document.project.input.is_negative();
 
-                if self.reset_repairs_pending {
-                    self.document.dust = dust::State::default();
-                }
-                self.reset_repairs_pending = false;
-                let replacement = matches!(pending_history, Some(history::Pending::Reset));
-                let same_visit = !replacement
-                    && self.document.visit.current_source == prepared.selected
+                let same_visit = self.document.visit.current_source == prepared.selected
                     && self
                         .document
                         .same_visit(prepared.ready.as_ref(), prepared.reuse_ready);
-                let layer_selection =
-                    if !replacement && self.document.visit.current_source == prepared.selected {
-                        self.document.visit.adjustment_layers.selection_only()
-                    } else {
-                        AdjustmentLayerEditor::default()
-                    };
-                self.document.visit.source = source::State::default();
-                if replacement {
-                    self.document = self.document.replacement(prepared.document);
+                let layer_selection = if self.document.visit.current_source == prepared.selected {
+                    self.document.visit.adjustment_layers.selection_only()
                 } else {
-                    self.document.install(prepared.document);
-                }
-                self.document.correction = prepared.correction;
+                    AdjustmentLayerEditor::default()
+                };
+                self.document.visit.source = source::State::default();
+                self.document.install(prepared.document);
+                self.document.correction = prepared.correction.into();
                 if let Some(ready) = &prepared.ready {
                     self.document.cache_ready(ready);
                 }
                 self.remember_imported_look();
                 self.document.visit.adjustment_layers = layer_selection;
-                if new_project {
-                    self.tab = 0;
-                    self.preferences
-                        .sections
-                        .insert("roll-calibration".into(), true);
-                }
                 self.id = id;
                 if !same_visit {
                     self.replace_photo_scope(self.id);

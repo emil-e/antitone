@@ -141,7 +141,7 @@ fn low_gamma_with_shoulder_is_usable_and_numeric_edits_update_the_document() {
 }
 
 #[test]
-fn project_widgets_save_precision_order_and_reject_open_atomically() {
+fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atomically() {
     let directory = tempfile::tempdir().unwrap();
     let paths: Vec<_> = ["calibration.dng", "working.dng", "unvisited.dng"]
         .map(|name| {
@@ -285,9 +285,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert!(!editor.document.dirty()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
@@ -339,9 +337,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             .save(&adjusted_path, crate::project::Save::New)
             .unwrap();
         open_project(&mut harness, adjusted_path);
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         let adjusted_pixel = compare_pixel(&harness);
         stage(&mut harness, "Photo");
@@ -354,9 +350,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             &mut harness,
             directory.path().join("adjusted.antitone.json"),
         );
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         harness.read(|editor| assert!(!editor.document.dirty()));
         wait_settled(&mut harness);
@@ -373,17 +367,20 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 .proxy
                 .clone()
         });
-        for (name, id) in [("missing-selected", ids[1]), ("missing-offscreen", ids[2])] {
-            let mut rejected = adjusted.clone();
-            rejected.source_mut(id).unwrap().path = directory.path().join("missing.dng");
-            let path = directory.path().join(format!("{name}.antitone.json"));
-            rejected.save(&path, crate::project::Save::New).unwrap();
+        let mut unsupported = serde_json::to_value(&adjusted).unwrap();
+        unsupported["schema"] = serde_json::json!(u32::MAX);
+        for (name, bytes) in [
+            ("malformed", b"{".to_vec()),
+            (
+                "unsupported-schema",
+                serde_json::to_vec(&unsupported).unwrap(),
+            ),
+        ] {
+            let path = directory.path().join(format!("{name}.antitone"));
+            std::fs::write(&path, bytes).unwrap();
+            assert!(crate::project::Project::load(&path).is_err());
             open_project(&mut harness, path);
-            wait_for(&mut harness, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
-            harness
-                .read(|editor| assert!(editor.status.contains("missing.dng"), "{}", editor.status));
+            wait_opened_photo(&mut harness);
             harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
             harness.read(|editor| {

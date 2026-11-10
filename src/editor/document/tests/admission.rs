@@ -274,7 +274,7 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
         for name in ["one.ARW", "two.ARW"] {
             std::fs::remove_file(directory.path().join(name)).unwrap();
         }
-        let opened = Document::open_with_progress(&path, Some(&device), |_, _| {}).unwrap();
+        let opened = Document::open(&path).unwrap();
         assert_eq!(opened.project, saved.project);
         assert_eq!(
             opened.project.sources[0]
@@ -297,19 +297,13 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
         assert!(rejected.dirty());
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         rejected.project.save(&path, Save::Replace).unwrap();
-        let mut progress = Vec::new();
-        assert!(
-            Document::open_with_progress(&path, Some(&device), |done, total| progress
-                .push((done, total)))
-            .is_err()
-        );
+        assert!(Document::open(&path).is_err());
         assert_eq!(saved.project, opened.project);
     });
 }
 
 #[test]
-fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted_state_or_dispatch()
-{
+fn unsupported_offscreen_grade_blocks_export_before_retiring_accepted_state_or_dispatch() {
     pollster::block_on(async {
         let (mut editor, _, _) = crate::editor::processing::tests::fixture().await;
 
@@ -351,36 +345,6 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             .unwrap()
             .path
             .clone();
-        editor.load(
-            "different.ARW".into(),
-            &crate::application::UiContext::render_only(),
-        );
-        assert!(
-            editor.status.contains("f32 intermediate working range"),
-            "{}",
-            editor.status
-        );
-        assert_eq!(editor.document.visit.current_source, selected);
-        assert_eq!(editor.id, loaded);
-        assert_eq!(
-            editor
-                .source_epoch
-                .load(std::sync::atomic::Ordering::Relaxed),
-            epoch
-        );
-        assert_eq!(
-            editor.document.visit.canvas.ready.as_ref().unwrap().path,
-            path
-        );
-        assert_eq!(editor.document.visit.canvas.viewport, viewport);
-        assert_eq!(
-            editor.document.visit.canvas.original.continuation(),
-            revision
-        );
-        assert_eq!(editor.document.state.project, before);
-        assert!(
-            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
-        );
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("existing.tif");
         std::fs::write(&destination, b"keep destination").unwrap();
@@ -401,6 +365,23 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
         );
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
+        assert_eq!(editor.document.visit.current_source, selected);
+        assert_eq!(editor.id, loaded);
+        assert_eq!(
+            editor
+                .source_epoch
+                .load(std::sync::atomic::Ordering::Relaxed),
+            epoch
+        );
+        assert_eq!(
+            editor.document.visit.canvas.ready.as_ref().unwrap().path,
+            path
+        );
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
+        assert_eq!(
+            editor.document.visit.canvas.original.continuation(),
+            revision
+        );
         assert_eq!(editor.document.state.project, before);
         let current = editor
             .positive_processing(
@@ -430,7 +411,7 @@ fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_re
         let saved = document
             .save_with_device(&path, Save::New, Some(&device))
             .unwrap();
-        let mut opened = Document::open_with_progress(&path, Some(&device), |_, _| {}).unwrap();
+        let mut opened = Document::open(&path).unwrap();
         assert_eq!(opened.project, saved.project);
         opened
             .import_with_progress(&[raw.clone(), raw], Some(&device), |_, _| {})

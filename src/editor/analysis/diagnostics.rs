@@ -150,7 +150,7 @@ fn diagnose_sample_rolls() {
             editor = crate::editor::tests::complete_document_operation(
                 editor,
                 Duration::from_secs(300),
-                |editor, cx| editor.start_document(Preparation::New, cx),
+                |editor, _| editor.new_project(),
             );
             editor = crate::editor::tests::complete_document_operation(
                 editor,
@@ -170,7 +170,7 @@ fn diagnose_sample_rolls() {
                         Duration::from_secs(300),
                         |e, cx| e.apply_flat_edit(cx),
                     );
-                    prepared = editor.document.correction.is_some();
+                    prepared = editor.document.correction.prepared().is_some();
                 } else {
                     prepared = false;
                 }

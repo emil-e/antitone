@@ -112,12 +112,15 @@ fn document_admission_retires_the_gesture_before_preparation_is_polled() {
         start(&mut editor);
         let before = editor.document.state.project.clone();
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| editor.start_document(Preparation::New, cx));
+            app.enter(|editor, _| editor.new_project());
             app.read(|editor| {
-                assert!(editor.document_pending.is_some());
-                assert!(!editor.document.visit.masks.editing(), "operation admission must retire the unfinished refinement, not wait for its completion");
-                assert!(editor.document.visit.working_view.compare);
-                assert_eq!(editor.document.state.project, before);
+                assert!(editor.document_pending.is_none());
+                assert!(
+                    !editor.document.visit.masks.editing(),
+                    "replacement retires the unfinished refinement"
+                );
+                assert_ne!(editor.document.state.project, before);
+                assert!(editor.document.project.sources.is_empty());
             });
         });
     });

@@ -273,7 +273,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             let reopened: DocumentScope = Document::open(&project_path).unwrap().into();
             assert_eq!(
                 reopened.project.source(id).unwrap().development,
-                expected.development
+                captured.project.source(id).unwrap().development
             );
             assert_eq!(reopened.project.input, document.project.input);
             let unpacks = Arc::new(std::sync::atomic::AtomicUsize::new(0));

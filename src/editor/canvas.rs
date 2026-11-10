@@ -738,7 +738,7 @@ impl Editor {
             && rendered.has_correction(
                 self.document
                     .correction
-                    .as_ref()
+                    .prepared()
                     .map(|correction| &correction.gpu),
             )
             && *requested_frame == frame
@@ -760,7 +760,7 @@ impl Editor {
                 &capture,
                 self.document
                     .correction
-                    .as_ref()
+                    .prepared()
                     .map(|correction| correction.gpu.clone()),
                 spec,
             )
@@ -834,6 +834,10 @@ impl Editor {
                     egui::Align2::CENTER_CENTER,
                     if self.interaction_blocked() {
                         "Working…"
+                    } else if self.document.visit.source.pending() {
+                        "Loading photo…"
+                    } else if self.document.visit.current_source.is_some() {
+                        "Photo unavailable"
                     } else {
                         "Add scans to begin"
                     },

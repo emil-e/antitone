@@ -2,7 +2,7 @@ use super::workflow_tests::{LIMIT, await_native, fixture, preparing, start};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Document, Preparation, history::Direction, source_loading},
+    editor::{Document, history::Direction, source_loading},
 };
 use std::sync::mpsc;
 
@@ -339,13 +339,14 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         let admission = crate::background::testing::pause();
         confirm(app);
         app.pump();
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
         app.pump();
         app.read(|e| {
             assert!(!e.analysis_fitting() && e.document.analysis_review().is_none());
-            assert!(e.document_pending.is_some());
+            assert!(e.document_pending.is_none());
+            assert!(e.document.project.sources.is_empty());
         });
         drop(admission);
         app.run_until(LIMIT, |e| !e.interaction_blocked());

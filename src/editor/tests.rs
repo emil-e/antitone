@@ -211,7 +211,13 @@ pub(super) fn complete_document_operation(
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
         app.enter(start);
-        app.run_until(timeout, |editor| editor.document_pending.is_none());
+        // Consumer fixtures also need the initial photo. Metadata acceptance is tested separately.
+        app.run_until(timeout, |editor| {
+            editor.document_pending.is_none()
+                && !editor.files.opening()
+                && !editor.document.visit.source.pending()
+                && !editor.document.correction.pending()
+        });
         app.close_execution();
     }
     owner.into_inner().unwrap()

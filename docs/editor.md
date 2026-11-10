@@ -92,14 +92,14 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 | Work | Presentation and retained use |
 | --- | --- |
-| RAW import, project Open/New/Save, correction estimation/validation, input/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
+| RAW import, project metadata Open/Save, correction estimation/validation, input/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
-| Selected RAW preparation | Nonblocking progressive display; cached previews remain usable while precise inputs prepare |
+| Selected RAW preparation, including the first photo after Open | Nonblocking progressive display; cached previews remain usable while precise inputs prepare |
 | Reference preparation, picker measurement | A delayed working modal; quick measurements complete without showing a dialog |
 | Shared region preparation and running Analyze | A delayed working modal with counted or indeterminate progress and Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
-Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
+New installs an empty document without resource preparation. Opening accepts [project metadata](projects.md#prepare-before-replacing) before loading photos; correction-resource failures appear in the [flat-field section](flat-field.md#save-the-accepted-result). Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
 
 [Activities](../src/editor/activity.rs) are scoped handles carrying caller-supplied status, progress, modality and cancellation feedback. Keep the handle in the async workflow; destruction removes its feedback. Worker reporters and UI snapshots observe weakly. Feature state and explicit modality govern admission; the presence of nonmodal feedback does not make the editor unavailable.
 

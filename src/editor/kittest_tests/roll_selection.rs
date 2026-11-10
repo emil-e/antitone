@@ -36,7 +36,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         wait_for(&mut harness, |e| {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });
-        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            )
+        });
         let ids = harness.read(|editor| editor.document.state.project.order.clone());
         let project_path = directory.path().join("roll.antitone.json");
         harness.update(|e| {
@@ -228,7 +234,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     && editor.document.visit.current_source.is_none()
             )
         });
-        harness.read(|editor| assert!(editor.document.correction.is_some()));
+        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
         wait_for(&mut harness, |e| {
             let charges = e.document.cache.charges();
             charges.retained == 0 && charges.leased_only == 0
@@ -245,7 +251,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
-        harness.read(|editor| assert!(editor.document.correction.is_some()));
+        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_none()

@@ -5,6 +5,10 @@ use crate::{
     project::FlatFieldSettings,
     viewport::CanvasLayout,
 };
+use futures_util::{
+    FutureExt,
+    future::{BoxFuture, Shared},
+};
 use std::{cell::RefCell, rc::Rc};
 
 struct Change {
@@ -12,6 +16,69 @@ struct Change {
     device: wgpu::Device,
     previous: Option<Arc<Correction>>,
     activity: Activity,
+}
+
+type PreparedCorrection = Result<Option<Arc<Correction>>, String>;
+
+/// Captured readers share preparation and its result, independently of the live UI waiter.
+#[derive(Clone)]
+pub(super) enum Resources {
+    Ready(PreparedCorrection),
+    Preparing(Shared<BoxFuture<'static, PreparedCorrection>>),
+}
+
+impl Default for Resources {
+    fn default() -> Self {
+        Self::Ready(Ok(None))
+    }
+}
+
+impl From<Option<Arc<Correction>>> for Resources {
+    fn from(correction: Option<Arc<Correction>>) -> Self {
+        Self::Ready(Ok(correction))
+    }
+}
+
+impl Resources {
+    fn prepare(document: Document, device: Option<wgpu::Device>) -> Self {
+        Self::Preparing(
+            async move {
+                let device = device.ok_or_else(|| "Correction resources unavailable".to_owned())?;
+                crate::background::run(move |_| Correction::prepare(&device, &document, None))
+                    .await
+                    .map_err(|_| "Correction preparation worker panicked".to_owned())?
+                    .map_err(|error| error.to_string())
+            }
+            .boxed()
+            .shared(),
+        )
+    }
+
+    fn result(&self) -> Option<&PreparedCorrection> {
+        match self {
+            Self::Ready(result) => Some(result),
+            Self::Preparing(preparation) => preparation.peek(),
+        }
+    }
+
+    pub(super) fn prepared(&self) -> Option<&Arc<Correction>> {
+        self.result()?.as_ref().ok()?.as_ref()
+    }
+
+    pub(super) fn error(&self) -> Option<&str> {
+        self.result()?.as_ref().err().map(String::as_str)
+    }
+
+    pub(super) fn pending(&self) -> bool {
+        self.result().is_none()
+    }
+
+    pub(super) async fn acquire(self) -> PreparedCorrection {
+        match self {
+            Self::Ready(result) => result,
+            Self::Preparing(preparation) => preparation.await,
+        }
+    }
 }
 
 pub(super) struct Correction {
@@ -64,6 +131,41 @@ pub(super) struct FlatPreview {
 }
 
 impl Editor {
+    pub(super) fn restore_correction(&mut self, cx: &UiContext<'_, Self>) {
+        if self.document.project.active_flat_field().is_none() {
+            return;
+        }
+        let resources = Resources::prepare(
+            self.document.capture(),
+            self.document.visit.working_view.device().cloned(),
+        );
+        self.document.correction = resources.clone();
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Preparing correction…"));
+        // Only this presentation continuation belongs to the document's live UI.
+        self.document.correction_restore = cx.spawn(move |cx| async move {
+            let result = resources.acquire().await;
+            drop(activity);
+            cx.update(|editor| {
+                editor.document.correction_restore = None;
+                match result {
+                    Ok(_) => {
+                        editor.observe_gamma_pivot();
+                        editor.acquire_working(&cx);
+                    }
+                    Err(_) => {
+                        editor.document.source = true;
+                        editor
+                            .preferences
+                            .sections
+                            .insert("roll-flat-field".into(), true);
+                    }
+                }
+            });
+        });
+    }
+
     fn change_correction(&mut self, enabled: Option<bool>, cx: &UiContext<'_, Self>) {
         self.cancel_control_edit();
         let mut candidate = self.document.capture();
@@ -101,6 +203,12 @@ impl Editor {
         let configured = settings.is_some();
         let available = self.tool_start_available();
         let summary = match settings {
+            Some(settings) if settings.enabled && self.document.correction.error().is_some() => {
+                "Unavailable"
+            }
+            Some(settings) if settings.enabled && self.document.correction.pending() => {
+                "Preparing…"
+            }
             Some(settings) if settings.enabled => "Enabled",
             Some(_) => "Disabled",
             None => "Not configured",
@@ -119,6 +227,26 @@ impl Editor {
             |ui| {
                 if editing {
                     return;
+                }
+                if let Some(error) = self.document.correction.error() {
+                    let status = presentation::ContextualStatus::new(
+                        presentation::StatusLevel::Error,
+                        error,
+                    );
+                    ui.horizontal(|ui| {
+                        let (_, response) = ui.allocate_exact_size(
+                            egui::Vec2::splat(presentation::INSPECTOR_ROW_HEIGHT),
+                            egui::Sense::hover(),
+                        );
+                        presentation::status_icon(
+                            ui,
+                            response,
+                            "Correction error",
+                            status.level,
+                            &status.reason,
+                        );
+                        ui.add(egui::Label::new(&status.reason).wrap());
+                    });
                 }
                 ui.add_enabled_ui(available, |ui| {
                     if let Some(settings) = self.document.state.project.flat_field() {
@@ -507,7 +635,7 @@ impl Change {
         Ok(Self {
             edit,
             device,
-            previous: editor.document.correction.clone(),
+            previous: editor.document.correction.prepared().cloned(),
             activity: editor
                 .activities
                 .start(ActivityOptions::new("Applying correction…").modal()),
@@ -548,7 +676,7 @@ impl Change {
                     document.capture_exposure(&editor.document.exposures);
                     self.edit.replace_snapshot(Arc::new(document));
                     editor.commit_document(self.edit).expect("current document edit");
-                    editor.document.correction = correction;
+                    editor.document.correction = correction.into();
                     editor.observe_gamma_pivot();
                     editor.status = "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup.".into();
                     editor.acquire_working(cx);
@@ -639,6 +767,8 @@ async fn preview(
 
 #[cfg(test)]
 mod operation_tests;
+#[cfg(test)]
+mod resources_tests;
 #[cfg(test)]
 mod testing;
 #[cfg(test)]

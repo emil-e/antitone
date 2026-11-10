@@ -76,7 +76,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
-            |editor, cx| editor.start_document(Preparation::Open(project_path), cx),
+            |editor, cx| editor.open_project(project_path, cx),
         );
         assert!(
             editor.document.visit.canvas.ready.is_some() && editor.dialogs.message().is_none(),

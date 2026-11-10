@@ -103,7 +103,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         apply(app);
         wait(app);
         app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
             assert_eq!(e.document.state.project.order, before.order);
             assert_eq!(e.document.visit.canvas.viewport.zoom, Some(1.375));
@@ -191,7 +191,7 @@ fn correction_acquisition_rejects_an_existing_edit_without_retiring_it_or_its_re
         apply(app);
         wait(app);
         app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert_eq!(e.document.project.roll.exposure, 0.25);
             assert_eq!(
                 e.history_label(history::Direction::Undo),
@@ -221,7 +221,7 @@ fn accepted_correction_outlives_tool_dismissal_before_and_after_its_first_poll()
                 assert!(editor.interaction_blocked());
                 assert_eq!(editor.document.project, before);
                 assert_eq!(editor.document.project_snapshot(), before);
-                assert!(editor.document.correction.is_none());
+                assert!(editor.document.correction.prepared().is_none());
                 assert!(editor.edit_project("Overlapping edit").is_err());
                 assert_eq!(
                     editor.history_label(history::Direction::Undo),
@@ -241,7 +241,11 @@ fn accepted_correction_outlives_tool_dismissal_before_and_after_its_first_poll()
             drop(hold);
             wait(app);
             app.read(|editor| {
-                assert!(editor.document.correction.is_some(), "{}", editor.status);
+                assert!(
+                    editor.document.correction.prepared().is_some(),
+                    "{}",
+                    editor.status
+                );
                 assert!(editor.document.flat_edit().is_none());
                 assert_eq!(editor.document.project.order, before.order);
                 assert_eq!(editor.document.project.dmin(), before.dmin());
@@ -287,8 +291,8 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
                 assert_eq!(e.document.flat_correction.is_some(), accept);
                 assert!(e.document.flat_edit().is_none());
             });
-            app.enter(|e, cx| {
-                e.start_document(crate::editor::Preparation::New, cx);
+            app.enter(|e, _| {
+                e.new_project();
             });
             let operation = app.read(|e| e.document_pending);
             app.read(|e| {
@@ -311,7 +315,7 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
 }
 
 #[test]
-fn failed_document_change_ends_reference_setup_without_displacing_the_working_view() {
+fn document_change_retires_reference_setup_without_displacing_the_working_view() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
@@ -337,7 +341,10 @@ fn failed_document_change_ends_reference_setup_without_displacing_the_working_vi
         app.pump();
         app.enter(|e, cx| {
             e.start_document(
-                crate::editor::Preparation::Open(path("missing-project.antitone")),
+                crate::editor::Preparation::Input(
+                    e.document.capture(),
+                    e.document.visit.current_source,
+                ),
                 cx,
             );
         });
@@ -351,7 +358,7 @@ fn failed_document_change_ends_reference_setup_without_displacing_the_working_vi
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.flat_edit().is_none() && e.document.correction.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document.correction.prepared().is_none());
             assert!(Arc::ptr_eq(
                 &pixels,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
@@ -434,7 +441,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
         assert!(app.read(|e| e.document.flat_correction.is_some()));
         wait(app);
         app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert!(e.document.state.project.order.is_empty());
             assert_eq!(e.document.state.project.sources.len(), 1);
             assert!(e.document.state.project.sources[0].reference_only);
@@ -490,7 +497,7 @@ fn accepted_correction_completes_after_the_display_visit_retires() {
         app.read(|e| {
             assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order, before.order);
             assert_eq!(e.document.state.project.dmin(), before.dmin());
             assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -586,7 +593,7 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.flat_edit().is_none() && e.document.correction.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document.correction.prepared().is_none());
             assert_eq!(
                 e.dialogs.message().unwrap().title,
                 FailureCase::FlatCorrection.title()
@@ -612,7 +619,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
         let (accepted, correction) = app.read(|editor| {
             (
                 editor.document.project.clone(),
-                editor.document.correction.clone().unwrap(),
+                editor.document.correction.prepared().cloned().unwrap(),
             )
         });
         begin(app, "bare-light.dng");
@@ -641,7 +648,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
             assert!(!editor.has_hosted_tool() && editor.document.flat_correction.is_some());
             assert_eq!(editor.document.project, accepted);
             assert!(Arc::ptr_eq(
-                editor.document.correction.as_ref().unwrap(),
+                editor.document.correction.prepared().unwrap(),
                 &correction
             ));
         });
@@ -653,7 +660,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
             );
             assert_eq!(editor.document.project, accepted);
             assert!(Arc::ptr_eq(
-                editor.document.correction.as_ref().unwrap(),
+                editor.document.correction.prepared().unwrap(),
                 &correction
             ));
         });
@@ -674,7 +681,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
         wait(app);
         app.read(|editor| {
             assert_eq!(editor.document.project, original);
-            assert!(editor.document.correction.is_none());
+            assert!(editor.document.correction.prepared().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -763,7 +770,7 @@ fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_n
         wait(app);
         apply(app);
         wait(app);
-        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+        app.read(|e| assert!(e.document.correction.prepared().is_some(), "{}", e.status));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -793,7 +800,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
         });
         apply(app);
         wait(app);
-        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+        app.read(|e| assert!(e.document.correction.prepared().is_some(), "{}", e.status));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -812,7 +819,7 @@ fn correction_uses_the_prepared_reference_even_if_its_file_disappears_before_app
         apply(app);
         wait(app);
         app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             let settings = e.document.state.project.flat_field().unwrap();
             let record = e.document.state.project.source(settings.reference).unwrap();
             assert_eq!(record.path, reference);
@@ -851,7 +858,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
         apply(app);
         wait(app);
         let accepted = app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert!(e.document.project.flat_field().unwrap().enabled);
             e.document.project.clone()
         });
@@ -860,7 +867,12 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
             wait(app);
             app.read(|e| {
                 assert_eq!(e.document.project.flat_field().unwrap().enabled, enabled);
-                assert_eq!(e.document.correction.is_some(), enabled, "{}", e.status);
+                assert_eq!(
+                    e.document.correction.prepared().is_some(),
+                    enabled,
+                    "{}",
+                    e.status
+                );
                 assert!(e.document.visit.canvas.ready.is_none());
                 assert!(!e.document.visit.source.pending());
                 assert_eq!(e.document.visit.current_source, Some(selected));
@@ -873,7 +885,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
             let mut cleared = accepted;
             cleared.set_flat_field(None);
             assert_eq!(e.document.project, cleared, "{}", e.status);
-            assert!(e.document.correction.is_none());
+            assert!(e.document.correction.prepared().is_none());
             assert!(e.document.visit.canvas.ready.is_none());
             assert!(!e.document.visit.source.pending());
             assert_eq!(e.document.visit.current_source, Some(selected));
@@ -894,7 +906,7 @@ fn each_correction_change_is_one_exact_undo_and_redo() {
         apply(app);
         wait(app);
         versions.push(app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             e.document.project.clone()
         }));
         for enabled in [Some(false), Some(true), None] {
@@ -908,7 +920,7 @@ fn each_correction_change_is_one_exact_undo_and_redo() {
             app.read(|e| {
                 assert_eq!(&e.document.project, expected, "{}", e.status);
                 assert_eq!(
-                    e.document.correction.is_some(),
+                    e.document.correction.prepared().is_some(),
                     expected.active_flat_field().is_some()
                 );
             });
@@ -925,7 +937,7 @@ fn each_correction_change_is_one_exact_undo_and_redo() {
             app.read(|e| {
                 assert_eq!(&e.document.project, expected, "{}", e.status);
                 assert_eq!(
-                    e.document.correction.is_some(),
+                    e.document.correction.prepared().is_some(),
                     expected.active_flat_field().is_some()
                 );
             });
@@ -982,7 +994,7 @@ fn apply_captures_support_before_the_correction_task_runs() {
             let map = &e
                 .document
                 .correction
-                .as_ref()
+                .prepared()
                 .expect("correction accepted")
                 .settings
                 .map;
@@ -1006,7 +1018,7 @@ fn correction_after_reference_selection_does_not_require_source_services() {
         apply(app);
         wait(app);
         app.read(|e| {
-            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert!(e.document.flat_edit().is_none());
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
@@ -1156,7 +1168,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             // The document operation completes without another UI frame.
             wait(app);
             app.read(|e| {
-                assert!(e.document.correction.is_some(), "{}", e.status);
+                assert!(e.document.correction.prepared().is_some(), "{}", e.status);
                 assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -1220,7 +1232,10 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
                 );
                 app.enter(|e, cx| {
                     e.start_document(
-                        crate::editor::Preparation::Open(path("missing.antitone")),
+                        crate::editor::Preparation::Input(
+                            e.document.capture(),
+                            e.document.visit.current_source,
+                        ),
                         cx,
                     )
                 });

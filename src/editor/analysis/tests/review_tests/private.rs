@@ -118,7 +118,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(240),
-            |editor, cx| editor.start_document(Preparation::Open(path), cx),
+            |editor, cx| editor.open_project(path, cx),
         );
         assert_eq!(editor.document.state.project, accepted);
         editor = crate::editor::tests::complete_analysis_preparation(

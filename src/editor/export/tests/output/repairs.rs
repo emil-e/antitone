@@ -165,12 +165,12 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
-            |editor, cx| editor.start_document(Preparation::New, cx),
+            |editor, _| editor.new_project(),
         );
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
-            |editor, cx| editor.start_document(Preparation::Open(saved), cx),
+            |editor, cx| editor.open_project(saved, cx),
         );
         let id = editor.document.visit.current_source.unwrap();
         let dirty = editor.document.dirty();

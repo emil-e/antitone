@@ -190,7 +190,7 @@ impl Editor {
     fn analysis_support(&self) -> Option<Rect> {
         self.document
             .correction
-            .as_ref()
+            .prepared()
             .map(|c| rect(c.settings.map.area()))
             .or_else(|| {
                 self.document
@@ -1666,7 +1666,7 @@ impl AnalyzeTool {
         editor.status = "Analyzing roll…".into();
         Some(FitInput {
             activity,
-            correction: editor.document.correction.clone(),
+            correction: editor.document.correction.prepared().cloned(),
             sources: editor.source_provider(),
             sampling_inputs: editor.document.sampling_inputs.clone(),
             exposures: editor.document.exposures.clone(),

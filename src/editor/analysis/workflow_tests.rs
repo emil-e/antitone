@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Document, Preparation, Thumbnails, source, source_loading},
+    editor::{Document, Thumbnails, source, source_loading},
 };
 use std::{
     cell::RefCell,
@@ -210,21 +210,22 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
 }
 
 #[test]
-fn document_transition_retires_areas_and_waits_for_native_work_before_promotion() {
+fn new_document_retires_areas_without_waiting_for_physical_native_cleanup() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
+        app.enter(|e, _| {
+            e.new_project();
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document_pending.is_some());
+            assert!(e.document_pending.is_none());
             assert!(!e.analysis_preparing());
-            assert_eq!(e.document.state.project, before);
+            assert_ne!(e.document.state.project, before);
+            assert!(e.document.project.sources.is_empty());
         });
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| e.document_pending.is_none());

@@ -22,7 +22,7 @@ pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
         editor
             .document
             .correction
-            .as_ref()
+            .prepared()
             .map(|correction| correction.settings.map.clone()),
     );
     Ok(scan)

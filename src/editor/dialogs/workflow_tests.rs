@@ -215,7 +215,11 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
             editor.document.flat_correction.is_none()
         });
         app.update(|editor| {
-            assert!(editor.document.correction.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            );
             assert_eq!(editor.dialogs.message().unwrap().details, details);
             assert_eq!(
                 editor.history_label(history::Direction::Undo),

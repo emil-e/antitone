@@ -2,7 +2,7 @@ use super::workflow_tests::{LIMIT, fixture};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Preparation, history::Direction, source_loading},
+    editor::{history::Direction, source_loading},
 };
 
 fn open(app: &mut TestApplication<'_, Editor>) {
@@ -174,14 +174,14 @@ fn document_replacement_retires_a_waiting_review_without_restoring_its_retired_p
     let editor = fixture(sources.clone());
     with_application(editor, |app| {
         open(app);
-        app.enter(|editor, cx| {
+        app.enter(|editor, _| {
             let stopped = editor
                 .document
                 .analysis_operation()
                 .unwrap()
                 .cancelled
                 .clone();
-            editor.start_document(Preparation::New, cx);
+            editor.new_project();
             assert!(stopped.is_cancelled());
             assert!(editor.document.analysis_operation().is_none());
             assert!(editor.document.analysis_review().is_none());

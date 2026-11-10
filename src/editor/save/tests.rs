@@ -142,15 +142,16 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
         });
         let retired = app.read(|e| e.document_pending.unwrap());
         app.pump();
-        app.enter(|e, cx| e.start_document(Preparation::New, cx));
-        let current = app.read(|e| e.document_pending.unwrap());
+        app.enter(|e, _| e.new_project());
         app.pump();
         drop(hold);
         pollster::block_on(crate::background::run(|_| {})).unwrap();
         app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
-            assert_eq!(e.document_pending, Some(current));
-            assert!(e.interaction_blocked() && e.activities.view().is_some());
+            assert!(e.document_pending.is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
+            assert!(e.document.project.sources.is_empty());
+            assert!(!e.allow_close);
             assert!(!e.dialogs.is_open());
         });
         assert!(!path.exists());

@@ -921,7 +921,7 @@ impl Editor {
             field: self
                 .document
                 .correction
-                .as_ref()
+                .prepared()
                 .map(|c| FieldKey(c.settings.map.clone())),
         })
     }
@@ -1115,7 +1115,7 @@ impl Editor {
         let field = self
             .document
             .correction
-            .as_ref()
+            .prepared()
             .map(|c| FieldKey(c.settings.map.clone()));
         self.document
             .thumbnails
@@ -1281,7 +1281,7 @@ impl Editor {
                                     parameters,
                                     self.document
                                         .correction
-                                        .as_ref()
+                                        .prepared()
                                         .map(|correction| correction.gpu.clone()),
                                     mapping,
                                     ui.ctx(),
@@ -1610,7 +1610,7 @@ impl Editor {
             key: key.clone(),
             path,
             source,
-            correction: self.document.correction.clone(),
+            correction: self.document.correction.prepared().cloned(),
             render,
             priority,
             previous,

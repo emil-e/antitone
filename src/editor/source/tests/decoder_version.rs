@@ -72,7 +72,7 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
 }
 
 #[test]
-fn current_decoder_observations_do_not_invalidate_a_saved_map_with_an_unavailable_reference() {
+fn open_keeps_recorded_development_and_map_when_the_reference_is_unavailable() {
     let directory = tempfile::tempdir().unwrap();
     let photo = directory.path().join("photo.dng");
     let reference = directory.path().join("reference.dng");
@@ -109,12 +109,21 @@ fn current_decoder_observations_do_not_invalidate_a_saved_map_with_an_unavailabl
     observed.camera_to_ap1[0][0] *= 1.01;
     observed.decode.backend_version = "previous decoder".into();
     document.project.reset_scan_basis();
+    let recorded = document
+        .project
+        .source(photo_id)
+        .unwrap()
+        .development
+        .clone();
     let path = directory.path().join("map.antitone");
     document.save(&path, Save::New).unwrap();
     std::fs::remove_file(reference).unwrap();
     let opened = Document::open(&path).unwrap();
     assert!(!opened.dirty());
-    assert_eq!(opened.project.source(photo_id).unwrap().development, actual);
+    assert_eq!(
+        opened.project.source(photo_id).unwrap().development,
+        recorded
+    );
     assert_eq!(opened.project.roll.exposure, 0.375);
     assert_eq!(opened.project.active_flat_field().unwrap().map, map);
     assert!(opened.project.source(reference_id).unwrap().reference_only);
@@ -201,28 +210,14 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     .is_some()
             );
             let opened = Document::open(&project_path).unwrap();
-            assert!(
-                !opened.dirty(),
-                "decoder provenance refresh must not edit the grade"
-            );
-            let mut expected = saved.project.clone();
-            expected
-                .source_mut(id)
-                .unwrap()
-                .development
-                .decode
-                .backend_version = if sdk {
-                crate::dng::INTERPRETATION.into()
-            } else {
-                crate::raw::version()
-            };
-            assert_eq!(opened.project, expected);
+            assert!(!opened.dirty(), "opening metadata must not edit the grade");
+            assert_eq!(opened.project, saved.project);
             assert_eq!(opened.exposure_metadata, saved.exposure_metadata);
             let opened: DocumentScope = opened.into();
             let correction = Correction::prepare(&device, &opened, None).unwrap();
             assert_eq!(correction.is_some(), !digital);
             let loader = source_loading::SourceLoader::new();
-            // Deliberately request the saved descriptor too, not only the refreshed document record.
+            // Acquisition uses the current pixel producer without rewriting saved provenance.
             let developed = Request {
                 reference: opened.exposure_slot(&opened.exposures, id),
                 input: opened.project.input,

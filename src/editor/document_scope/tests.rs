@@ -1,12 +1,9 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{
-        Preparation, Prepared,
-        tests::{add_ready_fixture, fixture},
-    },
+    editor::tests::{add_ready_fixture, fixture},
 };
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 struct Dropped(Rc<Cell<bool>>);
 impl Drop for Dropped {
@@ -158,7 +155,10 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
     let view = editor.document.visit.view;
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.start_document(Preparation::Open("unavailable.antitone".into()), cx);
+            editor.start_document(
+                crate::editor::Preparation::Import(editor.document.capture(), vec![], None),
+                cx,
+            );
             let request = editor.document_pending.unwrap();
             assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             assert_eq!(editor.document.visit.view, view);
@@ -204,35 +204,33 @@ fn installing_same_document_preserves_visit_but_opening_the_same_data_replaces_i
 
         let view = editor.document.visit.view;
         let store = Arc::downgrade(&editor.document.cache);
-        let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let selected = editor.document.visit.current_source;
         let candidate = editor.document.capture();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("same-data.antitone");
+        candidate.save(&path, crate::project::Save::New).unwrap();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 if replace {
-                    editor.start_document(Preparation::Open("same-data.antitone".into()), cx);
-                    let request = editor.document_pending.unwrap();
-                    assert!(editor.interaction_blocked());
-                    editor.document_prepared(
-                        request,
-                        Ok(Box::new(Prepared {
-                            document: candidate,
-                            ready: Some(ready),
-                            selected,
-                            reuse_ready: false,
-                            correction: None,
-                            preserve_view: false,
-                        })),
-                    );
+                    editor.open_project(path, cx);
                 } else {
                     editor.document.install(candidate);
                 }
+            });
+            app.run_until(Duration::from_secs(10), |editor| {
+                !editor.files.opening() && !editor.document.visit.source.pending()
+            });
+            app.read(|editor| {
                 if replace {
                     assert_ne!(editor.document.visit.view, view);
+                    assert!(
+                        editor.document.visit.canvas.ready.is_none(),
+                        "fixture has no source services"
+                    );
                 } else {
                     assert_eq!(editor.document.visit.view, view);
+                    assert!(editor.document.visit.canvas.ready.is_some());
                 }
-                assert!(editor.document.visit.canvas.ready.is_some());
                 assert_eq!(store.upgrade().is_none(), replace);
                 assert_eq!(
                     store.ptr_eq(&Arc::downgrade(&editor.document.cache)),
@@ -240,7 +238,6 @@ fn installing_same_document_preserves_visit_but_opening_the_same_data_replaces_i
                 );
                 assert_eq!(editor.document.visit.current_source, selected);
             });
-            app.pump();
         });
     }
 }

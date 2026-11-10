@@ -1076,8 +1076,8 @@ fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admi
 }
 
 #[test]
-fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_work() {
-    for open in [false, true] {
+fn failed_candidates_preserve_repairs_and_new_retires_them_and_late_work() {
+    for fail_first in [false, true] {
         let e = editor();
         crate::application::test_support::with_application(e, |app| {
             app.enter(|e, cx| {
@@ -1085,30 +1085,13 @@ fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_
                 let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
                 e.schedule_dust(e.dust_signature().unwrap(), cx);
                 let request = captured_request(e);
-                let work = || {
-                    if open {
-                        Preparation::Open("missing.json".into())
-                    } else {
-                        Preparation::New
-                    }
-                };
-                e.start_document(work(), cx);
-                let id = e.document_pending.unwrap();
-                e.document_prepared(id, Err("not prepared".into()));
-                assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
-                e.start_document(work(), cx);
-                let id = e.document_pending.unwrap();
-                e.document_prepared(
-                    id,
-                    Ok(Box::new(Prepared {
-                        document: Document::default(),
-                        ready: None,
-                        selected: None,
-                        reuse_ready: false,
-                        correction: None,
-                        preserve_view: false,
-                    })),
-                );
+                if fail_first {
+                    e.start_document(Preparation::Import(e.document.capture(), vec![], None), cx);
+                    let id = e.document_pending.unwrap();
+                    e.document_prepared(id, Err("not prepared".into()));
+                    assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
+                }
+                e.new_project();
                 assert!(e.dust_repairs(source).is_none());
                 e.receive_dust(request.request, Ok(Some(response(&request, active))));
                 assert!(e.dust_repairs(source).is_none());

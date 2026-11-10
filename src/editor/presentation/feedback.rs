@@ -50,7 +50,7 @@ impl ContextualStatus {
     }
 }
 
-pub(super) fn status_icon(
+pub(in crate::editor) fn status_icon(
     ui: &Ui,
     response: egui::Response,
     name: &str,

@@ -428,7 +428,7 @@ fn completed_new_cannot_reuse_the_departed_photos_fullscreen_evidence_before_a_p
             assert!(editor.canvas_frame.layout.is_some());
             assert!(editor.fullscreen_available());
         });
-        app.enter(|editor, cx| editor.start_document(Preparation::New, cx));
+        app.enter(|editor, _| editor.new_project());
         app.run_until(Duration::from_secs(20), |editor| {
             editor.document_pending.is_none()
         });

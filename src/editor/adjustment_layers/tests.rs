@@ -369,7 +369,10 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
 
                 let accepted = editor.document.state.project.clone();
                 let visit = editor.document.visit.view;
-                editor.start_document(Preparation::Open("unavailable.antitone".into()), cx);
+                editor.start_document(
+                    Preparation::Import(editor.document.capture(), vec![], None),
+                    cx,
+                );
                 let request = editor.document_pending.unwrap();
                 editor.document_prepared(request, Err("candidate rejected".into()));
                 assert_eq!(editor.document.visit.view, visit);

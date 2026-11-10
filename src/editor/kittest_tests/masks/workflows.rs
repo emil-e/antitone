@@ -64,7 +64,7 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         let saved = harness.read(|editor| editor.document.state.project.clone());
         assert_eq!(crate::project::Project::load(&path).unwrap(), saved);
-        harness.enter(|editor, cx| editor.start_document(Preparation::Open(path), cx));
+        harness.enter(|editor, cx| editor.open_project(path, cx));
         wait_for(&mut harness, |editor| {
             !editor.interaction_blocked() && editor.document_pending.is_none()
         });

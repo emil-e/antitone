@@ -98,6 +98,7 @@ impl Editor {
         self.export_photos(
             Request {
                 photos: vec![Photo {
+                    correction: request.input.correction.clone().into(),
                     input: Input::Ready(request.input),
                     recipe: request.recipe,
                     path: request.path,

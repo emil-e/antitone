@@ -60,6 +60,7 @@ fn project_save_name(path: Option<&std::path::Path>) -> String {
 #[derive(Default)]
 pub(super) struct State {
     action: Option<Pending>,
+    open: Option<async_executor::Task<()>>,
 }
 
 struct Pending {
@@ -68,13 +69,21 @@ struct Pending {
 }
 
 impl State {
+    pub fn opening(&self) -> bool {
+        self.open.as_ref().is_some_and(|task| !task.is_finished())
+    }
+
     pub fn pending(&self) -> bool {
-        self.action
-            .as_ref()
-            .is_some_and(|action| !action.task.is_finished())
+        self.opening()
+            || self
+                .action
+                .as_ref()
+                .is_some_and(|action| !action.task.is_finished())
     }
     pub fn closing(&self) -> bool {
-        self.pending() && self.action.as_ref().unwrap().closing
+        self.action
+            .as_ref()
+            .is_some_and(|action| action.closing && !action.task.is_finished())
     }
 }
 
@@ -85,10 +94,61 @@ pub(super) struct Destination {
 }
 
 impl Editor {
+    pub(super) fn new_project(&mut self) {
+        self.files.open = None;
+        self.install_project(Document::default());
+        self.tab = 0;
+        self.preferences
+            .sections
+            .insert("roll-calibration".into(), true);
+    }
+
+    pub(super) fn open_project(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Opening project…").modal());
+        self.files.open = cx.spawn(move |cx| async move {
+            let result = crate::background::run(move |_| Document::open(&path))
+                .await
+                .map_err(|_| "Project reader panicked".to_owned())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            drop(activity);
+            cx.update(|editor| match result {
+                Ok(document) => {
+                    editor.install_project(document);
+                    editor.restore_correction(&cx);
+                    if let Some(id) = editor.document.project.order.first().copied()
+                        && let Ok(path) = editor.document.source_path(id)
+                    {
+                        editor.document.visit.current_source = Some(id);
+                        editor.load(path, &cx);
+                    }
+                }
+                Err(error) => editor.status = error,
+            });
+        });
+    }
+
+    fn install_project(&mut self, document: Document) {
+        self.cancel_active_tool();
+        self.candidate_operation = document::State::default();
+        self.document_pending = None;
+        self.history_pending = None;
+        self.document = self.document.replacement(document);
+        self.id = self.request_id();
+        self.document.visit.view = self.id;
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
+        self.canvas_frame = Default::default();
+        self.remember_imported_look();
+        self.invalidate_original();
+        self.status = "Project ready".into();
+    }
+
     pub(super) fn perform_transition(&mut self, transition: Transition, cx: &UiContext<'_, Self>) {
         match transition {
-            Transition::New => self.start_document(Preparation::New, cx),
-            Transition::Open(path) => self.start_document(Preparation::Open(path), cx),
+            Transition::New => self.new_project(),
+            Transition::Open(path) => self.open_project(path, cx),
             Transition::Close => self.allow_close = true,
         }
     }

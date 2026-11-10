@@ -32,7 +32,7 @@ Negative inverts before the camera-to-working-space matrix: a matrix mixes chann
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#compatibility-is-about-the-processing-basis) keeps accepted development choices while refreshing decoder observations.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#compatibility-is-about-the-processing-basis) keeps recorded development choices; acquisition checks current decoder observations when the source is needed.
 
 ### Embedded Sony lens correction
 
