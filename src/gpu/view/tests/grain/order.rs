@@ -10,6 +10,10 @@ use crate::{
 fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let base = probe_view(&device, &queue, &renderer, &kernels, [1.8, 1.], true, 17);
         let source = base.graded.as_ref().unwrap().source.clone();
         let layers = vec![

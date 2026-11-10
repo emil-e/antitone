@@ -52,6 +52,10 @@ fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
 fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_support() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let base = configured_probe(
             &device,
             &renderer,
@@ -136,6 +140,10 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
 fn grain_gpu_encoded_field_survives_owner_retirement_before_submission() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let view = probe_view(&device, &queue, &renderer, &kernels, [2., 1.], true, 17);
         let weak_view = Arc::downgrade(&view);
         let weak_field = Arc::downgrade(field(&view));
@@ -177,6 +185,10 @@ fn grain_gpu_encoded_field_survives_owner_retirement_before_submission() {
 fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         // Keep acquisition layout fixed while changing Size, so the field-key assertion
         // cannot pass merely because insufficient support forced a different raster.
         let base = configured_probe(
@@ -330,6 +342,10 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         let cold_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
+        cold_renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let cold_source = Arc::new(ViewSource::from_neutral_samples(
             source.spec.clone(),
             cold_renderer,
@@ -458,9 +474,13 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
 }
 
 #[test]
-fn grain_cache_off_and_an_insufficient_budget_preserve_rendered_pixels() {
+fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let baseline = configured_probe(&device, &renderer, &kernels, ProbeConfig::default(), 17);
         baseline.ensure_submitted(
             &device,
@@ -494,7 +514,12 @@ fn grain_cache_off_and_an_insufficient_budget_preserve_rendered_pixels() {
                 .any(|(a, b)| (a[0] - b[0]).abs() > 1e-4),
             "fixture must detect omitted grain"
         );
-        for bytes in [0, 1] {
+        for (pressure, bytes) in [
+            (crate::sys::MemoryPressure::Normal, 0),
+            (crate::sys::MemoryPressure::Normal, 1),
+            (crate::sys::MemoryPressure::Warning, 256 << 20),
+            (crate::sys::MemoryPressure::Critical, 256 << 20),
+        ] {
             let uncached_renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
                 &device,
                 &queue,
@@ -505,6 +530,10 @@ fn grain_cache_off_and_an_insufficient_budget_preserve_rendered_pixels() {
             )
             .await
             .unwrap();
+            uncached_renderer
+                .evaluation()
+                .materializations()
+                .set_test_pressure(pressure);
             for _ in 0..2 {
                 let view = configured_probe(
                     &device,
