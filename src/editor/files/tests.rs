@@ -2,6 +2,7 @@ use super::*;
 use crate::application::test_support::with_application;
 use crate::project::Development;
 
+mod import;
 mod open;
 
 #[test]
@@ -799,7 +800,6 @@ fn fixture() -> Editor {
                     camera_model: "test-camera".into(),
                     camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
                 },
-                reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                     AdjustmentLayerSettings::default(),
                 )),
@@ -919,7 +919,10 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.start_document(
-                Preparation::Import(editor.document.capture(), vec![], None),
+                Preparation::Input(
+                    editor.document.capture(),
+                    editor.document.visit.current_source,
+                ),
                 cx,
             );
             let id = editor.document_pending.unwrap();

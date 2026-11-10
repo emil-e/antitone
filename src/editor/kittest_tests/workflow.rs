@@ -31,9 +31,7 @@ pub(super) fn calibrated_workflow<R>(
     std::fs::copy(fixture("roll-0.dng"), &photo).unwrap();
     editor_harness(|mut harness, capture| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), dmax, photo], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -225,9 +223,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
     editor_harness_with_thumbnails(true, |mut harness, capture| {
         let wb = crate::project::UNITY_WB;
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

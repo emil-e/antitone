@@ -253,6 +253,10 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             ))
             .unwrap()
         };
+        renderer
+            .evaluation()
+            .materializations()
+            .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let p = pipeline(film.amount, film.colour, 0.2);
         let source = ready_source(&device, &renderer, &kernels, frame, p.clone(), 5.);
         assert!(source.spec.plan.output().output[0] > frame.output[0]);

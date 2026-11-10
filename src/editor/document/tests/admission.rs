@@ -136,59 +136,42 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
 }
 
 #[test]
-fn device_preflight_includes_offscreen_photos_and_the_flat_field_reference_and_validates_inactive_records()
- {
+fn device_preflight_includes_offscreen_photos_and_validates_inactive_records() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
-        for reference_only in [false, true] {
-            let mut document = calibrated(directory.path());
-            let id = document.project.sources[1].id;
-            if reference_only {
-                document.project.order.retain(|source| *source != id);
-                let source = document.project.source(id).unwrap();
-                let map = Arc::new(
-                    crate::flat_field::FlatField::from_nodes(
-                        source.development.active_area,
-                        [2, 2],
-                        vec![DVec3::ONE; 4],
-                    )
-                    .unwrap(),
-                );
-                let field = crate::project::FlatFieldSettings::new(source, map);
-                document.project.set_flat_field(Some(field));
-                assert!(document.project.source(id).unwrap().reference_only);
-            }
-            document.project.source_mut(id).unwrap().adjustment_layers = Some(unsupported_locals());
-            let before = document.project.clone();
-            assert!(document.validate_for_device(&device).is_err());
-            assert_eq!(document.project, before);
-            let layers = document
-                .project
-                .source_mut(id)
-                .unwrap()
-                .adjustment_layers
-                .as_mut()
-                .unwrap();
-            for record in &mut layers.layers {
-                record.adjustment.enabled = false;
-            }
-            document.validate_for_device(&device).unwrap();
-            document
-                .project
-                .source_mut(id)
-                .unwrap()
-                .adjustment_layers
-                .as_mut()
-                .unwrap()
-                .layers[0]
-                .adjustment
-                .strength = f64::NAN;
-            assert!(
-                document.validate_for_device(&device).is_err(),
-                "inactive records must still obey the persisted mask/control contract"
-            );
+        let mut document = calibrated(directory.path());
+        let id = document.project.sources[1].id;
+        document.project.source_mut(id).unwrap().adjustment_layers = Some(unsupported_locals());
+        let before = document.project.clone();
+        assert!(document.validate_for_device(&device).is_err());
+        assert_eq!(document.project, before);
+        for record in &mut document
+            .project
+            .source_mut(id)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers
+        {
+            record.adjustment.enabled = false;
         }
+        document.validate_for_device(&device).unwrap();
+        document
+            .project
+            .source_mut(id)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .strength = f64::NAN;
+        assert!(
+            document.validate_for_device(&device).is_err(),
+            "inactive photo records must obey the persisted mask/control contract"
+        );
     });
 }
 
@@ -208,8 +191,8 @@ fn document_preflight_preserves_calibration_under_correction_and_checks_processi
             )
             .unwrap(),
         );
-        let settings = crate::project::FlatFieldSettings::new(source, field);
-        document.project.set_flat_field(Some(settings));
+        let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field);
+        document.project.set_flat_field(Some(settings)).unwrap();
         assert_eq!(Some(calibration), document.project.calibration().unwrap());
         document.validate_for_device(&device).unwrap();
         let before = document.project.clone();
@@ -225,8 +208,7 @@ fn document_preflight_preserves_calibration_under_correction_and_checks_processi
 }
 
 #[test]
-fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and_preserve_rejected_candidates()
- {
+fn device_aware_save_and_open_validate_photo_grades_before_io_and_preserve_rejected_candidates() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
@@ -248,22 +230,17 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
         document
             .project
             .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                &reference, map,
-            )));
+                reference.path.clone(),
+                map,
+            )))
+            .unwrap();
         let ordered = document.project.order[0];
         document.project.remove_from_filmstrip(ordered).unwrap();
-        document
-            .project
-            .remove_from_filmstrip(reference.id)
-            .unwrap();
-        assert!(document.project.order.is_empty());
+        assert_eq!(document.project.order, vec![reference.id]);
         assert_eq!(document.project.sources.len(), 1);
-        assert!(
-            document
-                .project
-                .source(reference.id)
-                .unwrap()
-                .reference_only
+        assert_eq!(
+            document.project.flat_field().unwrap().reference_name,
+            "two.ARW"
         );
         let path = directory.path().join("reference.json");
         let saved = document
@@ -401,7 +378,7 @@ fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_re
         let raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         let mut document = Document::default();
         document
-            .import_with_progress(std::slice::from_ref(&raw), Some(&device), |_, _| {})
+            .import_with_progress(std::slice::from_ref(&raw), &Default::default(), |_, _| {})
             .unwrap();
         document.project.set_dmin(Some([0.2, 0.15, 0.1]));
         document.project.set_dmax(Some([0.008, 0.005, 0.002]));
@@ -414,7 +391,7 @@ fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_re
         let mut opened = Document::open(&path).unwrap();
         assert_eq!(opened.project, saved.project);
         opened
-            .import_with_progress(&[raw.clone(), raw], Some(&device), |_, _| {})
+            .import_with_progress(&[raw.clone(), raw], &Default::default(), |_, _| {})
             .unwrap();
         assert_eq!(opened.project, saved.project);
         assert!(!opened.dirty());

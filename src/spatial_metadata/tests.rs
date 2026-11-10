@@ -34,7 +34,6 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
                 id: SourceId(0),
                 path: path.clone(),
                 development: development.clone(),
-                reference_only: false,
 
                 repairs: Default::default(),
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(

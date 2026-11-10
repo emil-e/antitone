@@ -250,20 +250,20 @@ fn failed_open_and_successful_import_preserve_the_selected_tab() {
             assert_eq!(editor.tab, 2);
             assert_eq!(editor.document.state.project, before);
         });
-        app.enter(|editor, cx| {
-            editor.start_document(Preparation::Import(Document::default(), vec![], None), cx);
-            editor.document_prepared(
-                editor.document_pending.unwrap(),
-                Ok(Box::new(Prepared {
-                    document: Document::default(),
-                    ready: None,
-                    selected: None,
-                    reuse_ready: false,
-                    correction: None,
-                    preserve_view: false,
-                })),
-            );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.dng");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
+            &path,
+        )
+        .unwrap();
+        app.enter(|editor, cx| editor.add_raws(vec![path], cx));
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.interaction_blocked() && !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
             assert_eq!(editor.tab, 2);
+            assert_eq!(editor.document.project.order.len(), 1);
         });
     });
 }

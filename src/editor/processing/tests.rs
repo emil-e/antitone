@@ -25,7 +25,6 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
             camera_model: "test-camera".into(),
             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
         },
-        reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             editor.photo_settings(),
         )),
@@ -265,8 +264,8 @@ fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
             )
             .unwrap(),
         );
-        let field = crate::project::FlatFieldSettings::new(source, map);
-        editor.document.project.set_flat_field(Some(field));
+        let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+        editor.document.project.set_flat_field(Some(field)).unwrap();
         editor.document.correction = Correction::prepare(&device, &editor.document, None)
             .unwrap()
             .into();
@@ -293,8 +292,8 @@ fn correction_leaves_inversion_parameters_and_captured_layer_stacks_unchanged() 
             )
             .unwrap(),
         );
-        let settings = crate::project::FlatFieldSettings::new(source, field.clone());
-        candidate.project.set_flat_field(Some(settings));
+        let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field.clone());
+        candidate.project.set_flat_field(Some(settings)).unwrap();
         editor.document.correction = Correction::prepare(&device, &candidate, None)
             .unwrap()
             .into();

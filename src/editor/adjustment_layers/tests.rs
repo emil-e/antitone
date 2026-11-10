@@ -370,7 +370,10 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
                 let accepted = editor.document.state.project.clone();
                 let visit = editor.document.visit.view;
                 editor.start_document(
-                    Preparation::Import(editor.document.capture(), vec![], None),
+                    Preparation::Input(
+                        editor.document.capture(),
+                        editor.document.visit.current_source,
+                    ),
                     cx,
                 );
                 let request = editor.document_pending.unwrap();

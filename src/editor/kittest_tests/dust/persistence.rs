@@ -81,9 +81,7 @@ fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_st
     std::fs::copy(fixture("patches.dng"), &other).unwrap();
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![other], cx));
-        wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         h.get_by_label("patches.dng").click();
         h.step();
         wait_for(&mut h, |editor| !editor.interaction_blocked());

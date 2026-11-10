@@ -23,7 +23,6 @@ fn project() -> (Project, SourceId) {
         .add_source(Source {
             id: SourceId(0),
             path: "negative.ARW".into(),
-            reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("test".into(), [1.; 4]),
                 dimensions: [900, 600],
@@ -126,7 +125,7 @@ fn accepted_recipes_capture_grades_composition_and_repair_metadata() {
 }
 
 #[test]
-fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the_filmstrip() {
+fn recipe_capture_uses_the_requested_photo_and_deleted_photos_leave_only_correction_provenance() {
     let (mut project, first) = project();
     let mut second = project.source(first).unwrap().clone();
     second.path = "other.ARW".into();
@@ -138,15 +137,18 @@ fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the
     let map = Arc::new(
         FlatField::from_nodes([12, 12, 864, 576], [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
     );
-    let field = FlatFieldSettings::new(project.source(second).unwrap(), map);
-    project.set_flat_field(Some(field));
-    project.remove_from_filmstrip(second).unwrap();
-    assert!(!project.order.contains(&second));
+    let field = FlatFieldSettings::new(project.source(second).unwrap().path.clone(), map);
+    project.set_flat_field(Some(field.clone())).unwrap();
+    assert!(project.order.contains(&first) && project.order.contains(&second));
     let a = project.image_recipe(first).unwrap();
     let b = project.image_recipe(second).unwrap();
     assert_ne!(a.neutral, b.neutral);
     assert_eq!(a.grade.layers()[0].photo.exposure, 0.);
     assert_eq!(b.grade.layers()[0].photo.exposure, 2.);
+    project.remove_from_filmstrip(second).unwrap();
+    assert!(project.image_recipe(second).is_err());
+    assert_eq!(project.flat_field(), Some(&field));
+    project.validate().unwrap();
 }
 
 #[test]

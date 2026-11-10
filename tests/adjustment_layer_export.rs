@@ -95,7 +95,6 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
                 camera_model: "test-camera".into(),
                 camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
             },
-            reference_only: false,
 
             adjustment_layers: Some(layers),
             repairs: Default::default(),

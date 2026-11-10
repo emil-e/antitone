@@ -190,7 +190,7 @@ fn output() -> Result<PathBuf> {
 fn proposal(case: &CaseInput) -> Result<Crop> {
     let id = case.spec.source;
     let source = case.project.source(id)?;
-    if source.reference_only || !case.project.order.contains(&id) {
+    if !case.project.order.contains(&id) {
         return Err("source is not an ordinary filmstrip photo".into());
     }
     let areas = case

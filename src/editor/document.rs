@@ -1,12 +1,8 @@
 //! Document snapshots, candidate preparation and transactional editor installation.
-use super::{
-    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, RollSelection, history,
-    source,
-};
+use super::{ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, history, source};
 use crate::{
     Error,
     project::{Project, Save, Source, SourceId},
-    raw::Metadata,
 };
 
 use std::{
@@ -29,8 +25,6 @@ pub(super) struct Document {
     pub exposure_metadata: Arc<crate::exposure_metadata::Metadata>,
     saved: super::editing::ProjectVersion,
 
-    source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
-
     // Keep identities for undo; each record locator follows project-path rebasing on Save As.
     source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
     #[cfg(test)]
@@ -46,7 +40,6 @@ impl Default for Document {
             path: None,
             spatial_metadata: Arc::default(),
             exposure_metadata: Arc::default(),
-            source_previews: Default::default(),
             source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
@@ -64,15 +57,6 @@ impl Document {
     ) -> Result<SourceId> {
         source.development.decode = development;
         self.register(source)
-    }
-
-    pub fn register_reference_with_development(
-        &mut self,
-        mut source: Source,
-        development: crate::project::Development,
-    ) -> Result<SourceId> {
-        source.development.decode = development;
-        self.register_reference(source)
     }
 }
 
@@ -176,23 +160,6 @@ impl Document {
         }
     }
 
-    pub(super) fn remember_source_preview(
-        &mut self,
-        id: SourceId,
-        metadata: &Metadata,
-        white_balance: [f64; 4],
-    ) {
-        self.source_previews
-            .insert(id, metadata.source_preview(white_balance));
-    }
-
-    pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
-        self.source_previews
-            .get(&source.id)
-            .copied()
-            .unwrap_or_default()
-    }
-
     fn inspect_source(
         path: &Path,
         wb: Option<[f64; 4]>,
@@ -269,7 +236,10 @@ impl Document {
         )
     }
 
-    pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
+    pub(super) fn refresh_source(
+        &mut self,
+        id: SourceId,
+    ) -> Result<(crate::source::SourceKey, crate::raw::SourcePreview)> {
         let expected = self.project.source(id)?;
         let (actual, preview) = Self::inspect_source(
             &self.source_path(id)?,
@@ -280,8 +250,7 @@ impl Document {
             log::debug!(recorded = expected.development.decode.version(), current = actual.development.decode.version(); "source_decoder_changed");
         }
         self.project.source_mut(id)?.development = actual.development;
-        self.source_previews.insert(id, preview);
-        Ok(())
+        Ok((self.source_key(id)?, preview))
     }
 
     pub fn dirty(&self) -> bool {
@@ -293,7 +262,6 @@ impl Document {
         self.project
             .sources
             .iter()
-            .filter(|source| !source.reference_only)
             .filter_map(|source| {
                 Some(crate::spatial_metadata::Input {
                     source: source.id,
@@ -398,7 +366,6 @@ impl Document {
             path: Some(path),
             spatial_metadata: Arc::default(),
             exposure_metadata: Arc::new(exposure_metadata),
-            source_previews: Default::default(),
             source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
@@ -411,109 +378,81 @@ impl Document {
 
     /// Re-acquire active sources for the target input stage before accepting a stage switch.
     /// Negative uses unity WB; Digital resolves each source's as-shot WB. Crossing stages clears
-    /// the accepted correction and its reference record before this redevelopment.
+    /// the accepted correction before this redevelopment.
     pub(super) fn redevelop_for_input(
         &mut self,
         target: crate::processing::InputSettings,
-    ) -> Result<()> {
+    ) -> Result<super::viewer_ui::SourcePreviews> {
         // A correction belongs to the stage in which it was measured, so crossing stages drops it.
-        self.project.set_flat_field(None);
+        self.project.set_flat_field(None)?;
         let wb = target.is_negative().then_some(crate::project::UNITY_WB);
-        let active = self.project.active_source_ids();
+        let active = self.project.order.clone();
         let mut developments = Vec::with_capacity(active.len());
         for id in active {
             let path = self.source_path(id)?;
             let (source, preview) = Self::inspect_source(&path, wb)?;
             developments.push((id, source.development, preview));
         }
+        let mut previews = super::viewer_ui::SourcePreviews::default();
         for (id, development, preview) in developments {
             self.project.source_mut(id)?.development = development;
-            self.source_previews.insert(id, preview);
+            previews.insert(self.source_key(id)?, preview);
         }
         self.project.input = target;
         if target.requires_scan_sources() {
             self.project.reset_scan_basis();
             self.project.require_scan_sources()?;
         }
-        Ok(())
+        Ok(previews)
     }
 
     #[cfg(test)]
     pub fn import(&mut self, paths: &[PathBuf]) -> Result<()> {
-        self.import_with_progress(paths, None, |_, _| {})
+        self.import_with_progress(
+            paths,
+            &crate::cancellation::Cancellation::default(),
+            |_, _| {},
+        )
+        .map(|_| ())
     }
 
     pub fn import_with_progress(
         &mut self,
         paths: &[PathBuf],
-        device: Option<&wgpu::Device>,
+        cancelled: &crate::cancellation::Cancellation,
         mut progress: impl FnMut(usize, usize),
-    ) -> Result<()> {
-        let started = std::time::Instant::now();
+    ) -> Result<super::viewer_ui::SourcePreviews> {
+        let mut previews = super::viewer_ui::SourcePreviews::default();
         progress(0, paths.len());
         let auto_digital = self.auto_digital_available();
-        // Negative decodes every new source with unity WB; Digital uses each source's as-shot
-        // WB. The first successful scan establishes the compatibility basis inside
-        // `add_source`, so read it again for every file.
         for (index, path) in paths.iter().enumerate() {
-            let existing = self.find_source(path);
-            if let Some(id) = existing {
-                if self.project.order.contains(&id) {
-                    self.refresh_source(id)?;
-                } else {
-                    // The only nonordered record kept by accepted state is the current
-                    // flat-field reference. Importing it as a photo reuses that record.
-                    let wb = self
-                        .project
-                        .input
-                        .requires_scan_sources()
-                        .then_some(crate::project::UNITY_WB);
-                    let (source, preview) = Self::inspect_source(path, wb)?;
-                    self.project.order.push(id);
-                    self.project.source_mut(id)?.development = source.development;
-                    self.source_previews.insert(id, preview);
-                }
-                self.project.source_mut(id)?.reference_only = false;
-                let resolved = self.source_path(id)?;
-                self.source_files.insert(
-                    id,
-                    (
-                        self.project.source(id)?.path.clone(),
-                        crate::source::FileKey::new(&resolved),
-                    ),
-                );
-            } else {
+            if cancelled.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            if self.find_source(path).is_none() {
                 let wb = self.project.acquisition_wb();
                 let (mut source, mut preview) = Self::inspect_source(path, wb)?;
-                // A fresh scan import may contain sources that cannot share one acquisition
-                // basis. In that case choose Digital for the batch; the first source remains
-                // valid in its own as-shot basis. An existing calibrated Negative project is
-                // never switched silently.
                 if auto_digital
                     && self.project.input.requires_scan_sources()
                     && self.scan_source_incompatible(&source)
                 {
                     self.project.input = crate::processing::InputSettings::Digital;
                     self.project.scan = None;
-                    // Every ordered source now belongs to Digital, including one that was
-                    // already present before this batch. Reacquire all of them in as-shot WB.
-                    self.redevelop_for_input(crate::processing::InputSettings::Digital)?;
+                    previews.extend(
+                        self.redevelop_for_input(crate::processing::InputSettings::Digital)?,
+                    );
                     (source, preview) = Self::inspect_source(path, None)?;
                 }
                 let id = self.register(source)?;
-                self.source_previews.insert(id, preview);
+                previews.insert(self.source_key(id)?, preview);
             }
             progress(index + 1, paths.len());
         }
-
-        self.validate_with_device(device)?;
-        log::info!(
-            sources = paths.len(),
-            seconds = started.elapsed().as_secs_f64();
-            "raw_import"
-        );
-
-        Ok(())
+        if cancelled.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        self.project.require_runtime()?;
+        Ok(previews)
     }
 
     fn auto_digital_available(&self) -> bool {
@@ -539,17 +478,6 @@ impl Document {
                 crate::source::FileKey::new(&path),
             ),
         );
-        Ok(id)
-    }
-
-    pub fn register_reference(&mut self, mut source: Source) -> Result<SourceId> {
-        if let Some(id) = self.find_source(&source.path) {
-            verify_source(self.project.source(id)?, &source)?;
-            return Ok(id);
-        }
-        source.reference_only = true;
-        let id = self.register(source)?;
-        self.project.remove_from_order(id)?;
         Ok(id)
     }
 
@@ -636,7 +564,7 @@ pub(super) fn rebase_project(project: &mut Project, old: Option<&Path>, new: Opt
     let new_parent = new.and_then(Path::parent).unwrap_or(Path::new("."));
     for source in &mut project.sources {
         if source.path.is_relative() {
-            // Rebase directories, not RAWs: unavailable non-filmstrip records remain valid.
+            // Resolve directories without requiring the photo itself to exist.
             source.path = rebase_relative(&source.path, old_parent, new_parent)
                 .unwrap_or_else(|_| old_parent.join(&source.path));
         }
@@ -682,14 +610,12 @@ mod tests;
 mod workflow_tests;
 
 pub(super) enum Preparation {
-    Import(Document, Vec<PathBuf>, Option<(u64, SourceId)>),
     Input(Document, Option<SourceId>),
     History(Document, Option<SourceId>, history::Direction),
 }
 
 pub(super) struct Request {
     pub work: Preparation,
-    pub source: Option<(u64, Ready)>,
     pub correction: Option<Arc<Correction>>,
     pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     pub exposures: Option<Arc<crate::exposure_metadata::Store>>,
@@ -697,11 +623,10 @@ pub(super) struct Request {
 
 pub(super) struct Prepared {
     pub document: Document,
+    pub source_previews: super::viewer_ui::SourcePreviews,
     pub ready: Option<Ready>,
     pub selected: Option<SourceId>,
-    pub reuse_ready: bool,
     pub correction: Option<Arc<Correction>>,
-    pub preserve_view: bool,
 }
 
 pub(super) struct Write {
@@ -724,32 +649,22 @@ pub(super) struct Candidate {
 
 /// The synchronous admission/preparation stage contains metadata, validation and
 /// GPU preflight only. Selected native development is a separate awaited service.
-pub(super) fn candidate(
-    request: Request,
-    device: &wgpu::Device,
-    mut progress: impl FnMut(usize, usize),
-) -> Result<Candidate, Error> {
+pub(super) fn candidate(request: Request, device: &wgpu::Device) -> Result<Candidate, Error> {
     let Request {
         work,
-        source: previous,
         correction: previous_correction,
         sources,
         exposures,
     } = request;
-    let preserve_view = matches!(work, Preparation::Input(..) | Preparation::History(..));
-    let selected_override = match &work {
-        Preparation::Input(_, selected) | Preparation::History(_, selected, _) => Some(*selected),
-        _ => None,
+    let selected = match &work {
+        Preparation::Input(_, selected) | Preparation::History(_, selected, _) => *selected,
     };
-    let (mut document, reuse) = match work {
-        Preparation::Import(mut document, paths, reuse) => {
-            document.import_with_progress(&paths, Some(device), &mut progress)?;
-            (document, reuse)
-        }
+    let mut source_previews = super::viewer_ui::SourcePreviews::default();
+    let mut document = match work {
         Preparation::Input(mut document, _) => {
             let target = document.project.input;
-            document.redevelop_for_input(target)?;
-            (document, None)
+            source_previews.extend(document.redevelop_for_input(target)?);
+            document
         }
         Preparation::History(mut document, _, _) => {
             if let Some(exposures) = &exposures {
@@ -757,9 +672,10 @@ pub(super) fn candidate(
             }
             document.validate_for_device(device)?;
             for id in document.project.order.clone() {
-                document.refresh_source(id)?;
+                let (key, preview) = document.refresh_source(id)?;
+                source_previews.insert(key, preview);
             }
-            (document, None)
+            document
         }
     };
     if let Some(exposures) = &exposures {
@@ -772,31 +688,6 @@ pub(super) fn candidate(
             false,
         )?;
     }
-    if let Some((loaded, selected)) = reuse
-        && let Some((_, ready)) = previous.filter(|(active, _)| *active == loaded)
-        && document
-            .project
-            .source(selected)
-            .is_ok_and(|source| source.development == ready.record.development)
-        && (document.project.input.is_negative() || ready.reference.is_some())
-    {
-        return Ok(Candidate {
-            prepared: Prepared {
-                document,
-                ready: Some(ready),
-                selected: Some(selected),
-                reuse_ready: true,
-                correction,
-                preserve_view,
-            },
-            source: None,
-        });
-    }
-    let selected = selected_override.unwrap_or_else(|| {
-        reuse
-            .map(|(_, selected)| selected)
-            .or_else(|| document.project.order.first().copied())
-    });
     let source = selected
         .map(|id| {
             source_request(
@@ -811,11 +702,10 @@ pub(super) fn candidate(
     Ok(Candidate {
         prepared: Prepared {
             document,
+            source_previews,
             ready: None,
             selected,
-            reuse_ready: false,
             correction,
-            preserve_view,
         },
         source,
     })
@@ -862,7 +752,6 @@ impl PreparationServices {
         self,
         mut request: Request,
         cancelled: crate::cancellation::Cancellation,
-        progress: impl FnMut(usize, usize) + Send + 'static,
     ) -> Result<Prepared, String> {
         let sources = request.sources.take();
         let exposures = request.exposures.clone();
@@ -875,7 +764,7 @@ impl PreparationServices {
             if retired.is_cancelled() {
                 return Err(Error::UnusableSample("document preparation retired"));
             }
-            candidate(request, &device, progress)
+            candidate(request, &device)
         })
         .await
         .map_err(|_| "Document preparation worker panicked".to_owned())?
@@ -933,13 +822,9 @@ impl Editor {
         self.cancel_control_edit();
 
         self.history_pending = match &work {
-            Preparation::Import(..) | Preparation::Input(..) => Some(history::Pending::Edit {
+            Preparation::Input(..) => Some(history::Pending::Edit {
                 before: Box::new(self.document.state.project.clone()),
-                label: if matches!(&work, Preparation::Import(..)) {
-                    "Import photos"
-                } else {
-                    "Input stage"
-                },
+                label: "Input stage",
                 photo: None,
             }),
             Preparation::History(_, _, direction) => Some(history::Pending::Restore {
@@ -952,22 +837,11 @@ impl Editor {
         let id = self.begin_document_operation();
         let activity = self.activities.start(
             ActivityOptions::new(match &work {
-                Preparation::Import(..) => "Importing RAWs…",
                 Preparation::Input(..) => "Switching input stage…",
                 Preparation::History(..) => "Restoring edit…",
             })
             .modal(),
         );
-        let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
-            self.document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .map(|ready| (self.id, ready.clone()))
-        } else {
-            None
-        };
         let request = Request {
             exposures: Some(self.document.exposures.clone()),
             sources: self
@@ -975,11 +849,9 @@ impl Editor {
                 .as_ref()
                 .map(|services| services.provider(Some(self.document.cache.clone()))),
             work,
-            source,
             correction: self.document.correction.prepared().cloned(),
         };
         let source = self.source_services.clone();
-        let progress = activity.reporter();
         let cancelled = crate::cancellation::Cancellation::default();
         let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
@@ -987,9 +859,7 @@ impl Editor {
             let result = async {
                 let source = source.ok_or_else(|| "Document services unavailable".to_owned())?;
                 PreparationServices(source)
-                    .prepare(request, cancelled, move |done, total| {
-                        progress.progress(done, total)
-                    })
+                    .prepare(request, cancelled)
                     .await
             };
             let result = result.await.map(Box::new);
@@ -1022,9 +892,7 @@ impl Editor {
                     != prepared.document.project.input.is_negative();
 
                 let same_visit = self.document.visit.current_source == prepared.selected
-                    && self
-                        .document
-                        .same_visit(prepared.ready.as_ref(), prepared.reuse_ready);
+                    && self.document.same_visit(prepared.ready.as_ref());
                 let layer_selection = if self.document.visit.current_source == prepared.selected {
                     self.document.visit.adjustment_layers.selection_only()
                 } else {
@@ -1032,6 +900,10 @@ impl Editor {
                 };
                 self.document.visit.source = source::State::default();
                 self.document.install(prepared.document);
+                self.document
+                    .source_previews
+                    .extend(prepared.source_previews);
+                self.document.correction_restore = None;
                 self.document.correction = prepared.correction.into();
                 if let Some(ready) = &prepared.ready {
                     self.document.cache_ready(ready);
@@ -1043,9 +915,6 @@ impl Editor {
                     self.replace_photo_scope(self.id);
                 }
                 self.document.visit.current_source = prepared.selected;
-                if !prepared.reuse_ready && !prepared.preserve_view {
-                    self.document.roll_selection = RollSelection::default();
-                }
                 self.document.roll_selection.reconcile(
                     &self.document.state.project.order,
                     self.document.visit.current_source,
@@ -1065,10 +934,6 @@ impl Editor {
                 self.document.clear_crop_edit();
                 self.document.visit.canvas.last_layout = None;
                 self.document.visit.canvas.ready = prepared.ready;
-                if !prepared.reuse_ready && !prepared.preserve_view {
-                    self.document.visit.canvas.viewport.fit();
-                    self.document.source = !self.document.project.input.ready();
-                }
                 if input_changed {
                     self.document.source = !self.document.project.input.ready();
                 }

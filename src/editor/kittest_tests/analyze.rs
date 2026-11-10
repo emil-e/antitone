@@ -244,19 +244,6 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .unwrap()
                 .adjustment_layers = Some(layers.clone());
         }
-        if let Some(reference_id) = editor
-            .document
-            .project
-            .flat_field()
-            .map(|field| field.reference)
-        {
-            editor
-                .document
-                .project
-                .source_mut(reference_id)
-                .unwrap()
-                .adjustment_layers = Some(layers);
-        }
         editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(ids[0]));
 
         editor
@@ -446,9 +433,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         h.enter(|editor, cx| {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         show_confirmation(&mut h);
         h.read(|editor| assert!(!editor.document.analysis_review().unwrap().replaces_photos));
         let before = h.read(|editor| editor.document.state.project.clone());
@@ -534,9 +519,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.enter(|editor, cx| {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.update(|editor| editor.photo_settings_mut().exposure = 1.25);
 
         let before = harness.read(|editor| editor.document.state.project.clone());
@@ -745,9 +728,7 @@ fn analyze_widgets_preserve_area_cancel_failure_and_both_settled_targets() {
         harness.enter(|editor, cx| {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -777,9 +758,7 @@ fn analyze_widgets_keep_real_correction_and_both_settled_targets() {
         harness.enter(|editor, cx| {
             editor.add_raws(vec![fixture("illuminated-patches.dng"), second], cx)
         });
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

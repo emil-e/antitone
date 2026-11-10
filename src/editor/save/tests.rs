@@ -310,12 +310,10 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
         crate::editor::DocumentRequest {
             exposures: None,
             sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
-            work: Preparation::Import(document.clone(), vec![], None),
-            source: None,
+            work: Preparation::Input(document.clone(), Some(source)),
             correction: None,
         },
         &device,
-        |_, _| {},
     )
     .unwrap();
     assert_eq!(prepared.prepared.document.project, accepted);
@@ -337,16 +335,18 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
         crate::editor::DocumentRequest {
             exposures: None,
             sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
-            work: Preparation::Import(
-                document.clone(),
-                vec![PathBuf::from("missing-source.dng")],
-                None,
+            work: Preparation::Input(
+                {
+                    let mut candidate = document.clone();
+                    candidate.project.source_mut(source).unwrap().path =
+                        "missing-source.dng".into();
+                    candidate
+                },
+                Some(source),
             ),
-            source: None,
             correction: None,
         },
         &device,
-        |_, _| {},
     );
     assert!(bad.is_err());
     assert_eq!(document.project, accepted);

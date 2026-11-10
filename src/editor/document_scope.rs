@@ -40,10 +40,7 @@ impl SamplingInputs {
 
     pub fn retain(&mut self, document: &Document) {
         let matches = |e: &SamplingEntry| {
-            document
-                .project
-                .source(e.source)
-                .is_ok_and(|source| !source.reference_only)
+            document.project.source(e.source).is_ok()
                 && document.source_key(e.source).is_ok_and(|key| key == e.key)
         };
         if self.entries.iter().all(&matches) {
@@ -82,6 +79,7 @@ pub(super) struct DocumentScope {
     pub roll_selection: super::RollSelection,
 
     pub export: super::export::State,
+    pub importing: Option<async_executor::Task<()>>,
     pub correction: super::flat::Resources,
     pub correction_restore: Option<async_executor::Task<()>>,
     pub flat_correction: Option<async_executor::Task<()>>,
@@ -91,6 +89,7 @@ pub(super) struct DocumentScope {
     pub exposures: Arc<crate::exposure_metadata::Store>,
     pub spatial: crate::spatial_metadata::Store,
     pub sampling_inputs: SamplingInputs,
+    pub source_previews: super::viewer_ui::SourcePreviews,
     pub spatial_preparing: Option<super::spatial::Pending>,
     #[cfg(test)]
     pub spatial_reply: Option<
@@ -181,8 +180,6 @@ impl DocumentScope {
 
     pub fn install(&mut self, document: Document) {
         self.retire_edits();
-        self.flat_correction = None;
-        self.correction_restore = None;
         self.sampling_inputs.retain(&document);
         self.exposures.restore(&document.exposure_metadata, |id| {
             document.exposure_origin(id)
@@ -213,6 +210,14 @@ impl DocumentScope {
         )
     }
 
+    pub fn source_preview(&self, source: &crate::project::Source) -> crate::raw::SourcePreview {
+        let Ok(path) = self.state.source_path(source.id) else {
+            return Default::default();
+        };
+        let key = SourceKey::for_load(&path, self.state.file_key(&path), &source.development);
+        self.source_previews.get(&key)
+    }
+
     pub fn cache_ready(&mut self, ready: &Ready) {
         if let (Some(id), Some(reference)) = (self.state.find_source(&ready.path), &ready.reference)
         {
@@ -227,6 +232,13 @@ impl DocumentScope {
             ready.file.clone(),
             &ready.record.development,
         );
+        self.source_previews.insert(
+            key.clone(),
+            ready
+                .developed
+                .metadata()
+                .source_preview(ready.developed.white_balance()),
+        );
         if let Err(error) = self
             .cache
             .publish_source(key.clone(), ready.developed.clone())
@@ -240,10 +252,7 @@ impl DocumentScope {
         }
     }
 
-    pub fn same_visit(&self, ready: Option<&Ready>, reuse_ready: bool) -> bool {
-        if reuse_ready {
-            return true;
-        }
+    pub fn same_visit(&self, ready: Option<&Ready>) -> bool {
         match (self.visit.canvas.ready.as_ref(), ready) {
             (Some(current), Some(candidate)) => {
                 current.path == candidate.path
@@ -278,6 +287,7 @@ impl From<Document> for DocumentScope {
             roll_selection: super::RollSelection::default(),
 
             export: Default::default(),
+            importing: None,
             gamma_pivot: Default::default(),
 
             source: true,
@@ -286,6 +296,7 @@ impl From<Document> for DocumentScope {
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
             sampling_inputs: Default::default(),
+            source_previews: Default::default(),
             #[cfg(test)]
             spatial_reply: None,
             spatial_resumed: Arc::default(),

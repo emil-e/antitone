@@ -36,7 +36,6 @@ fn project() -> (Project, SourceId) {
         .add_source(Source {
             id: SourceId(0),
             path: "graph-input.dng".into(),
-            reference_only: false,
             development: SourceDevelopment {
                 decode: Development::new("fixture".into(), [1.; 4]),
                 dimensions: [3, 1],

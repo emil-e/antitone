@@ -143,7 +143,6 @@ pub(super) fn with_camera_basis(editor: &mut Editor) {
                     camera_model: "test-camera".into(),
                     camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                 },
-                reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                     AdjustmentLayerSettings::default(),
                 )),
@@ -214,6 +213,7 @@ pub(super) fn complete_document_operation(
         // Consumer fixtures also need the initial photo. Metadata acceptance is tested separately.
         app.run_until(timeout, |editor| {
             editor.document_pending.is_none()
+                && !editor.editing()
                 && !editor.files.opening()
                 && !editor.document.visit.source.pending()
                 && !editor.document.correction.pending()
@@ -469,7 +469,6 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                             camera_model: "test-camera".into(),
                             camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                         },
-                        reference_only: true,
                         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                             Default::default(),
                         )),
@@ -921,7 +920,6 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
                 camera_model: "test-camera".into(),
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
             },
-            reference_only: false,
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                 Default::default(),
             )),
@@ -1149,7 +1147,6 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             camera_model: "test-camera".into(),
             camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         },
-        reference_only: false,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             editor.photo_settings(),
         )),
@@ -2625,7 +2622,6 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
                         camera_model: "test-camera".into(),
                         camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
                     },
-                    reference_only: false,
                     adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                         AdjustmentLayerSettings::default(),
                     )),

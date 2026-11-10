@@ -41,7 +41,6 @@ impl SourceKey {
             id: self.id,
             path: path.to_path_buf(),
             development: self.source.clone(),
-            reference_only: false,
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                 Default::default(),
             )),
@@ -251,8 +250,7 @@ impl SelectedPreview {
                 .ok()
                 .zip(document.source_path(self.key.id).ok())
                 .is_some_and(|(source, path)| {
-                    !source.reference_only
-                        && SourceKey::new(source, document.file_key(&path)) == self.key
+                    SourceKey::new(source, document.file_key(&path)) == self.key
                 })
     }
 
@@ -417,7 +415,7 @@ impl Thumbnails {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
         let key = SourceKey::new(source, document.file_key(&document.source_path(id)?));
-        if source.reference_only || key.file.revision.is_none() {
+        if key.file.revision.is_none() {
             return Ok(None);
         }
         let Some(native_key) = key.store_key_at(&document.source_path(id)?) else {

@@ -214,7 +214,6 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
             id: SourceId(0),
             path: file.path().into(),
             development: development(&scan),
-            reference_only: false,
 
             repairs: Default::default(),
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -237,10 +236,12 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
     let field =
         Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::splat(3.); 4]).unwrap());
     scan.set_flat_field(Some(field.clone()));
-    project.set_flat_field(Some(FlatFieldSettings::new(
-        project.source(id).unwrap(),
-        field,
-    )));
+    project
+        .set_flat_field(Some(FlatFieldSettings::new(
+            project.source(id).unwrap().path.clone(),
+            field,
+        )))
+        .unwrap();
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(
         (base).validate().unwrap(),
@@ -259,7 +260,7 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
         .require_scan(&scan)
         .unwrap();
     let mut changed = reopened.clone();
-    changed.set_flat_field(None);
+    changed.set_flat_field(None).unwrap();
     assert!(
         changed
             .image_recipe(id)

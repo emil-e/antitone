@@ -195,7 +195,6 @@ fn record(scan: &Scan, path: &std::path::Path) -> antitone::project::Source {
     Source {
         id: SourceId(0),
         path: path.into(),
-        reference_only: false,
         development: SourceDevelopment {
             decode: metadata.development(scan.white_balance),
             dimensions: metadata.source_dimensions().unwrap(),

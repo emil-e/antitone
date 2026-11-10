@@ -1,6 +1,40 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 
+/// Display transforms follow captured source inputs, independently of document snapshots.
+#[derive(Default, Debug)]
+pub(super) struct SourcePreviews {
+    entries: Vec<(crate::source::SourceKey, crate::raw::SourcePreview)>,
+}
+
+impl SourcePreviews {
+    pub fn get(&self, key: &crate::source::SourceKey) -> crate::raw::SourcePreview {
+        self.entries
+            .iter()
+            .find(|(captured, _)| captured == key)
+            .map(|(_, preview)| *preview)
+            .unwrap_or_default()
+    }
+
+    pub fn insert(&mut self, key: crate::source::SourceKey, preview: crate::raw::SourcePreview) {
+        if let Some((_, current)) = self
+            .entries
+            .iter_mut()
+            .find(|(captured, _)| captured == &key)
+        {
+            *current = preview;
+        } else {
+            self.entries.push((key, preview));
+        }
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        for (key, preview) in other.entries {
+            self.insert(key, preview);
+        }
+    }
+}
+
 pub(super) fn surface() -> egui::Color32 {
     egui::Color32::from_gray(16)
 }

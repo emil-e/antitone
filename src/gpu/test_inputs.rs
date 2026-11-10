@@ -418,7 +418,6 @@ mod tests {
             .add_source(Source {
                 id: SourceId(0),
                 path: "authored.dng".into(),
-                reference_only: false,
                 development: SourceDevelopment {
                     decode: Development::new("test".into(), [1.; 4]),
                     dimensions: [624, 424],

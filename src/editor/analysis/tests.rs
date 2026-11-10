@@ -239,7 +239,6 @@ fn state() -> Editor {
                     camera_model: "test-camera".into(),
                     camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                 },
-                reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                     AdjustmentLayerSettings::default(),
                 )),

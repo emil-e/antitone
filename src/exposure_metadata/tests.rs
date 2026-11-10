@@ -21,7 +21,6 @@ fn fixture(path: &std::path::Path) -> (Project, Metadata) {
         .add_source(Source {
             id: SourceId(0),
             path: path.to_owned(),
-            reference_only: false,
             development: development.clone(),
             adjustment_layers: None,
             repairs: Default::default(),

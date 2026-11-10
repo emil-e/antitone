@@ -60,7 +60,9 @@ fn import(app: &mut TestApplication<'_, Editor>) {
     app.enter(|e, cx| {
         e.add_raws(vec![path("illuminated-patches.dng")], cx);
     });
-    wait(app);
+    app.run_until(Duration::from_secs(20), |e| {
+        !e.interaction_blocked() && !e.document.visit.source.pending()
+    });
 }
 
 #[test]
@@ -443,8 +445,52 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
         app.read(|e| {
             assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert!(e.document.state.project.order.is_empty());
-            assert_eq!(e.document.state.project.sources.len(), 1);
-            assert!(e.document.state.project.sources[0].reference_only);
+            assert!(e.document.state.project.sources.is_empty());
+            assert_eq!(
+                e.document.project.flat_field().unwrap().reference_name,
+                "bare-light.dng"
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn switching_an_empty_corrected_document_clears_the_map_and_undo_restores_it_without_a_reference_record()
+ {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        begin(app, "bare-light.dng");
+        wait(app);
+        apply(app);
+        wait(app);
+        let corrected = app.read(|e| {
+            assert!(e.document.project.sources.is_empty());
+            assert!(e.document.correction.prepared().is_some());
+            e.document.project.clone()
+        });
+        app.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
+        app.read(|e| {
+            assert!(e.document.project.flat_field().is_none());
+            assert!(e.document.correction.prepared().is_none());
+            assert_eq!(
+                e.document.project.input,
+                crate::processing::InputSettings::Digital
+            );
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Input stage")
+            );
+        });
+        app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
+        wait(app);
+        app.read(|e| {
+            assert_eq!(e.document.project, corrected);
+            assert_eq!(
+                e.document.correction.prepared().unwrap().settings.map,
+                corrected.flat_field().unwrap().map
+            );
+            assert!(e.document.project.sources.is_empty());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -821,9 +867,8 @@ fn correction_uses_the_prepared_reference_even_if_its_file_disappears_before_app
         app.read(|e| {
             assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             let settings = e.document.state.project.flat_field().unwrap();
-            let record = e.document.state.project.source(settings.reference).unwrap();
-            assert_eq!(record.path, reference);
-            assert!(record.reference_only);
+            assert_eq!(settings.reference_name, "captured-light.dng");
+            assert!(e.document.project.sources.is_empty());
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Correction")
@@ -883,7 +928,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
         wait(app);
         app.read(|e| {
             let mut cleared = accepted;
-            cleared.set_flat_field(None);
+            cleared.set_flat_field(None).unwrap();
             assert_eq!(e.document.project, cleared, "{}", e.status);
             assert!(e.document.correction.prepared().is_none());
             assert!(e.document.visit.canvas.ready.is_none());

@@ -29,7 +29,6 @@ fn fixture() -> Project {
             camera_model: "test-camera".into(),
             camera_to_ap1: DMat3::IDENTITY.to_cols_array_2d(),
         },
-        reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
             AdjustmentLayerSettings::default(),
         )),
@@ -51,11 +50,27 @@ fn fixture() -> Project {
         )
         .unwrap(),
     );
-    project.set_flat_field(Some(FlatFieldSettings::new(
-        project.source(id).unwrap(),
-        map,
-    )));
     project
+        .set_flat_field(Some(FlatFieldSettings::new(
+            project.source(id).unwrap().path.clone(),
+            map,
+        )))
+        .unwrap();
+    project
+}
+
+#[test]
+fn reference_provenance_stores_only_the_filename() {
+    let mut project = fixture();
+    let map = project.flat_field().unwrap().map.clone();
+    let reference = std::path::Path::new("outside-the-roll").join("light.ARW");
+    let settings = FlatFieldSettings::new(reference, map);
+    assert_eq!(settings.reference_name, "light.ARW");
+    project.set_flat_field(Some(settings)).unwrap();
+    let json = serde_json::to_string(&project).unwrap();
+    assert!(!json.contains("outside-the-roll"));
+    let reopened: Project = serde_json::from_str(&json).unwrap();
+    assert_eq!(reopened.flat_field().unwrap().reference_name, "light.ARW");
 }
 
 #[test]
@@ -93,7 +108,7 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
     disabled.flat_field_mut().unwrap().enabled = false;
     assert_eq!(disabled.calibration().unwrap(), calibration);
     let mut plain = project;
-    plain.set_flat_field(None);
+    plain.set_flat_field(None).unwrap();
     assert_eq!(plain.calibration().unwrap(), calibration);
     let json = serde_json::to_string(&plain).unwrap();
     assert!(!json.contains("flat_field"));
@@ -104,8 +119,8 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
 fn contract_identity_geometry_and_incompatible_sources_reject() {
     let project = fixture();
     let mut changed = project.clone();
-    changed.flat_field_mut().unwrap().reference = SourceId(999);
-    assert!(changed.validate().is_err());
+    changed.flat_field_mut().unwrap().reference_name = "reference.ARW".into();
+    changed.validate().unwrap();
     changed = project.clone();
     changed.sources[0].development.decode.white_balance[0] = 2.;
     assert!(changed.validate().is_err());
@@ -124,7 +139,7 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     changed.flat_field_mut().unwrap().enabled = false;
     changed.validate().unwrap();
     let mut json = serde_json::to_value(&project).unwrap();
-    json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
+    json["scan"]["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
     assert!(serde_json::from_value::<Project>(json).is_err());
 }
 
@@ -142,13 +157,18 @@ fn dense_calibration_remains_usable_with_or_without_correction() {
     .enumerate()
     {
         let mut project = fixture();
-        project.set_flat_field(None);
+        project.set_flat_field(None).unwrap();
         if flat_gain > 1. {
             let map = Arc::new(
                 FlatField::from_nodes([30, 30, 760, 550], [2, 2], vec![DVec3::splat(flat_gain); 4])
                     .unwrap(),
             );
-            project.set_flat_field(Some(FlatFieldSettings::new(&project.sources[0], map)));
+            project
+                .set_flat_field(Some(FlatFieldSettings::new(
+                    project.sources[0].path.clone(),
+                    map,
+                )))
+                .unwrap();
         }
 
         let floor = CAMERA_INPUT_FLOOR * anchor_scale * flat_gain;
@@ -283,13 +303,12 @@ fn scan_reentry_can_use_the_saved_map_with_changed_developed_dimensions() {
 }
 
 #[test]
-fn reference_kept_visible_and_removing_it_from_order_does_not_remove_map() {
+fn removing_a_photo_deletes_its_record_without_removing_the_map() {
     let mut project = fixture();
     let id = project.order[0];
-    assert!(!project.source(id).unwrap().reference_only);
     project.remove_from_filmstrip(id).unwrap();
     project.validate().unwrap();
     assert!(project.order.is_empty());
     assert!(project.flat_field().is_some());
-    assert!(project.source(id).is_ok());
+    assert!(project.source(id).is_err());
 }

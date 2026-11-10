@@ -181,7 +181,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
         };
         let mut reference_id = None;
         for name in ["illuminated-patches.dng", "bare-light.dng"] {
-            let reference_only = name == "bare-light.dng";
+            let is_reference = name == "bare-light.dng";
             let id = project
                 .add_source(Source {
                     id: SourceId(0),
@@ -196,7 +196,6 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                         camera_model: scan.camera_model.clone(),
                         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
                     },
-                    reference_only,
                     adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
                         AdjustmentLayerSettings::default(),
                     )),
@@ -205,17 +204,19 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     crop: None,
                 })
                 .unwrap();
-            if reference_only {
+            if is_reference {
                 reference_id = Some(id);
             }
         }
         let reference_id = reference_id.unwrap();
-        project.set_flat_field(Some(FlatFieldSettings::new(
-            project.source(reference_id).unwrap(),
-            map.clone(),
-        )));
+        project
+            .set_flat_field(Some(FlatFieldSettings::new(
+                project.source(reference_id).unwrap().path.clone(),
+                map.clone(),
+            )))
+            .unwrap();
         project.remove_from_filmstrip(reference_id).unwrap();
-        assert!(project.source(reference_id).unwrap().reference_only);
+        assert!(project.source(reference_id).is_err());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("corrected.antitone.json");
         project.save(&path, Save::New).unwrap();

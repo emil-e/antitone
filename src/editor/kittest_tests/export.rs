@@ -8,9 +8,7 @@ fn fixture_editor(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir)) {
         harness.enter(|editor, cx| {
             editor.add_raws(vec![fixture("patches.dng"), fixture("roll-0.dng")], cx)
         });
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
@@ -147,9 +145,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
 fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected_photos() {
     fixture_editor(|mut harness, directory| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("bare-light.dng")], cx));
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         harness
             .get_by_label("roll-0.dng")
             .click_modifiers(egui::Modifiers::COMMAND);

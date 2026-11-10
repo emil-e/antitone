@@ -207,8 +207,8 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
                 )
                 .unwrap(),
             );
-            let field = crate::project::FlatFieldSettings::new(photo, map);
-            candidate.project.set_flat_field(Some(field));
+            let field = crate::project::FlatFieldSettings::new(photo.path.clone(), map);
+            candidate.project.set_flat_field(Some(field)).unwrap();
             editor.start_correction(candidate, cx);
         });
         app.run_until(std::time::Duration::from_secs(10), |editor| {

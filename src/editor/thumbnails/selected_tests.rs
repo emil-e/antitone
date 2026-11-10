@@ -75,7 +75,6 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
                     camera_model: "test-camera".into(),
                     camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                 },
-                reference_only: false,
                 adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                     AdjustmentLayerSettings::default(),
                 )),
@@ -473,9 +472,12 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                 let path = directory.path().join("corrected.ARW");
                 let id = add_source(editor, path.clone());
                 let source = editor.document.state.project.source(id).unwrap().clone();
-                editor.document.state.project.set_flat_field(Some(
-                    crate::project::FlatFieldSettings::new(
-                        &source,
+                editor
+                    .document
+                    .state
+                    .project
+                    .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                        source.path.clone(),
                         Arc::new(
                             crate::flat_field::FlatField::from_nodes(
                                 [12, 7, 864, 576],
@@ -484,8 +486,8 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                             )
                             .unwrap(),
                         ),
-                    ),
-                ));
+                    )))
+                    .unwrap();
                 editor.document.correction = Correction::prepare(&device, &editor.document, None)
                     .unwrap()
                     .into();
@@ -500,7 +502,7 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                     .unwrap()
                     .proxy
                     .clone();
-                editor.document.state.project.set_flat_field(None);
+                editor.document.state.project.set_flat_field(None).unwrap();
                 editor.document.correction = None.into();
                 editor.validate_pending_preview();
                 assert!(

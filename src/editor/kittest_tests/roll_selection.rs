@@ -224,8 +224,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             editor.document.project.order.is_empty()
         });
         expected.order.clear();
-        let reference = before.flat_field().unwrap().reference;
-        expected.sources.retain(|source| source.id == reference);
+        expected.sources.clear();
         expected.analysis_regions.clear();
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| {
@@ -276,15 +275,8 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 0.
             );
             assert!(source.repairs.repairs().is_empty());
-            assert_eq!(editor.document.state.project.sources.len(), 2);
-            assert!(
-                editor
-                    .document
-                    .project
-                    .source(reference)
-                    .unwrap()
-                    .reference_only
-            );
+            assert_eq!(editor.document.state.project.sources.len(), 1);
+            assert_eq!(editor.document.project.flat_field(), before.flat_field());
             assert_eq!(editor.photo_settings().exposure, 0.);
         });
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));

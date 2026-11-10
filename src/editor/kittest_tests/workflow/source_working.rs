@@ -323,9 +323,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             .as_ref()
             .map_or_else(|| fixture("roll-1.dng"), |file| file.path().to_owned());
         harness.enter(|editor, cx| editor.add_raws(vec![first, second.clone()], cx));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_opened_photo(&mut harness);
         if film {
             harness.enter(|editor, cx| {
                 editor.apply_input(crate::processing::InputSettings::Digital, cx)

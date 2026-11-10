@@ -43,7 +43,6 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
                 camera_model: "test-camera".into(),
                 camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
             },
-            reference_only: false,
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
                 AdjustmentLayerSettings::default(),
             )),
@@ -185,45 +184,16 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
 }
 
 #[test]
-fn load_prunes_legacy_nonordered_records_but_keeps_the_flat_field_reference() {
-    use antitone::{flat_field::FlatField, scan_regions::Areas};
+fn load_rejects_nonordered_source_records() {
     let directory = tempfile::tempdir().unwrap();
-    let (mut project, kept, reference) = fixture(directory.path());
-    let map = std::sync::Arc::new(
-        FlatField::from_nodes(
-            project.source(reference).unwrap().development.active_area,
-            [2, 2],
-            vec![DVec3::ONE; 4],
-        )
-        .unwrap(),
-    );
-    project.set_flat_field(Some(FlatFieldSettings::new(
-        project.source(reference).unwrap(),
-        map,
-    )));
-    project.remove_from_filmstrip(reference).unwrap();
-    let mut dormant = project.source(kept).unwrap().clone();
-    dormant.id = SourceId(0);
-    dormant.path = "dormant.ARW".into();
-    let dormant_id = project.add_source(dormant).unwrap();
-    project.order.retain(|id| *id != dormant_id);
-    project.analysis_regions.push(SourceAnalysis {
-        source: dormant_id,
-        areas: Areas::default(),
-    });
-    project.analysis_regions.push(SourceAnalysis {
-        source: reference,
-        areas: Areas::default(),
-    });
-    let path = directory.path().join("legacy-dormant.antitone.json");
+    let (mut project, kept, removed) = fixture(directory.path());
+    project.order = vec![kept];
+    let path = directory.path().join("nonordered.antitone");
     std::fs::write(&path, serde_json::to_vec_pretty(&project).unwrap()).unwrap();
-    let loaded = Project::load(&path).unwrap();
-    assert_eq!(loaded.order, vec![kept]);
-    assert!(loaded.source(dormant_id).is_err());
-    assert!(loaded.source(reference).unwrap().reference_only);
-    assert_eq!(loaded.flat_field().unwrap().reference, reference);
-    assert!(loaded.analysis_regions.is_empty());
-    loaded.validate().unwrap();
+    assert!(Project::load(&path).is_err());
+    project.sources.retain(|source| source.id != removed);
+    project.save(&path, Save::Replace).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), project);
 }
 
 #[test]
@@ -609,7 +579,6 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     project.remove_from_filmstrip(dmin_source_id).unwrap();
     assert!(project.source(dmin_source_id).is_err());
     project.order.reverse();
-    project.source_mut(dmax_source_id).unwrap().reference_only = true;
     let path = dir.path().join("roll.antitone.json");
     project.save(&path, Save::New).unwrap();
     std::fs::remove_file(dir.path().join("dmin.ARW")).unwrap();
@@ -835,7 +804,6 @@ fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) 
             camera_model: camera.into(),
             camera_to_ap1: matrix,
         },
-        reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
             AdjustmentLayerSettings::default(),
         )),

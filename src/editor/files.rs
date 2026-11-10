@@ -94,6 +94,74 @@ pub(super) struct Destination {
 }
 
 impl Editor {
+    pub(super) fn add_raws(&mut self, paths: Vec<PathBuf>, cx: &UiContext<'_, Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        let edit = match self.edit_document("Import photos") {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let mut document = edit.initial().as_ref().clone();
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Importing RAWs…").modal());
+        let progress = activity.reporter();
+        self.document.importing = cx.spawn(move |cx| async move {
+            let result = crate::background::run(move |cancelled| {
+                let previews =
+                    document.import_with_progress(&paths, &cancelled, |done, total| {
+                        progress.progress(done, total)
+                    })?;
+                Ok((document, previews))
+            })
+            .await
+            .map_err(|_| "Import worker panicked".to_owned())
+            .and_then(|result: Result<_, Error>| result.map_err(|error| error.to_string()));
+            drop(activity);
+            cx.update(|editor| {
+                editor.document.importing = None;
+                if !editor.owns_document_edit(&edit) {
+                    return;
+                }
+                let (mut document, previews) = match result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        editor.status = error;
+                        return;
+                    }
+                };
+                if document.project == editor.document.project {
+                    return;
+                }
+                let input_changed = document.project.input != editor.document.project.input;
+                document.capture_exposure(&editor.document.exposures);
+                let mut edit = edit;
+                edit.replace_snapshot(Arc::new(document));
+                editor.commit_document(edit).expect("current import edit");
+                editor.document.source_previews.extend(previews);
+                editor.document.roll_selection.reconcile(
+                    &editor.document.state.project.order,
+                    editor.document.visit.current_source,
+                );
+                editor.status = "Photos added".into();
+                let load = match editor.document.visit.current_source {
+                    Some(id) if input_changed => Some(id),
+                    None => editor.document.project.order.first().copied(),
+                    _ => None,
+                };
+                if let Some(id) = load
+                    && let Ok(path) = editor.document.source_path(id)
+                {
+                    editor.load(path, &cx);
+                }
+            });
+        });
+    }
+
     pub(super) fn new_project(&mut self) {
         self.files.open = None;
         self.install_project(Document::default());

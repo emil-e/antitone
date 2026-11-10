@@ -544,9 +544,7 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
     };
     tools::calibrated_harness(|mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![other], cx));
-        wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_opened_photo(&mut h);
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
