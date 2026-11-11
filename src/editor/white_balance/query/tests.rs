@@ -92,7 +92,10 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
 
 #[test]
 fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_later_queries() {
-    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&["patches.dng"]),
+        InputSettings::Digital,
+    );
     let services = editor.source_services.as_ref().unwrap();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let coverage = Coverage::rectangle(SourceRegion {
@@ -172,7 +175,10 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
         [260, 1000, 600],
         glam::DMat3::IDENTITY.to_cols_array(),
     );
-    let editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
+    let editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]),
+        InputSettings::Digital,
+    );
     let services = editor.source_services.as_ref().unwrap();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let coverage = Coverage::rectangle(SourceRegion {

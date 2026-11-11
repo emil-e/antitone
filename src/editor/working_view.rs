@@ -1286,7 +1286,7 @@ impl Editor {
     }
 
     pub(super) fn acquire_working(&mut self, cx: &crate::application::UiContext<'_, Self>) {
-        if self.allow_close || self.document.visit.working_view.task.is_some() {
+        if self.allow_close {
             return;
         }
         let Some(request) = self.document.visit.working_view.acquisition() else {

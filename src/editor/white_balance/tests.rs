@@ -180,8 +180,10 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         adjustment_layers::AdjustmentLayerCoverage, geometry::SourcePoint,
         project::AdjustmentLayers,
     };
-    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.document.project.input = InputSettings::Digital;
+    let mut editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&["patches.dng"]),
+        InputSettings::Digital,
+    );
     editor.document.project.roll = RollSettings::default();
     let source = editor.document.visit.current_source.unwrap();
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
@@ -747,9 +749,6 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     use crate::exposure_reference::{ReferenceExposure, StartingExposure};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.document.project.input = InputSettings::Digital;
-    editor.document.state.project.input = InputSettings::Digital;
-    editor.document.project.roll = RollSettings::default();
     let id = editor.document.visit.current_source.unwrap();
     let baseline = ReferenceExposure::Matched(StartingExposure {
         ev: 2.75,
@@ -758,12 +757,11 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     });
     editor
         .document
-        .visit
-        .canvas
-        .ready
-        .as_mut()
-        .unwrap()
-        .reference = Some(baseline.clone());
+        .exposure_slot(&editor.document.initialization, id)
+        .set(baseline.clone())
+        .unwrap();
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
+    editor.document.project.roll = RollSettings::default();
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let scan = Scan::with_reference(ready.developed.clone(), Some(baseline));
     let patch = Rect {

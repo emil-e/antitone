@@ -24,7 +24,7 @@ fn set_map(document: &mut Document, gain: f64) {
 }
 
 #[test]
-fn correction_resources_ignore_downstream_lut_capacity_and_grade_range() {
+fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_constants() {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -60,6 +60,13 @@ fn correction_resources_ignore_downstream_lut_capacity_and_grade_range() {
             .unwrap();
     }
     source.adjustment_layers = Some(layers);
+    // These valid f64 calibration anchors cannot be represented by the photographic shader ABI.
+    let dmin = 1e-50_f64;
+    let dmax = 1e-51_f64;
+    document.project.set_dmin(Some([dmin; 3]));
+    document.project.set_dmax(Some([dmax; 3]));
+    assert_eq!(dmin as f32, 0.);
+    assert_eq!(dmax as f32, 0.);
     assert!(
         crate::editor::processing::validate_source_with_matrix(
             Some(&device),
@@ -69,7 +76,7 @@ fn correction_resources_ignore_downstream_lut_capacity_and_grade_range() {
             glam::DMat3::from_cols_array_2d(&document.project.sources[0].development.camera_to_ap1),
         )
         .is_err(),
-        "the accepted grade must really exceed the rendering domain"
+        "the captured photograph must really fail shader-constant admission"
     );
     document.project.require_runtime().unwrap();
     let before = document.project.clone();
