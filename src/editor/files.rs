@@ -202,9 +202,7 @@ impl Editor {
 
     fn install_project(&mut self, document: Document) {
         self.cancel_active_tool();
-        self.history_restore = document::RestoreTask::default();
         self.document_pending = None;
-        self.history_pending = None;
         self.document = self.document.replacement(document);
         self.id = self.request_id();
         self.document.visit.view = self.id;

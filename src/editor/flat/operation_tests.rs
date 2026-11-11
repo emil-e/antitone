@@ -718,11 +718,17 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
                 "acknowledge the rejected replacement before Undo"
             )
         });
-        app.enter(|editor, cx| editor.restore_history(crate::editor::history::Direction::Undo, cx));
-        assert!(
-            app.read(|editor| editor.document_pending.is_some()),
-            "Undo must actually start"
-        );
+        app.enter(|editor, cx| {
+            editor.restore_history(crate::editor::history::Direction::Undo, cx);
+            assert_eq!(editor.document.project, original);
+            assert!(editor.document.correction.prepared().is_none());
+            assert!(editor.document_pending.is_none() && !editor.interaction_blocked());
+            assert!(
+                editor
+                    .history_label(crate::editor::history::Direction::Redo)
+                    .is_some()
+            );
+        });
         wait(app);
         app.read(|editor| {
             assert_eq!(editor.document.project, original);

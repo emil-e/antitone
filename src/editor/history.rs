@@ -34,9 +34,10 @@ pub(super) struct History {
     group_redo: Option<Vec<Entry>>,
 }
 
-pub(super) struct Pending {
-    pub direction: Direction,
-    pub cleanup: Option<bool>,
+struct Restored {
+    before: Project,
+    label: &'static str,
+    photo: Option<SourceId>,
 }
 
 impl History {
@@ -103,17 +104,24 @@ impl History {
         }
     }
 
-    fn complete(&mut self, direction: Direction) {
+    fn restore(&mut self, accepted: &mut Project, direction: Direction) -> Option<Restored> {
         self.finish_group();
         let (from, to) = match direction {
             Direction::Undo => (&mut self.undo, &mut self.redo),
             Direction::Redo => (&mut self.redo, &mut self.undo),
         };
-        to.push(
-            from.pop()
-                .expect("accepted history request retains its entry"),
-        );
-        self.group = None;
+        let entry = from.pop()?;
+        let target = match direction {
+            Direction::Undo => entry.before.clone(),
+            Direction::Redo => entry.after.clone(),
+        };
+        let restored = Restored {
+            before: std::mem::replace(accepted, target),
+            label: entry.label,
+            photo: entry.photo,
+        };
+        to.push(entry);
+        Some(restored)
     }
 
     pub(super) fn rebase(&mut self, old: Option<&std::path::Path>, new: Option<&std::path::Path>) {
@@ -152,6 +160,7 @@ impl Editor {
 
     pub(super) fn history_available(&self) -> bool {
         !self.interaction_blocked()
+            && !self.editing()
             && !self.controls_pending()
             && !self.dialogs.is_open()
             && self.menus.panel.is_none()
@@ -169,74 +178,113 @@ impl Editor {
             return;
         }
         self.document.history.finish_group();
-        let Some(entry) = self.document.history.entry(direction) else {
+        if self.document.history.entry(direction).is_none() {
             return;
+        }
+        let cleanup = self.dusting().then(|| self.dust_outlines());
+        self.document.visit.interaction_action = None;
+        self.cancel_active_tool();
+        self.document.visit.masks.cancel();
+
+        let Restored {
+            before,
+            label,
+            photo,
+        } = {
+            let document = &mut self.document;
+            document
+                .history
+                .restore(&mut document.state.project, direction)
+                .expect("history entry selected in this transaction")
         };
-        let project = match direction {
-            Direction::Undo => entry.before.clone(),
-            Direction::Redo => entry.after.clone(),
-        };
-        let selected = entry
-            .photo
-            .filter(|id| project.order.contains(id))
+        self.document
+            .sampling_inputs
+            .retain(&self.document.state, &self.document.initialization);
+        let selected = photo
+            .filter(|id| self.document.project.order.contains(id))
             .or(self
                 .document
                 .visit
                 .current_source
-                .filter(|id| project.order.contains(id)))
+                .filter(|id| self.document.project.order.contains(id)))
             .or_else(|| {
-                project
+                self.document
+                    .project
                     .order
                     .get(
                         self.document
                             .selected
-                            .min(project.order.len().saturating_sub(1)),
+                            .min(self.document.project.order.len().saturating_sub(1)),
                     )
                     .copied()
             });
-        let mut candidate = self.document.capture();
-        candidate.project = project;
-        self.start_history(
-            document::Restore {
-                document: candidate,
-                selected,
-                direction,
-            },
-            cx,
-        );
-    }
-
-    pub(super) fn history_prepared(&mut self, pending: Option<Pending>) {
-        if let Some(Pending { direction, cleanup }) = pending {
-            let label = self
-                .document
-                .history
-                .entry(direction)
-                .expect("pending history entry")
-                .label;
-            self.document.history.complete(direction);
-            self.document.visit.working_view.clear();
-            self.document.source = !self.document.project.input.ready();
-            if let Some(show_masks) = cleanup
-                && !self.document.source
-                && self.document.visit.canvas.ready.is_some()
-            {
-                self.restore_dust(show_masks);
-            } else if self.dusting() {
-                self.end_tool();
+        let next = selected.and_then(|id| self.document.source_input(id).ok());
+        let stage_changed = before.input.is_negative() != self.document.project.input.is_negative();
+        let same_visit = !stage_changed
+            && self.document.visit.current_source == selected
+            && match (&next, &self.document.visit.canvas.ready) {
+                (Some(input), Some(ready)) => {
+                    input.matches(&ready.path, &ready.file, &ready.record)
+                }
+                (Some(input), None) => self
+                    .document
+                    .visit
+                    .source
+                    .input
+                    .as_ref()
+                    .is_some_and(|current| current.same_request(input)),
+                (None, _) => true,
+            };
+        let correction_changed =
+            before.active_flat_field() != self.document.project.active_flat_field();
+        if !same_visit {
+            self.id = self.request_id();
+            self.source_epoch
+                .store(self.id, std::sync::atomic::Ordering::Relaxed);
+            if self.document.visit.current_source == selected {
+                self.reinterpret_photo(self.id);
+            } else {
+                self.replace_photo_scope(self.id);
             }
-            self.status = format!("{} {label}", direction.verb());
         }
-    }
-
-    pub(super) fn history_failed(&mut self, pending: Option<Pending>) {
-        if let Some(Pending {
-            cleanup: Some(show_masks),
-            ..
-        }) = pending
+        if stage_changed {
+            self.cancel_spatial();
+            self.document.thumbnails.cancel();
+        }
+        self.document.visit.current_source = selected;
+        self.document
+            .roll_selection
+            .reconcile(&self.document.state.project.order, selected);
+        self.document.selected = selected
+            .and_then(|id| {
+                self.document
+                    .project
+                    .order
+                    .iter()
+                    .position(|candidate| *candidate == id)
+            })
+            .unwrap_or(0);
+        self.refresh_adjustment_layer_selection();
+        self.remember_imported_look();
+        self.invalidate_original();
+        self.document.source = !self.document.project.input.ready();
+        if correction_changed {
+            self.document.correction_restore = None;
+            self.document.correction = Default::default();
+            self.restore_correction(cx);
+        }
+        if let Some(show_masks) = cleanup
+            && !self.document.source
+            && self.document.visit.canvas.ready.is_some()
         {
             self.restore_dust(show_masks);
         }
+        self.observe_gamma_pivot();
+        if !same_visit && let Some(input) = next {
+            self.start_source_acquisition(input.path().to_owned(), cx);
+        }
+        self.acquire_working(cx);
+        self.status = format!("{} {label}", direction.verb());
     }
 
     pub(super) fn history_label(&self, direction: Direction) -> Option<&'static str> {
@@ -247,5 +295,7 @@ impl Editor {
     }
 }
 
+#[cfg(test)]
+mod acquisition_tests;
 #[cfg(test)]
 mod tests;

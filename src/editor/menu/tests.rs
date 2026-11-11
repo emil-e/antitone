@@ -17,7 +17,7 @@ fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 }
 
 #[test]
-fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation() {
+fn native_history_actions_update_accepted_state_and_labels_without_worker_preparation() {
     let mut editor = super::super::tests::with_document_services(super::super::tests::fixture());
     let context = egui::Context::default();
     frame(&mut editor, &context);
@@ -35,15 +35,14 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     crate::application::test_support::with_application(editor, |app| {
         frame(app, &context);
         app.read(|e| {
-            assert!(e.document_pending.is_some());
+            assert!(e.document_pending.is_none());
+            assert!(!e.interaction_blocked());
             assert_eq!(
-                e.document.project.roll.exposure, 0.5,
-                "preparation must not replace accepted state"
+                e.document.state.project, before,
+                "worker admission must not delay History"
             );
-            assert!(!e.application_menu_state().enabled(Action::Undo));
         });
         drop(preparing);
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, before, "{}", e.status);
             assert_eq!(e.document.project.roll.exposure, 0.);
@@ -62,16 +61,16 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
         });
         frame(app, &context);
         app.read(|e| {
-            assert!(
-                e.document_pending.is_some(),
-                "the ordinary restoration boundary admits history and retires the tool"
-            );
+            assert!(e.document_pending.is_none() && !e.interaction_blocked());
             assert!(!e.cropping());
-            assert_eq!(e.document.project.roll.exposure, 0.);
+            assert_eq!(e.document.project.roll.exposure, 0.5);
+            assert_eq!(
+                e.application_menu_state().label(Action::Undo),
+                "Undo Roll exposure"
+            );
+            assert!(!e.application_menu_state().enabled(Action::Redo));
         });
         drop(preparing);
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
-        app.read(|e| assert_eq!(e.document.project.roll.exposure, 0.5));
     });
 }
 

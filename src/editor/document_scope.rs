@@ -63,10 +63,13 @@ impl SamplingInputs {
         entries.push(SamplingEntry { source, key, input });
     }
 
-    pub fn retain(&mut self, document: &Document) {
+    pub fn retain(&mut self, document: &Document, initialization: &crate::source::Initialization) {
         let matches = |e: &SamplingEntry| {
-            document.project.source(e.source).is_ok()
-                && document.source_key(e.source).is_ok_and(|key| key == e.key)
+            document
+                .source_input(e.source, initialization)
+                .ok()
+                .and_then(|input| input.cached_key())
+                .is_some_and(|key| key == e.key)
         };
         if self.entries.iter().all(&matches) {
             return;
@@ -239,7 +242,7 @@ impl DocumentScope {
 
     pub fn install(&mut self, document: Document) {
         self.retire_edits();
-        self.sampling_inputs.retain(&document);
+        self.sampling_inputs.retain(&document, &self.initialization);
         self.initialization
             .exposures
             .restore(&document.exposure_metadata, |id| {

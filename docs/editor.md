@@ -78,7 +78,7 @@ Stock/media names retain upstream attribution. Imported names remain as saved. S
 
 The Edit menu and Cmd–Z / Shift–Cmd–Z traverse one chronological history for the whole project. Roll, Photo and Rendering edits share it, including calibration, correction, accepted Analyze results and project-only photo removal. Navigation itself is not recorded; undoing a Photo edit activates its photo.
 
-A continuous gesture is one action; numeric text commits, resets and commands are separate actions. Undo/Redo can run with a tool selected; an admitted document restoration retires the current unfinished interaction before replacing accepted state. Unapplied draft gestures are not history entries. Cancelled, rejected and unchanged edits add no entries; new accepted edits discard redo. The implementation retains up to 100 actions in memory through shared immutable project versions — not RAW pixels or rendered images. History is neither stored in the project file nor restored on relaunch.
+A continuous gesture is one action; numeric text commits, resets and commands are separate actions. Undo/Redo restores the retained accepted project version and advances history synchronously, without revalidation or resource preparation. Live edits reject conflicting history commands. An admitted restoration retires the current tool's unfinished interaction before replacing accepted state; compatible photo navigation, acquired facts and resources remain available. Unapplied draft gestures are not history entries. Cancelled, rejected and unchanged edits add no entries; new accepted edits discard redo. The implementation retains up to 100 actions in memory through shared immutable project versions — not RAW pixels or rendered images. History is neither stored in the project file nor restored on relaunch.
 
 ## Numeric edits own their input
 
@@ -98,14 +98,14 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 | Work | Presentation and retained use |
 | --- | --- |
-| RAW import, project metadata Open/Save, correction estimation/validation, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
+| RAW import, project metadata Open/Save, correction estimation/validation | A centred working modal after a brief delay; the transaction already blocks the workspace |
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation, including the first photo after Open | Nonblocking progressive display; cached previews remain usable while precise inputs prepare |
 | Reference preparation, picker measurement | A delayed working modal; quick measurements complete without showing a dialog |
 | Shared region preparation and running Analyze | A delayed working modal with counted or indeterminate progress and Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
-New installs an empty document without resource preparation. Input-stage acceptance is synchronous after any confirmation; selected-photo preparation remains nonblocking. Opening accepts [project metadata](projects.md#prepare-before-replacing) before loading photos; correction-resource failures appear in the [flat-field section](flat-field.md#save-the-accepted-result). Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
+New installs an empty document without resource preparation. Input-stage acceptance is synchronous after any confirmation. History restores accepted choices immediately; source and correction consumers prepare asynchronously afterward, with failures local to those consumers. Selected-photo preparation remains nonblocking. Opening accepts [project metadata](projects.md#prepare-before-replacing) before loading photos; correction-resource failures appear in the [flat-field section](flat-field.md#save-the-accepted-result). Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
 
 [Activities](../src/editor/activity.rs) are scoped handles carrying caller-supplied status, progress, modality and cancellation feedback. Keep the handle in the async workflow; destruction removes its feedback. Worker reporters and UI snapshots observe weakly. Feature state and explicit modality govern admission; the presence of nonmodal feedback does not make the editor unavailable.
 
