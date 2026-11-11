@@ -162,17 +162,15 @@ impl Editor {
                     "Regions unavailable: Application stopped; accepted edits unchanged".into();
             }
         }
-        let resumed = self.document.spatial_resumed.clone();
         let dialogs = self.dialogs.changes();
         let cx = cx.clone();
         Some(async move {
             let metadata = receive.await.ok().flatten()?;
 
             loop {
-                let changed = resumed.listen();
                 let dialog_changed = dialogs.listen();
-                if cx.read(|editor| editor.document_pending.is_some() || editor.dialogs.is_open()) {
-                    futures_lite::future::or(changed, dialog_changed).await;
+                if cx.read(|editor| editor.dialogs.is_open()) {
+                    dialog_changed.await;
                     continue;
                 }
                 return cx
@@ -192,9 +190,7 @@ impl Editor {
     pub(super) fn cancel_spatial(&mut self) {
         if self.document.spatial_preparing.take().is_some() {
             self.document.spatial.cancel();
-            if self.document_pending.is_none() {
-                self.status = "Region preparation cancelled; accepted edits unchanged".into();
-            }
+            self.status = "Region preparation cancelled; accepted edits unchanged".into();
         }
     }
 
@@ -208,7 +204,7 @@ impl Editor {
         let Some(mut pending) = self.document.spatial_preparing.take() else {
             return;
         };
-        let foreground = self.document_pending.is_none();
+        let foreground = !self.activities.blocks_workspace();
         let result = result
             .and_then(|metadata| metadata.ok_or_else(|| "Region preparation cancelled".to_owned()));
         let metadata = match result {
@@ -256,9 +252,5 @@ impl Editor {
         for completion in pending.completion.drain(..) {
             let _ = completion.send(Some(self.document.spatial.ready()));
         }
-    }
-
-    pub(super) fn resume_region_actions(&self) {
-        self.document.spatial_resumed.notify(usize::MAX);
     }
 }

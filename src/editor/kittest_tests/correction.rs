@@ -568,9 +568,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         harness.get_by_label("Apply").click();
         harness.step();
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(
                 editor.document.correction.prepared().is_some(),
@@ -784,9 +782,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         for enabled in [false, true] {
             harness.get_by_label("Enabled").click();
             harness.step();
-            wait_for(&mut harness, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            wait_for(&mut harness, |e| !e.interaction_blocked());
             harness.read(|editor| {
                 assert_eq!(editor.document.correction.prepared().is_some(), enabled)
             });
@@ -852,9 +848,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                 cx,
             )
         });
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         save_existing_project(&mut harness);
         let saved = harness.read(|editor| editor.document.state.project.clone());
@@ -865,9 +859,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert!(editor.document.correction.prepared().is_none()));
         let mut cleared = saved.clone();
         cleared.set_flat_field(None).unwrap();

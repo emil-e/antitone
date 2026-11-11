@@ -238,7 +238,7 @@ fn save_blocks_an_unfinished_gamma_edit_but_not_independent_source_preparation()
         });
         native_file_action(&mut h, crate::platform::menu::Action::Save);
         wait_for(&mut h, |editor| {
-            destination.exists() && editor.document_pending.is_none()
+            destination.exists() && !editor.document.write.pending()
         });
         h.read(|editor| {
             assert!(
@@ -597,9 +597,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         assert_eq!(saved.input, reset.input);
         assert_eq!(saved.roll, reset.roll);
         open_project(&mut h, path);
-        wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| {
             assert!(!editor.document.gamma_pivot.locked());
             assert_eq!(editor.document.project.input, reset.input);

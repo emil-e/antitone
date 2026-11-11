@@ -332,9 +332,7 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         let pixel = compare_pixel(&harness);
         save_existing_project(&mut harness);
         native_file_action(&mut harness, crate::platform::menu::Action::New);
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert!(editor.document.state.project.development().is_none()));
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
@@ -493,15 +491,13 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         native_file_action(&mut harness, crate::platform::menu::Action::New);
         harness.try_run_realtime().unwrap();
         harness.read(|editor| assert!(editor.files.pending()));
-        let request = harness.read(|editor| editor.next_request);
+        harness.read(|editor| assert!(editor.dialogs.message().is_none()));
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Save changes")
             .click();
         harness.step();
-        wait_for(&mut harness, |editor| editor.next_request > request);
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |editor| editor.dialogs.message().is_some());
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
         harness.read(|editor| assert!(editor.files.pending()));
@@ -589,7 +585,7 @@ fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate(
                 e.interaction_blocked(),
                 e.tool_interacting(),
                 e.dialogs.is_open(),
-                e.document_pending,
+                e.document.write.pending(),
                 e.status.clone()
             ))
         );
@@ -603,7 +599,6 @@ fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate(
             assert_eq!(editor.document.project.sources, records);
             assert_eq!(editor.document.visit.current_source, source);
             assert!(editor.document.visit.canvas.ready.is_none());
-            assert!(editor.document_pending.is_none());
         });
         harness.try_run_realtime().unwrap();
         assert!(harness.output().shapes.iter().any(|shape| matches!(

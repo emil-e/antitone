@@ -110,7 +110,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         wait(app);
         app.read(|e| {
             assert!(e.document.correction.prepared().is_some(), "{}", e.status);
-            assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
+            assert!(e.document.flat_edit().is_none());
             assert_eq!(e.document.state.project.order, before.order);
             assert_eq!(e.document.visit.canvas.viewport.zoom, Some(1.375));
             assert_eq!(
@@ -300,7 +300,6 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
             app.enter(|e, _| {
                 e.new_project();
             });
-            let operation = app.read(|e| e.document_pending);
             app.read(|e| {
                 assert!(
                     publication
@@ -308,7 +307,7 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
                         .is_none_or(|owner| !e.document.document_preview.same_edit(owner))
                 )
             });
-            app.read(|e| assert_eq!(e.document_pending, operation));
+            app.read(|e| assert!(!e.document.write.pending()));
             drop(hold);
             wait(app);
             app.read(|e| {
@@ -349,7 +348,7 @@ fn input_rejects_an_owned_correction_without_retiring_its_work_or_visit() {
         app.read(|e| {
             assert!(e.document.flat_edit().is_none());
             assert!(e.document.visit.canvas.ready.is_some());
-            assert!(e.document_pending.is_none());
+
             assert!(e.document.flat_correction.is_some());
             assert!(!e.dialogs.is_open());
             assert!(e.document.document_preview.same_edit(&publication));
@@ -540,7 +539,7 @@ fn accepted_correction_completes_after_the_display_visit_retires() {
         drop(hold);
         wait(app);
         app.read(|e| {
-            assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
+            assert!(e.document.flat_edit().is_none());
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order, before.order);
@@ -722,7 +721,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
             editor.restore_history(crate::editor::history::Direction::Undo, cx);
             assert_eq!(editor.document.project, original);
             assert!(editor.document.correction.prepared().is_none());
-            assert!(editor.document_pending.is_none() && !editor.interaction_blocked());
+            assert!(!editor.interaction_blocked());
             assert!(
                 editor
                     .history_label(crate::editor::history::Direction::Redo)
@@ -799,7 +798,7 @@ fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_n
         wait(app);
         app.update(|e| {
             assert!(e.document.flat_edit().unwrap().view.ready.is_some());
-            assert!(!e.interaction_blocked() && e.document_pending.is_none());
+            assert!(!e.interaction_blocked());
             e.finish_flat_edit();
         });
         app.pump();
@@ -845,7 +844,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
                 .flat_edit()
                 .expect("replacement setup remains active");
             assert!(edit.view.ready.is_some());
-            assert!(!e.interaction_blocked() && e.document_pending.is_none());
+            assert!(!e.interaction_blocked());
             assert!(e.test_pick_region().is_some());
             assert_eq!(e.document.state.project, before);
         });
@@ -1219,7 +1218,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             wait(app);
             app.read(|e| {
                 assert!(e.document.correction.prepared().is_some(), "{}", e.status);
-                assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
+                assert!(e.document.flat_edit().is_none());
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(e.document.visit.canvas.viewport, viewport);
                 assert_eq!(e.document.source, source);
@@ -1287,11 +1286,7 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
             }
             wait(app);
             app.read(|e| {
-                assert!(
-                    e.document.flat_edit().is_none()
-                        && !e.interaction_blocked()
-                        && e.document_pending.is_none()
-                );
+                assert!(e.document.flat_edit().is_none() && !e.interaction_blocked());
                 assert_eq!(e.document.state.project, before);
             });
             if accept {
@@ -1306,11 +1301,7 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
                 begin(app, "bare-light.dng");
             }
             app.read(|e| {
-                assert!(
-                    e.document.flat_edit().is_none()
-                        && !e.interaction_blocked()
-                        && e.document_pending.is_none()
-                );
+                assert!(e.document.flat_edit().is_none() && !e.interaction_blocked());
                 assert_eq!(e.document.state.project, before);
                 assert!(!e.editing() && e.document.flat_correction.is_none());
                 assert!(

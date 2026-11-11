@@ -266,7 +266,6 @@ pub struct Editor {
     document: DocumentScope,
 
     next_request: u64,
-    document_pending: Option<u64>,
     export_services: Option<export::Services>,
     files: files::State,
     allow_close: bool,
@@ -277,9 +276,7 @@ pub struct Editor {
 
 impl Editor {
     fn interaction_blocked(&self) -> bool {
-        self.document_pending.is_some()
-            || self.document.look.is_some()
-            || self.activities.blocks_workspace()
+        self.document.look.is_some() || self.activities.blocks_workspace()
     }
 
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
@@ -383,7 +380,6 @@ impl Editor {
 
             document,
             next_request: 0,
-            document_pending: None,
             export_services: None,
             files: Default::default(),
             allow_close: false,
@@ -967,35 +963,6 @@ impl Editor {
     fn request_id(&mut self) -> u64 {
         self.next_request += 1;
         self.next_request
-    }
-
-    pub(super) fn begin_document_operation(&mut self) -> u64 {
-        self.document.visit.interaction_action = None;
-        self.document.write = save::State::default();
-        self.document.retire_edits();
-        self.document.flat_correction = None;
-        self.retire_look_selection();
-        if self.dusting() {
-            self.end_tool();
-        }
-        if self
-            .document
-            .analysis_operation()
-            .is_some_and(|op| op.phase != analysis::Phase::Regions)
-        {
-            self.close_analysis();
-        }
-        self.document.visit.pending_preview = None;
-        self.document.visit.canvas.preview_rendered = None;
-        self.document.visit.canvas.selection_timing = None;
-        self.document.thumbnails.cancel();
-        let id = self.request_id();
-        self.source_epoch
-            .store(id, std::sync::atomic::Ordering::Relaxed);
-        self.invalidate_original();
-        self.document_pending = Some(id);
-        self.status = "Preparing project…".into();
-        id
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {

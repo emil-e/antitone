@@ -309,7 +309,7 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
             let view = editor.request_id();
             editor.replace_photo_scope(view);
             assert!(editor.interaction_blocked());
-            assert!(editor.document_pending.is_none());
+            assert!(!editor.document.write.pending());
             assert_eq!(editor.activities.view().unwrap().title, activity);
         });
     });
@@ -557,7 +557,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
         assert!(app.read(|e| e.files.opening() && e.interaction_blocked()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| {
-            e.document_pending.is_none()
+            !e.document.write.pending()
                 && !e.interaction_blocked()
                 && !e.document.visit.source.pending()
         });
@@ -624,7 +624,7 @@ fn input_switch_retires_old_source_presentations_in_both_completion_orders() {
                     _ => panic!("retired completion replaced current presentation"),
                 }
                 assert_eq!(editor.document.project.sources, accepted);
-                assert!(editor.document_pending.is_none());
+                assert!(!editor.document.write.pending());
             });
         });
     }
@@ -632,41 +632,41 @@ fn input_switch_retires_old_source_presentations_in_both_completion_orders() {
 
 #[test]
 fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
-    // Typed-outcome ordering is a controller test. Worker-lifetime cases above
-    // exercise physical source execution; this case does not simulate that timing.
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let source_path = ready.path.clone();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("written.antitone");
+        let hold = crate::background::testing::pause();
         with_application(editor, |app| {
-            app.enter(|e, cx| {
+            let (view, captured) = app.enter(|e, cx| {
                 e.load(source_path, cx);
-
                 let view = e.document.visit.view;
-                let snapshot = e.document.capture();
+                let captured = e.document.project.clone();
                 e.save_project(path.clone(), crate::project::Save::New, None, cx);
-                let operation = e.document_pending.unwrap();
-                let saved = snapshot.save(&path, crate::project::Save::New).unwrap();
+                assert!(e.document.write.pending());
                 e.document.project.roll.exposure = 0.5;
-
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
-                    assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
+                    assert!(e.document.visit.canvas.ready.is_some() && e.interaction_blocked());
                 }
-                e.save_result(operation, Ok(Box::new(saved)), cx);
+                (view, captured)
+            });
+            app.pump();
+            drop(hold);
+            app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
+            app.update(|e| {
                 if !complete_first {
-                    assert!(e.document.visit.source.pending());
                     e.source_result(view, Ok(Box::new(ready)));
                 }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.canvas.ready.is_some() && e.document_pending.is_none());
+                assert!(e.document.visit.canvas.ready.is_some());
                 assert!(e.document.dirty());
-                assert_eq!(e.document.state.project.roll.exposure, 0.5);
+                assert_eq!(e.document.project.roll.exposure, 0.5);
                 assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
             });
+            assert_eq!(crate::project::Project::load(&path).unwrap(), captured);
             app.pump();
             app.read(|e| assert!(e.activities.view().is_none()));
         });
@@ -755,7 +755,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         await_native(app, &starts);
         let store = app.read(|e| Arc::downgrade(&e.document.cache));
         app.enter(|e, _| e.new_project());
-        assert!(app.read(|e| !e.interaction_blocked() && e.document_pending.is_none()));
+        assert!(app.read(|e| !e.interaction_blocked() && !e.document.write.pending()));
         app.pump();
         assert!(store.upgrade().is_none());
         assert_eq!(scheduler.waiter_count(), 0);

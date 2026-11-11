@@ -673,13 +673,12 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
             assert!(
                 !e.analysis_preparing()
                     && !e.analysis_fitting()
-                    && e.document_pending.is_none()
                     && e.document.export.operation.is_none()
             );
             e.new_project();
             assert!(!e.document.auto_crop.reviewing());
             assert!(e.document.state.project.sources.is_empty());
-            assert!(!e.interaction_blocked() && e.document_pending.is_none());
+            assert!(!e.interaction_blocked());
         });
     });
 }
@@ -773,13 +772,12 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
 }
 
 #[test]
-fn batch_entry_respects_document_operations_and_removal() {
-    for case in [0, 4, 5] {
+fn batch_entry_respects_working_modals_and_pending_decisions() {
+    for case in [0, 5] {
         let (mut e, _directory) = fixture();
         let before = e.document.state.project.clone();
         match case {
             0 => e.set_test_busy(true),
-            4 => e.document_pending = Some(99),
             5 => e.block_with_decision(),
             _ => unreachable!(),
         }

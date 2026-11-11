@@ -329,7 +329,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     assert_eq!(editor.document.state.project, original);
     editor.set_test_pick_region(Some(editor.photo_crop().unwrap().coverage().unwrap()));
     editor.apply_flat_edit(&UiContext::render_only());
-    assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+    assert!(!editor.interaction_blocked());
     assert_eq!(editor.document.state.project, original);
     editor.set_test_pick_region(Some(Coverage::rectangle(region)));
     assert_eq!(
@@ -516,11 +516,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert!(e.status.contains("open"), "{}", e.status);
-                assert!(
-                    e.document.flat_edit().is_none()
-                        && e.test_pick().is_none()
-                        && e.document_pending.is_none()
-                );
+                assert!(e.document.flat_edit().is_none() && e.test_pick().is_none());
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(e.document.visit.current_source, selected);
                 assert!(e.document.visit.canvas.ready.is_some());

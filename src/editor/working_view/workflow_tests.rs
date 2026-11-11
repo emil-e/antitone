@@ -966,35 +966,92 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
 }
 
 #[test]
-fn save_completion_readmits_existing_working_demand_without_another_paint() {
-    let (e, input, spec, scheduler) = fixture();
+fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working_demand() {
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    editor.document.source = true;
+    let input = editor.source_context().unwrap();
+    let scan = input.scan().unwrap();
+    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let size = composition.size();
+    let frame = FrameRaster::new(
+        composition,
+        FramePoint([0., 0.]),
+        FramePoint(size.map(f64::from)),
+        [64, 48],
+    )
+    .unwrap();
+    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
+        .unwrap()
+        .with_identity(crate::gpu::source::identity::Identity::camera(
+            input.source.identity(),
+        ));
+    let (entered, reached) = std::sync::mpsc::sync_channel(1);
+    let (release, resume) = std::sync::mpsc::sync_channel::<()>(0);
+    let resume = std::sync::Mutex::new(resume);
+    editor.document.write_observer = Some(Arc::new(move |phase| {
+        if phase == crate::project::WritePhase::TemporarySynced {
+            entered.send(()).unwrap();
+            let _ = resume.lock().unwrap().recv();
+        }
+    }));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("saved.antitone");
-    with_application(e, |app| {
-        app.enter(|e, cx| {
-            e.save_project(path.clone(), crate::project::Save::New, None, cx);
-            request_working(e, spec.clone(), input, cx);
-            assert!(e.document_pending.is_some());
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.save_project(path.clone(), crate::project::Save::New, None, cx)
+        });
+        app.pump();
+        reached.recv_timeout(Duration::from_secs(15)).unwrap();
+        // Park only the later working acquisition; the write is already at its own physical boundary.
+        let working = crate::background::testing::pause();
+        app.enter(|editor, cx| request_working(editor, spec.clone(), input, cx));
+        app.pump();
+        app.read(|editor| {
             assert!(
-                e.document.visit.working.task.is_none(),
-                "working-source dispatch is paused"
+                editor.document.visit.working.task.is_some()
+                    && !editor.document.visit.working_view.support_ready()
+            )
+        });
+        let context = egui::Context::default();
+        crate::editor::tests::app_frame(app, &context, vec![]);
+        app.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.last_layout.is_some(),
+                "paint the ordinary composed canvas"
+            );
+            assert!(
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .mailbox
+                    .0
+                    .lock()
+                    .unwrap()
+                    .demand
+                    .is_some(),
+                "input modality must not withdraw captured physical demand"
             );
         });
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document_pending.is_none() && e.document.visit.working_view.support_ready()
+        drop(working);
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.working_view.support_ready()
         });
-        app.read(|e| {
-            assert!(e.document.visit.working_view.source().unwrap().spec == spec);
-            assert!(e.document.visit.working.task.is_none() && !e.interaction_blocked());
-            assert!(!e.dialogs.is_open(), "{}", e.status);
+        app.read(|editor| {
+            assert!(editor.document.write.pending() && editor.interaction_blocked());
+            assert!(editor.document.visit.working_view.source().unwrap().spec == spec);
+            assert!(!editor.dialogs.is_open(), "{}", editor.status);
+        });
+        drop(release);
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.write.pending() && !editor.files.pending()
         });
         assert!(path.is_file());
     });
-    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn guarded_save_close_does_not_readmit_waiting_working_demand() {
+fn closing_after_save_does_not_dispatch_new_working_demand() {
     let (e, input, spec, scheduler) = fixture();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("saved.antitone");
@@ -1006,17 +1063,20 @@ fn guarded_save_close_does_not_readmit_waiting_working_demand() {
                 Some(crate::editor::Transition::Close),
                 cx,
             );
-            request_working(e, spec, input, cx);
-            assert!(e.document.visit.working.task.is_none());
+            request_working(e, spec.clone(), input.clone(), cx);
+            assert!(e.document.visit.working.task.is_some());
         });
         app.run_until(Duration::from_secs(15), |e| e.allow_close);
-        app.pump();
-        app.read(|e| {
-            assert!(e.document_pending.is_none() && !e.interaction_blocked());
-            assert!(e.document.visit.working.task.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working.task.is_none()
+        });
+        app.enter(|e, cx| {
+            assert!(!e.document.write.pending() && !e.interaction_blocked());
+            e.document.visit.working_view.clear();
+            request_working(e, spec, input, cx);
             assert!(
-                e.document.visit.working_view.source().is_none(),
-                "close must not start another acquisition"
+                e.document.visit.working.task.is_none(),
+                "an approved close admits no new acquisition"
             );
         });
         assert!(path.is_file());

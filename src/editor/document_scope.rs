@@ -126,7 +126,6 @@ pub(super) struct DocumentScope {
             Result<Option<crate::spatial_metadata::Metadata>, String>,
         >,
     >,
-    pub spatial_resumed: Arc<event_listener::Event>,
     pub history: History,
     pub visit: PhotoScope,
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
@@ -377,7 +376,6 @@ impl From<Document> for DocumentScope {
             source_previews: Default::default(),
             #[cfg(test)]
             spatial_reply: None,
-            spatial_resumed: Arc::default(),
             state,
             cache,
             initialization,

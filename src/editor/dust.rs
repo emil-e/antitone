@@ -1169,9 +1169,7 @@ impl Editor {
     }
 
     pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
-        if self.document_pending.is_some()
-            || self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id
-        {
+        if self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id {
             return;
         }
         let Some(source) = self.document.visit.current_source else {

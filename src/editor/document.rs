@@ -31,6 +31,8 @@ pub(super) struct Document {
     source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
+    #[cfg(test)]
+    pub(super) write_observer: Option<Arc<crate::project::WriteObserver>>,
 }
 
 impl Default for Document {
@@ -46,6 +48,8 @@ impl Default for Document {
             source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
+            #[cfg(test)]
+            write_observer: None,
         }
     }
 }
@@ -414,8 +418,10 @@ impl Document {
             source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
+            #[cfg(test)]
+            write_observer: None,
         };
-        document.validate_with_device(None)?;
+        document.project.require_runtime()?;
         // Best-effort cache freshness only: missing files do not reject metadata.
         document.capture_source_files()?;
         Ok(document)
@@ -499,17 +505,7 @@ impl Document {
         Ok(id)
     }
 
-    #[cfg(test)]
     pub fn save(&self, path: &Path, policy: Save) -> Result<Self> {
-        self.save_with_device(path, policy, None)
-    }
-
-    pub fn save_with_device(
-        &self,
-        path: &Path,
-        policy: Save,
-        device: Option<&wgpu::Device>,
-    ) -> Result<Self> {
         let path = absolute(path)?;
         // Keep Save-in-place available for existing JSON-named projects.
         if !path.extension().is_some_and(|extension| {
@@ -519,7 +515,7 @@ impl Document {
                 "project destination must use an .antitone extension",
             ));
         }
-        self.validate_with_device(device)?;
+        self.project.require_runtime()?;
         let mut candidate = self.clone();
         for source in &mut candidate.project.sources {
             let resolved = self.source_path(source.id)?;
@@ -548,6 +544,13 @@ impl Document {
         snapshot.development_metadata = (!development.entries.is_empty()
             || development.scan_basis.is_some())
         .then_some(development);
+        #[cfg(test)]
+        if let Some(observer) = &self.write_observer {
+            snapshot.save_observed(&path, policy, observer.as_ref())?;
+        } else {
+            snapshot.save(&path, policy)?;
+        }
+        #[cfg(not(test))]
         snapshot.save(&path, policy)?;
         candidate.spatial_metadata = Arc::new(metadata);
         candidate.rebase_source_files(self.path.as_deref(), Some(&path));
@@ -630,16 +633,3 @@ pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {
 mod tests;
 #[cfg(test)]
 mod workflow_tests;
-
-pub(super) struct Write {
-    pub document: Document,
-    pub path: PathBuf,
-    pub policy: Save,
-}
-
-impl Write {
-    pub fn save(self, device: &wgpu::Device) -> Result<Document, Error> {
-        self.document
-            .save_with_device(&self.path, self.policy, Some(device))
-    }
-}

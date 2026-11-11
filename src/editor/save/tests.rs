@@ -57,14 +57,14 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
             e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         app.pump();
-        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document.write.pending()));
         app.update(|e| {
             let before = e.history_snapshot();
             e.document.project.roll.exposure = 0.5;
             e.record_edit(before, "Later exposure", None);
         });
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
             crate::project::Project::load(&path).unwrap().roll.exposure,
             0.25
@@ -108,13 +108,13 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
             );
         });
         let accepted = app.read(|e| e.document.state.project.clone());
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.dirty());
             assert!(e.files.closing());
-            assert!(e.document_pending.is_none() && !e.allow_close);
+            assert!(!e.document.write.pending() && !e.allow_close);
             assert_eq!(
                 e.dialogs.message().unwrap().title,
                 FailureCase::Save.title()
@@ -140,15 +140,14 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
                 access,
             );
         });
-        let retired = app.read(|e| e.document_pending.unwrap());
+        assert!(app.read(|e| e.document.write.pending()));
         app.pump();
         app.enter(|e, _| e.new_project());
         app.pump();
         drop(hold);
         pollster::block_on(crate::background::run(|_| {})).unwrap();
-        app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
-            assert!(e.document_pending.is_none());
+            assert!(!e.document.write.pending());
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert!(e.document.project.sources.is_empty());
             assert!(!e.allow_close);
@@ -177,12 +176,12 @@ fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_clos
         app.pump();
         app.update(|e| e.files = Default::default());
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert!(path.exists());
         app.read(|e| {
             assert!(!e.document.dirty());
             assert!(!e.files.pending() && !e.allow_close);
-            assert!(e.document_pending.is_none());
+            assert!(!e.document.write.pending());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -216,7 +215,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                 e.document.state.project.clone()
             });
             app.run_until(Duration::from_secs(15), |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
+                !e.interaction_blocked() && !e.document.write.pending()
             });
             assert_eq!(crate::project::Project::load(&written).unwrap(), captured);
             app.read(|e| {
@@ -272,7 +271,7 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
             e.document.state.project.clone()
         });
         app.run_until(Duration::from_secs(15), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.interaction_blocked() && !e.document.write.pending()
         });
         app.read(|e| {
             assert_eq!(e.document.path.as_ref(), Some(&written));

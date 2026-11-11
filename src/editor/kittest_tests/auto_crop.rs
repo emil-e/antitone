@@ -115,9 +115,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                 cx,
             )
         });
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         test(h, directory)
     })

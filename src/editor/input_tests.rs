@@ -57,7 +57,6 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
             assert_eq!(editor.document.visit.current_source, Some(selected));
             assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(2.25));
             assert!(editor.document.project.scan.is_none());
-            assert!(editor.document_pending.is_none());
             assert!(!editor.editing());
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
@@ -86,7 +85,7 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document_pending.is_none() && !editor.document.visit.source.pending()
+            !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before);
@@ -97,7 +96,7 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document_pending.is_none() && !editor.document.visit.source.pending()
+            !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project.input, InputSettings::Digital);
@@ -163,7 +162,6 @@ fn map_only_switch_owns_one_edit_across_confirmation_and_cancel_is_lossless() {
         app.read(|editor| {
             assert_eq!(editor.document.project.input, InputSettings::Digital);
             assert!(editor.document.project.flat_field().is_none());
-            assert!(editor.document_pending.is_none());
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
                 Some("Input stage")
@@ -355,7 +353,6 @@ fn input_accepts_while_old_native_work_is_held_and_only_the_new_wb_can_present()
         let accepted_while_held = app.read(|editor| {
             held.load(Ordering::SeqCst)
                 && editor.document.project.input == InputSettings::Digital
-                && editor.document_pending.is_none()
                 && editor.document.visit.view != old_view
                 && editor.history_label(history::Direction::Undo) == Some("Input stage")
         });
@@ -419,7 +416,6 @@ fn missing_corrupt_and_incompatible_photos_fail_locally_after_a_successful_switc
         app.read(|editor| {
             assert!(editor.document.project.input.is_negative());
             assert_eq!(editor.document.project.sources, accepted_sources);
-            assert!(editor.document_pending.is_none());
         });
         app.enter(|editor, cx| editor.load(paths[0].clone(), cx));
         app.run_until(Duration::from_secs(15), |editor| {

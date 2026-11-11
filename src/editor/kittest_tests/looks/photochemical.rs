@@ -91,9 +91,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
         let path = directory.path().join("paper-only.antitone");
         let accepted = h.read(|e| e.document.state.project.clone());
         h.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|e| assert!(!e.document.dirty() && !e.dialogs.is_open()));
         let reopened = crate::project::Project::load(&path).unwrap();
         assert_eq!(
@@ -135,9 +133,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
         h.get_by_label("Discard changes").click();
         h.step();
         wait_for(&mut h, |e| {
-            !e.interaction_blocked()
-                && e.document_pending.is_none()
-                && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         paint_until(&mut h, positive_ready);
         h.read(|e| {

@@ -869,17 +869,13 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
         harness.enter(|editor, cx| {
             editor.save_project(path.clone(), crate::project::Save::New, None, cx)
         });
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.read(|editor| assert!(!editor.document.dirty()));
         editor_harness_with_thumbnails(true, |mut reopened, _| {
             reopened.run();
             open_project(&mut reopened, path.clone());
             wait_for(&mut reopened, |editor| {
-                !editor.interaction_blocked()
-                    && editor.document_pending.is_none()
-                    && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             reopened.read(|editor| assert!(!editor.dialogs.is_open()));
             reopened.read(|editor| assert_eq!(editor.look.loaded.len(), 1));
@@ -888,9 +884,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             reopened.read(|editor| assert!(!editor.document.dirty()));
             open_project(&mut harness, path);
             wait_for(&mut harness, |editor| {
-                !editor.interaction_blocked()
-                    && editor.document_pending.is_none()
-                    && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             harness.read(|editor| assert!(!editor.dialogs.is_open()));
             harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
@@ -960,16 +954,12 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 harness.enter(|editor, cx| {
                     editor.save_project(path.clone(), crate::project::Save::New, None, cx)
                 });
-                wait_for(&mut harness, |editor| {
-                    !editor.interaction_blocked() && editor.document_pending.is_none()
-                });
+                wait_for(&mut harness, |editor| !editor.interaction_blocked());
                 harness.read(|editor| assert!(!editor.dialogs.is_open()));
                 harness.read(|editor| assert!(!editor.document.dirty()));
                 open_project(&mut reopened, path);
                 wait_for(&mut reopened, |editor| {
-                    !editor.interaction_blocked()
-                        && editor.document_pending.is_none()
-                        && editor.document.visit.canvas.ready.is_some()
+                    !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
                 });
                 reopened.read(|editor| assert!(!editor.dialogs.is_open()));
                 reopened.read(|editor| assert_eq!(editor.document.project.output.luts(), asset));

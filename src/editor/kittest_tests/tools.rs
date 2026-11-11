@@ -557,9 +557,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.get_by_label("Apply").click();
         harness.step();
         harness.read(|editor| assert!(editor.interaction_blocked()));
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(
                 editor.document.correction.prepared().is_some(),

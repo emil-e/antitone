@@ -6,9 +6,7 @@ fn calibrated_roll(harness: &mut Harness<'_, Editor>) -> Vec<SourceId> {
     harness.enter(|editor, cx| {
         editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
     });
-    wait_for(harness, |editor| {
-        !editor.interaction_blocked() && editor.document_pending.is_none()
-    });
+    wait_for(harness, |editor| !editor.interaction_blocked());
     harness.update(|editor| {
         editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
         editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));

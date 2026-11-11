@@ -64,7 +64,7 @@ fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_th
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |editor| {
-            editor.document_pending.is_none() && !editor.document.visit.source.pending()
+            !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before.project);
@@ -142,7 +142,7 @@ fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_pho
         app.update(|editor| editor.document.visit.current_source = Some(ids[1]));
         app.enter(|editor, cx| editor.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document_pending.is_none() && !editor.document.visit.source.pending()
+            !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, calibrated);

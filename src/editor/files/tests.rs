@@ -136,7 +136,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .center();
         click(app, &context, cancel);
         app.read(|e| {
-            assert!(!e.files.pending() && e.document_pending.is_none());
+            assert!(!e.files.pending() && !e.document.write.pending());
             assert_eq!(e.document.state.project, before);
         });
         app.enter(|e, cx| e.guard_transition(Transition::New, cx));
@@ -313,7 +313,7 @@ fn numeric_save(route: SaveInput) {
         }
         app.read(|e| {
             assert!(e.editing());
-            assert!(!e.files.pending() && e.document_pending.is_none());
+            assert!(!e.files.pending() && !e.document.write.pending());
             assert!(!e.allow_close);
             assert_eq!(e.photo_settings().exposure, 0.);
         });
@@ -388,8 +388,8 @@ fn numeric_save(route: SaveInput) {
             };
             click(app, &context, save);
         }
-        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        assert!(app.read(|e| e.interaction_blocked() && e.document.write.pending()));
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()
@@ -449,7 +449,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
                 assert!(editor.files.closing());
                 assert!(!editor.allow_close);
                 assert!(
-                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
+                    !editor.document.write.pending() && editor.document.export.operation.is_none()
                 );
             });
         }
@@ -512,7 +512,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 app.read(|editor| {
                     assert!(editor.files.pending() || editor.document.export.draft.is_some());
                     assert!(
-                        editor.document_pending.is_none()
+                        !editor.document.write.pending()
                             && editor.document.export.operation.is_none()
                     );
                 });
@@ -524,7 +524,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                             && editor.document.export.draft.is_none()
                     );
                     assert!(
-                        editor.document_pending.is_none()
+                        !editor.document.write.pending()
                             && editor.document.export.operation.is_none()
                     );
                     assert!(!editor.allow_close && !editor.interaction_blocked());
@@ -562,9 +562,9 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         app.read(|e| {
             assert!(!e.dialogs.is_open() && !e.allow_close);
             assert!(e.files.closing());
-            assert!(e.document_pending.is_some());
+            assert!(e.document.write.pending());
         });
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()
@@ -617,10 +617,10 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
             .center();
         click(app, &context, point);
         app.read(|e| {
-            assert!(!e.dialogs.is_open() && e.document_pending.is_some());
+            assert!(!e.dialogs.is_open() && e.document.write.pending());
             assert!(e.files.pending());
         });
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()
@@ -927,7 +927,7 @@ fn input_rejects_a_conflicting_photo_edit_without_retiring_it_or_changing_accept
                 editor.editing(),
                 "a rejected request must not cancel its conflicting owner"
             );
-            assert!(editor.document_pending.is_none());
+            assert!(!editor.document.write.pending());
             assert!(!editor.dialogs.is_open());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.id, active);
@@ -961,7 +961,7 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
                 cx,
             )
         });
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.document.dirty() && !e.interaction_blocked());
@@ -1002,7 +1002,7 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     let path = directory.path().join("snapshot.antitone");
     with_application(editor, |app| {
         app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         let snapshot = crate::project::Project::load(&path).unwrap();
         assert_eq!(
             snapshot
@@ -1039,7 +1039,7 @@ fn new_resets_development_and_replaces_the_previous_document() {
     let previous = editor.id;
     with_application(editor, |app| {
         app.enter(|e, _| e.new_project());
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         app.update(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(
@@ -1101,7 +1101,7 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
                 assert!(editor.files.pending() && editor.dialogs.is_open());
                 assert_eq!(editor.files.closing(), transition == Transition::Close);
                 assert!(
-                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
+                    !editor.document.write.pending() && editor.document.export.operation.is_none()
                 );
                 assert!(!editor.allow_close);
             });
@@ -1179,7 +1179,7 @@ fn shortcut_save_captures_the_current_accepted_document_after_edit_commit() {
                 modifiers: egui::Modifiers::COMMAND,
             }],
         );
-        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
             crate::project::Project::load(&path)
                 .unwrap()

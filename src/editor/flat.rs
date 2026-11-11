@@ -508,9 +508,7 @@ impl tool::Tool for FlatTool {
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
         match action {
-            tool::Action::Primary
-                if !editor.interaction_blocked() && editor.document_pending.is_none() =>
-            {
+            tool::Action::Primary if !editor.interaction_blocked() => {
                 let state = self.state.borrow();
                 let Some(reference) = &state.view.ready else {
                     return;

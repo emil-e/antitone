@@ -152,7 +152,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             let path = directory.path().join("pending.antitone");
             e.save_project(path.clone(), crate::project::Save::New, None, cx);
             assert!(!path.exists());
-            assert!(e.document_pending.is_none());
+            assert!(!e.document.write.pending());
             e.open_export_dialog();
             assert!(e.document.export.draft.is_none());
             stroke
@@ -855,7 +855,7 @@ fn pending_search_blocks_undo_then_one_completed_stroke_round_trips_without_a_pr
         app.enter(|e, cx| {
             queue(e, [50, 50], cx);
             e.restore_history(history::Direction::Undo, cx);
-            assert!(e.document_pending.is_none());
+            assert!(!e.document.write.pending());
             assert_eq!(e.document.state.project, before);
         });
         gate.next(app)
@@ -865,12 +865,12 @@ fn pending_search_blocks_undo_then_one_completed_stroke_round_trips_without_a_pr
         assert_ne!(before, after);
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(30), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.interaction_blocked() && !e.document.write.pending()
         });
         app.read(|e| assert_eq!(e.document.state.project, before));
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(30), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.interaction_blocked() && !e.document.write.pending()
         });
         app.read(|e| assert_eq!(e.document.state.project, after));
     });

@@ -854,6 +854,30 @@ impl Project {
     }
 
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {
+        self.write(
+            path,
+            policy,
+            #[cfg(all(test, feature = "editor"))]
+            None,
+        )
+    }
+
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn save_observed(
+        &self,
+        path: &Path,
+        policy: Save,
+        observer: &WriteObserver,
+    ) -> Result<()> {
+        self.write(path, policy, Some(observer))
+    }
+
+    fn write(
+        &self,
+        path: &Path,
+        policy: Save,
+        #[cfg(all(test, feature = "editor"))] observer: Option<&WriteObserver>,
+    ) -> Result<()> {
         self.validate()?;
         let parent = path
             .parent()
@@ -867,15 +891,33 @@ impl Project {
             output.flush().map_err(failure)?;
         }
         temporary.as_file().sync_all().map_err(failure)?;
+        #[cfg(all(test, feature = "editor"))]
+        if let Some(observer) = observer {
+            observer(WritePhase::TemporarySynced);
+        }
         match policy {
             Save::New => install_new(temporary, path)?,
             Save::Replace => {
                 temporary.persist(path).map_err(failure)?;
             }
         }
+        #[cfg(all(test, feature = "editor"))]
+        if let Some(observer) = observer {
+            observer(WritePhase::Published);
+        }
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "editor"))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WritePhase {
+    TemporarySynced,
+    Published,
+}
+
+#[cfg(all(test, feature = "editor"))]
+pub(crate) type WriteObserver = dyn Fn(WritePhase) + Send + Sync;
 
 /// Installs the completed temporary as a new project, never overwriting an
 /// existing file.

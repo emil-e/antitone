@@ -163,7 +163,7 @@ fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
 }
 
 #[test]
-fn relative_save_as_keeps_normalized_range_admission() {
+fn relative_save_as_preserves_recorded_normalization_without_render_admission() {
     let raw = crate::exposure_fixture::neutral_dng(1.3);
     let destination = tempfile::tempdir().unwrap();
     let old = raw.path().parent().unwrap().join("original.antitone");
@@ -186,13 +186,20 @@ fn relative_save_as_keeps_normalized_range_admission() {
         snapshot.validate_with_device(None).is_err(),
         "known amplification makes this otherwise admitted stack unsafe"
     );
-    assert!(snapshot.save(&old, crate::project::Save::New).is_err());
-    assert!(snapshot.save(&new, crate::project::Save::New).is_err());
-    assert!(!old.exists() && !new.exists());
+    for path in [&old, &new] {
+        let saved = snapshot.save(path, crate::project::Save::New).unwrap();
+        let reopened = Document::open(path).unwrap();
+        assert_eq!(reopened.project, saved.project);
+        assert_eq!(
+            reopened.reference_exposure(reopened.project.source(id).unwrap()),
+            Some(&reference(3.))
+        );
+        assert!(reopened.validate_with_device(None).is_err());
+    }
 }
 
 #[test]
-fn history_restores_accepted_settings_while_known_offscreen_normalization_still_guards_saving() {
+fn history_and_persistence_preserve_settings_while_known_normalization_guards_rendering() {
     let first = crate::exposure_fixture::neutral_dng(0.3);
     let second = crate::exposure_fixture::neutral_dng(1.3);
     let loader = source_loading::SourceLoader::new();
@@ -244,17 +251,20 @@ fn history_restores_accepted_settings_while_known_offscreen_normalization_still_
                 e.history_label(crate::editor::history::Direction::Redo),
                 Some("Remove photo")
             );
-            assert!(!e.interaction_blocked() && e.document_pending.is_none());
+            assert!(!e.interaction_blocked() && !e.document.write.pending());
             let snapshot = e.document.capture();
             assert!(
                 snapshot
                     .validate_for_device(&e.source_services.as_ref().unwrap().device)
                     .is_err()
             );
-            assert!(snapshot.save(&output, crate::project::Save::New).is_err());
+            let saved = snapshot.save(&output, crate::project::Save::New).unwrap();
+            let reopened = Document::open(&output).unwrap();
+            assert_eq!(reopened.project, saved.project);
             assert!(
-                !output.exists(),
-                "unsafe numerical output must still be rejected at persistence"
+                reopened
+                    .validate_for_device(&e.source_services.as_ref().unwrap().device)
+                    .is_err()
             );
             assert_eq!(e.document.state.project, target.project);
         });

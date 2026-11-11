@@ -43,7 +43,6 @@ impl Editor {
             && !self.cropping()
             && !self.masking()
             && !self.dialogs.is_open()
-            && self.document_pending.is_none()
             && !self.files.pending()
             && !self.allow_close
             && !self.export_modal()

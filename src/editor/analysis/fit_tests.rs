@@ -345,7 +345,7 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         app.pump();
         app.read(|e| {
             assert!(!e.analysis_fitting() && e.document.analysis_review().is_none());
-            assert!(e.document_pending.is_none());
+
             assert!(e.document.project.sources.is_empty());
         });
         drop(admission);

@@ -83,7 +83,6 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
             !e.interaction_blocked()
-                && e.document_pending.is_none()
                 && e.document.visit.working_view.support_ready()
                 && e.document
                     .thumbnails
@@ -167,7 +166,6 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
         h.enter(|editor, cx| editor.add_raws(vec![path], cx));
         wait_for(&mut h, |e| {
             !e.interaction_blocked()
-                && e.document_pending.is_none()
                 && e.document.visit.working_view.support_ready()
                 && e.document
                     .thumbnails
@@ -328,9 +326,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             harness.enter(|editor, cx| {
                 editor.apply_input(crate::processing::InputSettings::Digital, cx)
             });
-            wait_for(&mut harness, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            wait_for(&mut harness, |e| !e.interaction_blocked());
         }
         harness.update(|editor| {
             if film {
@@ -515,9 +511,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
-            !e.interaction_blocked()
-                && e.document_pending.is_none()
-                && e.document.visit.working_view.support_ready()
+            !e.interaction_blocked() && e.document.visit.working_view.support_ready()
         });
         h.read(|editor| assert!(editor.document.source));
         h.render().unwrap();
@@ -631,9 +625,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
         });
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| {
-            !e.interaction_blocked()
-                && e.document_pending.is_none()
-                && e.document.visit.working_view.support_ready()
+            !e.interaction_blocked() && e.document.visit.working_view.support_ready()
         });
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));

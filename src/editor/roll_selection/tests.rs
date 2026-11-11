@@ -379,14 +379,7 @@ fn an_ordinary_picker_preserves_multiselection_and_anchor() {
 
 #[test]
 fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
-    for blocker in [
-        "busy",
-        "pick",
-        "failure",
-        "transition",
-        "analysis",
-        "removal",
-    ] {
+    for blocker in ["busy", "pick", "failure", "transition", "removal"] {
         let editor = fixture(2);
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
@@ -400,7 +393,6 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                     "pick" => picking::preview(editor, PickerCase::Dmax.display()),
                     "failure" => editor.report_failure(FailureCase::Save, "fixture".into()),
                     "transition" => editor.guard_transition(Transition::Close, cx),
-                    "analysis" => editor.document_pending = Some(12),
                     "removal" => editor.request_removal(cx),
                     _ => unreachable!(),
                 }

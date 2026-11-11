@@ -5,32 +5,34 @@ use crate::editor::*;
 
 #[test]
 fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pending_decision() {
-    let editor = fixture();
-    crate::application::test_support::with_application(editor, |app| {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("occupied.antitone");
+    std::fs::write(&path, b"keep existing bytes").unwrap();
+    crate::application::test_support::with_application(fixture(), |app| {
+        let before = app.read(|editor| editor.document.state.project.clone());
         app.enter(|editor, cx| {
-            let before = editor.document.state.project.clone();
             editor.save_project(
-                "project.json".into(),
+                path.clone(),
                 crate::project::Save::New,
                 Some(Transition::Close),
                 cx,
-            );
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-            let id = editor.document_pending.unwrap();
-            editor.save_result(id, Err("permission denied".into()), cx);
+            )
+        });
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.write.pending()
+        });
+        app.update(|editor| {
             assert_eq!(
                 editor.dialogs.message().unwrap().title,
                 FailureCase::Save.title()
             );
+            let details = editor.dialogs.message().unwrap().details.clone();
+            assert!(!details.is_empty());
             assert!(editor.files.closing());
             assert_eq!(editor.document.state.project, before);
             assert!(editor.document.dirty());
             editor.status = "Unrelated progress or success".into();
-            editor.save_result(id, Err("stale error".into()), cx);
-            assert_eq!(
-                editor.dialogs.message().unwrap().details,
-                "permission denied"
-            );
+            assert_eq!(editor.dialogs.message().unwrap().details, details);
             let context = egui::Context::default();
             app_frame(editor, &context, vec![]);
             let labels = app_frame(editor, &context, vec![]);
@@ -42,7 +44,6 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
             assert!(!labels.iter().any(|(label, _)| label == "Save changes"));
             editor.dialogs.answer_for_test("OK");
             assert!(!editor.allow_close);
-            assert_eq!(editor.document.state.project, before);
         });
         app.pump();
         app.update(|editor| {
@@ -51,6 +52,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
         });
         app.pump();
         app.read(|editor| assert!(!editor.allow_close && !editor.files.pending()));
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep existing bytes");
     });
 }
 
@@ -86,7 +88,7 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                 editor.dialogs.message().unwrap().details,
                 "Export services unavailable"
             );
-            assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+            assert!(!editor.interaction_blocked() && !editor.document.write.pending());
             assert!(editor.document.flat_edit().is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.document.visit.current_source, source);
@@ -121,7 +123,7 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
         editor.dialogs.message().unwrap().title,
         FailureCase::FlatReference.title()
     );
-    assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+    assert!(!editor.interaction_blocked() && !editor.document.write.pending());
     assert!(editor.document.flat_edit().is_none() && editor.test_pick().is_none());
     assert_eq!(editor.document.visit.view, visit);
     assert_eq!(
@@ -138,24 +140,24 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
 
 #[test]
 fn successful_save_keeps_the_unread_notice_and_waits_before_closing() {
-    let editor = fixture();
-    crate::application::test_support::with_application(editor, |app| {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.antitone");
+    crate::application::test_support::with_application(fixture(), |app| {
         app.enter(|editor, cx| {
             editor.report_failure(FailureCase::Save, "destination unavailable".into());
             editor.save_project(
-                "project.json".into(),
+                path.clone(),
                 crate::project::Save::New,
                 Some(Transition::Close),
                 cx,
             );
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document.write.pending());
             assert!(editor.dialogs.is_open());
-            let id = editor.document_pending.unwrap();
-            editor.save_result(id, Ok(Box::new(editor.document.capture())), cx);
-            assert!(editor.dialogs.is_open());
-            assert!(!editor.allow_close);
         });
-        app.pump();
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.write.pending()
+        });
+        assert!(path.is_file());
         app.read(|editor| assert!(!editor.allow_close && editor.dialogs.is_open()));
         app.update(|editor| editor.dialogs.answer_for_test("OK"));
         app.pump();
@@ -249,9 +251,9 @@ fn rejected_support_and_accepted_state_remain_visible_until_acknowledgement() {
     assert_eq!(failure.presentation().severity, Severity::Warning);
     assert_eq!(editor.test_pick_region(), region);
     assert_eq!(editor.document.state.project, before);
-    assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+    assert!(!editor.interaction_blocked() && !editor.document.write.pending());
     assert!(
-        editor.document.flat_edit().unwrap().task.is_none() && editor.document_pending.is_none()
+        editor.document.flat_edit().unwrap().task.is_none() && !editor.document.write.pending()
     );
     editor.clear_look();
     assert!(editor.dialogs.is_open());
@@ -309,7 +311,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     }
     assert!(editor.dialogs.is_open());
     assert!(!editor.files.pending());
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
     let point = labels
         .iter()
         .find(|(label, _)| label == "OK")
@@ -321,7 +323,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     }
     assert!(!editor.dialogs.is_open());
     assert_eq!(editor.document.state.project, before);
-    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+    assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
     assert!(!editor.files.pending());
     // The same command is a meaningful positive control once acknowledgement removes the blocker.
     crate::application::test_support::with_application(editor, |app| {

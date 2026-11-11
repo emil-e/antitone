@@ -428,9 +428,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         });
 
         native_file_action(&mut h, crate::platform::menu::Action::New);
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert!(editor.document.state.project.sources.is_empty()));
         open_project(&mut h, path.clone());
         wait_opened_photo(&mut h);
@@ -614,9 +612,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             });
         }
         drop(hold);
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| {
             assert!(Arc::ptr_eq(
@@ -661,9 +657,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.get_by_label("Done").click();
         h.step();
         native_file_action(&mut h, crate::platform::menu::Action::New);
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         open_project(&mut h, path);
         wait_opened_photo(&mut h);
         ready(&mut h, 2);

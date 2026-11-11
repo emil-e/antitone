@@ -404,7 +404,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                     editor.document.visit.pending_preview.is_none()
                         && editor.document.visit.canvas.selection_timing.is_none()
                 );
-                assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
+                assert!(!editor.interaction_blocked());
                 assert!(editor.document.project.sources.is_empty());
             });
         });

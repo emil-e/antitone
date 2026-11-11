@@ -265,9 +265,7 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
             editor.finish_auto_crop(false);
             editor.save_project(path.clone(), crate::project::Save::New, None, cx);
         });
-        app.run_until(LIMIT, |editor| {
-            editor.document_pending.is_none() && !editor.interaction_blocked()
-        });
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
             assert_eq!(*editor.document.spatial.ready(), *ready);
@@ -276,9 +274,7 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
         app.enter(|editor, cx| {
             editor.guard_transition(crate::editor::files::Transition::Open(path.clone()), cx);
         });
-        app.run_until(LIMIT, |editor| {
-            editor.document_pending.is_none() && !editor.interaction_blocked()
-        });
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
             assert!(editor.document.spatial.ready().groups.is_empty());
