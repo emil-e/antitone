@@ -58,16 +58,12 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
         harness.enter(|editor, cx| {
             editor.save_project(path.clone(), crate::project::Save::New, None, cx)
         });
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         let saved = harness.read(|editor| editor.document.state.project.clone());
         assert_eq!(crate::project::Project::load(&path).unwrap(), saved);
         harness.enter(|editor, cx| editor.open_project(path, cx));
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness
             .read(|editor| assert_eq!(editor.document.state.project, saved, "{}", editor.status));
         harness.get_by_label("working-photo.dng").click();

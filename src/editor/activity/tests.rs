@@ -3,32 +3,36 @@ use super::super::tests::{add_ready_fixture, app_frame, fixture};
 use super::super::*;
 
 #[test]
-fn save_ignores_stale_replies_and_feedback_ends_with_task_teardown() {
+fn save_feedback_is_owned_by_the_document_write_not_its_callers_waiter() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.antitone");
+    let hold = crate::background::testing::pause();
     crate::application::test_support::with_application(fixture(), |app| {
         app.enter(|editor, cx| {
-            let before = editor.document.state.project.clone();
-            editor.save_project(
-                "project.json".into(),
-                crate::project::Save::New,
-                Some(Transition::Close),
+            drop(editor.start_save(
+                save::Write {
+                    document: editor.document.capture(),
+                    path: path.clone(),
+                    policy: crate::project::Save::New,
+                },
                 cx,
-            );
-            assert!(editor.interaction_blocked());
-            let id = editor.document_pending.unwrap();
-            let title = editor.activities.view().unwrap().title;
+            ));
+            assert!(editor.document.write.pending() && editor.interaction_blocked());
+            assert_eq!(editor.activities.view().unwrap().title, "Saving project…");
             editor.status = "Unrelated status".into();
-            editor.save_result(id + 1, Err("stale".into()), cx);
-            assert_eq!(editor.activities.view().unwrap().title, title);
-            assert!(editor.interaction_blocked());
-            assert_eq!(editor.document.state.project, before);
-            editor.save_result(id, Err("cannot save".into()), cx);
-            assert!(editor.document_pending.is_none());
-            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.activities.view().unwrap().title, "Saving project…");
         });
         app.pump();
-        app.read(|editor| {
-            assert!(editor.activities.view().is_none() && !editor.interaction_blocked())
+        assert!(!path.exists());
+        drop(hold);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.write.pending()
         });
+        app.read(|editor| {
+            assert!(editor.activities.view().is_none() && !editor.interaction_blocked());
+            assert!(!editor.document.dirty());
+        });
+        assert!(path.is_file());
     });
 }
 
@@ -55,7 +59,7 @@ fn unavailable_export_services_and_analysis_device_leave_no_working_feedback() {
             });
             app.run_until(Duration::from_secs(5), |e| !e.interaction_blocked());
             app.read(|editor| {
-                assert!(editor.document_pending.is_none());
+                assert!(!editor.document.write.pending());
                 assert_eq!(editor.document.state.project, before);
             });
             app.pump();
@@ -284,8 +288,8 @@ fn export_blocks_the_workspace_before_its_progress_modal_becomes_prominent() {
 }
 
 #[test]
-fn matching_success_retires_source_save_and_measurement_activity() {
-    for operation in 0..3 {
+fn matching_success_retires_source_and_measurement_activity() {
+    for operation in [0, 2] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
         if operation == 2 {
@@ -298,24 +302,12 @@ fn matching_success_retires_source_save_and_measurement_activity() {
                 app.pump();
             }
             let mut source_completion = None;
-            let mut save_completion = None;
             app.enter(|editor, access| match operation {
                 0 => {
                     let ready = editor.document.visit.canvas.ready.take().unwrap();
                     editor.load("current.ARW".into(), access);
                     assert!(editor.document.visit.source.pending());
                     source_completion = Some((editor.document.visit.view, ready));
-                }
-                1 => {
-                    editor.save_project(
-                        "project.json".into(),
-                        crate::project::Save::New,
-                        None,
-                        access,
-                    );
-                    assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-                    save_completion =
-                        Some((editor.document_pending.unwrap(), editor.document.capture()));
                 }
                 _ => {
                     let source = editor
@@ -344,9 +336,6 @@ fn matching_success_retires_source_save_and_measurement_activity() {
                 app.pump();
             }
             assert!(app.read(|editor| editor.activities.view().is_some()));
-            if let Some((id, saved)) = save_completion {
-                app.enter(|e, cx| e.save_result(id, Ok(Box::new(saved)), cx));
-            }
             if let Some((view, ready)) = source_completion {
                 app.update(|e| e.source_result(view, Ok(Box::new(ready))));
             }

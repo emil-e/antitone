@@ -411,7 +411,7 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
         let destination = directory.path().join("still-corrected.antitone");
         app.enter(|editor, cx| editor.save_project(destination.clone(), Save::New, None, cx));
         app.run_until(Duration::from_secs(15), |editor| {
-            !editor.files.pending() && editor.document_pending.is_none()
+            !editor.files.pending() && !editor.document.write.pending()
         });
         let written = crate::project::Project::load(&destination).unwrap();
         assert_eq!(written.active_flat_field(), Some(&settings));

@@ -578,7 +578,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.read(|editor| assert!(!editor.application_menu_state().enabled(Action::Undo)));
         native_action(&mut h, Action::Undo);
         h.read(|editor| assert_eq!(editor.document.state.project, held));
-        h.read(|editor| assert!(editor.document_pending.is_none()));
+        h.read(|editor| assert!(!editor.document.write.pending()));
         h.event(egui::Event::PointerButton {
             pos: end,
             button: egui::PointerButton::Primary,
@@ -602,7 +602,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         native_action(&mut h, Action::Undo);
         assert!(egui::Popup::is_any_open(&h.ctx));
         h.read(|editor| assert_eq!(editor.document.state.project, before_popup_undo));
-        h.read(|editor| assert!(editor.document_pending.is_none()));
+        h.read(|editor| assert!(!editor.document.write.pending()));
         h.key_press(egui::Key::Escape);
         h.step();
         native_action(&mut h, Action::Undo);
@@ -958,7 +958,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         h.event(egui::Event::Text("2.5".into()));
         h.step();
         shortcut(&mut h, false);
-        h.read(|editor| assert!(editor.document_pending.is_none(), "numeric text owns Cmd-Z"));
+        h.read(|editor| assert!(!editor.document.write.pending(), "numeric text owns Cmd-Z"));
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.render().unwrap();
     });

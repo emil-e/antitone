@@ -111,7 +111,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
             assert_eq!(*editor.document.spatial.ready(), regions);
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Undo, cx));
-        app.run_until(LIMIT, |editor| editor.document_pending.is_none());
+        app.run_until(LIMIT, |editor| !editor.document.write.pending());
         app.read(|editor| {
             assert!(
                 editor
@@ -127,7 +127,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
             assert!(editor.document.state.project.analysis_regions.is_empty());
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Redo, cx));
-        app.run_until(LIMIT, |editor| editor.document_pending.is_none());
+        app.run_until(LIMIT, |editor| !editor.document.write.pending());
         app.read(|editor| {
             assert!(
                 editor
@@ -373,14 +373,14 @@ fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui
         });
         app.enter(|editor, cx| {
             drop(editor.start_save(
-                crate::editor::document::Write {
+                crate::editor::save::Write {
                     document: editor.document.capture(),
                     path: path.clone(),
                     policy: Save::Replace,
                 },
                 cx,
             ));
-            assert!(editor.document_pending.is_some());
+            assert!(editor.document.write.pending());
         });
         let context = egui::Context::default();
         crate::editor::tests::app_frame(app, &context, vec![]);
@@ -395,7 +395,7 @@ fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui
         }));
         release.send(()).unwrap();
         app.run_until(LIMIT, |editor| {
-            editor.document_pending.is_none()
+            !editor.document.write.pending()
                 && editor.document.spatial_preparing.is_none()
                 && received.get()
         });

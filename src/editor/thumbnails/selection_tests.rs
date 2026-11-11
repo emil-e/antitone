@@ -324,7 +324,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
 }
 
 #[test]
-fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
+fn a_working_modal_blocks_navigation_while_a_selected_load_is_pending() {
     let editor = crate::editor::tests::fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -338,7 +338,7 @@ fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
                 cx,
             );
             assert!(editor.document.visit.source.pending());
-            editor.document_pending = Some(999);
+            editor.set_test_busy(true);
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
             let output = frame(editor, &context, vec![], cx);

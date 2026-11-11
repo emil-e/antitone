@@ -94,9 +94,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                 });
                 h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
                 h.step();
-                wait_for(&mut h, |editor| {
-                    !editor.interaction_blocked() && editor.document_pending.is_none()
-                });
+                wait_for(&mut h, |editor| !editor.interaction_blocked());
                 h.read(|editor| {
                     assert!(editor.photo_crop().is_none());
                     assert_eq!(editor.photo_settings().exposure, 0.75);
@@ -110,9 +108,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             });
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
-            wait_for(&mut h, |editor| {
-                !editor.interaction_blocked() && editor.document_pending.is_none()
-            });
+            wait_for(&mut h, |editor| !editor.interaction_blocked());
             h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.));
         });
     }

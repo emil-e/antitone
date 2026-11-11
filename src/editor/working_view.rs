@@ -1116,15 +1116,7 @@ impl Editor {
             return Ok(None);
         }
 
-        if self.interaction_blocked()
-            && self.document_pending.is_none()
-            && !image.is_sample()
-            && !self.cropping()
-        {
-            let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
-            mailbox.demand = None;
-            drop(mailbox);
-
+        if self.interaction_blocked() && !image.is_sample() && !self.cropping() {
             if inspection && self.document.visit.working_view.wanted.is_some() {
                 self.document
                     .visit
@@ -1155,12 +1147,6 @@ impl Editor {
                                 )
                         });
             return Ok(self.document.visit.working_view.displayed.clone());
-        }
-
-        if self.document_pending.is_some() {
-            // Candidate preparation must not retire the accepted view before replacement succeeds.
-            self.document.visit.working_view.displayed = previous;
-            return Ok(self.document.visit.working_view.hold(target, compare));
         }
 
         if repairs.0.is_empty()
@@ -1322,10 +1308,7 @@ impl Editor {
     }
 
     pub(super) fn acquire_working(&mut self, cx: &crate::application::UiContext<'_, Self>) {
-        if self.allow_close
-            || self.document_pending.is_some()
-            || self.document.visit.working.task.is_some()
-        {
+        if self.allow_close || self.document.visit.working.task.is_some() {
             return;
         }
         let Some(request) = self.document.visit.working_view.acquisition() else {

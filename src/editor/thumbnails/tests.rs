@@ -1072,7 +1072,7 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
 
 #[test]
 fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
-    for suspension in ["busy", "pick", "document"] {
+    for suspension in ["busy", "pick"] {
         let mut editor = Editor::state();
         *editor.document = fixture();
         let (commands, requests) = mpsc::channel();
@@ -1080,7 +1080,6 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
         match suspension {
             "busy" => editor.set_test_busy(true),
             "pick" => picking::preview(&mut editor, super::super::PickerCase::Dmin.display()),
-            "document" => editor.document_pending = Some(0),
             _ => unreachable!(),
         }
         crate::application::test_support::with_application(editor, |app| {

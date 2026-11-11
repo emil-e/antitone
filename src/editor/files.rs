@@ -202,7 +202,6 @@ impl Editor {
 
     fn install_project(&mut self, document: Document) {
         self.cancel_active_tool();
-        self.document_pending = None;
         self.document = self.document.replacement(document);
         self.id = self.request_id();
         self.document.visit.view = self.id;
@@ -250,20 +249,22 @@ impl Editor {
             return;
         }
         let id = self.id;
-        let response = self.start_save(
-            document::Write {
+        let Some(response) = self.start_save(
+            save::Write {
                 document: self.document.capture(),
                 path,
                 policy,
             },
             cx,
-        );
+        ) else {
+            return;
+        };
         let closing = after == Some(Transition::Close);
         self.files.action = cx
             .spawn(move |cx| async move {
                 let Ok(success) = response.await else { return };
                 if let Some(transition) = after {
-                    if success {
+                    if success && cx.read(|editor| !editor.document.dirty()) {
                         finish_transition(&cx, id, transition).await;
                     } else {
                         guarded_transition(&cx, id, transition).await;
@@ -333,7 +334,11 @@ impl Editor {
                 match save_to(&cx, id, destination).await {
                     Some(true) => {
                         if let Some(transition) = after {
-                            finish_transition(&cx, id, transition).await;
+                            if cx.read(|editor| editor.document.dirty()) {
+                                guarded_transition(&cx, id, transition).await;
+                            } else {
+                                finish_transition(&cx, id, transition).await;
+                            }
                         }
                     }
                     Some(false) => {
@@ -419,8 +424,8 @@ async fn guarded_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Tra
                     return;
                 };
                 match save_to(cx, id, destination).await {
-                    Some(true) => {}
-                    Some(false) => continue,
+                    Some(true) if cx.read(|editor| !editor.document.dirty()) => {}
+                    Some(true) | Some(false) => continue,
                     None => return,
                 }
             }
@@ -468,14 +473,14 @@ async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) 
                 return None;
             }
 
-            Some(editor.start_save(
-                document::Write {
+            editor.start_save(
+                save::Write {
                     document: editor.document.capture(),
                     path: destination.path,
                     policy: destination.policy,
                 },
                 cx,
-            ))
+            )
         })
         .flatten()?;
     response.await.ok()

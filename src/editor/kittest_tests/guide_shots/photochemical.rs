@@ -92,7 +92,7 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
         let path = directory.join(format!("{name}.antitone"));
         harness.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
+            !e.interaction_blocked()
         });
         let project = harness.read(|e| {
             assert!(!e.dialogs.is_open());
@@ -121,9 +121,7 @@ fn supplied_project_renders_and_saves_the_paper_routes_without_reanalysis() {
         harness.step();
         open_project(&mut harness, source);
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.interaction_blocked()
-                && e.document_pending.is_none()
-                && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         harness.read(|e| assert!(!e.dialogs.is_open()));
         settle_view(&mut harness);

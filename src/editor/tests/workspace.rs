@@ -66,7 +66,7 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                 );
                 assert!(editor.test_pick().is_none());
                 assert!(editor.document.crop_edit().is_none());
-                assert!(editor.document_pending.is_none());
+                assert!(!editor.document.write.pending());
             }
         }
     }
@@ -229,9 +229,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
             assert!(!editor.files.pending());
             assert_eq!(editor.tab, 2);
             assert_eq!(editor.document.state.project, project);
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
+            assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
         });
     });
 }

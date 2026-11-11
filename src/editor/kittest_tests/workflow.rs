@@ -253,9 +253,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
         harness.update(|editor| *editor.document = saved);
         let project = harness.read(|editor| editor.document.state.project.clone());
         open_project(&mut harness, path);
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));

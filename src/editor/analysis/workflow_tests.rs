@@ -222,13 +222,12 @@ fn new_document_retires_areas_without_waiting_for_physical_native_cleanup() {
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document_pending.is_none());
             assert!(!e.analysis_preparing());
             assert_ne!(e.document.state.project, before);
             assert!(e.document.project.sources.is_empty());
         });
         release.send(()).unwrap();
-        app.run_until(LIMIT, |e| e.document_pending.is_none());
+        app.run_until(LIMIT, |e| !e.document.write.pending());
         app.read(|e| {
             assert!(e.document.state.project.order.is_empty());
             assert!(e.document.analysis_review().is_none());

@@ -233,7 +233,7 @@ pub(super) fn complete_document_operation(
         app.enter(start);
         // Consumer fixtures also need the initial photo. Metadata acceptance is tested separately.
         app.run_until(timeout, |editor| {
-            editor.document_pending.is_none()
+            !editor.document.write.pending()
                 && !editor.editing()
                 && !editor.files.opening()
                 && !editor.document.visit.source.pending()
@@ -270,7 +270,7 @@ pub(super) fn complete_reference_operation(
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
         app.enter(start);
         app.run_until(timeout, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
+            !editor.interaction_blocked() && !editor.document.write.pending()
         });
         app.close_execution();
     }
@@ -1794,7 +1794,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
     editor.file_action(files::FileAction::Save, &UiContext::render_only());
-    assert!(editor.document_pending.is_none());
+    assert!(!editor.document.write.pending());
     editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.photo_crop(), crop);

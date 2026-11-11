@@ -1092,7 +1092,6 @@ impl Editor {
             && !self.picking()
             && !self.cropping()
             && !self.masking()
-            && self.document_pending.is_none()
             && !self.files.pending()
             && !self.export_modal()
             && !self.dialogs.is_open()

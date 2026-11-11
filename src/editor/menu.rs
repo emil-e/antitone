@@ -84,7 +84,6 @@ impl Editor {
         self.allow_close
             || self.activities.blocks_workspace() && self.document.spatial_preparing.is_none()
             || self.dialogs.is_open()
-            || self.document_pending.is_some()
             || self.document.export.draft.is_some()
             || self.files.pending()
     }

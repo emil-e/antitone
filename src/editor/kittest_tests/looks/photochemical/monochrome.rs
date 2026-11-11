@@ -39,9 +39,7 @@ fn named_bw_paper_prepares_persists_exports_and_only_admits_supported_material_c
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("ilford-paper.antitone");
         h.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
-        wait_for(&mut h, |e| {
-            !e.interaction_blocked() && e.document_pending.is_none()
-        });
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|e| assert!(!e.dialogs.is_open() && !e.document.dirty()));
         assert_eq!(
             crate::project::Project::load(&path)
@@ -80,9 +78,7 @@ fn named_bw_paper_prepares_persists_exports_and_only_admits_supported_material_c
         h.get_by_label("Discard changes").click();
         h.step();
         wait_for(&mut h, |e| {
-            !e.interaction_blocked()
-                && e.document_pending.is_none()
-                && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         paint_until(&mut h, positive_ready);
         h.read(|e| {

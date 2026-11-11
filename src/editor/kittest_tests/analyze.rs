@@ -771,9 +771,7 @@ fn analyze_widgets_keep_real_correction_and_both_settled_targets() {
         wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.get_by_label("Apply").click();
         harness.step();
-        wait_for(&mut harness, |editor| {
-            !editor.interaction_blocked() && editor.document_pending.is_none()
-        });
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.read(|editor| {
             assert!(
                 editor.document.correction.prepared().is_some(),

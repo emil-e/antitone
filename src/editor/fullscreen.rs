@@ -18,7 +18,6 @@ impl Editor {
         self.menus.panel.is_some()
             || self.activities.blocks_workspace()
             || self.dialogs.is_open()
-            || self.document_pending.is_some()
             || self.files.pending()
             || self.allow_close
             || self.export_modal()

@@ -175,7 +175,6 @@ impl Editor {
     pub(super) fn tool_start_available(&self) -> bool {
         !self.interaction_blocked()
             && !self.controls_pending()
-            && self.document_pending.is_none()
             && !self.export_modal()
             && !self.dialogs.is_open()
             && !self.files.pending()

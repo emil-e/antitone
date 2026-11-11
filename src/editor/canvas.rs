@@ -531,7 +531,7 @@ impl Editor {
         } else {
             geometry.physical_frame_raster(pixels_per_point)
         };
-        let normal = !source_outside_frame && !image.is_sample() && self.document_pending.is_none();
+        let normal = !source_outside_frame && !image.is_sample();
         let working = normal && self.document.visit.working_view.enabled();
         let view = if working {
             Some(ViewRequest {

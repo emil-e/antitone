@@ -187,21 +187,15 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             let path = directory.path().join(format!("film-{scale}.antitone"));
             h.update(|e| e.document.path = Some(path.clone()));
             native_file_action(&mut h, crate::platform::menu::Action::Save);
-            wait_for(&mut h, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| assert!(!e.document.dirty(), "{}", e.status));
             let saved = crate::project::Project::load(&path).unwrap();
             assert_eq!((saved.output.grain, saved.output.halation), saved_values);
             native_file_action(&mut h, crate::platform::menu::Action::New);
-            wait_for(&mut h, |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            wait_for(&mut h, |e| !e.interaction_blocked());
             open_project(&mut h, path);
             wait_for(&mut h, |e| {
-                !e.interaction_blocked()
-                    && e.document_pending.is_none()
-                    && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             stage(&mut h, "Rendering");
             h.run();

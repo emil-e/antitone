@@ -668,7 +668,6 @@ fn queued_import_is_retired_by_document_replacement() {
         app.pump();
 
         app.read(|e| {
-            assert!(e.document_pending.is_none());
             assert!(e.activities.view().is_none());
             assert!(!e.interaction_blocked());
         });

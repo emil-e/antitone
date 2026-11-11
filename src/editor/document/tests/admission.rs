@@ -208,7 +208,7 @@ fn document_preflight_preserves_calibration_under_correction_and_checks_processi
 }
 
 #[test]
-fn device_aware_save_and_open_validate_photo_grades_before_io_and_preserve_rejected_candidates() {
+fn persistence_preserves_valid_photo_grades_even_when_render_admission_rejects_them() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
@@ -243,9 +243,7 @@ fn device_aware_save_and_open_validate_photo_grades_before_io_and_preserve_rejec
             "two.ARW"
         );
         let path = directory.path().join("reference.json");
-        let saved = document
-            .save_with_device(&path, Save::New, Some(&device))
-            .unwrap();
+        let saved = document.save(&path, Save::New).unwrap();
         assert!(document.dirty());
         assert!(!saved.dirty());
         for name in ["one.ARW", "two.ARW"] {
@@ -265,16 +263,16 @@ fn device_aware_save_and_open_validate_photo_grades_before_io_and_preserve_rejec
         rejected.project.sources[0].adjustment_layers = Some(unsupported_locals());
         let before = rejected.project.clone();
         let bytes = std::fs::read(&path).unwrap();
-        assert!(
-            rejected
-                .save_with_device(&path, Save::Replace, Some(&device))
-                .is_err()
-        );
+        assert!(rejected.validate_for_device(&device).is_err());
+        let written = rejected.save(&path, Save::Replace).unwrap();
         assert_eq!(rejected.project, before);
         assert!(rejected.dirty());
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        rejected.project.save(&path, Save::Replace).unwrap();
-        assert!(Document::open(&path).is_err());
+        assert_ne!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(Document::open(&path).unwrap().project, written.project);
+        let complete = std::fs::read(&path).unwrap();
+        rejected.project.sources[0].development.camera_to_ap1 = [[0.; 3]; 3];
+        assert!(rejected.save(&path, Save::Replace).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), complete);
         assert_eq!(saved.project, opened.project);
     });
 }
@@ -372,28 +370,23 @@ fn unsupported_offscreen_grade_blocks_export_before_retiring_accepted_state_or_d
 }
 
 #[test]
-fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_records_and_ids() {
-    pollster::block_on(async {
-        let device = device().await;
-        let raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-        let mut document = Document::default();
-        document
-            .import_with_progress(std::slice::from_ref(&raw), &Default::default(), |_, _| {})
-            .unwrap();
-        document.project.set_dmin(Some([0.2, 0.15, 0.1]));
-        document.project.set_dmax(Some([0.008, 0.005, 0.002]));
-        document.project.sources[0].adjustment_layers = Some(layers());
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("masks.json");
-        let saved = document
-            .save_with_device(&path, Save::New, Some(&device))
-            .unwrap();
-        let mut opened = Document::open(&path).unwrap();
-        assert_eq!(opened.project, saved.project);
-        opened
-            .import_with_progress(&[raw.clone(), raw], &Default::default(), |_, _| {})
-            .unwrap();
-        assert_eq!(opened.project, saved.project);
-        assert!(!opened.dirty());
-    });
+fn authored_raw_metadata_open_and_duplicate_import_preserve_linear_radial_records_and_ids() {
+    let raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let mut document = Document::default();
+    document
+        .import_with_progress(std::slice::from_ref(&raw), &Default::default(), |_, _| {})
+        .unwrap();
+    document.project.set_dmin(Some([0.2, 0.15, 0.1]));
+    document.project.set_dmax(Some([0.008, 0.005, 0.002]));
+    document.project.sources[0].adjustment_layers = Some(layers());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("masks.json");
+    let saved = document.save(&path, Save::New).unwrap();
+    let mut opened = Document::open(&path).unwrap();
+    assert_eq!(opened.project, saved.project);
+    opened
+        .import_with_progress(&[raw.clone(), raw], &Default::default(), |_, _| {})
+        .unwrap();
+    assert_eq!(opened.project, saved.project);
+    assert!(!opened.dirty());
 }

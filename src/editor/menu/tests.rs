@@ -35,7 +35,6 @@ fn native_history_actions_update_accepted_state_and_labels_without_worker_prepar
     crate::application::test_support::with_application(editor, |app| {
         frame(app, &context);
         app.read(|e| {
-            assert!(e.document_pending.is_none());
             assert!(!e.interaction_blocked());
             assert_eq!(
                 e.document.state.project, before,
@@ -61,7 +60,7 @@ fn native_history_actions_update_accepted_state_and_labels_without_worker_prepar
         });
         frame(app, &context);
         app.read(|e| {
-            assert!(e.document_pending.is_none() && !e.interaction_blocked());
+            assert!(!e.interaction_blocked());
             assert!(!e.cropping());
             assert_eq!(e.document.project.roll.exposure, 0.5);
             assert_eq!(
@@ -96,7 +95,6 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    assert!(editor.document_pending.is_none());
     assert_eq!(editor.document.project.roll.exposure, 0.5);
     assert!(!editor.application_menu_state().enabled(Action::Undo));
 }
@@ -121,7 +119,6 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
             if modifiers.command && modifiers.shift == (action == Action::Redo))
         );
         assert_eq!(editor.document.state.project, accepted);
-        assert!(editor.document_pending.is_none());
     }
     editor.menus.text_focused = false;
     assert_eq!(
@@ -145,9 +142,7 @@ fn native_quit_and_close_wait_for_the_document_decision() {
             app.read(|editor| {
                 assert!(editor.files.closing() && editor.dialogs.is_open());
                 assert!(!editor.allow_close);
-                assert!(
-                    editor.document_pending.is_none() && editor.document.export.operation.is_none()
-                );
+                assert!(editor.document.export.operation.is_none());
             });
         });
     }
@@ -172,7 +167,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.application_menu_state().enabled(action));
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
-        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+        assert!(editor.document.export.operation.is_none());
         assert!(!editor.files.pending());
     }
     assert!(editor.cropping());
@@ -209,9 +204,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
             assert!(editor.menus.panel.is_none());
             assert!(editor.files.closing() && editor.dialogs.is_open());
             assert!(!editor.allow_close);
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
+            assert!(editor.document.export.operation.is_none());
         });
     });
 }

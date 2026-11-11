@@ -156,7 +156,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             let saved = h.read(|editor| editor.document.path.clone().unwrap());
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
             h.step();
-            h.read(|editor| assert!(editor.document_pending.is_none()));
+            h.read(|editor| assert!(!editor.document.write.pending()));
             let accepted = crate::project::Project::load(&saved).unwrap();
             assert_eq!(accepted, before);
 

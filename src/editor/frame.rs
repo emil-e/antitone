@@ -116,7 +116,7 @@ impl Editor {
         dialog_escape_available: bool,
     ) {
         if self.document.spatial_preparing.is_some()
-            && self.document_pending.is_none()
+            && !self.document.write.pending()
             && !self.dialogs.is_open()
             && dialog_escape_available
             && !text_was_focused
@@ -253,7 +253,6 @@ impl Editor {
             || self.activities.blocks_workspace()
             || self.dialogs.is_open()
             || self.export_modal()
-            || self.document_pending.is_some()
             || self.files.pending()
         {
             ui.disable();

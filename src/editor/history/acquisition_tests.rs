@@ -163,7 +163,7 @@ fn rapid_history_retires_old_photo_presentation_in_both_native_completion_orders
                     Direction::Undo,
                 ] {
                     editor.restore_history(direction, cx);
-                    assert!(editor.document_pending.is_none() && !editor.interaction_blocked());
+                    assert!(!editor.interaction_blocked());
                     assert_eq!(
                         editor
                             .source_epoch

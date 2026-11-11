@@ -413,14 +413,13 @@ impl Developed {
 #[derive(Default)]
 pub(super) struct State {
     task: Option<async_executor::Task<()>>,
-    completion: Option<Result<Box<Ready>, String>>,
 
     pub input: Option<crate::source::Input>,
 }
 
 impl State {
     pub fn pending(&self) -> bool {
-        self.task.is_some() || self.completion.is_some()
+        self.task.is_some()
     }
 }
 
@@ -536,18 +535,7 @@ impl Editor {
         if self.document.visit.view != view {
             return;
         }
-        self.document.visit.source.task = None;
-        self.document.visit.source.completion = Some(result);
-        self.resume_source_completion();
-    }
 
-    fn resume_source_completion(&mut self) {
-        if self.document_pending.is_some() {
-            return;
-        }
-        let Some(result) = self.document.visit.source.completion.take() else {
-            return;
-        };
         let view = self.document.visit.view;
         self.document.visit.source = State::default();
 
@@ -608,11 +596,5 @@ impl Editor {
                 self.status = error;
             }
         }
-    }
-
-    // Candidate failure and Save retain the requested visit. A result that arrived
-    // during preparation becomes usable without another load or another paint.
-    pub(super) fn resume_source_after_document(&mut self) {
-        self.resume_source_completion();
     }
 }

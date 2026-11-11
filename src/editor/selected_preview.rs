@@ -95,7 +95,6 @@ impl Editor {
             .as_ref()
             .is_some_and(|preview| {
                 self.document.visit.working_view.displayed.is_some()
-                    || self.document_pending.is_some()
                     || !preview.current_source(&self.document, self.document.visit.current_source)
             })
         {

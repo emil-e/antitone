@@ -117,9 +117,7 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
             );
             assert!(!editor.allow_close);
             assert_eq!(editor.document.project, before);
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
+            assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
         });
     });
 }
@@ -142,7 +140,7 @@ fn a_clean_system_quit_approves_without_saving_again() {
         Some(host::QuitState::Approved)
     );
     assert!(editor.allow_close && !editor.document.dirty());
-    assert!(editor.document_pending.is_none());
+    assert!(!editor.document.write.pending());
 }
 
 #[test]
@@ -171,7 +169,7 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.cropping(), gate == 1);
         assert_eq!(editor.dialogs.is_open(), gate == 2 || gate == 3);
-        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
+        assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
     }
 }
 
@@ -197,17 +195,11 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             app.update(host::App::request_quit);
             frame(app, &context, vec![]);
             click(app, &context, "Save changes");
-            let request = app.read(|e| {
-                assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
-                assert!(!e.allow_close);
-                e.document_pending.unwrap()
-            });
-            app.enter(|e, cx| e.save_result(request + 1, Err("stale save failure".into()), cx));
             app.read(|e| {
                 assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
-                assert_eq!(e.document_pending, Some(request));
+                assert!(!e.allow_close && e.document.write.pending());
             });
-            app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+            app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
             if success {
                 app.read(|e| {
                     assert_eq!(host::App::quit_state(e), Some(host::QuitState::Approved));
@@ -263,9 +255,7 @@ fn cancelling_project_replacement_retires_the_native_close_continuation() {
                 Some(host::QuitState::Running)
             );
             assert!(!editor.allow_close);
-            assert!(
-                editor.document_pending.is_none() && editor.document.export.operation.is_none()
-            );
+            assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
         });
         assert_eq!(std::fs::read(&destination).unwrap(), b"existing project");
     });

@@ -412,9 +412,7 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
         app.enter(|e, _| {
             e.new_project();
         });
-        let operation = app.read(|e| e.document_pending);
         app.read(|e| {
-            assert_eq!(e.document_pending, operation);
             assert!(!e.interaction_blocked());
             assert!(e.document.state.project.output.lut.is_none());
         });
@@ -587,9 +585,7 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
         assert!(opened.validate_for_device(device).is_err());
         with_application(e, |app| {
             app.enter(|e, cx| e.open_project(path, cx));
-            app.run_until(Duration::from_secs(15), |e| {
-                !e.interaction_blocked() && e.document_pending.is_none()
-            });
+            app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, opened.project);
                 assert_eq!(e.document.path, opened.path);

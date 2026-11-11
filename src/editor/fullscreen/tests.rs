@@ -430,7 +430,7 @@ fn completed_new_cannot_reuse_the_departed_photos_fullscreen_evidence_before_a_p
         });
         app.enter(|editor, _| editor.new_project());
         app.run_until(Duration::from_secs(20), |editor| {
-            editor.document_pending.is_none()
+            !editor.document.write.pending()
         });
         app.update(|editor| {
             assert!(!editor.interaction_blocked() && editor.document.project.order.is_empty());

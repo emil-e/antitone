@@ -113,9 +113,7 @@ fn document_replacement_retires_the_continuation_but_not_the_unanswered_dialog()
             assert!(e.dialogs.is_open());
             e.new_project();
         });
-        app.run_until(Duration::from_secs(30), |e| {
-            e.document_pending.is_none() && !e.interaction_blocked()
-        });
+        app.run_until(Duration::from_secs(30), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.dialog_action.is_none() && e.document.look.is_none());
             assert!(e.document.project.output.film_and_paper.is_none());

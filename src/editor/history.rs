@@ -165,7 +165,6 @@ impl Editor {
             && !self.dialogs.is_open()
             && self.menus.panel.is_none()
             && self.document.look.is_none()
-            && self.document_pending.is_none()
             && !self.export_modal()
             && !self.files.pending()
             && !self.allow_close

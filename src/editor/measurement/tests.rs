@@ -269,7 +269,6 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     editor.activities.view().unwrap().request_cancel();
                     editor.document.visit.canvas.ready = None;
                 }
-                assert!(editor.document_pending.is_none());
             });
             app.pump();
             assert!(!app.read(Editor::measurement_pending));
@@ -290,7 +289,6 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                 std::thread::sleep(Duration::from_millis(1));
             }
             app.read(|editor| {
-                assert!(editor.document_pending.is_none());
                 assert_eq!(editor.status, status);
                 assert_eq!(editor.activities.view().map(|view| view.title), activity);
             });

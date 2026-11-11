@@ -316,9 +316,7 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 if accept {
                     h.update(|e| host::App::menu_action(e, crate::platform::menu::Action::Undo));
                     h.step();
-                    wait_for(&mut h, |e| {
-                        !e.interaction_blocked() && e.document_pending.is_none()
-                    });
+                    wait_for(&mut h, |e| !e.interaction_blocked());
                     h.read(|e| assert_eq!(e.document.state.project, graded, "one history action undoes only crop acceptance, not independent grading"));
                 }
             });

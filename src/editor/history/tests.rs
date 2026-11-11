@@ -42,7 +42,7 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
                 let depths = (e.document.history.undo.len(), e.document.history.redo.len());
                 e.restore_history(direction, cx);
                 assert_eq!(&e.document.state.project, expected, "{}", e.status);
-                assert!(e.document_pending.is_none() && !e.interaction_blocked());
+                assert!(!e.interaction_blocked());
                 let after = (e.document.history.undo.len(), e.document.history.redo.len());
                 assert_eq!(
                     after,
@@ -693,7 +693,6 @@ fn busy_work_and_decisions_cannot_dispatch_document_history() {
             editor.block_with_decision();
         }
         editor.restore_history(Direction::Undo, &UiContext::render_only());
-        assert!(editor.document_pending.is_none());
         assert_eq!(editor.document.history.undo.len(), 1);
     }
 }
@@ -747,7 +746,7 @@ fn restoration_is_immediate_without_services_and_does_not_change_when_facts_reso
                         depths
                     );
                     assert!(!editor.interaction_blocked());
-                    assert!(editor.document_pending.is_none());
+
                     assert!(
                         editor
                             .activities

@@ -1067,12 +1067,28 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
             .expect("fixture save destination")
     });
     let project = harness.read(|editor| editor.document.state.project.clone());
-    let request = harness.read(|editor| editor.next_request);
-    native_file_action(harness, crate::platform::menu::Action::Save);
-    harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
-    wait_for(harness, |e| {
-        !e.interaction_blocked() && e.document_pending.is_none()
+    let publications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = publications.clone();
+    let previous = harness.update(|editor| editor.document.write_observer.take());
+    let forwarded = previous.clone();
+    harness.update(|editor| {
+        editor.document.write_observer = Some(Arc::new(move |phase| {
+            if let Some(observer) = &forwarded {
+                observer(phase);
+            }
+            if phase == crate::project::WritePhase::Published {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Release);
+            }
+        }))
     });
+    native_file_action(harness, crate::platform::menu::Action::Save);
+    wait_for(harness, |e| !e.interaction_blocked() && !e.files.pending());
+    assert_eq!(
+        publications.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the native Save command must actually publish, even for a clean project"
+    );
+    harness.update(|editor| editor.document.write_observer = previous);
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
     harness.read(|editor| assert_eq!(editor.document.state.project, project));
     assert_eq!(crate::project::Project::load(&path).unwrap(), project);
@@ -1085,7 +1101,6 @@ fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |editor| {
         !editor.files.pending()
             && !editor.interaction_blocked()
-            && editor.document_pending.is_none()
             && !editor.document.visit.source.pending()
             && !editor.document.correction.pending()
     });

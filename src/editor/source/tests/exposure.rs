@@ -214,7 +214,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
 }
 
 #[test]
-fn save_open_admission_uses_restored_positive_and_negative_source_normalization() {
+fn save_and_open_preserve_restored_normalization_without_admitting_rendering() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
         exposure_reference::StartingExposure,
@@ -269,8 +269,10 @@ fn save_open_admission_uses_restored_positive_and_negative_source_normalization(
         let path = directory.path().join(format!("{name}.antitone"));
         document.capture().save(&path, Save::New).unwrap();
         if reference_ev < 0. {
-            let opened = Document::open(&path)
-                .expect("normalization must be restored before range admission");
+            let opened = Document::open(&path).unwrap();
+            opened
+                .validate()
+                .expect("attenuation must remain available to rendering admission");
             assert_eq!(opened.project.roll, document.project.roll);
             assert_eq!(opened.project.sources, document.project.sources);
             assert!(!opened.dirty());
@@ -283,10 +285,15 @@ fn save_open_admission_uses_restored_positive_and_negative_source_normalization(
                     spread: 0.,
                 });
             saved.save(&path, Save::Replace).unwrap();
+            let opened =
+                Document::open(&path).expect("rendering range must not restrict metadata Open");
             assert!(
-                Document::open(&path).is_err(),
-                "restored amplification makes this otherwise supported stack unsafe"
+                opened.validate().is_err(),
+                "restored amplification must still reject unsafe rendering"
             );
+            let second = directory.path().join("amplified-roundtrip.antitone");
+            opened.save(&second, Save::New).unwrap();
+            assert_eq!(Project::load(&second).unwrap(), saved);
         }
     }
 }

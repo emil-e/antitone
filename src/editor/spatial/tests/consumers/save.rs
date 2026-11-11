@@ -1,19 +1,17 @@
 use super::*;
 
 #[test]
-fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_save() {
+fn save_declines_unfinished_region_consumers_without_retiring_them_or_queueing_a_write() {
     for analyze in [false, true] {
         let (scheduler, _) = observed();
         let mut editor = fixture(scheduler.clone());
         let metadata = supplied(&mut editor);
         editor.document.spatial = crate::spatial_metadata::Store::default();
         let reply = programmed(&mut editor);
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pending.antitone");
-        // Only the physical write is parked: the programmed preparation uses its normal async producer.
-        let write = crate::background::testing::pause();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("not-queued.antitone");
         with_application(editor, |app| {
-            app.enter(|editor, cx| {
+            let accepted = app.enter(|editor, cx| {
                 if analyze {
                     editor.request_analysis(cx);
                 } else {
@@ -23,22 +21,17 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                         cx,
                     );
                 }
+                let accepted = editor.document.project.clone();
                 editor.save_project(path.clone(), Save::New, None, cx);
+                assert!(!editor.document.write.pending() && !editor.files.pending());
+                assert!(editor.document.spatial_preparing.is_some());
+                accepted
             });
             app.pump();
-            assert!(app.read(|editor| editor.document_pending.is_some()));
+            assert!(!path.exists());
             reply.send(Ok(Some(metadata.clone()))).unwrap();
-            app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
-            app.read(|editor| {
-                assert!(editor.document_pending.is_some());
-                assert!(!editor.document.auto_crop.reviewing());
-                assert!(!editor.analysis_preparing());
-                assert_eq!(*editor.document.spatial.ready(), metadata);
-            });
-            drop(write);
             app.run_until(LIMIT, |editor| {
-                editor.document_pending.is_none()
-                    && !editor.interaction_blocked()
+                editor.document.spatial_preparing.is_none()
                     && if analyze {
                         editor.document.analysis_review().is_some()
                     } else {
@@ -46,73 +39,54 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                     }
             });
             app.read(|editor| {
-                assert!(!editor.dialogs.is_open(), "{}", editor.status);
+                assert_eq!(editor.document.project, accepted);
                 assert_eq!(*editor.document.spatial.ready(), metadata);
-                assert!(
-                    editor
-                        .document
-                        .project
-                        .sources
-                        .iter()
-                        .all(|source| source.crop.is_none())
-                );
-                assert!(editor.document.state.project.analysis_regions.is_empty());
-                assert!(!editor.document.dirty());
+                assert!(!editor.document.write.pending() && !editor.dialogs.is_open());
             });
-            let saved = Project::load(&path).unwrap();
-            assert!(saved.sources.iter().all(|source| source.crop.is_none()));
-            let json: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            assert!(json.get("spatial_metadata").is_none());
+            assert!(
+                !path.exists(),
+                "a refused Save must not replay when the consumer becomes ready"
+            );
         });
         scheduler.close_and_wait().unwrap();
     }
 }
 
 #[test]
-fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
+fn save_after_finishing_the_consumer_reports_real_file_failure_without_losing_accepted_state() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
     let metadata = supplied(&mut editor);
     editor.document.spatial = crate::spatial_metadata::Store::default();
     let reply = programmed(&mut editor);
-    let accepted = editor.document.state.project.clone();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("existing.antitone");
+    let accepted = editor.document.project.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("occupied.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
-    let write = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
             editor.save_project(path.clone(), Save::New, None, cx);
+            assert!(!editor.document.write.pending());
         });
         app.pump();
+        assert!(app.read(|editor| !editor.dialogs.is_open()));
         reply.send(Ok(Some(metadata.clone()))).unwrap();
-        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
-        drop(write);
-        app.run_until(LIMIT, |editor| editor.document_pending.is_none());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
+        app.enter(|editor, cx| {
+            editor.finish_auto_crop(false);
+            editor.save_project(path.clone(), Save::New, None, cx);
+            assert!(editor.document.write.pending());
+        });
+        app.run_until(LIMIT, |editor| !editor.document.write.pending());
         app.read(|editor| {
             assert!(editor.dialogs.is_open());
-            assert!(editor.document.auto_crop.active());
-            assert!(!editor.document.auto_crop.reviewing());
-        });
-        let context = egui::Context::default();
-        crate::editor::tests::app_frame(app, &context, vec![]);
-        crate::editor::tests::app_frame(
-            app,
-            &context,
-            vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        );
-        app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
-        app.read(|editor| {
-            assert!(!editor.dialogs.is_open());
-            assert_eq!(editor.document.state.project, accepted);
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                "Could not save project"
+            );
+            assert!(!editor.document.auto_crop.active());
+            assert_eq!(editor.document.project, accepted);
             assert_eq!(*editor.document.spatial.ready(), metadata);
         });
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
