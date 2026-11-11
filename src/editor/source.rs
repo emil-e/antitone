@@ -8,7 +8,6 @@ use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source::SourceKey,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -130,14 +129,8 @@ impl Context {
 }
 
 pub(super) struct Request {
-    pub input: crate::processing::InputSettings,
-    pub reference: Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>>,
-    pub path: PathBuf,
-    pub wb: Option<[f64; 4]>,
-    pub expected: Option<Source>,
+    pub source: crate::source::Input,
     pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
-    // New sources resolve identity alongside header inspection, off the UI thread.
-    pub file: thumbnails::FileKey,
     pub correction: Option<Arc<Correction>>,
 }
 
@@ -171,18 +164,14 @@ impl Services {
         request: Request,
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<Ready, String> {
+        let physical = request.source.clone();
         let sources = request
             .sources
             .clone()
             .unwrap_or_else(|| self.provider(None));
         let mut developed = self.clone().develop(request, cancelled.clone()).await?;
         if developed.camera_proxy.is_none() {
-            let key = SourceKey::for_load(
-                &developed.path,
-                developed.file.clone(),
-                &developed.record.development,
-            );
-            let proxy = sources.load_proxy(key, source_loading::Priority::Foreground);
+            let proxy = physical.proxy(sources.as_ref(), source_loading::Priority::Foreground);
             developed.camera_proxy = Some(
                 futures_lite::future::or(
                     async {
@@ -222,35 +211,14 @@ impl Services {
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<Developed, String> {
         let started = std::time::Instant::now();
-        let retired = cancelled.clone();
         let sources = request
             .sources
             .take()
             .unwrap_or_else(|| self.provider(None));
-        let needs_header = request.expected.is_none();
-        let capture = move || {
-            request.require_live(&|| retired.is_cancelled())?;
-            let key = request.load_key()?;
-            request.wb = Some(key.development().decode.white_balance);
-            Ok::<_, Error>((request, key))
-        };
-        let captured = if needs_header {
-            crate::background::run(move |_| capture())
-                .await
-                .map_err(|_| "Source header worker panicked".to_owned())?
-        } else {
-            capture()
-        };
-        let (request, key) = captured.map_err(|error| error.to_string())?;
-        let file = key.file().clone();
-        let load = crate::photo_preparation::acquire(
-            sources.as_ref(),
-            key,
-            source_loading::Priority::Foreground,
-            request.input,
-            request.reference.clone(),
-        );
-        let prepared = futures_lite::future::or(
+        let load = request
+            .source
+            .source(sources.as_ref(), source_loading::Priority::Foreground);
+        let acquired = futures_lite::future::or(
             async {
                 cancelled.wait().await;
                 Err(Error::Cancelled)
@@ -266,7 +234,7 @@ impl Services {
             verification_seconds: 0.,
         };
         crate::background::run(move |_| {
-            request.accept(prepared, file, &|| cancelled.is_cancelled(), timing)
+            request.accept(acquired, &|| cancelled.is_cancelled(), timing)
         })
         .await
         .map_err(|_| "Source acceptance worker panicked".to_owned())?
@@ -289,33 +257,6 @@ impl Request {
         Ok(())
     }
 
-    pub(super) fn load_key(&self) -> Result<SourceKey, Error> {
-        let record = match &self.expected {
-            Some(expected) => {
-                expected.grade_snapshot()?;
-                if self
-                    .wb
-                    .is_some_and(|wb| wb != expected.development.decode.white_balance)
-                {
-                    return Err(Error::Project(
-                        "source WB differs from accepted development".into(),
-                    ));
-                }
-                expected.clone()
-            }
-            None => {
-                let (record, raw) = document::open_source(&self.path, self.wb)?;
-                return Ok(SourceKey::for_load(
-                    &self.path,
-                    raw.file.clone(),
-                    &record.development,
-                ));
-            }
-        };
-        let file = self.file.clone();
-        Ok(SourceKey::for_load(&self.path, file, &record.development))
-    }
-
     /// Synchronous fixtures drive the same provider, observing their poll-only stop signal.
     #[cfg(test)]
     pub fn load(
@@ -324,21 +265,15 @@ impl Request {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
-        let key = self.load_key()?;
-        self.wb = Some(key.development().decode.white_balance);
-        let file = key.file().clone();
         let started = std::time::Instant::now();
         let provider = self
             .sources
             .take()
             .unwrap_or_else(|| developments.provider(None));
-        let mut load = Box::pin(crate::photo_preparation::acquire(
-            provider.as_ref(),
-            key,
-            source_loading::Priority::Foreground,
-            self.input,
-            self.reference.clone(),
-        ));
+        let mut load = Box::pin(
+            self.source
+                .source(provider.as_ref(), source_loading::Priority::Foreground),
+        );
         let prepared = loop {
             self.require_live(cancelled)?;
             if let Some(result) =
@@ -355,26 +290,31 @@ impl Request {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        self.accept(prepared, file, cancelled, timing)
+        self.accept(prepared, cancelled, timing)
     }
 
     fn accept(
         self,
-        prepared: crate::photo_preparation::PreparedSource,
-        file: thumbnails::FileKey,
-
+        acquired: crate::source::input::Acquired,
         cancelled: &dyn Fn() -> bool,
         mut timing: Timing,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
         let tick = std::time::Instant::now();
+        let crate::source::input::Acquired {
+            prepared,
+            record,
+            file,
+            ..
+        } = acquired;
         let source = prepared.source.clone();
-        let record =
-            document::source_metadata(&self.path, &source.metadata(), source.white_balance())?;
+        let actual = document::source_metadata(
+            self.source.path(),
+            &source.metadata(),
+            source.white_balance(),
+        )?;
         timing.registration_seconds = tick.elapsed().as_secs_f64();
-        if let Some(expected) = &self.expected {
-            document::verify_source(expected, &record)?;
-        }
+        document::verify_source(&record, &actual)?;
         let tick = std::time::Instant::now();
         let mut scan = Scan::from_source(source);
         document::verify_scan(&record, &scan)?;
@@ -392,7 +332,7 @@ impl Request {
             context,
             record,
             file,
-            path: self.path,
+            path: self.source.path().to_owned(),
             timing,
             camera_proxy,
         })
@@ -475,52 +415,37 @@ pub(super) struct State {
     task: Option<async_executor::Task<()>>,
     completion: Option<Result<Box<Ready>, String>>,
 
-    pub key: Option<SourceKey>,
+    pub input: Option<crate::source::Input>,
 }
 
 impl State {
     pub fn pending(&self) -> bool {
         self.task.is_some() || self.completion.is_some()
     }
-
-    pub fn matches(&self, ready: &Ready) -> bool {
-        self.key
-            .as_ref()
-            .zip(
-                SourceKey::from_revision(
-                    &ready.path,
-                    ready.file.clone(),
-                    &ready.record.development,
-                )
-                .as_ref(),
-            )
-            .is_some_and(|(requested, prepared)| requested == prepared)
-    }
 }
 
 impl Editor {
     pub(super) fn source_input(&self, path: PathBuf) -> Request {
-        let expected = self
+        let source = self
             .document
             .find_source(&path)
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .cloned();
-        let wb = expected
-            .as_ref()
-            .and_then(|source| self.document.source_wb(source.id))
-            .or_else(|| self.document.project.acquisition_wb());
-        let file = self.document.file_key(&path);
-        Request {
-            reference: expected.as_ref().map_or_else(Arc::default, |source| {
+            .map(|id| {
                 self.document
-                    .exposure_slot(&self.document.exposures, source.id)
-            }),
-            input: self.input(),
-            path,
-            wb,
-            expected,
+                    .source_input(id)
+                    .expect("registered source input")
+            })
+            .unwrap_or_else(|| {
+                crate::source::Input::reference(
+                    path.clone(),
+                    self.document.file_key(&path),
+                    self.document.project.acquisition_wb(),
+                    self.input(),
+                    Arc::default(),
+                )
+            });
+        Request {
+            source,
             correction: self.document.correction.prepared().cloned(),
-            file,
             sources: self.source_provider(),
         }
     }
@@ -561,30 +486,7 @@ impl Editor {
             !self.document.project.input.ready() || self.document.correction.error().is_some();
         self.status = "Developing full-resolution RAW…".into();
 
-        let activity = self
-            .activities
-            .start(ActivityOptions::new("Loading photo…"));
-        let request = self.source_input(path);
-        self.document.visit.source.key = request.expected.as_ref().and_then(|source| {
-            SourceKey::from_revision(&request.path, request.file.clone(), &source.development)
-        });
-        let view = self.document.visit.view;
-        let services = self.source_services.clone();
-        let cancelled = crate::cancellation::Cancellation::default();
-        let retire = cancelled.cancel_on_drop();
-        let Some(task) = cx.spawn(move |cx| async move {
-            let _retire = retire;
-            let result = match services {
-                Some(services) => services.prepare(request, cancelled).await.map(Box::new),
-                None => Err("Source services unavailable".into()),
-            };
-            drop(activity);
-            cx.update(|editor| editor.source_result(view, result));
-        }) else {
-            self.source_result(view, Err("Application stopped".into()));
-            return;
-        };
-        self.document.visit.source.task = Some(task);
+        self.start_source_acquisition(path, cx);
         if selecting_photo
             && !self.picking()
             && let Some(source) = self.document.visit.current_source
@@ -603,6 +505,31 @@ impl Editor {
                 }
             }
         }
+    }
+
+    pub(super) fn start_source_acquisition(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Loading photo…"));
+        let request = self.source_input(path);
+        self.document.visit.source.input = Some(request.source.clone());
+        let view = self.document.visit.view;
+        let services = self.source_services.clone();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
+        let Some(task) = cx.spawn(move |cx| async move {
+            let _retire = retire;
+            let result = match services {
+                Some(services) => services.prepare(request, cancelled).await.map(Box::new),
+                None => Err("Source services unavailable".into()),
+            };
+            drop(activity);
+            cx.update(|editor| editor.source_result(view, result));
+        }) else {
+            self.source_result(view, Err("Application stopped".into()));
+            return;
+        };
+        self.document.visit.source.task = Some(task);
     }
 
     pub(super) fn source_result(&mut self, view: u64, result: Result<Box<Ready>, String>) {

@@ -31,6 +31,7 @@ fn record(path: &Path, scan: &Scan) -> Source {
     let area = scan.area;
     Source {
         id: SourceId(0),
+        development_mode: antitone::project::DevelopmentMode::Unity,
         path: path.into(),
         development: SourceDevelopment {
             decode: metadata.development(scan.white_balance),

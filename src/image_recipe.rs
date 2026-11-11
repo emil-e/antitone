@@ -6,7 +6,7 @@ use crate::{
     flat_field::FlatField,
     geometry::Composition,
     processing::{InputSettings, RollSettings},
-    project::{Project, Source, SourceDevelopment, SourceId},
+    project::{Project, Source, SourceId},
 };
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ pub(crate) mod quality;
 #[derive(Clone, Debug, PartialEq)]
 pub struct NeutralRecipe {
     pub source: SourceId,
-    pub source_development: SourceDevelopment,
+    pub source_development: crate::development_metadata::Development,
     pub input: InputSettings,
     pub reference: Option<crate::exposure_reference::ReferenceExposure>,
     pub correction: Option<Arc<FlatField>>,
@@ -38,10 +38,11 @@ pub struct ImageRecipe {
 impl ImageRecipe {
     /// Conservative cache charge including referenced correction payload, without deduplicating Arcs.
     pub fn retained_bytes(&self) -> usize {
-        let development = &self.neutral.source_development.decode;
+        let registered = self.neutral.source_development.registered();
+        let development = &registered.decode;
         std::mem::size_of::<Self>()
             + development.version().len()
-            + self.neutral.source_development.camera_model.capacity()
+            + registered.camera_model.capacity()
             + self
                 .neutral
                 .correction
@@ -81,7 +82,14 @@ impl Project {
         let mut recipe = ImageRecipe {
             neutral: NeutralRecipe {
                 source: source.id,
-                source_development: source.development.clone(),
+                source_development: crate::development_metadata::Development::captured(
+                    source,
+                    &source.path,
+                    self.input,
+                    self.development_metadata
+                        .as_ref()
+                        .unwrap_or(&Default::default()),
+                ),
                 input: self.input,
                 reference: self
                     .exposure_metadata

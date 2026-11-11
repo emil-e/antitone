@@ -230,6 +230,7 @@ fn state() -> Editor {
         .document
         .register_with_development(
             Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "scene.ARW".into(),
                 development: SourceDevelopment {
@@ -364,10 +365,11 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
     let input = AuthoredPhotograph::from(ProcessingParameters::source());
+    let target = editor.document.target();
     editor.document.visit.working_view.observe(
         frame,
         crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
-        editor.document.target(),
+        target,
     );
     assert!(editor.document.visit.working_view.revision().is_some());
     let view = ViewRequest {
@@ -379,7 +381,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         OriginalPurpose::Reference,
         super::super::original_view::Demand::fixture(
             input.clone(),
-            editor.document.target(),
+            target,
             Some(view),
             composition,
             source::Context {

@@ -9,8 +9,11 @@ mod workflow_tests;
 struct Request {
     ticket: u64,
     key: SourceKey,
+    #[cfg(test)]
     path: PathBuf,
+    #[cfg(test)]
     source: Source,
+    physical: crate::source::Input,
     sources: Option<Arc<dyn crate::source::SourceProvider>>,
 }
 
@@ -61,12 +64,7 @@ impl Services {
                 let Some(sources) = request.sources else {
                     return Completion::Stopped;
                 };
-                let key = crate::source::SourceKey::for_load(
-                    &request.path,
-                    request.key.file,
-                    &request.source.development,
-                );
-                let preview = sources.load_preview(key).await;
+                let preview = request.physical.preview(sources.as_ref()).await;
                 match crate::background::run(move |_| {
                     if cancelled.load(Ordering::Relaxed) {
                         return Ok(None);
@@ -199,14 +197,16 @@ impl EmbeddedPreviews {
         &mut self,
         document: &Document,
         sources: Option<Arc<dyn crate::source::SourceProvider>>,
+        initialization: &crate::source::Initialization,
     ) -> Option<(Request, Arc<AtomicBool>)> {
         if !self.allowed || self.pending.is_some() || self.services.is_none() {
             return None;
         }
-        let (key, path) = self.wanted.iter().find(|(key, _)| {
+        let (key, _path) = self.wanted.iter().find(|(key, _)| {
             current(key, document) && !self.entries.iter().any(|(candidate, _)| candidate == key)
         })?;
-        let source = key.metadata_record(path);
+        #[cfg(test)]
+        let source = key.metadata_record(_path);
         self.next += 1;
         let ticket = self.next;
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -219,8 +219,11 @@ impl EmbeddedPreviews {
             Request {
                 ticket,
                 key: key.clone(),
-                path: path.clone(),
+                #[cfg(test)]
+                path: _path.clone(),
+                #[cfg(test)]
                 source,
+                physical: document.source_input(key.id, initialization).ok()?,
                 sources,
             },
             cancelled,
@@ -276,13 +279,9 @@ impl EmbeddedPreviews {
             .and_then(|(_, image)| image.as_ref())
     }
 
-    pub(super) fn request_visible(
-        &mut self,
-        wanted: &[(usize, ImageKey, PathBuf, Source)],
-        allowed: bool,
-    ) {
+    pub(super) fn request_visible(&mut self, wanted: &[(usize, ImageKey, PathBuf)], allowed: bool) {
         // Touch visible entries without discarding recently seen navigation feedback.
-        for (_, image, _, _) in wanted {
+        for (_, image, _) in wanted {
             if let Some(index) = self
                 .entries
                 .iter()
@@ -296,14 +295,14 @@ impl EmbeddedPreviews {
             && (!allowed
                 || !wanted
                     .iter()
-                    .any(|(_, image, _, _)| image.source == pending.key))
+                    .any(|(_, image, _)| image.source == pending.key))
         {
             pending.cancelled.store(true, Ordering::Relaxed);
         }
         self.allowed = allowed;
         self.wanted = wanted
             .iter()
-            .map(|(_, image, path, _)| (image.source.clone(), path.clone()))
+            .map(|(_, image, path)| (image.source.clone(), path.clone()))
             .collect();
         self.trim();
     }
@@ -316,7 +315,7 @@ impl EmbeddedPreviews {
 impl Editor {
     pub(super) fn request_embedded_previews(
         &mut self,
-        wanted: &[(usize, ImageKey, PathBuf, Source)],
+        wanted: &[(usize, ImageKey, PathBuf)],
         allowed: bool,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
@@ -338,12 +337,11 @@ impl Editor {
             return;
         }
         let sources = self.document.thumbnails.acquisition();
-        let Some((request, cancelled)) = self
-            .document
-            .thumbnails
-            .embedded
-            .begin(&self.document.state, sources)
-        else {
+        let Some((request, cancelled)) = self.document.thumbnails.embedded.begin(
+            &self.document.state,
+            sources,
+            &self.document.initialization,
+        ) else {
             return;
         };
         let ticket = request.ticket;
@@ -401,7 +399,9 @@ fn current(key: &SourceKey, document: &Document) -> bool {
         .source(key.id)
         .ok()
         .zip(document.source_path(key.id).ok())
-        .is_some_and(|(source, path)| SourceKey::new(source, document.file_key(&path)) == *key)
+        .is_some_and(|(source, path)| {
+            SourceKey::for_document(source, document.file_key(&path), document) == *key
+        })
 }
 
 #[cfg(test)]
@@ -411,13 +411,7 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
     }
 
     let preview = match &request.sources {
-        Some(sources) => {
-            pollster::block_on(sources.load_preview(crate::source::SourceKey::for_load(
-                &request.path,
-                request.key.file.clone(),
-                &request.source.development,
-            )))
-        }
+        Some(sources) => pollster::block_on(request.physical.preview(sources.as_ref())),
         None => crate::embedded_preview::read(&request.path, &request.source.development),
     }?;
 

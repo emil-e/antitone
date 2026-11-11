@@ -48,6 +48,9 @@ impl DiskCache {
         if key.file.revision.is_none() {
             return Err(invalid("source file stats unavailable for thumbnail reuse"));
         }
+        key.development
+            .resolved()
+            .map_err(|error| invalid(&error.to_string()))?;
         // File stats are disposable cache freshness, not persisted photograph identity.
         let identity = serde_json::to_vec(&(
             5,
@@ -187,6 +190,13 @@ mod tests {
     use super::*;
 
     fn fixture() -> (SourceKey, Proxy) {
+        let development = SourceDevelopment {
+            decode: Development::new("test".into(), [1.; 4]),
+            dimensions: [2, 1],
+            active_area: [0, 0, 2, 1],
+            camera_model: "test".into(),
+            camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
+        };
         let key = SourceKey {
             id: crate::project::SourceId(1),
             file: FileKey {
@@ -199,13 +209,8 @@ mod tests {
                     changed: (1, 0),
                 }),
             },
-            source: SourceDevelopment {
-                decode: Development::new("test".into(), [1.; 4]),
-                dimensions: [2, 1],
-                active_area: [0, 0, 2, 1],
-                camera_model: "test".into(),
-                camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-            },
+            source: development.clone(),
+            development: development.into(),
         };
         let proxy = Proxy {
             identity: None,

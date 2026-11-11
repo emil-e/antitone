@@ -225,7 +225,7 @@ impl AuthoredPhotograph {
     ) -> Result<Self, Error> {
         let input = recipe.neutral.input;
         let matrix = input.positive_matrix(
-            DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1),
+            DMat3::from_cols_array_2d(&recipe.neutral.source_development.resolved()?.camera_to_ap1),
             recipe
                 .neutral
                 .reference
@@ -238,7 +238,7 @@ impl AuthoredPhotograph {
             recipe.roll,
             recipe.grade.clone(),
             matrix,
-            recipe.neutral.source_development.active_area.into(),
+            recipe.neutral.source_development.active_area().into(),
         )?
         .with_luts(recipe.luts.clone())
         .with_pixel_pipeline(crate::image_recipe::quality::sampling_stages(recipe)?))
@@ -416,6 +416,7 @@ mod tests {
         };
         let id = project
             .add_source(Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "authored.dng".into(),
                 development: SourceDevelopment {

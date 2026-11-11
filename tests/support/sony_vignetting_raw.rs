@@ -212,6 +212,7 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::Unity,
             path: file.path().into(),
             development: development(&scan),
 

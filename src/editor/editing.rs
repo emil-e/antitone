@@ -13,12 +13,39 @@ use std::{
 mod tests;
 
 /// An immutable model version shared by accepted state, readers and undo history.
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::editor) struct ProjectVersion(Arc<Project>);
+#[derive(Clone, Debug)]
+pub(in crate::editor) struct ProjectVersion {
+    project: Arc<Project>,
+    // Versions in one interpretation share its acquired basis; history retains that scope.
+    basis: Arc<std::sync::OnceLock<crate::project::ScanBasis>>,
+}
+
+impl PartialEq for ProjectVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.project == other.project
+    }
+}
 
 impl ProjectVersion {
     pub(in crate::editor) fn snapshot(&self) -> Arc<Project> {
-        self.0.clone()
+        self.project.clone()
+    }
+
+    pub(in crate::editor) fn interpretation_basis(
+        &self,
+    ) -> Arc<std::sync::OnceLock<crate::project::ScanBasis>> {
+        self.basis.clone()
+    }
+
+    pub(in crate::editor) fn updated(&self, project: Arc<Project>) -> Self {
+        if self.input.is_negative() != project.input.is_negative() {
+            project.into()
+        } else {
+            Self {
+                project,
+                basis: self.basis.clone(),
+            }
+        }
     }
 }
 
@@ -42,26 +69,35 @@ impl<'de> serde::Deserialize<'de> for ProjectVersion {
 
 impl From<Project> for ProjectVersion {
     fn from(project: Project) -> Self {
-        Self(Arc::new(project))
+        Arc::new(project).into()
     }
 }
 
 impl From<Arc<Project>> for ProjectVersion {
     fn from(project: Arc<Project>) -> Self {
-        Self(project)
+        let basis = project.scan_basis().cloned().or_else(|| {
+            project
+                .development_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.scan_basis.clone())
+        });
+        Self {
+            project,
+            basis: Arc::new(basis.map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from)),
+        }
     }
 }
 
 impl Deref for ProjectVersion {
     type Target = Project;
     fn deref(&self) -> &Project {
-        &self.0
+        &self.project
     }
 }
 
 impl DerefMut for ProjectVersion {
     fn deref_mut(&mut self) -> &mut Project {
-        Arc::make_mut(&mut self.0)
+        Arc::make_mut(&mut self.project)
     }
 }
 
@@ -253,10 +289,8 @@ impl Editor {
             return Ok(());
         }
         let (label, photo) = edit.description();
-        let before = std::mem::replace(
-            &mut self.document.state.project,
-            edit.into_snapshot().into(),
-        );
+        let project = self.document.state.project.updated(edit.into_snapshot());
+        let before = std::mem::replace(&mut self.document.state.project, project);
         self.observe_gamma_pivot();
         self.record_edit(before, label, photo);
         Ok(())

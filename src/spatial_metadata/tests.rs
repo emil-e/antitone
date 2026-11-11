@@ -31,6 +31,7 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
         };
         let id = project
             .add_source(Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: path.clone(),
                 development: development.clone(),

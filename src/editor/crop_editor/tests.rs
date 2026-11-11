@@ -8,6 +8,12 @@ use std::{
 };
 
 impl DocumentScope {
+    fn clear_crop_edit(&mut self) {
+        if self.visit.hosted_tool.is::<CropTool>() {
+            self.visit.hosted_tool = tool::Slot::Empty;
+        }
+    }
+
     pub(in crate::editor) fn crop_edit(&self) -> Option<Ref<'_, CropEdit>> {
         let tool = self.visit.hosted_tool.installed()?;
         let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;

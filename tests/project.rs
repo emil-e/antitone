@@ -31,6 +31,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
         let path = directory.join(name);
         std::fs::write(&path, b"test source bytes").unwrap();
         Source {
+            development_mode: antitone::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: name.into(),
             development: SourceDevelopment {
@@ -795,6 +796,7 @@ fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) 
     let path = std::path::PathBuf::from(path);
     std::fs::write(&path, b"mixed source bytes").unwrap();
     Source {
+        development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path,
         development: SourceDevelopment {
@@ -814,7 +816,7 @@ fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) 
 }
 
 #[test]
-fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses() {
+fn digital_recipes_and_unresolved_negative_intent_preserve_mixed_camera_baselines() {
     let directory = tempfile::tempdir().unwrap();
     let mut project = Project {
         input: InputSettings::Digital,
@@ -858,8 +860,8 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
     );
     let recipe = project.image_recipe(second).unwrap();
     assert_eq!(
-        recipe.neutral.source_development,
-        project.source(second).unwrap().development
+        recipe.neutral.source_development.resolved().unwrap(),
+        &project.source(second).unwrap().development
     );
     assert_eq!(recipe.neutral.input, InputSettings::Digital);
     assert_eq!(
@@ -867,29 +869,26 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
             .image_recipe(first)
             .unwrap()
             .neutral
-            .source_development,
-        project.source(first).unwrap().development
+            .source_development
+            .resolved()
+            .unwrap(),
+        &project.source(first).unwrap().development
     );
 
-    project.input = InputSettings::Negative {
-        dmin: Some(DVec3::splat(0.8)),
-        dmax: Some(DVec3::splat(0.02)),
-        response: Response::film(),
-        gamma: DEFAULT_GAMMA,
-        balance: Balance::default(),
-    };
-    for source in &mut project.sources {
-        source.development.decode = Development::new("0.22.0".into(), [1.; 4]);
+    let baselines = project.sources.clone();
+    project.input = InputSettings::default();
+    project.validate().unwrap();
+    for id in [first, second] {
+        let recipe = project.image_recipe(id).unwrap();
+        assert!(recipe.neutral.input.is_negative());
+        assert!(recipe.neutral.source_development.resolved().is_err());
     }
-    let error = project.require_scan_sources().unwrap_err();
-    assert!(error.to_string().contains("one scanning setup"));
-    let third = mixed_source(
-        directory.path().join("camera-c.ARW").to_str().unwrap(),
-        "camera-c",
-        1.,
-        [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-    );
-    assert!(project.add_source(third).is_err());
+    assert_eq!(project.sources, baselines);
+    let path = directory.path().join("unresolved.antitone");
+    project.save(&path, Save::New).unwrap();
+    let reopened = Project::load(&path).unwrap();
+    assert_eq!(reopened, project);
+    assert_eq!(reopened.sources, baselines);
 }
 
 #[test]

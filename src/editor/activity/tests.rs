@@ -6,7 +6,12 @@ use super::super::*;
 
 fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardown() {
     for save in [false, true] {
-        let editor = fixture();
+        let mut editor = fixture();
+        if !save {
+            let before = editor.history_snapshot();
+            editor.document.project.roll.exposure += 0.25;
+            editor.record_edit(before, "Exposure", None);
+        }
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 let before = editor.document.state.project.clone();
@@ -18,20 +23,20 @@ fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardo
                         cx,
                     );
                 } else {
-                    editor.start_document(Preparation::Input(editor.document.capture(), None), cx);
+                    editor.restore_history(history::Direction::Undo, cx);
                 }
                 assert!(editor.interaction_blocked() && editor.document_pending.is_some());
                 let id = editor.document_pending.unwrap();
                 let title = editor.activities.view().unwrap().title;
                 editor.status = "Unrelated status".into();
-                editor.document_prepared(id + 1, Err("stale".into()));
+                editor.history_restored(id + 1, Err("stale".into()), cx);
                 assert_eq!(editor.activities.view().unwrap().title, title);
                 assert!(editor.interaction_blocked());
                 assert_eq!(editor.document.state.project, before);
                 if save {
                     editor.save_result(id, Err("cannot save".into()), cx);
                 } else {
-                    editor.document_prepared(id, Err("cannot prepare input".into()));
+                    editor.history_restored(id, Err("invalid history metadata".into()), cx);
                 }
                 assert!(editor.document_pending.is_none());
                 assert_eq!(editor.document.state.project, before);

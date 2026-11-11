@@ -131,6 +131,7 @@ pub(super) fn with_camera_basis(editor: &mut Editor) {
         .document
         .register_with_development(
             crate::project::Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
@@ -184,6 +185,26 @@ pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
         editor = complete_document_operation(editor, Duration::from_secs(60), |e, cx| {
             e.add_raws(paths, cx)
         });
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
+    }
+    editor
+}
+
+pub(super) fn accepted_input(editor: Editor, input: InputSettings) -> Editor {
+    let selected = editor.document.visit.current_source;
+    let editor = complete_document_operation(editor, Duration::from_secs(30), |editor, cx| {
+        editor.request_input(input, cx);
+        if editor.document.input_change.is_some() {
+            editor.dialogs.answer_for_test("Switch stage");
+        }
+    });
+    assert_eq!(editor.document.project.input, input, "{}", editor.status);
+    assert_eq!(editor.document.visit.current_source, selected);
+    if selected.is_some() {
         assert!(
             editor.document.visit.canvas.ready.is_some(),
             "{}",
@@ -360,6 +381,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
             frame: None,
         };
         let input = AuthoredPhotograph::from(ProcessingParameters::source());
+        let source = editor.source_context().unwrap();
         editor.document.visit.canvas.original.observe(
             OriginalPurpose::Tool,
             original_view::Demand::fixture(
@@ -367,7 +389,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
                 OutputTarget::Srgb,
                 Some(view),
                 Composition::new(view.area, Default::default(), Default::default()).unwrap(),
-                editor.source_context().unwrap(),
+                source,
             ),
         );
         editor.document.visit.canvas.original.last_edit =
@@ -460,6 +482,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     analysis_support: None,
                     proxy: proxy.clone(),
                     record: Source {
+                        development_mode: crate::project::DevelopmentMode::Unity,
                         id: SourceId(0),
                         path,
                         development: crate::project::SourceDevelopment {
@@ -911,6 +934,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         .document
         .project
         .add_source(Source {
+            development_mode: crate::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: "test-camera.ARW".into(),
             development: crate::project::SourceDevelopment {
@@ -1135,6 +1159,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         .map(|source| source.development.decode.clone())
         .unwrap_or_else(|| Development::new(crate::raw::version(), [1.; 4]));
     let record = Source {
+        development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "current.ARW".into(),
         development: crate::project::SourceDevelopment {
@@ -2613,6 +2638,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
             .document
             .register_with_development(
                 Source {
+                    development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: path.into(),
                     development: crate::project::SourceDevelopment {

@@ -20,6 +20,7 @@ fn fixture() -> Project {
         ..Project::default()
     };
     let source = Source {
+        development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "photo.ARW".into(),
         development: SourceDevelopment {
@@ -116,7 +117,7 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
 }
 
 #[test]
-fn contract_identity_geometry_and_incompatible_sources_reject() {
+fn map_and_development_validation_are_separate_from_scan_compatibility() {
     let project = fixture();
     let mut changed = project.clone();
     changed.flat_field_mut().unwrap().reference_name = "reference.ARW".into();
@@ -126,6 +127,13 @@ fn contract_identity_geometry_and_incompatible_sources_reject() {
     assert!(changed.validate().is_err());
     changed = project.clone();
     changed.sources[0].development.camera_to_ap1[0][0] += 0.1;
+    changed.validate().unwrap();
+    assert!(
+        changed
+            .require_scan_source(&changed.sources[0].development)
+            .is_err()
+    );
+    changed.sources[0].development.camera_to_ap1 = DMat3::ZERO.to_cols_array_2d();
     assert!(changed.validate().is_err());
     changed = project.clone();
     changed.flat_field_mut().unwrap().map =

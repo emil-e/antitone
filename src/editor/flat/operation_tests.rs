@@ -53,7 +53,11 @@ fn apply(app: &TestApplication<'_, Editor>) {
 }
 
 fn wait(app: &mut TestApplication<'_, Editor>) {
-    app.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
+    app.run_until(Duration::from_secs(20), |e| {
+        !e.interaction_blocked()
+            && !e.document.visit.source.pending()
+            && !e.document.correction.pending()
+    });
 }
 
 fn import(app: &mut TestApplication<'_, Editor>) {
@@ -317,7 +321,7 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
 }
 
 #[test]
-fn document_change_retires_reference_setup_without_displacing_the_working_view() {
+fn input_rejects_an_owned_correction_without_retiring_its_work_or_visit() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
@@ -341,26 +345,21 @@ fn document_change_retires_reference_setup_without_displacing_the_working_view()
         apply(app);
         let publication = app.read(|e| e.document.document_preview.clone());
         app.pump();
-        app.enter(|e, cx| {
-            e.start_document(
-                crate::editor::Preparation::Input(
-                    e.document.capture(),
-                    e.document.visit.current_source,
-                ),
-                cx,
-            );
-        });
+        app.enter(|e, cx| e.request_input(crate::processing::InputSettings::Digital, cx));
         app.read(|e| {
             assert!(e.document.flat_edit().is_none());
             assert!(e.document.visit.canvas.ready.is_some());
-            assert!(e.document_pending.is_some());
+            assert!(e.document_pending.is_none());
+            assert!(e.document.flat_correction.is_some());
+            assert!(!e.dialogs.is_open());
+            assert!(e.document.document_preview.same_edit(&publication));
         });
-        app.read(|e| assert!(!e.document.document_preview.same_edit(&publication)));
         drop(hold);
         wait(app);
         app.read(|e| {
-            assert_eq!(e.document.state.project, before);
-            assert!(e.document.flat_edit().is_none() && e.document.correction.prepared().is_none());
+            assert_eq!(e.document.project.sources, before.sources);
+            assert!(e.document.project.input.is_negative());
+            assert!(e.document.flat_edit().is_none() && e.document.correction.prepared().is_some());
             assert!(Arc::ptr_eq(
                 &pixels,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
@@ -368,7 +367,7 @@ fn document_change_retires_reference_setup_without_displacing_the_working_view()
             assert_eq!(e.document.visit.view, visit);
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
-                Some("Import photos")
+                Some("Correction")
             );
         });
     });
@@ -1275,15 +1274,7 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
                     app.read(|e| e.document.flat_edit().is_none()
                         && e.document.flat_correction.is_some())
                 );
-                app.enter(|e, cx| {
-                    e.start_document(
-                        crate::editor::Preparation::Input(
-                            e.document.capture(),
-                            e.document.visit.current_source,
-                        ),
-                        cx,
-                    )
-                });
+                app.update(Editor::new_project);
             } else {
                 assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
                 app.update(Editor::finish_flat_edit);

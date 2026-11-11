@@ -7,6 +7,7 @@ use glam::{DMat3, DVec3};
 
 fn source(model: &str, matrix: DMat3) -> Source {
     Source {
+        development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "test.ARW".into(),
         development: SourceDevelopment {
@@ -160,7 +161,7 @@ fn roll_wb_roundtrips_defaults_missing_optional_values_to_zero_and_rejects_inval
 }
 
 #[test]
-fn incompatible_native_camera_sources_and_reference_picks_reject_without_mutation() {
+fn incompatible_scans_reject_at_registration_and_consumption_but_roundtrip_as_saved_intent() {
     let mut project = project();
     let before = project.clone();
     for incompatible in [
@@ -174,47 +175,57 @@ fn incompatible_native_camera_sources_and_reference_picks_reject_without_mutatio
         );
         assert!(project.add_source(incompatible.clone()).is_err());
         assert_eq!(project, before);
-        let mut invalid = project.clone();
-        let mut second = incompatible.clone();
-        second.id = SourceId(2);
-        invalid.sources.push(second);
-        invalid.order.push(SourceId(2));
-        invalid.next_source_id = 3;
-        assert!(invalid.validate().is_err());
+        let mut intent = project.clone();
+        intent.input = InputSettings::Digital;
+        let id = intent.add_source(incompatible).unwrap();
+        intent.input = before.input;
+        intent.validate().unwrap();
+        assert!(intent.require_scan_sources().is_err());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("incompatible-photo.antitone");
+        intent.save(&path, Save::New).unwrap();
+        let restored = Project::load(&path).unwrap();
+        assert_eq!(restored, intent);
+        assert!(
+            restored
+                .require_scan_source(&restored.source(id).unwrap().development)
+                .is_err()
+        );
     }
 }
 
 #[test]
-fn camera_basis_survives_source_removal_roundtrip_and_rejects_later_camera_substitution() {
+fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip() {
     let mut project = project();
+    let basis = project.scan.clone();
     project.sources.clear();
     project.order.clear();
-    project.scan = None;
     project.validate().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
     project.save(&path, Save::New).unwrap();
     let mut restored = Project::load(&path).unwrap();
     assert_eq!(restored, project);
-    // Clearing the explicit acquisition setup permits a new camera basis.
-    restored
-        .add_source(source("camera B", DMat3::IDENTITY))
-        .unwrap();
-    assert!(restored.validate().is_ok());
+    assert_eq!(restored.scan, basis);
     assert!(
         restored
-            .add_source(source(
-                "camera A",
-                DMat3::from_diagonal(DVec3::new(1.1, 1., 1.))
-            ))
+            .add_source(source("camera B", DMat3::IDENTITY))
             .is_err()
     );
-    // A corrupted document that bypasses admission is still rejected by validation.
-    let mut mixed = restored.clone();
-    let mut other = source("camera A", DMat3::from_diagonal(DVec3::new(1.1, 1., 1.)));
-    other.id = SourceId(2);
-    mixed.sources.push(other);
-    mixed.order.push(SourceId(2));
-    mixed.next_source_id = 3;
-    assert!(mixed.validate().is_err());
+    assert_eq!(restored, project);
+    restored
+        .add_source(source("camera A", DMat3::IDENTITY))
+        .unwrap();
+    restored.validate().unwrap();
+    let mut corrupt = restored.clone();
+    let mut invalid = source("camera A", DMat3::ZERO);
+    let id = SourceId(corrupt.next_source_id);
+    invalid.id = id;
+    corrupt.sources.push(invalid);
+    corrupt.order.push(id);
+    corrupt.next_source_id += 1;
+    assert!(
+        corrupt.validate().is_err(),
+        "a structurally valid source list must still reject an invalid camera matrix"
+    );
 }

@@ -28,6 +28,7 @@ impl Input {
         assert_eq!(metadata.width, fixture::SIDE);
         let area = metadata.image_area().unwrap();
         let mut record = Source {
+            development_mode: antitone::project::DevelopmentMode::Unity,
             id: SourceId(1),
             path: file.path().into(),
             adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(

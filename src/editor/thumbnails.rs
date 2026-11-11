@@ -24,23 +24,37 @@ struct SourceKey {
     id: SourceId,
     file: FileKey,
     source: SourceDevelopment,
+    development: crate::development_metadata::Development,
 }
 
 impl SourceKey {
     fn store_key_at(&self, path: &std::path::Path) -> Option<NativeKey> {
-        NativeKey::from_revision(path, self.file.clone(), &self.source)
+        NativeKey::from_revision(path, self.file.clone(), self.development.resolved().ok()?)
     }
 
     fn store_key(&self) -> Option<NativeKey> {
         self.store_key_at(&self.file.path)
     }
 
-    // Native/JPEG verification consumes development metadata, not photo edits or dust payload.
+    fn same_pixels(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.file == other.file
+            && self.source.decode.backend_version == other.source.decode.backend_version
+            && self
+                .development
+                .resolved()
+                .ok()
+                .zip(other.development.resolved().ok())
+                .is_some_and(|(a, b)| a.same_processing(b))
+    }
+
+    #[cfg(test)]
     fn metadata_record(&self, path: &std::path::Path) -> Source {
         Source {
+            development_mode: self.development.mode(),
             id: self.id,
             path: path.to_path_buf(),
-            development: self.source.clone(),
+            development: self.development.resolved().unwrap_or(&self.source).clone(),
             adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
                 Default::default(),
             )),
@@ -50,11 +64,41 @@ impl SourceKey {
         }
     }
 
+    fn for_document(source: &Source, file: FileKey, document: &Document) -> Self {
+        Self::new(source, file).with_development(
+            document
+                .source_input(source.id, &Default::default())
+                .expect("registered photo input")
+                .development()
+                .expect("photo development"),
+        )
+    }
+
+    fn with_development(mut self, development: crate::development_metadata::Development) -> Self {
+        if let Ok(resolved) = development.resolved() {
+            self.source = resolved.for_runtime();
+        }
+        self.development = development;
+        self
+    }
+
     fn new(source: &Source, file: FileKey) -> Self {
+        let input = if source.development_mode == crate::project::DevelopmentMode::Unity {
+            Default::default()
+        } else {
+            InputSettings::Digital
+        };
+        let development = crate::development_metadata::Development::captured(
+            source,
+            &file.path,
+            input,
+            &Default::default(),
+        );
         Self {
             id: source.id,
             file,
             source: source.development.for_runtime(),
+            development,
         }
     }
 }
@@ -160,7 +204,7 @@ impl ImageKey {
     }
 
     fn same_presentation(&self, other: &Self) -> bool {
-        self.source == other.source
+        self.source.same_pixels(&other.source)
             && self.field == other.field
             && self.target == other.target
             && self.projection == other.projection
@@ -212,7 +256,7 @@ impl Proxy {
         renderer: &Arc<crate::renderer::GpuRenderer>,
         device: &wgpu::Device,
         target: OutputTarget,
-        source: &SourceDevelopment,
+        area: [u32; 4],
     ) -> Result<Arc<GpuImage>, Error> {
         let image = GpuImage::new_continuous_shared(
             renderer,
@@ -221,7 +265,7 @@ impl Proxy {
             &self.pixels,
             self.matrix,
             Some(crate::gpu::source::SourceGeometry::new(
-                source.active_area,
+                area,
                 [self.width, self.height],
             )?),
             target,
@@ -250,7 +294,7 @@ impl SelectedPreview {
                 .ok()
                 .zip(document.source_path(self.key.id).ok())
                 .is_some_and(|(source, path)| {
-                    SourceKey::new(source, document.file_key(&path)) == self.key
+                    SourceKey::for_document(source, document.file_key(&path), document) == self.key
                 })
     }
 
@@ -270,8 +314,7 @@ struct Job {
     ticket: u64,
     generation: Arc<std::sync::atomic::AtomicU64>,
     key: ImageKey,
-    path: PathBuf,
-    source: Source,
+    physical: crate::source::Input,
     correction: Option<Arc<Correction>>,
     render: bool,
     priority: source_loading::Priority,
@@ -414,7 +457,11 @@ impl Thumbnails {
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
-        let key = SourceKey::new(source, document.file_key(&document.source_path(id)?));
+        let key = SourceKey::for_document(
+            source,
+            document.file_key(&document.source_path(id)?),
+            document,
+        );
         if key.file.revision.is_none() {
             return Ok(None);
         }
@@ -636,7 +683,8 @@ impl Thumbnails {
         }
         self.cache.entries.iter().rev().find_map(|(old, product)| {
             let product = product.as_ref().ok()?;
-            (key.source == old.source && product.positive.is_some()).then_some((old, product))
+            (key.source.same_pixels(&old.source) && product.positive.is_some())
+                .then_some((old, product))
         })
     }
 
@@ -776,11 +824,12 @@ impl Thumbnails {
                         .source(key.source.id)
                         .ok()
                         .is_some_and(|source| {
-                            SourceKey::new(
+                            SourceKey::for_document(
                                 source,
                                 document.file_key(
                                     &document.source_path(source.id).expect("thumbnail locator"),
                                 ),
+                                document,
                             ) == key.source
                         })
             })
@@ -809,9 +858,10 @@ impl Thumbnails {
             .source(outcome.key.source.id)
             .ok()
             .is_some_and(|source| {
-                SourceKey::new(
+                SourceKey::for_document(
                     source,
                     document.file_key(&document.source_path(source.id).expect("thumbnail locator")),
+                    document,
                 ) == outcome.key.source
             });
         // CPU/disk completion belongs to the document even when its GPU ticket retired.
@@ -887,7 +937,7 @@ fn make_image(
         &renderer,
         device,
         job.key.target,
-        &job.source.development,
+        job.key.source.source.active_area,
     ))?;
     metrics.image_seconds = tick.elapsed().as_secs_f64();
     Ok(active().then(|| Product::camera(image)))
@@ -912,7 +962,8 @@ impl Editor {
             None
         };
         Some(ImageKey {
-            source: SourceKey::new(source, self.document.file_key(path)),
+            source: SourceKey::new(source, self.document.file_key(path))
+                .with_development(self.document.development_for(source, self.input())),
             recipe,
             projection,
             target: self.document.target(),
@@ -1355,12 +1406,7 @@ impl Editor {
                                 } else {
                                     card.loading(ui);
                                 }
-                                camera_wanted.push((
-                                    index,
-                                    key.clone(),
-                                    path.clone(),
-                                    key.source.metadata_record(&path),
-                                ));
+                                camera_wanted.push((index, key.clone(), path.clone()));
                             }
                         }
                     }
@@ -1566,8 +1612,6 @@ impl Editor {
     fn request_thumbnail(
         &mut self,
         key: ImageKey,
-        path: PathBuf,
-        source: Source,
         render: bool,
         priority: source_loading::Priority,
         cx: &UiContext<'_, Self>,
@@ -1598,16 +1642,17 @@ impl Editor {
             .flatten();
         let cancelled = crate::cancellation::Cancellation::default();
         let retire = cancelled.cancel_on_drop();
+        let physical = self
+            .document
+            .source_input(key.source.id)
+            .expect("registered thumbnail input");
         let job = Job {
             generation: generation.clone(),
             cancelled,
-            reference: self
-                .document
-                .exposure_slot(&self.document.exposures, source.id),
+            reference: physical.reference_exposure(),
             ticket,
             key: key.clone(),
-            path,
-            source,
+            physical,
             correction: self.document.correction.prepared().cloned(),
             render,
             priority,
@@ -1638,7 +1683,7 @@ impl Editor {
                     editor
                         .document
                         .state
-                        .capture_exposure(&editor.document.exposures);
+                        .capture_initialization(&editor.document.initialization);
                     match result {
                         Ok(mut outcome) => {
                             if let Some(proxy) = outcome.proxy.take()
@@ -1789,11 +1834,8 @@ impl Editor {
             {
                 continue;
             }
-            let source = key.source.metadata_record(&path);
             self.request_thumbnail(
                 key,
-                path,
-                source,
                 render,
                 if visible {
                     source_loading::Priority::Visible
@@ -1809,7 +1851,7 @@ impl Editor {
 
 enum Input {
     Proxy(Arc<Proxy>),
-    Missing(Box<crate::source::SourceKey>),
+    Missing,
     Positive,
     Retired,
 }
@@ -1820,7 +1862,7 @@ struct Work {
     started: std::time::Instant,
     cache_hit: bool,
     metrics: ThumbnailMetrics,
-    preview: Option<crate::source::PreviewResult>,
+    prepared: Option<crate::scan::CameraProxy>,
 }
 
 struct Worker {
@@ -1875,7 +1917,7 @@ impl Worker {
                     }
                     Err(error) => {
                         log::debug!(
-                            source_id = job.source.id.0,
+                            source_id = job.key.source.id.0,
                             error = error.to_string().as_str();
                             "thumbnail_disk_cache_miss"
                         );
@@ -1889,12 +1931,7 @@ impl Worker {
             if job.cancelled.is_cancelled() {
                 return Ok(Input::Retired);
             }
-            let key = crate::source::SourceKey::for_load(
-                &job.path,
-                job.key.source.file.clone(),
-                &job.source.development,
-            );
-            Ok(Input::Missing(Box::new(key)))
+            Ok(Input::Missing)
         })();
         Work {
             job,
@@ -1902,7 +1939,7 @@ impl Worker {
             started,
             cache_hit,
             metrics,
-            preview: None,
+            prepared: None,
         }
     }
 
@@ -1929,6 +1966,8 @@ impl Worker {
             return Ok(None);
         }
         let mut recipe = recipe.clone();
+        Arc::make_mut(&mut recipe).neutral.source_development =
+            job.physical.development().expect("photo development");
         if let Some(reference) = job.reference.get()
             && recipe.neutral.reference.as_ref() != Some(reference)
         {
@@ -1949,7 +1988,7 @@ impl Worker {
                 proxy.ok_or_else(|| Error::Gpu("thumbnail requires a camera proxy".into()))?;
             let tick = std::time::Instant::now();
             let mut frame = crate::frame_raster::FrameRaster::full(Composition::new(
-                job.source.development.active_area.into(),
+                job.key.source.source.active_area.into(),
                 Default::default(),
                 Default::default(),
             )?)?;
@@ -2066,7 +2105,7 @@ impl Worker {
                 }
                 Input::Retired => return Ok(None),
                 Input::Proxy(proxy) => proxy,
-                Input::Missing(_) => unreachable!("source acquisition precedes proxy work"),
+                Input::Missing => unreachable!("source acquisition precedes proxy work"),
             };
 
             // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
@@ -2078,7 +2117,7 @@ impl Worker {
                 && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
             {
                 log::warn!(
-                    source_id = job.source.id.0,
+                    source_id = job.key.source.id.0,
                     error = error.to_string().as_str();
                     "thumbnail_disk_cache_write_failed"
                 );
@@ -2088,14 +2127,10 @@ impl Worker {
                 return Ok(None);
             }
             if matches!(&job.key.recipe, Ok(Some(_))) {
-                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
-                let prepared = crate::photo_preparation::proxy(
-                    &job.reference,
-                    recipe.neutral.input,
-                    &proxy,
-                    work.preview.unwrap_or(Ok(None)),
-                );
-                return self.positive(job, Some(&prepared), &mut work.metrics);
+                let prepared = work.prepared.as_ref().ok_or(Error::UnusableSample(
+                    "positive proxy has not been acquired",
+                ))?;
+                return self.positive(job, Some(prepared), &mut work.metrics);
             }
             make_image(
                 &self.device,
@@ -2109,7 +2144,7 @@ impl Worker {
         })()
         .map_err(|error: Error| error.to_string());
         log::debug!(
-            source_id = job.source.id.0,
+            source_id = job.key.source.id.0,
             target:? = job.key.target,
             source_cache_hit = work.cache_hit,
             disk_cache_hit = work.metrics.disk_hit,
@@ -2174,59 +2209,72 @@ impl Worker {
 
     async fn process(
         self: Arc<Self>,
-        job: Job,
+        mut job: Job,
         sources: Arc<dyn crate::source::SourceProvider>,
     ) -> Result<Outcome, Stopped> {
         let cancelled = job.cancelled.clone();
+        job.key.source = job
+            .key
+            .source
+            .with_development(job.physical.development().expect("photo development"));
         let cached = job
             .key
             .source
-            .store_key_at(&job.path)
+            .store_key_at(job.physical.path())
             .and_then(|key| sources.available_proxy(&key));
         let worker = self.clone();
         let mut work = crate::background::run(move |_| worker.begin(job, cached))
             .await
             .map_err(|_| Stopped)?;
-        if let Ok(Input::Missing(key)) = &work.input {
-            let key = (**key).clone();
-            let cancelled = work.job.cancelled.clone();
+        let positive = work.job.render && matches!(&work.job.key.recipe, Ok(Some(_)));
+        if positive && matches!(&work.input, Ok(Input::Missing | Input::Proxy(_))) {
+            let cached = match &work.input {
+                Ok(Input::Proxy(proxy)) => Some(proxy.clone()),
+                _ => None,
+            };
+            let prepared = futures_lite::future::or(
+                async {
+                    work.job.cancelled.wait().await;
+                    Ok(None)
+                },
+                async {
+                    work.job
+                        .physical
+                        .positive_proxy(sources.as_ref(), work.job.priority, cached)
+                        .await
+                        .map(Some)
+                },
+            )
+            .await;
+            work.input = match prepared {
+                Ok(Some(prepared)) => {
+                    let pixels = prepared.data.clone();
+                    work.prepared = Some(prepared);
+                    Ok(Input::Proxy(pixels))
+                }
+                Ok(None) => Ok(Input::Retired),
+                Err(error) => Err(error),
+            };
+        } else if matches!(&work.input, Ok(Input::Missing)) {
             work.input = futures_lite::future::or(
                 async {
-                    cancelled.wait().await;
+                    work.job.cancelled.wait().await;
                     Ok(Input::Retired)
                 },
                 async {
-                    sources
-                        .load_proxy(key, work.job.priority)
+                    work.job
+                        .physical
+                        .proxy(sources.as_ref(), work.job.priority)
                         .await
                         .map(Input::Proxy)
                 },
             )
             .await;
-            work.metrics.development_seconds =
-                work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
         }
-        if work.job.render
-            && !work.job.cancelled.is_cancelled()
-            && work.job.reference.get().is_none()
-            && matches!(&work.job.key.recipe, Ok(Some(recipe)) if !recipe.neutral.input.is_negative())
-        {
-            let path = work.job.path.clone();
-            let development = work.job.source.development.clone();
-            let key = crate::source::SourceKey::for_load(
-                &path,
-                work.job.key.source.file.clone(),
-                &development,
-            );
-            let load = sources.load_preview(key);
-            work.preview = futures_lite::future::or(
-                async {
-                    work.job.cancelled.wait().await;
-                    None
-                },
-                async { Some(load.await) },
-            )
-            .await;
+        work.metrics.development_seconds =
+            work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
+        if let Ok(record) = work.job.physical.record() {
+            work.job.key.source.source = record.development.for_runtime();
         }
         let (reply, result) = futures_channel::oneshot::channel();
         let start = {
@@ -2271,7 +2319,7 @@ impl Worker {
             };
             if let Ok(outcome) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 #[cfg(test)]
-                let id = work.job.source.id;
+                let id = work.job.key.source.id;
                 #[cfg(test)]
                 if let Some(observe) = &self.observe {
                     observe(id, true);

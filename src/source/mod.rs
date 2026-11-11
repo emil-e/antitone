@@ -40,6 +40,11 @@ pub(crate) use metadata::{open_source, source_metadata, verify_scan, verify_sour
 pub(crate) trait SourceProvider: Send + Sync {
     fn load_source(&self, key: SourceKey, priority: Priority) -> SourceFuture<'_>;
 
+    #[cfg(test)]
+    fn camera_capture_observer(&self) -> Option<std::sync::Arc<dyn Fn() + Send + Sync>> {
+        None
+    }
+
     fn available_proxy(
         &self,
         _key: &SourceKey,
@@ -70,4 +75,12 @@ pub(crate) type PreviewFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = PreviewResult> + Send + 'a>>;
 
 #[cfg(feature = "editor")]
+pub(crate) mod input;
+#[cfg(feature = "editor")]
 mod provider;
+#[cfg(feature = "editor")]
+pub(crate) use input::{CameraSamples, Input};
+#[cfg(feature = "editor")]
+mod initialization;
+#[cfg(feature = "editor")]
+pub(crate) use initialization::Initialization;

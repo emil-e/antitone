@@ -253,7 +253,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
     let document: crate::editor::document_scope::DocumentScope = document.into();
     crate::photo_preparation::native(
         None,
-        &document.exposure_slot(&document.exposures, id),
+        &document.exposure_slot(&document.initialization, id),
         document.project.input,
         native.source(),
     )

@@ -99,18 +99,28 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
         None,
         loader.clone(),
     );
-    let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
+    let mut fixture = tests::fixture();
+    let id = fixture.project.order[0];
+    fixture.development_metadata = Arc::new(crate::development_metadata::Metadata {
+        entries: vec![crate::development_metadata::Entry {
+            source: id,
+            mode: crate::project::DevelopmentMode::AsShot,
+            development: fixture.project.source(id).unwrap().development.clone(),
+        }],
+        ..Default::default()
+    });
+    let mut document: crate::editor::document_scope::DocumentScope = fixture.into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
     let id = document.project.order[0];
     document
-        .exposure_slot(&document.exposures, id)
+        .exposure_slot(&document.initialization, id)
         .set(crate::exposure_reference::ReferenceExposure::Unavailable(
             crate::exposure_reference::UnavailableReference::NoUsablePreview,
         ))
         .unwrap();
-    let exposures = document.exposures.clone();
-    document.state.capture_exposure(&exposures);
+    let initialization = document.initialization.clone();
+    document.state.capture_initialization(&initialization);
     document
         .project
         .source_mut(id)

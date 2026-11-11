@@ -1,6 +1,5 @@
 use super::material::Selection;
 use super::*;
-use crate::region_timing::timed;
 
 #[derive(Clone)]
 struct Run {
@@ -358,18 +357,15 @@ impl RollModel {
         {
             return Err(invalid("invalid rectangle measurement raster"));
         }
-        let Some(selection) = timed!("material_select", self.select(index, c)) else {
+        let Some(selection) = self.select(index, c) else {
             return Ok(Areas::default());
         };
-        timed!(
-            "fine_geometry",
-            fit_with_opening(
-                c,
-                selection,
-                measurement_size,
-                measurement,
-                self.opening.as_ref(),
-            )
+        fit_with_opening(
+            c,
+            selection,
+            measurement_size,
+            measurement,
+            self.opening.as_ref(),
         )
     }
 
@@ -405,10 +401,7 @@ fn fit_with_opening(
     measurement: &[[f32; 3]],
     shared: Option<&super::opening::Shared>,
 ) -> Result<Areas, Error> {
-    let observed = timed!(
-        "holder_rays",
-        runs(&selection, c.size, measurement_size, measurement)
-    );
+    let observed = runs(&selection, c.size, measurement_size, measurement);
     let holder_angles: Vec<_> = observed
         .iter()
         .flatten()
@@ -481,10 +474,7 @@ fn fit_with_opening(
                 super::opening::rail(c.size, s.angle, side, run.points.iter().map(|&(p, _)| p))
             })
         });
-        timed!(
-            "shared_constrain",
-            s.constrain(c.size, local_opening, fitted.map(|v| v.1), own_rails)
-        )
+        s.constrain(c.size, local_opening, fitted.map(|v| v.1), own_rails)
     });
     let Some(opening) = opening else {
         return Ok(Areas::default());

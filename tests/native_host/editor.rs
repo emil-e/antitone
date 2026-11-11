@@ -23,6 +23,7 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     };
     project.add_source(Source {
         id: SourceId(0),
+        development_mode: antitone::project::DevelopmentMode::Unity,
         path,
         development: SourceDevelopment {
             decode,

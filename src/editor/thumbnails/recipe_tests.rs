@@ -649,12 +649,13 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         editor.thumbnail_composition(editor.document.state.project.source(selected).unwrap()),
     )
     .unwrap();
+    let target = editor.document.target();
     editor.document.visit.working_view.observe(
         frame,
         crate::gpu::photograph::request::PhotographRequest::Fixture(AuthoredPhotograph::from(
             ProcessingParameters::source(),
         )),
-        editor.document.target(),
+        target,
     );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {

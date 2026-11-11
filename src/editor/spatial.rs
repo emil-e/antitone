@@ -71,12 +71,13 @@ impl Editor {
                 .all(|id| inputs.iter().any(|input| input.source == *id));
         let pixels_ready = !sampling
             || inputs.iter().all(|input| {
-                document.source_key(input.source).is_ok_and(|key| {
-                    self.document
-                        .sampling_inputs
-                        .get(input.source, &key)
-                        .is_some()
-                })
+                document
+                    .source_input(input.source, &self.document.initialization)
+                    .is_ok_and(|physical| {
+                        self.document
+                            .sampling_inputs
+                            .contains(input.source, &physical)
+                    })
             });
 
         if self.document.spatial_preparing.is_none() && complete && pixels_ready {
@@ -105,13 +106,9 @@ impl Editor {
             });
 
             self.status = "Preparing film and picture regions…".into();
-            let device = self
-                .source_services
-                .as_ref()
-                .map(|source| source.device.clone());
             let sources = self.source_provider();
             let sampling_inputs = self.document.sampling_inputs.clone();
-            let exposures = self.document.exposures.clone();
+            let initialization = self.document.initialization.clone();
 
             let retire = cancelled.cancel_on_drop();
             let captured = document.clone();
@@ -132,15 +129,13 @@ impl Editor {
                                 })
                             });
                     }
-                    let device = device.ok_or_else(|| "GPU device unavailable".to_owned())?;
                     let sources =
                         sources.ok_or_else(|| "Source provider unavailable".to_owned())?;
                     preparation::prepare(
                         captured,
-                        device,
                         sources,
                         sampling_inputs,
-                        exposures,
+                        initialization,
                         cancelled.clone(),
                         move |done, total| progress.progress(done, total),
                     )
@@ -240,6 +235,9 @@ impl Editor {
             }
         });
         // Supporting peers must still match when their shared geometry is published.
+        self.document
+            .state
+            .capture_initialization(&self.document.initialization);
         let current = self.document.spatial_inputs();
         let scope = &mut self.document;
         let publish = paths_match

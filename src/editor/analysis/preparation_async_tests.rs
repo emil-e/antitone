@@ -11,7 +11,6 @@ fn async_review_uses_finished_results_without_source_dependencies() {
     for _ in 0..2 {
         let approved = futures_lite::future::block_on(prepare_review(
             request.clone(),
-            device.clone(),
             Cancellation::default(),
             |_, _| {},
         ))
@@ -36,7 +35,6 @@ fn async_assembly_cancellation_keeps_finished_shared_results_and_accepted_state(
     let control = cancelled.clone();
     let result = futures_lite::future::block_on(prepare_review(
         request.clone(),
-        device,
         cancelled,
         move |index, _| {
             if index == 1 {

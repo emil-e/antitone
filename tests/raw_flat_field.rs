@@ -184,6 +184,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
             let is_reference = name == "bare-light.dng";
             let id = project
                 .add_source(Source {
+                    development_mode: antitone::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: fixture(name),
                     development: SourceDevelopment {

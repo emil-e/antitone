@@ -54,12 +54,7 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     let loader = source_loading::SourceLoader::new();
     // No runtime WB override: the accepted descriptor must be authoritative even on a cold load.
     let developed = Request {
-        reference: Default::default(),
-        input: InputSettings::Digital,
-        path: path.clone(),
-        wb: None,
-        expected: Some(record),
-        file: thumbnails::FileKey::new(&path),
+        source: opened.source_input(id, &Default::default()).unwrap(),
         sources: None,
         correction: None,
     }
@@ -222,12 +217,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             let loader = source_loading::SourceLoader::new();
             // Acquisition uses the current pixel producer without rewriting saved provenance.
             let developed = Request {
-                reference: opened.exposure_slot(&opened.exposures, id),
-                input: opened.project.input,
-                path: path.clone(),
-                wb: opened.project.acquisition_wb(),
-                expected: Some(legacy_record),
-                file: opened.file_key(&path),
+                source: opened.source_input(id).unwrap(),
                 sources: Some(loader.provider(Some(opened.cache.clone()))),
                 correction: correction.clone(),
             }
@@ -254,7 +244,13 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             assert_eq!(ready.area, scan.area);
             let recipe = legacy.image_recipe(id).unwrap();
             assert_eq!(
-                recipe.neutral.source_development.decode.backend_version,
+                recipe
+                    .neutral
+                    .source_development
+                    .resolved()
+                    .unwrap()
+                    .decode
+                    .backend_version,
                 "previous decoder release"
             );
             assert!(

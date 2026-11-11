@@ -128,8 +128,6 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
         app.enter(|editor, cx| {
             editor.request_thumbnail(
                 super::tests::key(&editor.document, id),
-                file.path().to_owned(),
-                source,
                 true,
                 source_loading::Priority::Visible,
                 cx,

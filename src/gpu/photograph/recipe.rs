@@ -35,7 +35,7 @@ impl<'a> RecipeGraph<'a> {
                 source,
                 CameraInput {
                     matrix: glam::DMat3::from_cols_array_2d(
-                        &recipe.neutral.source_development.camera_to_ap1,
+                        &recipe.neutral.source_development.resolved()?.camera_to_ap1,
                     ),
                     field,
                     continuous: true,
@@ -54,8 +54,9 @@ impl<'a> RecipeGraph<'a> {
         field: Option<Arc<GpuFlatField>>,
         recipe: &'a ImageRecipe,
     ) -> Result<Self, Error> {
-        let expected =
-            glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
+        let expected = glam::DMat3::from_cols_array_2d(
+            &recipe.neutral.source_development.resolved()?.camera_to_ap1,
+        );
         if source.camera_matrix() != expected {
             return Err(Error::Gpu(
                 "recipe differs from resident camera basis".into(),
@@ -104,7 +105,7 @@ impl<'a> RecipeGraph<'a> {
 
     fn assembly(&self, limits: &wgpu::Limits, coverage: u32) -> Result<Assembly, Error> {
         let program = InputTransform::from_recipe(&self.recipe.neutral)?;
-        let area = self.recipe.neutral.source_development.active_area.into();
+        let area = self.recipe.neutral.source_development.active_area().into();
         let mut camera = self.source.input.clone();
         camera.matrix = program.matrix;
         let mut grading = Grading::new(limits, self.recipe.roll, self.recipe.grade.clone(), area)?
@@ -367,7 +368,7 @@ impl PhotographGraph {
             ));
         }
         let program = InputTransform::from_recipe(&recipe.neutral)?;
-        let area = recipe.neutral.source_development.active_area.into();
+        let area = recipe.neutral.source_development.active_area().into();
         let grading = Grading::new(limits, recipe.roll, recipe.grade.clone(), area)?;
         grading.require_extent(spec.area)?;
         if Self::input_transform(&neutral).is_some_and(|captured| captured != program) {
@@ -398,7 +399,7 @@ impl PhotographGraph {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
             || source.domain().finite()?.source()?
-                != recipe.neutral.source_development.active_area.into()
+                != recipe.neutral.source_development.active_area().into()
         {
             return Err(Error::InvalidParameter(
                 "recipe requires its original camera cells",
@@ -507,7 +508,7 @@ impl super::request::PhotographRequest {
                     recipe.roll,
                     &recipe.grade,
                     program.matrix,
-                    recipe.neutral.source_development.active_area.into(),
+                    recipe.neutral.source_development.active_area().into(),
                     repairs.bound(),
                 )
                 .map(|_| ())

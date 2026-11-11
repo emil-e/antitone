@@ -93,12 +93,9 @@ mod cache_preferences_tests;
 mod calibration;
 mod canvas;
 mod canvas_view;
-mod gamma_pivot;
-use document::Preparation;
-#[cfg(test)]
-use document::Request as DocumentRequest;
 mod export;
 mod frame;
+mod gamma_pivot;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
 mod measurement;
@@ -110,6 +107,8 @@ mod picking;
 mod save;
 #[cfg(test)]
 use crate::export::Overwrite;
+#[cfg(test)]
+mod input_tests;
 mod roll_selection;
 #[cfg(test)]
 mod tests;
@@ -202,16 +201,37 @@ fn prepare_source_scheduled(
     developments: &source_loading::SourceLoader,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
+    let file = cache
+        .as_ref()
+        .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone());
+    let input = InputSettings::default();
+    let physical = match expected {
+        Some(source) => {
+            if wb.is_some_and(|wb| wb != source.development.decode.white_balance) {
+                return Err(Error::Project(
+                    "source WB differs from accepted development".into(),
+                ));
+            }
+            crate::source::Input::photo(
+                path,
+                file,
+                input,
+                Arc::default(),
+                crate::source::input::Photograph {
+                    record: source.clone(),
+                    development: source.development.clone().into(),
+                    basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
+                        source,
+                    ))),
+                    expected_camera: Some(source.development.camera_model.clone()),
+                },
+            )
+        }
+        None => crate::source::Input::reference(path, file, wb, input, Arc::default()),
+    };
     let developed = source::Request {
-        reference: Arc::default(),
-        input: Default::default(),
-        path: path.clone(),
-        wb,
-        expected: expected.cloned(),
+        source: physical,
         correction: correction.cloned(),
-        file: cache
-            .as_ref()
-            .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone()),
         sources: Some(developments.provider(cache.map(|(cache, _)| cache.clone()))),
     }
     .load(developments, cancelled)?;
@@ -244,7 +264,7 @@ pub struct Editor {
     preferences: preferences::Preferences,
     preference_store: Option<preferences::Store>,
     document: DocumentScope,
-    candidate_operation: document::State,
+    history_restore: document::RestoreTask,
     history_pending: Option<history::Pending>,
 
     next_request: u64,
@@ -365,7 +385,7 @@ impl Editor {
             history_pending: None,
 
             document,
-            candidate_operation: document::State::default(),
+            history_restore: document::RestoreTask::default(),
             next_request: 0,
             document_pending: None,
             export_services: None,
@@ -863,7 +883,17 @@ impl Editor {
         if target.is_negative() == self.document.project.input.is_negative() {
             return;
         }
-        if self.document.project.input.has_stage_settings() && !target.is_negative() {
+        let edit = match self.edit_project("Input stage") {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let discards_settings = !target.is_negative()
+            && (self.document.project.input.has_stage_settings()
+                || self.document.project.flat_field().is_some());
+        if discards_settings {
             let response = self.dialogs.show(move |context, id, escape| {
                 presentation::DecisionDialog::new(
                     "Switch input stage?",
@@ -871,61 +901,71 @@ impl Editor {
                     "Switch stage",
                 ).warning().show(context, id, escape)
             });
-            self.document.dialog_action = cx.spawn(move |cx| async move {
-                if response.await == Ok(presentation::DialogChoice::Confirm) {
-                    cx.update(|editor| editor.apply_input(target, &cx));
-                }
+            self.document.input_change = cx.spawn(move |cx| async move {
+                let confirmed = response.await == Ok(presentation::DialogChoice::Confirm);
+                cx.update(|editor| {
+                    editor.document.input_change = None;
+                    if confirmed {
+                        editor.publish_input(edit, target, &cx);
+                    }
+                });
             });
         } else {
-            self.apply_input(target, cx);
+            self.publish_input(edit, target, cx);
         }
     }
 
+    #[cfg(test)]
     fn apply_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        let mut draft = match self.edit_project("Input stage") {
-            Ok(edit) => edit,
-            Err(error) => {
-                self.status = error.to_string();
-                return;
-            }
-        };
-        let stage_changed = self.document.project.input.is_negative() != target.is_negative();
-        if stage_changed && !self.document.state.project.sources.is_empty() {
-            // Crossing stages changes every active source's decode WB, so it is an atomic
-            // document operation rather than an input-only edit.
+        match self.edit_project("Input stage") {
+            Ok(edit) => self.publish_input(edit, target, cx),
+            Err(error) => self.status = error.to_string(),
+        }
+    }
 
-            drop(draft);
-            let mut candidate = self.document.capture();
-            candidate.project.input = target;
-            self.start_document(
-                Preparation::Input(candidate, self.document.visit.current_source),
-                cx,
-            );
-            return;
-        }
-        if target.ready()
-            && !self.document.state.project.sources.is_empty()
-            && let Err(error) =
-                self.validate_processing(target, self.document.project.roll, self.photo_settings())
-        {
-            self.status = error.to_string();
-            return;
-        }
-        draft.update(|project| {
+    fn publish_input(
+        &mut self,
+        mut edit: editing::ProjectEdit,
+        target: InputSettings,
+        cx: &UiContext<'_, Self>,
+    ) {
+        let stage_changed = self.document.project.input.is_negative() != target.is_negative();
+        edit.update(|project| {
             project.input = target;
             if stage_changed {
-                project.set_flat_field(None).expect("clearing correction");
+                project.scan = None;
             }
         });
-        if let Err(error) = self.commit_project(draft) {
+        if let Err(error) = self.commit_project(edit) {
             self.status = error.to_string();
             return;
         }
-        if stage_changed {
-            self.document.correction_restore = None;
-            self.document.correction = Default::default();
-        }
         self.document.source = !target.ready();
+        if stage_changed {
+            self.reinterpret_input(cx);
+        }
+    }
+
+    fn reinterpret_input(&mut self, cx: &UiContext<'_, Self>) {
+        self.document.source = !self.document.project.input.ready();
+        self.document
+            .state
+            .capture_initialization(&self.document.initialization);
+        self.document.correction_restore = None;
+        self.document.correction = Default::default();
+        self.cancel_spatial();
+        self.document.hosted_tool = Default::default();
+        self.document.thumbnails.cancel();
+        self.id = self.request_id();
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
+        self.reinterpret_photo(self.id);
+        self.invalidate_original();
+        if let Some(id) = self.document.visit.current_source
+            && let Ok(path) = self.document.source_path(id)
+        {
+            self.start_source_acquisition(path, cx);
+        }
     }
 
     fn request_id(&mut self) -> u64 {
@@ -936,7 +976,7 @@ impl Editor {
     pub(super) fn begin_document_operation(&mut self) -> u64 {
         self.document.visit.interaction_action = None;
         self.document.write = save::State::default();
-        self.candidate_operation = document::State::default();
+        self.history_restore = document::RestoreTask::default();
         self.document.retire_edits();
         self.document.flat_correction = None;
         self.retire_look_selection();
@@ -1022,12 +1062,6 @@ impl Editor {
                     let input = displayed_input;
                     ui.push_id("roll", |ui| {
                         let capabilities = input.capabilities();
-                        let scan = self.document.state.project.require_scan_sources();
-                        let scan_reason = scan
-                            .as_ref()
-                            .err()
-                            .map(ToString::to_string)
-                            .unwrap_or_default();
                         ui.horizontal(|ui| {
                             ui.label("Input stage");
                             ui.add_enabled_ui(!self.tool_interacting(), |ui| {
@@ -1040,15 +1074,8 @@ impl Editor {
                                     .show_ui(ui, |ui| {
                                         if input.is_negative() {
                                             let _ = ui.selectable_label(true, "Negative");
-                                        } else {
-                                            ui.add_enabled_ui(scan.is_ok(), |ui| {
-                                                if ui.selectable_label(false, "Negative").clicked()
-                                                {
-                                                    stage_target = Some(self.negative_input());
-                                                }
-                                            })
-                                            .response
-                                            .on_disabled_hover_text(scan_reason.clone());
+                                        } else if ui.selectable_label(false, "Negative").clicked() {
+                                            stage_target = Some(self.negative_input());
                                         }
                                         if ui
                                             .selectable_label(!input.is_negative(), "Digital")

@@ -60,12 +60,11 @@ pub(in crate::editor) fn observed() -> (source_loading::SourceLoader, Arc<Atomic
 pub(super) fn detect(
     request: &mut analysis::Request,
     scheduler: &source_loading::SourceLoader,
-    device: &wgpu::Device,
+    _device: &wgpu::Device,
     _queue: &wgpu::Queue,
 ) {
     let metadata = futures_lite::future::block_on(crate::editor::spatial::preparation::prepare(
         Arc::new(request.document.clone()),
-        device.clone(),
         scheduler.provider(None),
         Default::default(),
         Arc::default(),
@@ -76,6 +75,83 @@ pub(super) fn detect(
     .unwrap();
     request.document.spatial_metadata = Arc::new(metadata.metadata);
     assert!(!request.document.ready_spatial_metadata().groups.is_empty());
+}
+
+#[test]
+fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission() {
+    use crate::looks::{LookAsset, LookOrigin, Lut3D};
+    let (mut request, _directory, _, _) = request();
+    let instance = crate::gpu::instance();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, _) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: wgpu::Limits {
+            max_storage_buffer_binding_size: 1024,
+            ..Default::default()
+        },
+        ..Default::default()
+    }))
+    .unwrap();
+    request.document.project.output.lut = Some(Arc::new(
+        LookAsset::new(
+            "Valid look beyond this device's capacity".into(),
+            LookOrigin::Imported,
+            Arc::new(Lut3D::new(5, [0.; 3], [1.; 3], vec![[0.5; 3]; 125]).unwrap()),
+        )
+        .unwrap(),
+    ));
+    request.document.project.require_runtime().unwrap();
+    assert!(
+        request.document.validate_for_device(&device).is_err(),
+        "the look must actually fail the unrelated GPU admission check"
+    );
+    let before = request.document.project.clone();
+    let (loader, count) = observed();
+    let prepared = pollster::block_on(crate::editor::spatial::preparation::prepare(
+        Arc::new(request.document.clone()),
+        loader.provider(None),
+        Default::default(),
+        Arc::default(),
+        Default::default(),
+        |_, _| {},
+    ))
+    .unwrap()
+    .unwrap();
+    request.document.spatial_metadata = Arc::new(prepared.metadata);
+    assert!(prepared.sampling_inputs.retained_bytes() > 0);
+    assert_eq!(count.load(Ordering::Relaxed), 2);
+    loader.close_and_wait().unwrap();
+    for id in &request.document.project.order {
+        let physical = request
+            .document
+            .source_input(*id, &Default::default())
+            .unwrap();
+        let cached = prepared
+            .sampling_inputs
+            .get(*id, &physical.cached_key().unwrap())
+            .unwrap();
+        let camera = pollster::block_on(prepared.sampling_inputs.acquire(
+            *id,
+            &physical,
+            loader.provider(None).as_ref(),
+            &Cancellation::default(),
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(
+            Arc::ptr_eq(&camera.pixels(), &cached),
+            "retained rasters must remain usable after native acquisition shuts down"
+        );
+    }
+    let review = pollster::block_on(prepare_review(
+        request.clone(),
+        Cancellation::default(),
+        |_, _| {},
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(review.entries.len(), 2);
+    assert!(review.entries.iter().all(|row| row.areas.ready()));
+    assert_eq!(request.document.project, before);
 }
 
 #[test]
@@ -90,10 +166,10 @@ fn finished_shared_sampling_is_reused_without_changing_accepted_state() {
         "both authored sources must exercise detection"
     );
     let ready = request.document.spatial_metadata.clone();
-    let first = assemble_review(&request, &device, || false, |_, _| {})
+    let first = assemble_review(&request, || false, |_, _| {})
         .unwrap()
         .unwrap();
-    let second = assemble_review(&request, &device, || false, |_, _| {})
+    let second = assemble_review(&request, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert_eq!(first.entries, second.entries);
@@ -116,7 +192,6 @@ fn cancelling_review_assembly_does_not_return_partial_areas_or_discard_detection
     let cancelled = std::cell::Cell::new(false);
     let result = assemble_review(
         &request,
-        &device,
         || cancelled.get(),
         |index, _| {
             if index == 1 {
@@ -163,7 +238,7 @@ fn authored_windows_override_suggestions_without_changing_shared_results() {
     ];
     let before = request.document.project.clone();
     let ready = request.document.spatial_metadata.clone();
-    let approved = assemble_review(&request, &device, || false, |_, _| {})
+    let approved = assemble_review(&request, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert_eq!(approved.entries[0].areas, first);
@@ -196,7 +271,7 @@ fn unavailable_detected_components_are_reviewable_without_redetection() {
     metadata.groups[0].sources[0].picture = None;
     metadata.validate().unwrap();
     request.document.spatial_metadata = Arc::new(metadata.clone());
-    let approved = assemble_review(&request, &device, || false, |_, _| {})
+    let approved = assemble_review(&request, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert!(
@@ -219,7 +294,7 @@ fn unavailable_detected_components_are_reviewable_without_redetection() {
 
 #[test]
 fn missing_shared_detection_is_not_replaced_with_an_operation_local_detector() {
-    let (request, _directory, device, _queue) = request();
-    assert!(assemble_review(&request, &device, || false, |_, _| {}).is_err());
+    let (request, _directory, _device, _queue) = request();
+    assert!(assemble_review(&request, || false, |_, _| {}).is_err());
     assert!(request.document.spatial_metadata.groups.is_empty());
 }

@@ -43,8 +43,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     use crate::rendering::OutputReference;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let plain_recipe = Arc::new(project.image_recipe(id).unwrap());
     let codes = evaluation::source(Arc::new(CameraCodes));
     let plain = RecipeGraph::originals(codes.clone(), None, &plain_recipe, &Default::default())
@@ -115,8 +114,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
 #[test]
 fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calculation() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let before_recipe = project.image_recipe(id).unwrap();
     let codes = evaluation::source(Arc::new(CameraCodes));
     let before = RecipeGraph::originals(codes.clone(), None, &before_recipe, &Default::default())

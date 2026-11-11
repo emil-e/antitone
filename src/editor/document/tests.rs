@@ -9,14 +9,11 @@ mod dust;
 
 fn acquired_scan(document: &Document, id: SourceId) -> Scan {
     let loader = crate::source::SourceLoader::new();
-    let scan = pollster::block_on(document.acquire_source(
-        id,
-        &loader,
-        &Default::default(),
-        &Default::default(),
-    ))
-    .unwrap()
-    .unwrap();
+    let physical = document.source_input(id, &Default::default()).unwrap();
+    let scan = pollster::block_on(physical.source(&loader, crate::source::Priority::Foreground))
+        .unwrap()
+        .prepared
+        .scan();
     loader.close_and_wait().unwrap();
     scan
 }
@@ -129,6 +126,7 @@ fn fixture(directory: &Path) -> Document {
         document
             .register_with_development(
                 Source {
+                    development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
@@ -298,9 +296,12 @@ fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_rec
     assert!(document.project.source(removed_id).is_err());
     assert_eq!(document.project.order.len(), 1);
 
-    document
-        .redevelop_for_input(crate::processing::InputSettings::Digital)
-        .unwrap();
+    let mut editor = crate::editor::Editor::state();
+    editor.document = document.into();
+    let mut document = crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.request_input(crate::processing::InputSettings::Digital, cx));
+        app.read(|editor| editor.document.capture())
+    });
     let active = document.project.order[0];
     assert_eq!(
         acquired_scan(&document, active).white_balance,
@@ -318,7 +319,7 @@ fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_rec
 }
 
 #[test]
-fn stage_redevelopment_clears_correction_without_removing_independent_photos() {
+fn input_switch_clears_correction_without_removing_independent_photos() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -348,26 +349,31 @@ fn stage_redevelopment_clears_correction_without_removing_independent_photos() {
         .project
         .set_flat_field(Some(settings.clone()))
         .unwrap();
-    let negative = document.project.input;
-    for target in [crate::processing::InputSettings::Digital, negative] {
-        document
-            .project
-            .set_flat_field(Some(settings.clone()))
-            .unwrap();
-        document.redevelop_for_input(target).unwrap();
-        assert!(document.project.flat_field().is_none());
-        assert_eq!(document.project.order, ids);
-        assert_eq!(document.project.sources.len(), 2);
-        for id in &ids {
-            let record = document.project.source(*id).unwrap();
-            assert_eq!(
-                record.development,
-                read_source(&record.path, target.development_wb())
-                    .unwrap()
-                    .development
-            );
+    let photos = document.project.sources.clone();
+    let mut editor = crate::editor::Editor::state();
+    editor.document = document.into();
+    crate::application::test_support::with_application(editor, |app| {
+        for target in [
+            crate::processing::InputSettings::Digital,
+            crate::processing::InputSettings::default(),
+        ] {
+            app.enter(|editor, cx| {
+                editor.request_input(target, cx);
+                if editor.dialogs.is_open() {
+                    editor.dialogs.answer_for_test("Switch stage");
+                }
+            });
+            app.run_until(std::time::Duration::from_secs(5), |editor| {
+                editor.document.input_change.is_none()
+            });
+            app.read(|editor| {
+                assert_eq!(editor.document.project.input, target);
+                assert!(editor.document.project.flat_field().is_none());
+                assert_eq!(editor.document.project.order, ids);
+                assert_eq!(editor.document.project.sources, photos);
+            });
         }
-    }
+    });
 }
 
 #[test]
@@ -424,12 +430,12 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         assert!(!reopened.dirty());
         let loader = crate::source::SourceLoader::new();
         assert!(
-            pollster::block_on(reopened.acquire_source(
-                reopened.project.order[0],
-                &loader,
-                &Default::default(),
-                &Default::default()
-            ))
+            pollster::block_on(
+                reopened
+                    .source_input(reopened.project.order[0], &Default::default())
+                    .unwrap()
+                    .source(&loader, crate::source::Priority::Foreground)
+            )
             .is_err()
         );
         loader.close_and_wait().unwrap();
@@ -933,6 +939,7 @@ fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
     ) -> crate::project::Source {
         std::fs::write(path, b"scan fixture").unwrap();
         crate::project::Source {
+            development_mode: crate::project::DevelopmentMode::Unity,
             id: crate::project::SourceId(0),
             path: path.into(),
             development: crate::project::SourceDevelopment {

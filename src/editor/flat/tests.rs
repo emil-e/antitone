@@ -4,6 +4,7 @@ use crate::{application::test_support::with_application, project::SourceDevelopm
 
 fn record(path: &str) -> Source {
     Source {
+        development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
@@ -82,13 +83,19 @@ fn removed_reference_preview_does_not_reuse_a_deleted_record() {
 
     editor.document.state.project.input = crate::processing::InputSettings::Digital;
     let request = editor.reference_preview_input("light.ARW".into());
-    assert_eq!(request.wb, None);
-    assert!(request.expected.is_none());
+    assert_eq!(
+        request.source.input(),
+        crate::processing::InputSettings::Digital
+    );
+    assert!(request.source.development().is_none());
 
     editor.document.state.project.input = crate::project::Project::default().input;
     let request = editor.reference_preview_input("light.ARW".into());
-    assert_eq!(request.wb, Some(crate::project::UNITY_WB));
-    assert!(request.expected.is_none());
+    assert_eq!(
+        request.source.input().development_wb(),
+        Some(crate::project::UNITY_WB)
+    );
+    assert!(request.source.development().is_none());
 }
 
 #[test]
@@ -492,7 +499,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 assert!(e.document.correction.prepared().is_none());
             });
             app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
+            app.run_until(Duration::from_secs(60), |e| {
+                !e.interaction_blocked() && !e.document.correction.pending()
+            });
             app.read(|e| {
                 assert_eq!(e.document.state.project, accepted, "{}", e.status);
                 assert_eq!(

@@ -175,14 +175,9 @@ fn state() -> EmbeddedPreviews {
     EmbeddedPreviews::new()
 }
 
-fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Source) {
+fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf) {
     let id = document.project.order[index];
-    (
-        index,
-        key(document, id),
-        document.source_path(id).unwrap(),
-        document.project.source(id).unwrap().clone(),
-    )
+    (index, key(document, id), document.source_path(id).unwrap())
 }
 
 fn complete(
@@ -214,6 +209,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -222,7 +218,8 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         previews
             .begin(
                 &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization
             )
             .is_none(),
         "only one current JPEG demand"
@@ -233,6 +230,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -266,6 +264,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
             .begin(
                 &document.state,
                 Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization,
             )
             .unwrap()
             .0;
@@ -290,7 +289,8 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
                 .embedded
                 .begin(
                     &document.state,
-                    Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                    Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                    &document.initialization
                 )
                 .is_none(),
             "warm scrolling must not extract JPEGs again"
@@ -334,7 +334,8 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         previews
             .begin(
                 &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization
             )
             .is_none()
     );
@@ -343,6 +344,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -352,7 +354,8 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         previews
             .begin(
                 &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization
             )
             .is_none(),
         "missing preview does not loop on each frame"
@@ -362,6 +365,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -371,7 +375,8 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         previews
             .begin(
                 &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization
             )
             .is_none(),
         "cancellation cannot add another pending demand"
@@ -383,6 +388,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -423,6 +429,7 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
         .begin(
             &document.state,
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+            &document.initialization,
         )
         .unwrap()
         .0;
@@ -440,7 +447,8 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
             .embedded
             .begin(
                 &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone())))
+                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization
             )
             .is_none()
     );
@@ -464,6 +472,7 @@ fn retired_document_source_and_development_reject_previews() {
             .begin(
                 &document.state,
                 Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
+                &document.initialization,
             )
             .unwrap()
             .0;

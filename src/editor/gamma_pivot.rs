@@ -68,7 +68,8 @@ impl Editor {
                 .project
                 .source(anchor.recipe.source)
                 .is_ok_and(|source| {
-                    source.development == anchor.recipe.source_development
+                    self.document.development_for(source, self.input())
+                        == anchor.recipe.source_development
                         && basis_input(self.document.state.project.input)
                             == basis_input(anchor.recipe.input)
                         && self
@@ -186,7 +187,7 @@ impl Editor {
                     negative(starting.input)?,
                     negative(candidate)?,
                     glam::DMat3::from_cols_array_2d(
-                        &captured.recipe.source_development.camera_to_ap1,
+                        &captured.recipe.source_development.resolved()?.camera_to_ap1,
                     ),
                     starting.roll.wb,
                     &|| cancelled.is_cancelled(),

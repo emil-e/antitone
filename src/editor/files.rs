@@ -138,7 +138,7 @@ impl Editor {
                     return;
                 }
                 let input_changed = document.project.input != editor.document.project.input;
-                document.capture_exposure(&editor.document.exposures);
+                document.capture_initialization(&editor.document.initialization);
                 let mut edit = edit;
                 edit.replace_snapshot(Arc::new(document));
                 editor.commit_document(edit).expect("current import edit");
@@ -148,10 +148,13 @@ impl Editor {
                     editor.document.visit.current_source,
                 );
                 editor.status = "Photos added".into();
-                let load = match editor.document.visit.current_source {
-                    Some(id) if input_changed => Some(id),
-                    None => editor.document.project.order.first().copied(),
-                    _ => None,
+                if input_changed {
+                    editor.reinterpret_input(&cx);
+                }
+                let load = if editor.document.visit.current_source.is_none() {
+                    editor.document.project.order.first().copied()
+                } else {
+                    None
                 };
                 if let Some(id) = load
                     && let Ok(path) = editor.document.source_path(id)
@@ -199,7 +202,7 @@ impl Editor {
 
     fn install_project(&mut self, document: Document) {
         self.cancel_active_tool();
-        self.candidate_operation = document::State::default();
+        self.history_restore = document::RestoreTask::default();
         self.document_pending = None;
         self.history_pending = None;
         self.document = self.document.replacement(document);

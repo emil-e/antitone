@@ -34,16 +34,9 @@ pub(super) struct History {
     group_redo: Option<Vec<Entry>>,
 }
 
-pub(super) enum Pending {
-    Edit {
-        before: Box<Project>,
-        label: &'static str,
-        photo: Option<SourceId>,
-    },
-    Restore {
-        direction: Direction,
-        cleanup: Option<bool>,
-    },
+pub(super) struct Pending {
+    pub direction: Direction,
+    pub cleanup: Option<bool>,
 }
 
 impl History {
@@ -203,42 +196,41 @@ impl Editor {
             });
         let mut candidate = self.document.capture();
         candidate.project = project;
-        self.start_document(Preparation::History(candidate, selected, direction), cx);
+        self.start_history(
+            document::Restore {
+                document: candidate,
+                selected,
+                direction,
+            },
+            cx,
+        );
     }
 
     pub(super) fn history_prepared(&mut self, pending: Option<Pending>) {
-        match pending {
-            Some(Pending::Edit {
-                before,
-                label,
-                photo,
-            }) => self.record_edit(*before, label, photo),
-            Some(Pending::Restore { direction, cleanup }) => {
-                let label = self
-                    .document
-                    .history
-                    .entry(direction)
-                    .expect("pending history entry")
-                    .label;
-                self.document.history.complete(direction);
-                self.document.visit.working_view.clear();
-                self.document.source = !self.document.project.input.ready();
-                if let Some(show_masks) = cleanup
-                    && !self.document.source
-                    && self.document.visit.canvas.ready.is_some()
-                {
-                    self.restore_dust(show_masks);
-                } else if self.dusting() {
-                    self.end_tool();
-                }
-                self.status = format!("{} {label}", direction.verb());
+        if let Some(Pending { direction, cleanup }) = pending {
+            let label = self
+                .document
+                .history
+                .entry(direction)
+                .expect("pending history entry")
+                .label;
+            self.document.history.complete(direction);
+            self.document.visit.working_view.clear();
+            self.document.source = !self.document.project.input.ready();
+            if let Some(show_masks) = cleanup
+                && !self.document.source
+                && self.document.visit.canvas.ready.is_some()
+            {
+                self.restore_dust(show_masks);
+            } else if self.dusting() {
+                self.end_tool();
             }
-            None => {}
+            self.status = format!("{} {label}", direction.verb());
         }
     }
 
     pub(super) fn history_failed(&mut self, pending: Option<Pending>) {
-        if let Some(Pending::Restore {
+        if let Some(Pending {
             cleanup: Some(show_masks),
             ..
         }) = pending

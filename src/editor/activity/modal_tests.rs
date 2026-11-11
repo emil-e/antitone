@@ -107,7 +107,26 @@ fn regions_sampling_and_fitting_block_unrelated_controls_but_expose_cancellation
         add_ready_fixture(&mut editor);
 
         let before = editor.document.project.clone();
-        let admission = crate::background::testing::pause();
+        let (_reply, receive) = futures_channel::oneshot::channel();
+        match phase {
+            0 => editor.document.spatial_reply = Some(receive),
+            1 => {
+                editor.document.analysis_preparation_work = Some(Box::new(|_, cancelled| {
+                    Box::pin(async move {
+                        cancelled.wait().await;
+                        Ok(None)
+                    })
+                }))
+            }
+            _ => {
+                editor.document.analysis_fit_work = Some(Box::new(|_, cancelled| {
+                    Box::pin(async move {
+                        cancelled.wait().await;
+                        Ok(None)
+                    })
+                }))
+            }
+        }
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 match phase {
@@ -159,11 +178,26 @@ fn regions_sampling_and_fitting_block_unrelated_controls_but_expose_cancellation
             for pressed in [true, false] {
                 app_frame(app, &context, pointer(cancel, pressed));
             }
-            drop(admission);
             app.run_until(Duration::from_secs(10), |editor| {
                 !editor.interaction_blocked()
             });
             app.read(|editor| assert_eq!(editor.document.project, before));
+            let labels = app_frame(app, &context, vec![]);
+            let photo = labels
+                .iter()
+                .find(|(text, _)| text == "Photo")
+                .unwrap()
+                .1
+                .center();
+            for pressed in [true, false] {
+                app_frame(app, &context, pointer(photo, pressed));
+            }
+            app.read(|editor| {
+                assert_eq!(
+                    editor.tab, 1,
+                    "ordinary tab dispatch must resume after cancellation"
+                )
+            });
         });
     }
 }

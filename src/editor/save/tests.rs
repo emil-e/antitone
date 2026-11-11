@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{FailureCase, Preparation, document, source, tests::fixture},
+    editor::{FailureCase, source, tests::fixture},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -287,8 +287,7 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
 }
 
 #[test]
-fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_open_on_failure() {
-    let (device, _queue) = gpu();
+fn acquisition_validates_physical_inputs_without_editor_and_keeps_the_parent_cache_on_failure() {
     let mut document = Document::default();
     document
         .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
@@ -306,49 +305,21 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     parent
         .publish_source(key.clone(), scan.source().clone())
         .unwrap();
-    let prepared = document::candidate(
-        crate::editor::DocumentRequest {
-            exposures: None,
-            sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
-            work: Preparation::Input(document.clone(), Some(source)),
-            correction: None,
-        },
-        &device,
-    )
-    .unwrap();
-    assert_eq!(prepared.prepared.document.project, accepted);
-    assert!(prepared.source.is_some());
-    let reused = pollster::block_on(
-        prepared
-            .source
-            .as_ref()
-            .unwrap()
-            .sources
-            .as_ref()
-            .unwrap()
-            .load_source(key.clone(), crate::source::Priority::Foreground),
-    )
-    .unwrap();
-    assert!(Arc::ptr_eq(&reused, scan.source()));
-    drop(prepared);
-    let bad = document::candidate(
-        crate::editor::DocumentRequest {
-            exposures: None,
-            sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
-            work: Preparation::Input(
-                {
-                    let mut candidate = document.clone();
-                    candidate.project.source_mut(source).unwrap().path =
-                        "missing-source.dng".into();
-                    candidate
-                },
-                Some(source),
-            ),
-            correction: None,
-        },
-        &device,
+    let loader = crate::source::SourceLoader::new();
+    let provider = loader.provider(Some(parent.clone()));
+    let input = document.source_input(source, &Default::default()).unwrap();
+    let acquired =
+        pollster::block_on(input.source(provider.as_ref(), crate::source::Priority::Foreground))
+            .unwrap();
+    assert!(Arc::ptr_eq(&acquired.prepared.source, scan.source()));
+    let mut candidate = document.clone();
+    candidate.project.source_mut(source).unwrap().path = "missing-source.dng".into();
+    let input = candidate.source_input(source, &Default::default()).unwrap();
+    assert!(
+        pollster::block_on(input.source(provider.as_ref(), crate::source::Priority::Foreground))
+            .is_err()
     );
-    assert!(bad.is_err());
     assert_eq!(document.project, accepted);
     assert!(Arc::ptr_eq(&parent.get(&key).unwrap(), scan.source()));
+    loader.close_and_wait().unwrap();
 }

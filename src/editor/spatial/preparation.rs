@@ -1,5 +1,5 @@
 //! Shared acquisition and physical-region preparation, independent of consumer transactions.
-use crate::editor::{Document, Error, document, document_scope::SamplingInputs};
+use crate::editor::{Document, Error, document_scope::SamplingInputs};
 use crate::{
     background,
     cancellation::Cancellation,
@@ -18,7 +18,7 @@ pub(in crate::editor) struct Prepared {
 
 struct CapturedSource {
     input: crate::spatial_metadata::Input,
-    camera: Arc<AnalysisInput>,
+    camera: crate::source::CameraSamples,
 }
 
 struct GeometryFrame {
@@ -34,7 +34,7 @@ fn geometry_frames(
     captures
         .into_iter()
         .map(|capture| {
-            let (size, rgb) = geometry_preview(&capture.camera, 768, checkpoint)?;
+            let (size, rgb) = geometry_preview(&capture.camera.pixels(), 768, checkpoint)?;
             Ok(GeometryFrame {
                 input: capture.input,
                 size,
@@ -97,59 +97,34 @@ fn geometry_preview(
 
 pub(in crate::editor) async fn prepare(
     document: Arc<Document>,
-    device: wgpu::Device,
     sources: Arc<dyn SourceProvider>,
     mut retained: SamplingInputs,
-    exposures: Arc<crate::exposure_metadata::Store>,
+    initialization: Arc<crate::source::Initialization>,
     cancelled: Cancellation,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Option<Prepared>, Error> {
-    let captured = document.clone();
-    let Some((inputs, cached)) = background::compute(&cancelled, move || {
-        captured.validate_for_device(&device)?;
-        let inputs = captured.spatial_inputs();
-        if captured
-            .project
-            .order
-            .iter()
-            .any(|id| !inputs.iter().any(|input| input.source == *id))
-        {
-            return Err(Error::UnusableSample("spatial source file is unavailable"));
-        }
-        let cached = captured
-            .spatial_metadata
-            .matching(&captured.project, &inputs);
-        Ok((inputs, cached))
-    })
-    .await?
-    else {
-        return Ok(None);
-    };
-    let regions_ready =
-        cached.groups.iter().map(|g| g.sources.len()).sum::<usize>() == inputs.len();
-    let total = inputs.len();
+    let known = document.spatial_inputs_with(&initialization);
+    let cached = document
+        .spatial_metadata
+        .matching(&document.project, &known);
+    let regions_ready = cached.groups.iter().map(|g| g.sources.len()).sum::<usize>()
+        == document.project.order.len();
+    let total = document.project.order.len();
     retained.retain(&document);
     let mut frames = Vec::with_capacity(total);
     let mut work = Vec::with_capacity(total);
-    for input in inputs {
-        let existing = retained.get(input.source, &document.source_key(input.source)?);
-        if !regions_ready || existing.is_none() {
-            work.push((input, existing));
+    for &source in &document.project.order {
+        let physical = document.source_input(source, &initialization)?;
+        if !regions_ready || !retained.contains(source, &physical) {
+            work.push((source, physical));
         }
     }
     let mut completed = total - work.len();
     progress(completed, total);
     {
-        // Bound source leases and CPU captures together, not just native development.
-        let captures = futures_util::stream::iter(work.into_iter().map(|(input, existing)| {
-            capture_source(
-                document.clone(),
-                sources.as_ref(),
-                &exposures,
-                &cancelled,
-                input,
-                existing,
-            )
+        let existing = retained.clone();
+        let captures = futures_util::stream::iter(work.into_iter().map(|(source, physical)| {
+            capture_source(sources.as_ref(), &existing, &cancelled, source, physical)
         }))
         .buffered(2);
         let mut captures = std::pin::pin!(captures);
@@ -157,11 +132,7 @@ pub(in crate::editor) async fn prepare(
             let Some(capture) = capture? else {
                 return Ok(None);
             };
-            retained.insert(
-                capture.input.source,
-                document.source_key(capture.input.source)?,
-                capture.camera.clone(),
-            );
+            retained.record(capture.input.source, &capture.camera);
             if !regions_ready {
                 frames.push(capture);
             }
@@ -171,23 +142,18 @@ pub(in crate::editor) async fn prepare(
             }
         }
     }
+    let inputs = document.spatial_inputs_with(&initialization);
     let metadata = if regions_ready {
         cached
     } else {
         let retired = cancelled.clone();
         let Some(metadata) = background::compute(&cancelled, move || {
-            let development = document
-                .project
-                .scan_basis()
-                .ok_or(Error::UnusableSample("no roll development"))
-                .and_then(|_| {
-                    document
-                        .project
-                        .sources
-                        .first()
-                        .map(|source| source.development.decode.clone())
-                        .ok_or(Error::UnusableSample("no roll development"))
-                })?;
+            let development = inputs
+                .first()
+                .ok_or(Error::UnusableSample("no roll development"))?
+                .development
+                .decode
+                .clone();
             let checkpoint = || {
                 if retired.is_cancelled() {
                     Err("spatial preparation cancelled".into())
@@ -205,7 +171,7 @@ pub(in crate::editor) async fn prepare(
                 .collect::<Result<Vec<_>, _>>()?;
             let metadata =
                 prepare_spatial(frames, development, checkpoint).map_err(Error::Project)?;
-            if metadata.matching(&document.project, &document.spatial_inputs()) != metadata {
+            if metadata.matching(&document.project, &inputs) != metadata {
                 return Err(Error::UnusableSample(
                     "source changed during spatial preparation",
                 ));
@@ -226,39 +192,25 @@ pub(in crate::editor) async fn prepare(
 }
 
 async fn capture_source(
-    document: Arc<Document>,
     sources: &dyn SourceProvider,
-    exposures: &crate::exposure_metadata::Store,
+    retained: &SamplingInputs,
     cancelled: &Cancellation,
-    input: crate::spatial_metadata::Input,
-    existing: Option<Arc<AnalysisInput>>,
+    source: crate::project::SourceId,
+    physical: crate::source::Input,
 ) -> Result<Option<CapturedSource>, Error> {
-    if let Some(camera) = existing {
-        return Ok(Some(CapturedSource { input, camera }));
-    }
-    let Some(scan) = document
-        .acquire_source(input.source, sources, exposures, cancelled)
+    let Some(camera) = retained
+        .acquire(source, &physical, sources, cancelled)
         .await?
     else {
         return Ok(None);
     };
-    let stopped = cancelled.clone();
-    let captured = input.clone();
-    let Some(Some(camera)) = background::compute(cancelled, move || {
-        let path = document.source_path(captured.source)?;
-        let actual = document::source_metadata(
-            &path,
-            &scan.source().metadata(),
-            scan.source().white_balance(),
-        )?;
-        document::verify_source(document.project.source(captured.source)?, &actual)?;
-        document::verify_scan(&actual, &scan)?;
-        document.project.require_scan_source(&actual.development)?;
-        Ok(AnalysisInput::capture(&scan, || stopped.is_cancelled())?.map(Arc::new))
-    })
-    .await?
-    else {
-        return Ok(None);
+    let input = crate::spatial_metadata::Input {
+        source,
+        revision: camera.file().revision.clone().ok_or(Error::UnusableSample(
+            "spatial source revision is unavailable",
+        ))?,
+        development: camera.development().clone(),
+        correction: None,
     };
     Ok(Some(CapturedSource { input, camera }))
 }

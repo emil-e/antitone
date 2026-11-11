@@ -175,7 +175,7 @@ impl crate::image_recipe::NeutralRecipe {
             camera_model: scan.camera_model.clone(),
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
         };
-        if !self.source_development.same_processing(&actual)
+        if !self.source_development.resolved()?.same_processing(&actual)
             || self.correction.as_ref() != scan.flat_field()
         {
             return Err(Error::Raw(

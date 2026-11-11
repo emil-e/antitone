@@ -5,11 +5,12 @@ use crate::{
 };
 
 mod film_edges;
+mod interpretation;
 
 struct Resources {
     sources: Arc<dyn SourceProvider>,
     sampling_inputs: SamplingInputs,
-    exposures: Arc<crate::exposure_metadata::Store>,
+    initialization: Arc<crate::source::Initialization>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderers: Arc<crate::renderer::RendererCache>,
@@ -17,13 +18,20 @@ struct Resources {
 
 impl Resources {
     fn fit(&self, request: Request, input: Option<Arc<Correction>>) -> Result<Fit, Error> {
-        Fit::new(
+        pollster::block_on(Fit::acquire(
             self.device.clone(),
             self.queue.clone(),
             self.renderers.get(&self.device, &self.queue)?,
             request,
-            input,
-        )
+            super::Resources {
+                correction: input,
+                sources: self.sources.clone(),
+                sampling_inputs: self.sampling_inputs.clone(),
+                initialization: self.initialization.clone(),
+            },
+            &Cancellation::default(),
+        ))
+        .map(|fit| fit.expect("uncancelled fitting acquisition"))
     }
 
     async fn acquire(
@@ -32,15 +40,22 @@ impl Resources {
         index: usize,
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
-        request
+        let physical = request
             .document
-            .acquire_source(
-                request.document.project.order[index],
-                self.sources.as_ref(),
-                &self.exposures,
-                &cancelled,
-            )
-            .await
+            .source_input(request.document.project.order[index], &self.initialization)?;
+        futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Ok(None)
+            },
+            async {
+                physical
+                    .source(self.sources.as_ref(), crate::source::Priority::Foreground)
+                    .await
+                    .map(|acquired| Some(acquired.prepared.scan()))
+            },
+        )
+        .await
     }
 }
 
@@ -51,16 +66,26 @@ async fn run(
     cancelled: Cancellation,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Outcome>, Error> {
-    let state = resources.fit(request, input)?;
-    state
-        .run(
-            resources.sources,
-            resources.sampling_inputs,
-            resources.exposures,
-            cancelled,
-            progress,
-        )
-        .await
+    let state = Fit::acquire(
+        resources.device.clone(),
+        resources.queue.clone(),
+        resources
+            .renderers
+            .get(&resources.device, &resources.queue)?,
+        request,
+        super::Resources {
+            correction: input,
+            sources: resources.sources,
+            sampling_inputs: resources.sampling_inputs,
+            initialization: resources.initialization,
+        },
+        &cancelled,
+    )
+    .await?;
+    match state {
+        Some(state) => state.run(cancelled, progress).await,
+        None => Ok(None),
+    }
 }
 
 fn approved(request: &mut Request) {
@@ -106,7 +131,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let mut services = Resources {
-        exposures: Arc::default(),
+        initialization: Arc::default(),
         sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
         device,
@@ -253,7 +278,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Resources {
-        exposures: Arc::default(),
+        initialization: Arc::default(),
         sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
         device,

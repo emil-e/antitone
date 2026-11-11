@@ -8,7 +8,7 @@ use std::time::Duration;
 fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layers() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.load_input(InputSettings::Digital);
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     editor.document.project.roll.wb = Balance {
         warmth: 0.3,
         tint: -0.2,
@@ -77,8 +77,10 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
 #[test]
 fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacement() {
     use crate::{adjustment_layers::AdjustmentLayer, project::AdjustmentLayers};
-    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.document.project.input = crate::processing::InputSettings::Digital;
+    let mut editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&["patches.dng"]),
+        crate::processing::InputSettings::Digital,
+    );
     editor.document.project.roll = RollSettings::default();
     let source = editor.document.visit.current_source.unwrap();
     let upstream = Balance {
@@ -296,7 +298,7 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
     use crate::{adjustment_layers::AdjustmentLayer, editor::adjustment_layers::Target};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.load_input(InputSettings::Digital);
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     editor
         .edit_adjustment_layers(|layers| {
             layers.add(
@@ -410,7 +412,7 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
     use crate::{adjustment_layers::AdjustmentLayer, editor::adjustment_layers::Target};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.load_input(InputSettings::Digital);
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     let source = editor.document.visit.current_source.unwrap();
     let first = editor
         .document
@@ -527,7 +529,7 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
     editor.tab = 1;
-    editor.load_input(InputSettings::Digital);
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     let source = editor.document.visit.current_source.unwrap();
     let first = editor
         .document
@@ -664,7 +666,7 @@ fn completed_wb_measurement_cannot_publish_after_cancellation_photo_or_document_
             first.path().to_str().unwrap(),
             second.path().to_str().unwrap(),
         ]);
-        editor.load_input(InputSettings::Digital);
+        editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
 
         let area = editor.selected_area().unwrap();
         let region = Coverage::rectangle(Rect {

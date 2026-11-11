@@ -791,6 +791,7 @@ fn fixture() -> Editor {
         .document
         .register_with_development(
             Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
                 development: crate::project::SourceDevelopment {
@@ -911,34 +912,23 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
 }
 
 #[test]
-fn failed_and_stale_document_results_preserve_state_and_active_request() {
+fn input_rejects_a_conflicting_photo_edit_without_retiring_it_or_changing_accepted_values() {
     let mut editor = fixture();
     editor.photo_settings_mut().exposure = 7.123456789012345;
     let before = editor.document.state.project.clone();
     let active = editor.id;
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.start_document(
-                Preparation::Input(
-                    editor.document.capture(),
-                    editor.document.visit.current_source,
-                ),
-                cx,
+            let edit = editor.edit_photo("Active photo edit").unwrap();
+            let owner = edit.preview();
+            editor.request_input(crate::processing::InputSettings::Digital, cx);
+            assert!(editor.document.visit.project_preview.same_edit(&owner));
+            assert!(
+                editor.editing(),
+                "a rejected request must not cancel its conflicting owner"
             );
-            let id = editor.document_pending.unwrap();
-            editor.document_prepared(id + 1, Err("stale candidate".into()));
-            editor.source_result(active, Err("old load".into()));
-            assert_eq!(editor.document_pending, Some(id));
-            assert_eq!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                id
-            );
-            assert!(editor.interaction_blocked());
-            assert_eq!(editor.document.state.project, before);
-            editor.document_prepared(id, Err("changed RAW".into()));
             assert!(editor.document_pending.is_none());
+            assert!(!editor.dialogs.is_open());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.id, active);
             assert_eq!(
@@ -949,8 +939,9 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
             );
             assert_eq!(editor.photo_settings().exposure, 7.123456789012345);
             assert!(editor.document.dirty());
+            drop(edit);
+            assert!(!editor.editing());
         });
-        app.pump();
     });
 }
 
@@ -1088,10 +1079,8 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
                 .unwrap();
             let request = editor.source_input(source_path.clone());
             editor.load(source_path, cx);
-            let wb = request.wb;
-            let expected = &request.expected;
-            assert_eq!(wb, editor.document.project.acquisition_wb());
-            assert!(expected.is_some());
+            assert_eq!(request.source.input(), editor.document.project.input);
+            assert!(request.source.development().is_some());
             assert_eq!(editor.document.state.project, before);
             assert!(!editor.document.dirty());
         });

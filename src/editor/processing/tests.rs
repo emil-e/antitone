@@ -16,6 +16,7 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
     let mut editor = super::super::tests::fixture();
     editor.initialize_viewer(&device, &queue);
     let record = Source {
+        development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "local-fixture.ARW".into(),
         development: SourceDevelopment {
@@ -652,19 +653,21 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                     editor.photo_settings(),
                 )
                 .unwrap();
+            let target = editor.document.target();
+            let source = editor.source_context().unwrap();
             editor.document.visit.canvas.original.observe(
                 OriginalPurpose::Reference,
                 original_view::Demand {
                     capture: PhotographRequest::Recipe(Arc::new(recipe)),
                     repairs: Default::default(),
-                    target: editor.document.target(),
+                    target,
                     view: Some(ViewRequest {
                         area: frame.bounds().unwrap(),
                         output: frame.output,
                         frame: Some(frame),
                     }),
                     composition: layout.composition,
-                    source: editor.source_context().unwrap(),
+                    source,
                 },
             );
             editor.document.visit.canvas.original.last_edit =

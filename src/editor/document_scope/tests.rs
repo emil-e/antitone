@@ -136,9 +136,10 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
 }
 
 #[test]
-fn failed_candidate_preserves_the_visit_source_and_history() {
+fn cancelling_input_confirmation_preserves_the_visit_source_and_history() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
+    editor.document.project.set_gamma(1.25);
     let before = editor.history_snapshot();
     editor.document.project.roll.exposure = 0.25;
     editor.record_edit(before, "Exposure", None);
@@ -154,16 +155,9 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
         .clone();
     let view = editor.document.visit.view;
     with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            editor.start_document(
-                crate::editor::Preparation::Input(
-                    editor.document.capture(),
-                    editor.document.visit.current_source,
-                ),
-                cx,
-            );
-            let request = editor.document_pending.unwrap();
-            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
+        app.enter(|editor, cx| editor.request_input(crate::processing::InputSettings::Digital, cx));
+        app.read(|editor| {
+            assert!(editor.dialogs.is_open());
             assert_eq!(editor.document.visit.view, view);
             assert!(Arc::ptr_eq(
                 &editor
@@ -176,7 +170,12 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
                     .developed,
                 &source
             ));
-            editor.document_prepared(request, Err("candidate rejected".into()));
+        });
+        app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
+        app.run_until(std::time::Duration::from_secs(5), |editor| {
+            editor.document.input_change.is_none()
+        });
+        app.read(|editor| {
             assert_eq!(editor.document.visit.view, view);
             assert!(Arc::ptr_eq(
                 &editor
@@ -195,7 +194,6 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
                 Some("Exposure")
             );
         });
-        app.pump();
     });
 }
 

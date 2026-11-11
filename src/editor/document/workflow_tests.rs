@@ -261,7 +261,11 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.restore_history(crate::editor::history::Direction::Redo, access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.visit.canvas.ready.is_some());
@@ -286,89 +290,78 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
 }
 
 #[test]
-fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
+fn input_stage_switch_accepts_intent_and_consumers_acquire_each_photographs_wb() {
     use crate::processing::InputSettings;
-
     let directory = tempfile::tempdir().unwrap();
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
     let red = directory.path().join("red-neutral.dng");
     std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
-    let red_as_shot = crate::scan::Scan::open(&red, None).unwrap().white_balance;
-    assert_ne!(red_as_shot, crate::project::UNITY_WB);
-
-    let assert_stage_development = |e: &Editor, digital: bool| {
-        let wb = if digital {
-            None
-        } else {
-            Some(crate::project::UNITY_WB)
-        };
-        for source in &e.document.state.project.sources {
-            let expected = crate::editor::document::read_source(
-                &e.document.source_path(source.id).unwrap(),
-                wb,
-            )
-            .unwrap();
-            assert_eq!(
-                source.development,
-                expected.development,
-                "source {} did not use the {} stage WB",
-                source.path.display(),
-                if digital { "Digital" } else { "Negative" }
-            );
-        }
-    };
-
+    assert_ne!(
+        crate::scan::Scan::open(&red, None).unwrap().white_balance,
+        crate::project::UNITY_WB
+    );
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
-        app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
-        app.read(|e| {
-            assert!(e.document.project.input.is_negative(), "{}", e.status);
-            assert_eq!(e.document.state.project.sources.len(), 2);
-            assert_stage_development(e, false);
+        app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red], cx));
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
         });
-        app.enter(|e, cx| e.request_input(InputSettings::Digital, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
-        app.read(|e| {
-            assert_eq!(
-                e.document.project.input,
-                InputSettings::Digital,
-                "{}",
-                e.status
-            );
-            assert_stage_development(e, true);
-        });
-        app.enter(|e, cx| e.request_input(e.negative_input(), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
-        app.read(|e| {
-            assert!(e.document.project.input.is_negative(), "{}", e.status);
-            assert_stage_development(e, false);
-            assert_eq!(
-                e.document.state.project.scan_basis(),
-                Some(&crate::project::ScanBasis::from_development(
-                    &e.document.state.project.sources[0].development
-                ))
-            );
-        });
-        app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
-        app.read(|e| {
-            assert_eq!(
-                e.document.project.input,
-                InputSettings::Digital,
-                "{}",
-                e.status
-            );
-            assert_stage_development(e, true);
-        });
-        app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
-        app.read(|e| {
-            assert!(e.document.project.input.is_negative(), "{}", e.status);
-            assert_stage_development(e, false);
-        });
+        let baseline = app.read(|e| e.document.project.sources.clone());
+        for (target, history) in [
+            (InputSettings::Digital, None),
+            (InputSettings::default(), None),
+            (InputSettings::Digital, Some(history::Direction::Undo)),
+            (InputSettings::default(), Some(history::Direction::Redo)),
+        ] {
+            app.enter(|e, cx| {
+                if let Some(direction) = history {
+                    e.restore_history(direction, cx);
+                } else {
+                    e.request_input(target, cx);
+                }
+            });
+            app.run_until(Duration::from_secs(15), |e| {
+                !e.interaction_blocked() && e.document.input_change.is_none()
+            });
+            let (requests, provider) = app.read(|e| {
+                assert_eq!(e.document.project.input, target, "{}", e.status);
+                assert_eq!(
+                    e.document.project.sources, baseline,
+                    "switching does not rewrite registered baselines"
+                );
+                let inputs: Vec<_> = e
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .map(|id| e.document.source_input(*id).unwrap())
+                    .collect();
+                (inputs, e.source_provider().unwrap())
+            });
+            for input in requests {
+                let expected =
+                    crate::editor::document::read_source(input.path(), target.development_wb())
+                        .unwrap();
+                let acquired = pollster::block_on(
+                    input.source(provider.as_ref(), source_loading::Priority::Foreground),
+                )
+                .unwrap();
+                assert_eq!(acquired.record.development, expected.development);
+                assert_eq!(
+                    acquired.prepared.scan().white_balance,
+                    expected.development.decode.white_balance
+                );
+            }
+            app.read(|e| {
+                assert_eq!(e.document.project.sources, baseline);
+                assert_eq!(
+                    e.history_label(history::Direction::Undo),
+                    Some("Input stage")
+                );
+            });
+        }
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -407,7 +400,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             candidate.project.set_flat_field(Some(field)).unwrap();
             e.start_correction(candidate, cx);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         let (negative, scan, expected_pixels) = app.read(|e| {
             assert!(e.document.correction.prepared().is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
@@ -428,8 +425,6 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 digital_proxy_pixels(e, &uncorrected, None),
             )
         });
-        let mut cleared_scan = scan.clone().unwrap();
-        cleared_scan.flat_field = None;
         // The fixture really exercises an active GPU correction, not just saved settings.
         let corrected_pixels = app.read(|e| {
             digital_proxy_pixels(
@@ -455,13 +450,15 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         });
         app.pump();
         app.read(|e| {
-            assert!(e.interaction_blocked() && e.document.correction.prepared().is_some());
-            assert_eq!(
-                e.document.project.input, negative,
-                "old interpretation stays accepted until preparation completes"
-            );
+            assert_eq!(e.document.project.input, InputSettings::Digital);
+            assert!(e.document.correction.prepared().is_none());
+            assert!(e.document.project.flat_field().is_none());
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         app.read(|e| {
             assert_eq!(
                 e.document.project.input,
@@ -478,7 +475,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                     .flat_field()
                     .is_none()
             );
-            assert_eq!(e.document.state.project.scan, Some(cleared_scan.clone()));
+            assert!(e.document.state.project.scan.is_none());
             assert_eq!(
                 e.history_label(history::Direction::Undo),
                 Some("Input stage")
@@ -499,14 +496,22 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             }
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         app.read(|e| {
             assert_eq!(e.document.project.input, negative, "{}", e.status);
             assert!(e.document.correction.prepared().is_some() && !e.document.source);
             assert_eq!(e.document.state.project.scan, scan);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         app.enter(|e, cx| {
             assert_eq!(
                 e.document.project.input,
@@ -517,7 +522,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             assert!(e.document.correction.prepared().is_none());
             e.request_input(e.negative_input(), cx);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && !e.document.correction.pending()
+        });
         app.read(|e| {
             assert!(
                 e.document.project.input.is_negative()
@@ -526,7 +535,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert_eq!(e.document.state.project.scan, Some(cleared_scan));
+            assert!(e.document.state.project.scan.is_none());
+            assert_eq!(
+                e.document.capture().scan_basis().as_ref(),
+                scan.as_ref().map(|scan| &scan.basis)
+            );
         });
     });
     scheduler.close_and_wait().unwrap();

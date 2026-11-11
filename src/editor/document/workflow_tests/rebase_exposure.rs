@@ -178,7 +178,7 @@ fn relative_save_as_keeps_normalized_range_admission() {
     let scope: crate::editor::document_scope::DocumentScope = document.into();
 
     scope
-        .exposure_slot(&scope.exposures, id)
+        .exposure_slot(&scope.initialization, id)
         .set(reference(3.))
         .unwrap();
     let snapshot = scope.capture();
@@ -207,7 +207,7 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
 
     editor
         .document
-        .exposure_slot(&editor.document.exposures, offscreen)
+        .exposure_slot(&editor.document.initialization, offscreen)
         .set(reference(3.))
         .unwrap();
     editor
@@ -219,29 +219,8 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     assert!(target.exposure_metadata.entries.is_empty());
     target.project = historical;
     let device = &editor.source_services.as_ref().unwrap().device;
-    let prepare = |cache| {
-        super::super::super::document::candidate(
-            crate::editor::DocumentRequest {
-                exposures: None,
-                work: Preparation::History(
-                    target.clone(),
-                    Some(selected),
-                    crate::editor::history::Direction::Undo,
-                ),
-                correction: None,
-                sources: Some(
-                    editor
-                        .source_services
-                        .as_ref()
-                        .unwrap()
-                        .provider(Some(cache)),
-                ),
-            },
-            device,
-        )
-    };
     assert!(
-        prepare(Arc::new(crate::source::SourceCache::new(0))).is_ok(),
+        target.validate_for_device(device).is_ok(),
         "unresolved domains remain lazily admitted"
     );
     let removed = editor.document.state.project.clone();

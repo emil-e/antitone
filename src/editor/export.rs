@@ -764,29 +764,17 @@ impl Editor {
                 number += 1;
             }
             require_safe(&path, &protected)?;
-            let expected = self.document.state.project.source(id)?;
-            let input = if self.document.visit.current_source == Some(id) {
-                self.source_context().map(Input::Ready)
-            } else {
-                None
-            }
-            .unwrap_or_else(|| {
-                let expected = expected.clone();
-                let wb = self.document.source_wb(id);
-                Input::Acquire(Box::new(source::Request {
-                    reference: self.document.exposure_slot(&self.document.exposures, id),
-
-                    input: self.input(),
-
-                    file: self.document.file_key(&source_path),
+            let ready = (self.document.visit.current_source == Some(id))
+                .then(|| self.source_context())
+                .flatten();
+            let input = match ready {
+                Some(context) => Input::Ready(context),
+                None => Input::Acquire(Box::new(source::Request {
+                    source: self.document.source_input(id)?,
                     sources: None,
-
-                    path: source_path,
-                    wb,
-                    expected: Some(expected),
                     correction: self.document.correction.prepared().cloned(),
-                }))
-            });
+                })),
+            };
             photos.push(Photo {
                 correction: self.document.correction.clone(),
                 input,

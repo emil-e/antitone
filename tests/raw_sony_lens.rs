@@ -443,6 +443,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::Unity,
             path: file.path().into(),
             development: first_development,
 
@@ -476,7 +477,9 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     recipe.neutral.require_scan(&scan).unwrap();
     recipe.neutral.require_scan(&other).unwrap();
     let mut different = recipe.neutral.clone();
-    different.source_development.decode.white_balance[0] *= 2.;
+    let mut development = different.source_development.resolved().unwrap().clone();
+    development.decode.white_balance[0] *= 2.;
+    different.source_development = development.into();
     assert!(different.require_scan(&scan).is_err());
     let mut old = reopened;
     old.set_flat_field(None).unwrap();

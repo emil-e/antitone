@@ -29,21 +29,9 @@ fn request(name: &str) -> (DocumentScope, Request) {
     let path = fixture(name);
     let mut document = Document::default();
     document.import(std::slice::from_ref(&path)).unwrap();
-    let expected = document
-        .project
-        .source(document.project.order[0])
-        .unwrap()
-        .clone();
-    let wb = document.project.acquisition_wb();
     let document: DocumentScope = document.into();
-    let file = document.file_key(&path);
     let request = Request {
-        reference: Arc::default(),
-        input: document.project.input,
-        path,
-        wb,
-        expected: Some(expected),
-        file,
+        source: document.source_input(document.project.order[0]).unwrap(),
         sources: None,
         correction: None,
     };
@@ -93,11 +81,26 @@ fn incompatible_requests_reject_without_rewriting_document_authority() {
     for conflicting_wb in [false, true] {
         let (document, mut request) = request("patches.dng");
         let accepted = document.project.clone();
+        let mut record = document.project.sources[0].clone();
         if conflicting_wb {
-            request.wb = Some([2., 1., 1., 1.]);
+            record.development.decode.white_balance = [2., 1., 1., 1.];
         } else {
-            request.expected.as_mut().unwrap().development.camera_model = "different camera".into();
+            record.development.camera_model = "different camera".into();
         }
+        request.source = crate::source::Input::photo(
+            document.source_path(record.id).unwrap(),
+            document.file_key(&document.source_path(record.id).unwrap()),
+            document.project.input,
+            Arc::default(),
+            crate::source::input::Photograph {
+                record: record.clone(),
+                development: record.development.clone().into(),
+                basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
+                    &record,
+                ))),
+                expected_camera: Some(record.development.camera_model.clone()),
+            },
+        );
         let scheduler = source_loading::SourceLoader::new();
         assert!(request.load(&scheduler, &|| false).is_err());
         assert_eq!(document.project, accepted);

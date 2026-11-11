@@ -25,6 +25,31 @@ pub struct SamplingInputs {
 }
 
 impl SamplingInputs {
+    pub async fn acquire(
+        &self,
+        source: SourceId,
+        physical: &crate::source::Input,
+        provider: &dyn crate::source::SourceProvider,
+        cancelled: &crate::cancellation::Cancellation,
+    ) -> Result<Option<crate::source::CameraSamples>, crate::Error> {
+        let cached = self
+            .entries
+            .iter()
+            .find(|entry| entry.source == source)
+            .map(|entry| (entry.key.clone(), entry.input.clone()));
+        physical.camera_samples(provider, cached, cancelled).await
+    }
+
+    pub fn contains(&self, source: SourceId, physical: &crate::source::Input) -> bool {
+        physical
+            .cached_key()
+            .is_some_and(|key| self.get(source, &key).is_some())
+    }
+
+    pub fn record(&mut self, source: SourceId, camera: &crate::source::CameraSamples) {
+        self.insert(source, camera.key().clone(), camera.pixels());
+    }
+
     pub fn get(&self, source: SourceId, key: &SourceKey) -> Option<Arc<AnalysisInput>> {
         self.entries
             .iter()
@@ -80,13 +105,14 @@ pub(super) struct DocumentScope {
 
     pub export: super::export::State,
     pub importing: Option<async_executor::Task<()>>,
+    pub input_change: Option<async_executor::Task<()>>,
     pub correction: super::flat::Resources,
     pub correction_restore: Option<async_executor::Task<()>>,
     pub flat_correction: Option<async_executor::Task<()>>,
     pub hosted_tool: super::tool::Slot,
     pub state: Document,
     pub cache: Arc<crate::source::SourceCache>,
-    pub exposures: Arc<crate::exposure_metadata::Store>,
+    pub initialization: Arc<crate::source::Initialization>,
     pub spatial: crate::spatial_metadata::Store,
     pub sampling_inputs: SamplingInputs,
     pub source_previews: super::viewer_ui::SourcePreviews,
@@ -126,7 +152,7 @@ impl DocumentScope {
             .project_preview
             .snapshot()
             .or_else(|| self.project_preview.snapshot())
-            .map(Into::into)
+            .map(|project| self.state.project.updated(project))
             .or_else(|| {
                 self.document_preview
                     .snapshot()
@@ -159,8 +185,41 @@ impl DocumentScope {
     pub fn capture(&self) -> Document {
         let mut document = self.state.clone();
         document.spatial_metadata = self.spatial.ready();
-        document.capture_exposure(&self.exposures);
+        document.capture_initialization(&self.initialization);
         document
+    }
+
+    pub fn source_input(&self, id: SourceId) -> Result<crate::source::Input, crate::Error> {
+        self.state.source_input(id, &self.initialization)
+    }
+
+    pub fn development_for(
+        &self,
+        source: &crate::project::Source,
+        input: crate::processing::InputSettings,
+    ) -> crate::development_metadata::Development {
+        let origin = self
+            .state
+            .exposure_origin(source.id)
+            .unwrap_or_else(|| source.path.clone());
+        self.initialization.developments.request(
+            source,
+            &origin,
+            input,
+            &self.state.development_metadata,
+        )
+    }
+
+    pub fn image_recipe(
+        &self,
+        id: SourceId,
+    ) -> Result<crate::image_recipe::ImageRecipe, crate::Error> {
+        let source = self.state.project.source(id)?;
+        self.state.project.capture_image(source, |recipe| {
+            recipe.neutral.source_development =
+                self.development_for(source, self.state.project.input);
+            recipe.neutral.reference = self.exposure_value(source);
+        })
     }
 
     pub fn accept_save(&mut self, saved: Document) {
@@ -181,9 +240,11 @@ impl DocumentScope {
     pub fn install(&mut self, document: Document) {
         self.retire_edits();
         self.sampling_inputs.retain(&document);
-        self.exposures.restore(&document.exposure_metadata, |id| {
-            document.exposure_origin(id)
-        });
+        self.initialization
+            .exposures
+            .restore(&document.exposure_metadata, |id| {
+                document.exposure_origin(id)
+            });
         self.state = document;
     }
 
@@ -193,7 +254,7 @@ impl DocumentScope {
     ) -> Option<crate::exposure_reference::ReferenceExposure> {
         self.state
             .exposure_origin(source.id)
-            .and_then(|origin| self.exposures.get(source.id, &origin))
+            .and_then(|origin| self.initialization.exposures.get(source.id, &origin))
             .or_else(|| self.state.reference_exposure(source).cloned())
     }
 
@@ -203,7 +264,12 @@ impl DocumentScope {
         input: crate::processing::InputSettings,
     ) -> Result<glam::DMat3, crate::Error> {
         input.positive_matrix(
-            glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+            glam::DMat3::from_cols_array_2d(
+                &self
+                    .development_for(source, input)
+                    .resolved()?
+                    .camera_to_ap1,
+            ),
             self.exposure_value(source)
                 .as_ref()
                 .map(|reference| reference.ev()),
@@ -214,8 +280,14 @@ impl DocumentScope {
         let Ok(path) = self.state.source_path(source.id) else {
             return Default::default();
         };
-        let key = SourceKey::for_load(&path, self.state.file_key(&path), &source.development);
-        self.source_previews.get(&key)
+        let development = self.development_for(source, self.state.project.input);
+        let Ok(development) = development.resolved() else {
+            return Default::default();
+        };
+        let key = SourceKey::for_load(&path, self.state.file_key(&path), development);
+        self.development_for(source, self.state.project.input)
+            .source_preview()
+            .unwrap_or_else(|| self.source_previews.get(&key))
     }
 
     pub fn cache_ready(&mut self, ready: &Ready) {
@@ -223,10 +295,19 @@ impl DocumentScope {
         {
             let _ = self
                 .state
-                .exposure_slot(&self.exposures, id)
+                .exposure_slot(&self.initialization, id)
                 .set(reference.clone());
         }
-        self.state.capture_exposure(&self.exposures);
+        if let Ok(source) = self.state.project.source(ready.record.id) {
+            self.development_for(source, self.state.project.input)
+                .observe_preview(
+                    ready
+                        .developed
+                        .metadata()
+                        .source_preview(ready.developed.white_balance()),
+                );
+        }
+        self.state.capture_initialization(&self.initialization);
         let key = crate::source::SourceKey::for_load(
             &ready.path,
             ready.file.clone(),
@@ -251,27 +332,20 @@ impl DocumentScope {
             log::warn!(error = error.to_string().as_str(); "source_proxy_publication_failed");
         }
     }
-
-    pub fn same_visit(&self, ready: Option<&Ready>) -> bool {
-        match (self.visit.canvas.ready.as_ref(), ready) {
-            (Some(current), Some(candidate)) => {
-                current.path == candidate.path
-                    && current.file == candidate.file
-                    && current.record.development == candidate.record.development
-            }
-            (None, Some(candidate)) => self.visit.source.matches(candidate),
-            (None, None) => true,
-            _ => false,
-        }
-    }
 }
 
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
         let cache = Arc::new(crate::source::SourceCache::new(0));
-        let exposures = Arc::new(crate::exposure_metadata::Store::restored(
-            &state.exposure_metadata,
-            |id| state.exposure_origin(id),
+        let initialization = Arc::new(crate::source::Initialization::new(
+            crate::exposure_metadata::Store::restored(&state.exposure_metadata, |id| {
+                state.exposure_origin(id)
+            }),
+            crate::development_metadata::Store::restored(
+                &state.development_metadata,
+                &state.project,
+                |id| state.exposure_origin(id),
+            ),
         ));
         Self {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
@@ -288,6 +362,7 @@ impl From<Document> for DocumentScope {
 
             export: Default::default(),
             importing: None,
+            input_change: None,
             gamma_pivot: Default::default(),
 
             source: true,
@@ -302,7 +377,7 @@ impl From<Document> for DocumentScope {
             spatial_resumed: Arc::default(),
             state,
             cache,
-            exposures,
+            initialization,
             history: History::default(),
             visit: PhotoScope::default(),
             embedded_preview: None,

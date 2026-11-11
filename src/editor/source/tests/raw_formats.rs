@@ -32,8 +32,9 @@ fn authored_capture_balance_is_per_source_across_input_stage_switches() {
         .unwrap();
     assert!(document.project.input.is_negative());
     let loader = source_loading::SourceLoader::new();
+    let initialization = crate::source::Initialization::default();
     for input in [InputSettings::Digital, InputSettings::default()] {
-        document.redevelop_for_input(input).unwrap();
+        document.project.input = input;
         assert_eq!(document.project.input, input);
         assert_eq!(document.project.sources.len(), 2);
         for (source, balance) in document
@@ -42,14 +43,12 @@ fn authored_capture_balance_is_per_source_across_input_stage_switches() {
             .iter()
             .zip([[2048., 1024., 1536.], [4096., 1024., 2048.]])
         {
-            let scan = pollster::block_on(document.acquire_source(
-                source.id,
-                &loader,
-                &Default::default(),
-                &Default::default(),
-            ))
-            .unwrap()
-            .unwrap();
+            let physical = document.source_input(source.id, &initialization).unwrap();
+            let scan =
+                pollster::block_on(physical.source(&loader, crate::source::Priority::Foreground))
+                    .unwrap()
+                    .prepared
+                    .scan();
             let expected = if input.is_negative() {
                 crate::project::UNITY_WB
             } else {
@@ -58,7 +57,7 @@ fn authored_capture_balance_is_per_source_across_input_stage_switches() {
             assert_eq!(scan.white_balance, expected);
             assert_eq!(
                 document
-                    .source_key(source.id)
+                    .source_key_with(source.id, &initialization)
                     .unwrap()
                     .development()
                     .decode
@@ -136,12 +135,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             let loader = source_loading::SourceLoader::new();
             let load = |document: &DocumentScope, loader: &source_loading::SourceLoader| {
                 Request {
-                    reference: document.exposure_slot(&document.exposures, id),
-                    input: document.project.input,
-                    path: path.clone(),
-                    wb: document.project.acquisition_wb(),
-                    expected: Some(document.project.source(id).unwrap().clone()),
-                    file: document.file_key(path),
+                    source: document.source_input(id).unwrap(),
                     sources: Some(loader.provider(Some(document.cache.clone()))),
                     correction: None,
                 }

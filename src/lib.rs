@@ -14,6 +14,8 @@ mod cancellation;
 pub mod color;
 pub mod coverage;
 pub mod crop;
+#[cfg(feature = "project")]
+pub mod development_metadata;
 #[cfg(feature = "dng-sdk")]
 pub mod dng;
 #[cfg(all(test, feature = "dng-sdk"))]
@@ -66,8 +68,6 @@ pub mod project;
 pub mod raw;
 #[cfg(feature = "editor")]
 mod refinement;
-#[cfg(feature = "project")]
-mod region_timing;
 #[cfg(feature = "render")]
 pub mod rendering;
 #[cfg(feature = "raw")]

@@ -66,6 +66,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
         .document
         .register_with_development(
             Source {
+                development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: path.clone(),
                 development: SourceDevelopment {
@@ -324,7 +325,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                 &renderers.get(&device, &queue).unwrap(),
                 &device,
                 OutputTarget::DisplayP3,
-                &source.development,
+                source.development.active_area,
             )
             .await
             .unwrap();
@@ -448,7 +449,8 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                 assert_eq!(
                     editor
                         .source_input(editor.document.source_path(id).unwrap())
-                        .expected
+                        .source
+                        .record()
                         .unwrap()
                         .id,
                     id

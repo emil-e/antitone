@@ -193,6 +193,7 @@ fn record(scan: &Scan, path: &std::path::Path) -> antitone::project::Source {
     use antitone::project::{Source, SourceDevelopment, SourceId};
     let metadata = scan.source().metadata();
     Source {
+        development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
