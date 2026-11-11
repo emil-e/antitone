@@ -2,7 +2,7 @@
   "source": "https://github.com/andreavolpato/spektrafilm",
   "author": "Andrea Volpato",
   "revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
-  "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds a brightness-anchored convex reference-negative spectral adapter with boundary-only radial mapping and inverse authoring DRT; no photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived components are a private trial with separate unresolved public redistribution clearance.",
+  "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds a brightness-anchored convex reference-negative spectral adapter with boundary-only radial mapping and inverse authoring DRT; no photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
   "source_code_sha256": {
     "src/spektrafilm/__init__.py": "c042866a99e58250654195a34fb60dfed397325b9e2515d7f0cf386d1026250d",
     "src/spektrafilm/config.py": "d090b6401431e44b8c9ea31c980728ceec6ed1f5468415fbfa8200454add7d0d",
@@ -97,7 +97,7 @@
     "colour-science": "0.4.7",
     "OpenColorIO": "2.6.0"
   },
-  "generator_sha256": "d0a1d700a8bd65bed99b3062a1469b12d1f629269122d8fb4fd3ad1d53587996",
+  "generator_sha256": "15b0d8f0af210d9f1ed809c6ca1018ea4c949d5f779d22ac6f449b70fed16227",
   "positive_driver_sha256": "ab7c6c84264a6d9a79551baf0a70d1e5337c2d21401816782e6cdf93e455c10d",
   "reference_driver_sha256": "20ba77f488202ec5ebb26221051d48fac60046a70d1b6fba93dd528f3ddc7cdc",
   "positive_drivers": {

@@ -82,6 +82,29 @@ class NoticeCollection(unittest.TestCase):
                 with patch.dict(packager.os.environ, {"LIBRAW_SOURCE": str(root / "shared")}):
                     self.assertEqual(packager.libraw_source(), root / "shared")
 
+    def test_colour_material_notices_include_the_academy_terms_without_runtime_blobs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "assets/spektrafilm"
+            source.mkdir(parents=True)
+            files = {
+                "LICENSE-code.txt": b"code terms\n",
+                "LICENSE-data.txt": b"data terms\n",
+                "NOTICE-Academy-APD.txt": "Academy notice: ©2010\n".encode(),
+                "CHANGELOG.txt": b"modifications\n",
+                "provenance.json": b'{"source": "historical reference"}\n',
+            }
+            for name, data in files.items():
+                (source / name).write_bytes(data)
+            (source / "catalog.json.z").write_bytes(b"compiled material data")
+            output = root / "notices"
+            with patch.object(packager, "ROOT", root):
+                packager.copy_spektrafilm_notices(output)
+            retained = output / "spektrafilm"
+            self.assertEqual({path.name for path in retained.iterdir()}, set(files))
+            for name, data in files.items():
+                self.assertEqual((retained / name).read_bytes(), data)
+
     def test_material_notices_follow_bound_paper_and_negative_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

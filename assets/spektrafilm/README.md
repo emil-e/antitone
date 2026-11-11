@@ -33,7 +33,7 @@ python3 scripts/spektrafilm/build.py generate --output .cache/spektrafilm-candid
 python3 scripts/spektrafilm/build.py check
 ```
 
-The separately supplied APD CSV has columns `wavelength_nm,red,green,blue`; its numeric hash identifies the complete 186-row [S-2008-002 v1.1 (2010) table](https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf). The reference-derived components are a private trial with unresolved public redistribution clearance; the spektrafilm code/data licenses do not grant that clearance. Keep the original source notice and resolve publication permission before distributing them publicly.
+The separately supplied APD CSV has columns `wavelength_nm,red,green,blue`; its numeric hash identifies the complete 186-row [S-2008-002 v1.1 (2010) table](https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf). Antitone distributes derived functional coefficients relying on the specification's implementation non-enforcement covenant, retaining the [Academy notice](NOTICE-Academy-APD.txt). The spektrafilm licenses do not relicense that source.
 
 Generation rejects a modified or differently pinned upstream checkout and writes only a fresh candidate. Its output includes numeric source observations and provenance for the source, dependency lock, exporter, reference helper and component bytes. The checker validates candidates before anything is copied into maintained assets. `--upstream` and `--python` allow reuse of an existing verified checkout/environment.
 

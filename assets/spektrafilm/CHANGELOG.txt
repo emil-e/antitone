@@ -27,8 +27,9 @@ Antitone modifications:
   No output hue/saturation fit or selected-negative characteristic curves
   define this virtual reference. Colour-brightness interaction is deliberately
   compensated. The separate historical APD input is canonically identified;
-  its reference-derived components are a private trial with unresolved
-  public redistribution clearance, not relicensed by the spektrafilm licenses.
+  its derived functional coefficients rely on the source's implementation
+  non-enforcement covenant, with the original notices retained separately
+  in NOTICE-Academy-APD.txt rather than relicensed by the spektrafilm licenses.
 - Target Supra Endura gamut compression directly to the p3rec50 authoring
   reference and omit its separate lightness rolloff. Retain fixed exposure
   calibration independently of output finishing; other media are unchanged.
