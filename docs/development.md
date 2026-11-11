@@ -10,7 +10,13 @@ Apply the architectural principles rather than copying neighboring code unquesti
 
 Keep changes focused and preserve unrelated work. Explain consequential choices through their benefits, costs and affected callers or saved data. Distinguish product intent from implementation choices; an existing algorithm, numeric representation or API is not automatically a requirement. Surface conflicts instead of silently weakening a commitment or expanding the task into a rewrite.
 
-Name values by role outside conventional mathematics, separate logical phases, and expand dense control flow. Prefer the simplest useful baseline; add machinery when an observed need justifies it. Keep tools with an ongoing contributor/build/diagnostic role; retire completed study scaffolding and record lasting knowledge in its owning guide.
+Organize files and functions around coherent responsibilities, using conventional module layout. Keep related behavior understandable together and separate genuinely independent concerns. Extraction should reduce what a reader must understand, not merely shorten a file or distribute an operation across more places. Reuse shared behavior where its contract fits, without forcing superficially similar code into one abstraction.
+
+Correctness and simplicity are joint design goals. Prefer the simplest useful baseline; justify additional machinery with an observed need or plausible failure in supported inputs or reachable states. Validate where uncertainty enters. Prefer sound calculations and representations to layers of guards around a poorly suited design. Relationships already guaranteed by construction or an earlier boundary should not need repeated downstream validation. Preserve checks that protect genuine numerical, compatibility or safety constraints.
+
+Readability requires manual layout as well as automated formatting. Inspect complete touched functions, including macro bodies and embedded shader/source strings. Separate declarations and logical phases with blank lines. Expand dense branches, macros and multi-step expressions so the sequence and purpose are apparent; use named intermediates where they clarify intent. Name values by role outside conventional mathematics. Passing a formatter is a baseline, not evidence that this inspection is complete.
+
+Keep tools with an ongoing contributor/build/diagnostic role; retire obsolete paths and completed study scaffolding, recording lasting knowledge in its owning guide. Preserve useful rationale and meaningful test protection when simplifying; fewer lines, files or assertions are not improvements by themselves.
 
 ### Comments and documentation
 
