@@ -12,7 +12,9 @@ $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
 $cache = Join-Path $root '.cache/native-deps'
 $archive = Join-Path $cache 'LibRaw-0.22.3.tar.gz'
-$source = Join-Path $cache 'LibRaw-0.22.3-msvc'
+$hashes = Get-Content -Raw (Join-Path $root 'native/libraw/dht-hashes.txt') | ConvertFrom-StringData
+$directory = "LibRaw-0.22.3-$($hashes.patched.Substring(0, 12))-msvc"
+$source = Join-Path $cache $directory
 $expected = '7edf96c5b70cff88980a02ab0fc8af125cb6a4a377985573c654439d9d02355c'
 
 if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
@@ -35,6 +37,19 @@ if (-not (Test-Path (Join-Path $source 'Makefile.msvc'))) {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not extract $archive"
     }
+}
+
+# Both platforms apply the same correction and verify the complete resulting file.
+$dht = Join-Path $source 'src/demosaic/dht_demosaic.cpp'
+$actual = (Get-FileHash -Algorithm SHA256 $dht).Hash.ToLowerInvariant()
+if ($actual -eq $hashes.upstream) {
+    & git -c core.autocrlf=false -c core.eol=lf -C $root apply --directory=".cache/native-deps/$directory" native/libraw/dht.patch
+    if ($LASTEXITCODE -ne 0) { throw 'Could not apply the pinned LibRaw DHT correction.' }
+} elseif ($actual -ne $hashes.patched) {
+    throw 'LibRaw DHT source differs from the pinned upstream and patched revisions.'
+}
+if ((Get-FileHash -Algorithm SHA256 $dht).Hash.ToLowerInvariant() -ne $hashes.patched) {
+    throw 'Patched LibRaw DHT source SHA-256 mismatch.'
 }
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -61,7 +76,8 @@ if (-not (Test-Path $devcmd)) {
 
 Push-Location $source
 try {
-    $command = "call `"$devcmd`" -arch=$Arch -host_arch=$HostArch >nul && nmake /f Makefile.msvc COPT_OPT=/openmp lib\libraw_static.lib"
+    $testSource = Join-Path $root 'native/libraw/dht_safety.cpp'
+    $command = "call `"$devcmd`" -arch=$Arch -host_arch=$HostArch >nul && nmake /f Makefile.msvc COPT_OPT=/openmp lib\libraw_static.lib && cl /nologo /std:c++17 /EHsc /MD /O1 /openmp /DWIN32 /DLIBRAW_NODLL /I. `"$testSource`" lib\libraw_static.lib /Foobject\dht_safety.obj /Felib\dht_safety.exe && lib\dht_safety.exe"
     & cmd.exe /d /c $command
     if ($LASTEXITCODE -ne 0) {
         throw "LibRaw build failed with exit code $LASTEXITCODE"

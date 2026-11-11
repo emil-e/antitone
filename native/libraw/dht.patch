@@ -1,0 +1,134 @@
+--- a/src/demosaic/dht_demosaic.cpp
++++ b/src/demosaic/dht_demosaic.cpp
+@@ -23,6 +23,8 @@
+  */
+ 
+ #include "../../internal/dmp_include.h"
++#include <climits>
++#include <memory>
+ 
+ static inline float calc_dist(float c1, float c2)
+ {
+@@ -33,8 +35,8 @@
+ {
+   int nr_height, nr_width;
+   static const int nr_topmargin = 4, nr_leftmargin = 4;
+-  float (*nraw)[3];
+-  ushort channel_maximum[3];
++  std::unique_ptr<float[][3]> nraw;
++  float channel_maximum[3];
+   float channel_minimum[3];
+   LibRaw &libraw;
+   enum
+@@ -54,7 +56,7 @@
+   static inline float Thot(void) throw() { return 64.0f; }
+   static inline float Tg(void) throw() { return 256.0f; }
+   static inline float T(void) throw() { return 1.4f; }
+-  char *ndir;
++  std::unique_ptr<char[]> ndir;
+   inline int nr_offset(int row, int col) throw()
+   {
+     return (row * nr_width + col);
+@@ -177,7 +179,6 @@
+     float o = base - ec;
+     return base - sqrt(s * (o + s)) + s;
+   }
+-  ~DHT();
+   DHT(LibRaw &_libraw);
+   void copy_to_image();
+   void make_greens();
+@@ -217,10 +218,16 @@
+ {
+   nr_height = libraw.imgdata.sizes.iheight + nr_topmargin * 2;
+   nr_width = libraw.imgdata.sizes.iwidth + nr_leftmargin * 2;
+-  nraw = (float3 *)malloc(nr_height * nr_width * sizeof(float3));
++  const size_t pixels = size_t(nr_height) * size_t(nr_width);
++  // nr_offset and the existing traversal use signed int offsets.
++  if (pixels > INT_MAX)
++    throw LIBRAW_EXCEPTION_TOOBIG;
++  nraw.reset(new float3[pixels]);
++  ndir.reset(new char[pixels]());
+   int iwidth = libraw.imgdata.sizes.iwidth;
+-  ndir = (char *)calloc(nr_height * nr_width, 1);
+-  channel_maximum[0] = channel_maximum[1] = channel_maximum[2] = 0;
++  // Keep ratio denominators positive even when a measured channel is all zero.
++  // The half-code floor still converts back to zero in the integer image.
++  channel_maximum[0] = channel_maximum[1] = channel_maximum[2] = 0.5f;
+   channel_minimum[0] = libraw.imgdata.image[0][0];
+   channel_minimum[1] = libraw.imgdata.image[0][1];
+   channel_minimum[2] = libraw.imgdata.image[0][2];
+@@ -240,7 +247,9 @@
+     {
+       int l = col_cache[j % 48];
+       unsigned short c = libraw.imgdata.image[i * iwidth + j][l];
+-      if (c != 0)
++      if (c == 0)
++        channel_minimum[l] = 0;
++      else
+       {
+         if (channel_maximum[l] < c)
+           channel_maximum[l] = c;
+@@ -250,17 +259,15 @@
+       }
+     }
+   }
+-  channel_minimum[0] += .5;
+-  channel_minimum[1] += .5;
+-  channel_minimum[2] += .5;
++  channel_minimum[0] = MAX(channel_minimum[0], 0.5f);
++  channel_minimum[1] = MAX(channel_minimum[1], 0.5f);
++  channel_minimum[2] = MAX(channel_minimum[2], 0.5f);
+ }
+ 
+ void DHT::hide_hots()
+ {
+   int iwidth = libraw.imgdata.sizes.iwidth;
+-#if defined(LIBRAW_USE_OPENMP)
+-#pragma omp parallel for schedule(guided) firstprivate(iwidth)
+-#endif
++  // Neighbour samples are updated in place; preserve the serial row order.
+   for (int i = 0; i < libraw.imgdata.sizes.iheight; ++i)
+   {
+     int js = libraw.COLOR(i, 0) & 1;
+@@ -441,9 +448,7 @@
+ //	for (int i = 0; i < libraw.imgdata.sizes.iheight; ++i) {
+ //		refine_diag_dirs(i, (i & 1) ^ 1);
+ //	}
+-#if defined(LIBRAW_USE_OPENMP)
+-#pragma omp parallel for schedule(guided)
+-#endif
++  // This refinement reads and updates adjacent rows in place.
+   for (int i = 0; i < libraw.imgdata.sizes.iheight; ++i)
+   {
+     refine_idiag_dirs(i);
+@@ -473,9 +478,7 @@
+   {
+     refine_hv_dirs(i, (i & 1) ^ 1);
+   }
+-#if defined(LIBRAW_USE_OPENMP)
+-#pragma omp parallel for schedule(guided)
+-#endif
++  // Unlike the checkerboard passes above, this pass updates both parities.
+   for (int i = 0; i < libraw.imgdata.sizes.iheight; ++i)
+   {
+     refine_ihv_dirs(i);
+@@ -1001,12 +1004,6 @@
+                                               j + nr_leftmargin)][1]);
+     }
+   }
+-}
+-
+-DHT::~DHT()
+-{
+-  free(nraw);
+-  free(ndir);
+ }
+ 
+ void LibRaw::dht_interpolate()
+@@ -1030,4 +1027,6 @@
+   dht.make_rb();
+   dht.restore_hots();
+   dht.copy_to_image();
++  // The positive workspace halo is not measured light outside the image.
++  border_interpolate(4);
+ }

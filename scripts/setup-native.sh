@@ -7,7 +7,7 @@ if [ "$(uname -s)" != Darwin ]; then
     printf '%s\n' 'Native editor setup currently supports macOS only.' >&2
     exit 1
 fi
-for tool in curl shasum tar make cmake ninja xcrun; do
+for tool in curl shasum tar make cmake ninja xcrun git; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Missing prerequisite: %s. See README.md.\n' "$tool" >&2
         exit 1

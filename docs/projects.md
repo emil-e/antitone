@@ -46,7 +46,7 @@ Switching stages accepts intent without reading RAWs or waiting for GPU resource
 
 The current format is **schema 20 with processing model 6**. This unreleased format has no migrations; unsupported schemas/models and unknown fields reject.
 
-Reproducibility is best effort. Development stores recorded `white_balance`, an explicit LibRaw/DNG SDK backend and diagnostic release provenance. Source records also describe geometry and camera conversion. Open restores these records unchanged. Acquisition uses the current decoder and checks compatibility when a photo is needed; diagnostic release differences alone do not reject it. Decoder fixes and upgrades can change pixels, and runtime cache identity distinguishes current pixel producers.
+Reproducibility is best effort. Development stores recorded `white_balance`, an explicit LibRaw/DNG SDK backend and diagnostic pixel-producer provenance, including the decoder release and development revision. Source records also describe geometry and camera conversion. Open restores these records unchanged. Acquisition uses the current decoder and checks compatibility when a photo is needed; diagnostic release differences alone do not reject it. Decoder fixes and upgrades can change pixels, and runtime cache identity distinguishes current pixel producers.
 
 Already-applied capture WB and sampling-precision estimates stay with runtime decoder metadata. Lens/opcode fingerprints and fixed colour-space labels are not saved. [Calibration and inversion](processing.md#two-anchors-define-the-response) operate on camera light and measured RGB anchors.
 

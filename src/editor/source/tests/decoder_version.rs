@@ -232,7 +232,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                 if sdk {
                     crate::dng::INTERPRETATION.into()
                 } else {
-                    crate::raw::version()
+                    crate::raw::development_version()
                 }
             );
             if digital {

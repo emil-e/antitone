@@ -40,7 +40,7 @@ jobs:
           path: |
             .cache/native-deps
             .cache/deps
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/libraw/**', 'scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
           restore-keys: |
             native-${{ runner.os }}-${{ runner.arch }}-
       - name: Cache Cargo downloads

@@ -113,11 +113,12 @@ mod tests {
         let raw = crate::raw::RawFile::open(file.path()).unwrap();
         let mut recorded = SourceDevelopment::from_metadata(&raw.metadata, [1.; 4]).unwrap();
         assert!(!recorded.decode.uses_sdk());
-        recorded.decode.backend_version = "historical LibRaw".into();
+        // The same LibRaw release without our development revision is a different producer.
+        recorded.decode.backend_version = crate::raw::version();
         let current = SourceKey::capture(file.path(), &recorded).unwrap();
         assert_eq!(
             current.development().decode.backend_version,
-            crate::raw::version()
+            crate::raw::development_version()
         );
         let mut previous_producer = current.clone();
         previous_producer.source.decode.backend_version = recorded.decode.backend_version;
