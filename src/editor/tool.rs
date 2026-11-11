@@ -165,11 +165,6 @@ impl DocumentScope {
         self.visit.masks.cancel();
         *self.hosted_slot_mut(placement) = Slot::Installed(tool);
     }
-    pub(super) fn clear_crop_edit(&mut self) {
-        if self.visit.hosted_tool.is::<crop_editor::CropTool>() {
-            self.visit.hosted_tool = Slot::Empty;
-        }
-    }
 }
 
 impl Editor {
@@ -215,14 +210,6 @@ impl Editor {
         self.document.hosted_tool.occupied() || self.document.visit.hosted_tool.occupied()
     }
 
-    pub(super) fn cropping(&self) -> bool {
-        self.document.hosted_tool.is::<crop_editor::CropTool>()
-            || self
-                .document
-                .visit
-                .hosted_tool
-                .is::<crop_editor::CropTool>()
-    }
     pub(super) fn retire_hosted_tool(&mut self) {
         self.retire_fullscreen();
         self.document.clear_hosted_tools();

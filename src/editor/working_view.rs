@@ -1098,6 +1098,7 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
+        let target = self.document.target();
         let inspection = image.inspection(self.canvas_inspection());
         let compare = self.comparing_original();
         let previous = self.document.visit.working_view.displayed.take();
@@ -1125,11 +1126,10 @@ impl Editor {
             drop(mailbox);
 
             if inspection && self.document.visit.working_view.wanted.is_some() {
-                self.document.visit.working_view.render_capture(
-                    capture,
-                    self.document.target(),
-                    context,
-                )?;
+                self.document
+                    .visit
+                    .working_view
+                    .render_capture(capture, target, context)?;
             }
 
             self.document.visit.working_view.displayed = self
@@ -1160,11 +1160,7 @@ impl Editor {
         if self.document_pending.is_some() {
             // Candidate preparation must not retire the accepted view before replacement succeeds.
             self.document.visit.working_view.displayed = previous;
-            return Ok(self
-                .document
-                .visit
-                .working_view
-                .hold(self.document.target(), compare));
+            return Ok(self.document.visit.working_view.hold(target, compare));
         }
 
         if repairs.0.is_empty()
@@ -1190,11 +1186,10 @@ impl Editor {
                 },
                 cx,
             );
-            self.document.visit.working_view.render_capture(
-                capture,
-                self.document.target(),
-                context,
-            )?;
+            self.document
+                .visit
+                .working_view
+                .render_capture(capture, target, context)?;
             self.document.visit.working_view.reference = None;
 
             self.document.visit.working_view.displayed = self
@@ -1231,11 +1226,10 @@ impl Editor {
             },
             cx,
         );
-        self.document.visit.working_view.render_capture(
-            capture,
-            self.document.target(),
-            context,
-        )?;
+        self.document
+            .visit
+            .working_view
+            .render_capture(capture, target, context)?;
 
         self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference)?

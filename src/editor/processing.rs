@@ -49,12 +49,22 @@ impl Editor {
         input: impl Into<InputSettings>,
         roll: RollSettings,
     ) -> Result<ProcessingParameters, Error> {
-        let basis = self
-            .document
-            .project
-            .camera_basis()
-            .ok_or(Error::UnusableSample("no native-camera basis identity"))?;
-        let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
+        let input = input.into();
+        let matrix = if let Some(id) = self.document.visit.current_source {
+            let development = self
+                .document
+                .development_for(self.document.project.source(id)?, input);
+            glam::DMat3::from_cols_array_2d(&development.resolved()?.camera_to_ap1)
+        } else {
+            glam::DMat3::from_cols_array_2d(
+                &self
+                    .document
+                    .scan_basis()
+                    .ok_or(Error::UnusableSample("no native-camera basis identity"))?
+                    .camera
+                    .camera_to_ap1,
+            )
+        };
         self.positive_parameters_for_matrix(input, roll, matrix)
     }
 
@@ -123,7 +133,7 @@ impl Editor {
 
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
         let mut candidate = document.clone();
-        candidate.capture_exposure(&self.document.exposures);
+        candidate.capture_initialization(&self.document.initialization);
         candidate.validate_with_device(self.document.visit.working_view.device())
     }
 
@@ -158,6 +168,7 @@ impl Editor {
         self.overlay_adjustment_layer_settings(&mut candidate, photo);
         self.document.project.capture_image(&candidate, |recipe| {
             recipe.neutral.input = input;
+            recipe.neutral.source_development = self.document.development_for(&candidate, input);
             recipe.roll = roll;
             recipe.neutral.reference = self.document.exposure_value(source);
             recipe.grain = self.document.project_snapshot().output.grain;

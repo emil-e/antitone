@@ -21,7 +21,7 @@ use std::{
 
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 19;
+pub const SCHEMA_VERSION: u32 = 20;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
@@ -43,6 +43,30 @@ fn require(condition: bool, message: &str) -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DevelopmentMode {
+    Unity,
+    AsShot,
+}
+
+impl DevelopmentMode {
+    pub fn for_input(input: crate::processing::InputSettings) -> Self {
+        if input.is_negative() {
+            Self::Unity
+        } else {
+            Self::AsShot
+        }
+    }
+
+    pub fn white_balance(self) -> Option<[f64; 4]> {
+        match self {
+            Self::Unity => Some(UNITY_WB),
+            Self::AsShot => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,6 +237,8 @@ pub struct Source {
     pub id: SourceId,
     pub path: PathBuf,
     pub development: SourceDevelopment,
+    /// Interpretation for which the registered development baseline was recorded.
+    pub development_mode: DevelopmentMode,
 
     pub repairs: crate::dust_repair::RepairSet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -227,6 +253,11 @@ impl Source {
     fn validate(&self) -> Result<()> {
         require(!self.path.as_os_str().is_empty(), "empty source path")?;
         self.development.validate()?;
+        require(
+            self.development_mode != DevelopmentMode::Unity
+                || self.development.decode.white_balance == UNITY_WB,
+            "registered scan development requires unity WB",
+        )?;
         if let Some(crop) = self.crop {
             crop.region(self.development.active_area.into())?;
         }
@@ -340,7 +371,7 @@ impl ScanBasis {
         )
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.camera.validate()
     }
 }
@@ -391,6 +422,8 @@ pub struct Project {
         skip_serializing_if = "crate::exposure_metadata::empty_or_invalid"
     )]
     pub exposure_metadata: Option<crate::exposure_metadata::Metadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development_metadata: Option<crate::development_metadata::Metadata>,
 }
 
 fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
@@ -419,6 +452,7 @@ impl Default for Project {
             analysis_area: None,
             analysis_regions: Vec::new(),
             exposure_metadata: None,
+            development_metadata: None,
         }
     }
 }
@@ -549,7 +583,10 @@ impl Project {
 
     fn ensure_scan_setup(&mut self) {
         if self.scan.is_none()
-            && let Some(first) = self.sources.first()
+            && let Some(first) = self
+                .sources
+                .iter()
+                .find(|source| source.development_mode == DevelopmentMode::Unity)
         {
             self.scan = Some(ScanSetup {
                 basis: ScanBasis::new(first),
@@ -572,6 +609,7 @@ impl Project {
     }
 
     pub fn add_source(&mut self, mut source: Source) -> Result<SourceId> {
+        source.development_mode = DevelopmentMode::for_input(self.input);
         source.validate()?;
         // Scan-based stages need one shared scanning setup; assert it at admission so the
         // project cannot accumulate sources the active stage cannot interpret.
@@ -626,8 +664,9 @@ impl Project {
             .map(|scan| scan.basis.clone())
             .or_else(|| {
                 self.order
-                    .first()
-                    .and_then(|id| self.source(*id).ok())
+                    .iter()
+                    .filter_map(|id| self.source(*id).ok())
+                    .find(|source| source.development_mode == DevelopmentMode::Unity)
                     .map(ScanBasis::new)
             })
             .map_or(Ok(()), |basis| basis.require_source(source))
@@ -645,8 +684,7 @@ impl Project {
             })
     }
 
-    /// Replace the negative scan basis after stage-specific source redevelopment.
-    #[cfg(feature = "editor")]
+    #[cfg(test)]
     pub(crate) fn reset_scan_basis(&mut self) {
         let Some(first) = self
             .order
@@ -739,8 +777,8 @@ impl Project {
             )?;
             source.validate()?;
         }
-        if self.input.requires_scan_sources() {
-            self.require_scan_sources()?;
+        if let Some(metadata) = &self.development_metadata {
+            metadata.validate(self)?;
         }
         let mut ordered = HashSet::new();
         for id in &self.order {

@@ -104,7 +104,12 @@ impl Correction {
         let gpu = Arc::new(GpuFlatField::new(device, settings.map.clone())?);
         for source in &document.project.sources {
             if document.project.order.contains(&source.id) {
-                let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
+                let development = document.image_recipe(source.id)?.neutral.source_development;
+                let Ok(development) = development.resolved() else {
+                    continue;
+                };
+                document.require_scan_source(development)?;
+                let matrix = glam::DMat3::from_cols_array_2d(&development.camera_to_ap1);
                 crate::gpu::parameters::CameraMatrix::require_source(matrix, true)?;
                 gpu.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN)?;
                 SourceGeometry::new(source.development.active_area, [1, 1])?;
@@ -327,32 +332,9 @@ impl FlatTool {
     }
 
     fn preview_input(editor: &Editor, path: PathBuf) -> source::Request {
-        let expected = editor
-            .document
-            .find_source(&path)
-            .and_then(|id| editor.document.state.project.source(id).ok())
-            .cloned();
-        // A retained record is either an ordered photo or the current flat-field reference;
-        // Both belong to the current stage; reuse already-resolved header gains when available.
-        let wb = expected
-            .as_ref()
-            .and_then(|source| editor.document.source_wb(source.id))
-            .or_else(|| editor.document.project.acquisition_wb());
-        let file = editor.document.file_key(&path);
-        source::Request {
-            reference: expected.as_ref().map_or_else(Arc::default, |source| {
-                editor
-                    .document
-                    .exposure_slot(&editor.document.exposures, source.id)
-            }),
-            input: editor.input(),
-            path,
-            wb,
-            expected,
-            file,
-            sources: editor.source_provider(),
-            correction: None,
-        }
+        let mut request = editor.source_input(path);
+        request.correction = None;
+        request
     }
 
     fn new(state: FlatEdit) -> Self {
@@ -668,7 +650,7 @@ impl Change {
             editor.document.flat_correction = None;
             match result {
                 Ok((mut document, correction)) => {
-                    document.capture_exposure(&editor.document.exposures);
+                    document.capture_initialization(&editor.document.initialization);
                     self.edit.replace_snapshot(Arc::new(document));
                     editor.commit_document(self.edit).expect("current document edit");
                     editor.document.correction_restore = None;
@@ -715,7 +697,6 @@ impl CorrectionInput {
             let mut scan = self.source.scan()?;
             let map = Arc::new(scan.estimate_flat_field(self.region)?);
             self.document
-                .project
                 .require_scan_source(&self.record.development)?;
             if self.document.project.scan.is_none() {
                 self.document.project.scan = Some(crate::project::ScanSetup {

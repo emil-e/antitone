@@ -379,8 +379,7 @@ fn loading_completion_before_import_publication_keeps_matching_viewing_metadata(
                 .source_mut(id)
                 .unwrap()
                 .development
-                .decode
-                .white_balance[0] = 2.;
+                .camera_to_ap1[0][0] *= 1.1;
             changed.project.validate().unwrap();
             e.document.install(changed);
             assert_eq!(

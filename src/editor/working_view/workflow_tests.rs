@@ -148,9 +148,10 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                 "fallback presentation retains its own processing, not the newer pipeline"
             );
             assert!(e.document.visit.working.task.is_some());
-            e.document.visit.working_view.acquired(Completion {
-                owner: Arc::downgrade(&e.document.visit.working_view.mailbox),
-                demand: Completion::fixture_demand(&e.document.visit.working_view, queued.clone()),
+            let working = &mut e.document.visit.working_view;
+            working.acquired(Completion {
+                owner: Arc::downgrade(&working.mailbox),
+                demand: Completion::fixture_demand(working, queued.clone()),
                 result: Ok(Arc::new(Frame {
                     source: old.clone(),
                     underlay: None,
@@ -163,9 +164,10 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                 "obsolete completion cannot fail current demand"
             );
             // Publication must validate actual coverage as well as the completion ticket.
-            e.document.visit.working_view.acquired(Completion {
-                owner: Arc::downgrade(&e.document.visit.working_view.mailbox),
-                demand: Completion::fixture_demand(&e.document.visit.working_view, latest.clone()),
+            let working = &mut e.document.visit.working_view;
+            working.acquired(Completion {
+                owner: Arc::downgrade(&working.mailbox),
+                demand: Completion::fixture_demand(working, latest.clone()),
                 result: Ok(Arc::new(Frame {
                     source: old.clone(),
                     underlay: None,
@@ -420,18 +422,20 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
                 .working_view
                 .request(Demand::fixture(spec.clone(), input.clone()));
             assert!(!e.document.visit.working_view.support_ready());
-            e.document.visit.working_view.acquired(Completion {
+            let working = &mut e.document.visit.working_view;
+            working.acquired(Completion {
                 owner: departed.clone(),
-                demand: Completion::fixture_demand(&e.document.visit.working_view, spec.clone()),
+                demand: Completion::fixture_demand(working, spec.clone()),
                 result: Ok(frame.clone()),
             });
             assert!(
                 e.document.visit.working_view.source().is_none(),
                 "even a complete matching calculation must arrive through its live owner"
             );
-            e.document.visit.working_view.acquired(Completion {
+            let working = &mut e.document.visit.working_view;
+            working.acquired(Completion {
                 owner: departed.clone(),
-                demand: Completion::fixture_demand(&e.document.visit.working_view, spec.clone()),
+                demand: Completion::fixture_demand(working, spec.clone()),
                 result: Err("departed failure".into()),
             });
             assert!(e.document.visit.working_view.error.is_none());
@@ -450,9 +454,10 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
                 .unwrap()
                 .clone();
             assert!(accepted.source.spec == frame.source.spec);
-            e.document.visit.working_view.acquired(Completion {
+            let working = &mut e.document.visit.working_view;
+            working.acquired(Completion {
                 owner: departed,
-                demand: Completion::fixture_demand(&e.document.visit.working_view, spec),
+                demand: Completion::fixture_demand(working, spec),
                 result: Err("late departed failure".into()),
             });
             assert!(e.document.visit.working_view.error.is_none());

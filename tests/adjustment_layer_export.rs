@@ -87,6 +87,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::Unity,
             path: "read-only-not-loaded.ARW".into(),
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [1.; 4]),

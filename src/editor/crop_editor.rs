@@ -12,6 +12,13 @@ pub(super) struct CropTool {
     auto_crop_task: Option<async_executor::Task<()>>,
 }
 
+impl Editor {
+    pub(super) fn cropping(&self) -> bool {
+        self.document.hosted_tool.is::<CropTool>()
+            || self.document.visit.hosted_tool.is::<CropTool>()
+    }
+}
+
 impl CropTool {
     fn new(base: Composition) -> Self {
         Self {

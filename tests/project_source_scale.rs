@@ -10,6 +10,7 @@ fn digital(gain: f64) -> Project {
     project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::AsShot,
             path: "source.arw".into(),
             development: SourceDevelopment {
                 decode: Development::new("test-backend".into(), [gain, 1., 1., 1.]),
@@ -86,8 +87,26 @@ fn accepted_wb_requires_representable_gains_and_the_selected_backend_basis() {
     let mut negative = project;
     negative.input = InputSettings::default();
     negative.sources[0].development.decode.white_balance = [2., 1., 1., 1.];
+    negative.validate().unwrap();
+    assert!(
+        negative
+            .image_recipe(negative.order[0])
+            .unwrap()
+            .neutral
+            .source_development
+            .resolved()
+            .is_err(),
+        "Negative intent must not relabel the recorded AsShot development"
+    );
+    assert!(
+        ScanBasis::from_development(&negative.sources[0].development)
+            .require_source(&negative.sources[0].development)
+            .is_err(),
+        "a Negative consumer requires unity development"
+    );
+    negative.sources[0].development_mode = DevelopmentMode::Unity;
     assert!(
         negative.validate().is_err(),
-        "Negative requires unity development"
+        "a registered Unity baseline must contain actual unity WB"
     );
 }

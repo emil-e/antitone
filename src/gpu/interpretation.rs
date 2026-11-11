@@ -82,7 +82,7 @@ impl InputTransform {
     pub(crate) fn from_recipe(recipe: &crate::image_recipe::NeutralRecipe) -> Result<Self, Error> {
         let input = recipe.input;
         let matrix = input.positive_matrix(
-            DMat3::from_cols_array_2d(&recipe.source_development.camera_to_ap1),
+            DMat3::from_cols_array_2d(&recipe.source_development.resolved()?.camera_to_ap1),
             recipe.reference.as_ref().map(|reference| reference.ev()),
         )?;
         Self::new(input, matrix)

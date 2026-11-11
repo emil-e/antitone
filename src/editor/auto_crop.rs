@@ -49,24 +49,8 @@ impl Draft {
                 .iter()
                 .find_map(|entry| entry.spatial.as_ref())
                 .is_none_or(|metadata| {
-                    metadata.groups.iter().all(|group| {
-                        group.sources.first().is_some_and(|row| {
-                            editor
-                                .document
-                                .state
-                                .project
-                                .scan_basis()
-                                .is_some_and(|basis| {
-                                    basis.require_source(&row.input.development).is_ok()
-                                })
-                        }) && group.sources.iter().all(|row| {
-                            editor
-                                .document
-                                .project
-                                .source(row.input.source)
-                                .is_ok_and(|source| source.development == row.input.development)
-                        })
-                    })
+                    let document = editor.document.capture();
+                    metadata.matching(&document.project, &document.spatial_inputs()) == **metadata
                 })
     }
 }

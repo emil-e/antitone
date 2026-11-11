@@ -44,6 +44,11 @@ pub(crate) fn source_metadata(
         id: SourceId(0),
         path: absolute(path)?,
         development: metadata_development(metadata, white_balance)?,
+        development_mode: if white_balance == crate::project::UNITY_WB {
+            crate::project::DevelopmentMode::Unity
+        } else {
+            crate::project::DevelopmentMode::AsShot
+        },
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             Default::default(),
         )),

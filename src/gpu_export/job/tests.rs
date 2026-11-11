@@ -36,6 +36,7 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
     };
     let id = project
         .add_source(Source {
+            development_mode: crate::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: "fixture.dng".into(),
             development: source_development,

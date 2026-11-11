@@ -71,7 +71,7 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
 }
 
 #[test]
-fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
+fn changing_input_from_review_retires_its_projection_even_without_source_services() {
     for fail in [false, true] {
         let sources = source_loading::SourceLoader::new();
         let mut editor = fixture(sources.clone());
@@ -99,11 +99,11 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
             app.read(|editor| {
                 assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible && editor.preferences.scopes_visible);
+                assert_eq!(editor.document.project.input, InputSettings::Digital);
+                assert_eq!(editor.document.project.sources, before.sources);
                 if fail {
-                    assert_eq!(editor.document.project, before);
-                    assert!(editor.status.contains("Document services unavailable"));
-                } else {
-                    assert_eq!(editor.document.project.input, InputSettings::Digital);
+                    assert!(editor.document.visit.canvas.ready.is_none());
+                    assert!(editor.status.contains("Source services unavailable"));
                 }
             });
         });
@@ -126,7 +126,7 @@ impl Drop for Retirement {
 #[allow(clippy::too_many_arguments)]
 fn held_work<T: Send + 'static>(
     sources: Arc<dyn SourceProvider>,
-    exposures: Arc<crate::exposure_metadata::Store>,
+    initialization: Arc<crate::source::Initialization>,
     output: T,
     entered: mpsc::Sender<Weak<crate::scan::DevelopedSource>>,
     release: mpsc::Receiver<()>,
@@ -139,17 +139,25 @@ fn held_work<T: Send + 'static>(
             let _retired = retired;
             // This scripted task acquires an unviewed original to probe physical-input
             // cleanup, not to model production review assembly's metadata-only input.
-            let scan = request
+            let physical = request
                 .document
-                .acquire_source(
-                    request.document.project.order[1],
-                    sources.as_ref(),
-                    &exposures,
-                    &stopped,
-                )
-                .await
-                .map_err(|error| error.to_string())?
-                .expect("unviewed original");
+                .source_input(request.document.project.order[1], &initialization)
+                .map_err(|error| error.to_string())?;
+            let scan = futures_lite::future::or(
+                async {
+                    stopped.wait().await;
+                    Ok(None)
+                },
+                async {
+                    physical
+                        .source(sources.as_ref(), crate::source::Priority::Foreground)
+                        .await
+                        .map(|acquired| Some(acquired.prepared.scan()))
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .expect("unviewed original");
             let result = background::compute(&stopped, move || {
                 entered.send(Arc::downgrade(scan.source())).unwrap();
                 release.recv_timeout(LIMIT).unwrap();
@@ -181,7 +189,7 @@ fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inpu
                 let (before, proposed) = app.enter(|editor, cx| {
                     let reviewed = editor.document.analysis_review().unwrap().approved.clone();
                     let sources = editor.source_provider().unwrap();
-                    let exposures = editor.document.exposures.clone();
+                    let initialization = editor.document.initialization.clone();
                     let before = editor.document.project.clone();
                     if fitting {
                         let mut document = editor.document.capture();
@@ -191,7 +199,7 @@ fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inpu
                         let proposed = document.project.clone();
                         editor.document.analysis_fit_work = Some(held_work(
                             sources,
-                            exposures,
+                            initialization,
                             Box::new(analysis::Outcome {
                                 document,
                                 frames: 2,
@@ -209,7 +217,7 @@ fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inpu
                         editor.finish_pick(cx);
                         editor.document.analysis_preparation_work = Some(held_work(
                             sources,
-                            exposures,
+                            initialization,
                             reviewed,
                             entered,
                             resume,

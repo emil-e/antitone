@@ -1,4 +1,5 @@
 use super::*;
+use crate::source::SourceKey;
 use crate::{exposure_reference::ReferenceExposure, processing::InputSettings};
 use std::sync::{
     Arc,
@@ -29,12 +30,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
         Ok(())
     });
     let request = |document: &DocumentScope| Request {
-        reference: document.exposure_slot(&document.exposures, first_id),
-        file: document.file_key(first.path()),
-        input: document.project.input,
-        path: first.path().to_owned(),
-        wb: document.project.acquisition_wb(),
-        expected: Some(document.project.source(first_id).unwrap().clone()),
+        source: document.source_input(first_id).unwrap(),
         sources: Some(scheduler.provider(Some(document.cache.clone()))),
         correction: None,
     };
@@ -126,19 +122,11 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         .unwrap();
     editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     let id = editor.document.state.project.order[1];
-    let expected = editor.document.state.project.source(id).unwrap().clone();
     Request {
-        reference: editor
-            .document
-            .exposure_slot(&editor.document.exposures, id),
-        file: editor.document.file_key(second.path()),
-        input: InputSettings::Digital,
-        path: second.path().to_owned(),
-        wb: editor.document.project.acquisition_wb(),
+        source: editor.document.source_input(id).unwrap(),
         sources: Some(
             source_loading::SourceLoader::new().provider(Some(editor.document.cache.clone())),
         ),
-        expected: Some(expected),
         correction: None,
     }
     .load(&source_loading::SourceLoader::new(), &|| false)
@@ -242,7 +230,7 @@ fn save_open_admission_uses_restored_positive_and_negative_source_normalization(
         let id = document.project.order[0];
 
         document
-            .exposure_slot(&document.exposures, id)
+            .exposure_slot(&document.initialization, id)
             .set(ReferenceExposure::Matched(StartingExposure {
                 ev: reference_ev,
                 samples: 1024,

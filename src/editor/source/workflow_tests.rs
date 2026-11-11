@@ -5,7 +5,7 @@ use crate::processing::InputSettings;
 fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_them() {
     let (scheduler, starts, release) = paused();
     let mut editor = editor(scheduler.clone());
-    editor.load_input(InputSettings::Digital);
+    editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -188,25 +188,24 @@ fn unregistered_source_requests_defer_file_identity_until_preparation() {
         editor.source_input(path.clone()),
         editor.reference_preview_input(path.clone()),
     ] {
-        assert!(request.expected.is_none());
+        assert!(request.source.development().is_none());
         assert!(
-            request.file.revision.is_none(),
-            "UI capture must leave first-time filesystem identity to preparation"
+            request.source.cached_key().is_none(),
+            "capture does not read an unregistered file"
         );
-        let key =
-            futures_lite::future::block_on(crate::background::run(move |_| request.load_key()))
-                .unwrap()
-                .unwrap();
+        let loader = source_loading::SourceLoader::new();
+        let acquired = request.load(&loader, &|| false).unwrap();
         assert!(
-            key.file().revision.is_some(),
-            "preparation must capture persisted-cache identity"
+            acquired.file.revision.is_some(),
+            "acquisition captures persisted-cache identity"
         );
+        loader.close_and_wait().unwrap();
     }
 }
 
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, document::Document, source, source_loading},
+    editor::{document::Document, source, source_loading},
 };
 use std::{
     path::PathBuf,
@@ -303,19 +302,14 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.load("not-opened.dng".into(), cx);
-            editor.start_document(
-                Preparation::Input(
-                    editor.document.capture(),
-                    editor.document.visit.current_source,
-                ),
-                cx,
-            );
-            let operation = editor.document_pending;
+            let _activity = editor
+                .activities
+                .start(crate::editor::ActivityOptions::new("Document work").modal());
             let activity = editor.activities.view().unwrap().title;
             let view = editor.request_id();
             editor.replace_photo_scope(view);
             assert!(editor.interaction_blocked());
-            assert_eq!(editor.document_pending, operation);
+            assert!(editor.document_pending.is_none());
             assert_eq!(editor.activities.view().unwrap().title, activity);
         });
     });
@@ -578,39 +572,60 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
 }
 
 #[test]
-fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
+fn input_switch_retires_old_source_presentations_in_both_completion_orders() {
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let path = ready.path.clone();
-        let accepted = editor.document.state.project.clone();
+        let accepted = editor.document.state.project.sources.clone();
         with_application(editor, |app| {
-            app.enter(|e, cx| {
-                e.load(path, cx);
-
-                let view = e.document.visit.view;
-                e.start_document(
-                    Preparation::Input(e.document.capture(), e.document.visit.current_source),
-                    cx,
-                );
-                let operation = e.document_pending.unwrap();
+            let old_view = app.enter(|editor, cx| {
+                editor.load(path, cx);
+                let view = editor.document.visit.view;
                 if complete_first {
-                    e.source_result(view, Ok(Box::new(ready.clone())));
-                    assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
+                    editor.source_result(view, Ok(Box::new(ready.clone())));
+                    assert!(editor.document.visit.canvas.ready.is_some());
                 }
-                e.document_prepared(operation, Err("candidate rejected".into()));
-                if !complete_first {
-                    assert!(e.document.visit.source.pending());
-                    e.source_result(view, Ok(Box::new(ready)));
+                editor.request_input(crate::processing::InputSettings::Digital, cx);
+                if editor.dialogs.is_open() {
+                    editor.dialogs.answer_for_test("Switch stage");
                 }
-                assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.canvas.ready.is_some() && e.document_pending.is_none());
-                assert_eq!(e.document.state.project, accepted);
-                assert!(e.status.contains("candidate rejected"));
+                view
             });
-            app.pump();
-            app.read(|e| assert!(e.activities.view().is_none()));
+            app.run_until(Duration::from_secs(5), |editor| {
+                editor.document.input_change.is_none()
+            });
+            app.update(|editor| {
+                assert_eq!(
+                    editor.document.project.input,
+                    crate::processing::InputSettings::Digital
+                );
+                let view = editor.document.visit.view;
+                assert_ne!(view, old_view);
+                let status = editor.status.clone();
+                let current = editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .map(|ready| ready.developed.clone());
+                if !complete_first {
+                    editor.source_result(old_view, Ok(Box::new(ready)));
+                }
+                editor.source_result(old_view, Err("retired source error".into()));
+                assert_eq!(editor.document.visit.view, view);
+                assert_eq!(editor.status, status);
+                match (current, &editor.document.visit.canvas.ready) {
+                    (Some(current), Some(ready)) => {
+                        assert!(Arc::ptr_eq(&current, &ready.developed))
+                    }
+                    (None, None) => {}
+                    _ => panic!("retired completion replaced current presentation"),
+                }
+                assert_eq!(editor.document.project.sources, accepted);
+                assert!(editor.document_pending.is_none());
+            });
         });
     }
 }
@@ -670,7 +685,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
             (
                 e.document.visit.view,
                 e.document.visit.current_source.unwrap(),
-                e.document.visit.source.key.clone(),
+                e.document.visit.source.input.clone(),
             )
         });
         app.enter(|e, cx| {
@@ -702,7 +717,15 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
         app.read(|e| {
             assert!(e.document.visit.source.pending());
             assert!(e.document.visit.canvas.ready.is_none());
-            assert_eq!(e.document.visit.source.key, key);
+            assert!(
+                e.document
+                    .visit
+                    .source
+                    .input
+                    .as_ref()
+                    .zip(key.as_ref())
+                    .is_some_and(|(current, captured)| current.same_request(captured))
+            );
             assert_eq!(e.document.visit.view, view);
             assert_eq!(e.document.visit.current_source, Some(selected));
             assert_eq!(

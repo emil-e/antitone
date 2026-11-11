@@ -112,8 +112,7 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
         .unwrap()
         .path
         .clone();
-    let request = editor.id;
-    let mut editor = crate::editor::tests::complete_reference_operation(
+    let editor = crate::editor::tests::complete_reference_operation(
         editor,
         Duration::from_secs(5),
         |e, cx| e.begin_flat_edit("missing-reference.ARW".into(), None, cx),
@@ -131,7 +130,6 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
     );
     assert!(!editor.document.source);
     assert_eq!(editor.document.state.project, before);
-    editor.document_prepared(request, Err("late completion".into()));
     assert_eq!(
         editor.dialogs.message().unwrap().details,
         "Reference services unavailable"

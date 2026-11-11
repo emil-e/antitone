@@ -24,10 +24,12 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
             Format::Tiff(OutputTarget::Srgb),
             Format::Exr(crate::export::ExrPrecision::Full),
         ] {
-            let scan = Scan::open(path.path(), Some([1.; 4])).unwrap();
+            let scan = Scan::open(path.path(), None).unwrap();
             assert!(scan.reference_exposure.as_ref().is_none());
             let (mut project, id) = fixture(&scan);
             project.input = InputSettings::Digital;
+            project.source_mut(id).unwrap().development_mode =
+                crate::project::DevelopmentMode::AsShot;
             project.source_mut(id).unwrap().crop = None;
             if repaired {
                 project

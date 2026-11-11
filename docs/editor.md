@@ -32,6 +32,12 @@ Tools compose [viewer controls, canvas layout and image painting](../src/editor/
 
 Crop continuously centers the frame during handle resizing, retaining screen-space pan and physical magnification. Pointer motion accounts for both moving screen edges so the grabbed handle follows the cursor, subject to source coverage, aspect constraints and pixel rounding. Fit crop is explicit. Option/Alt resizes around the crop center; Shift temporarily preserves the gesture-start aspect, and both combine.
 
+### Input-stage changes
+
+The Roll input selector owns one scoped project edit, including any awaited confirmation before discarding Negative settings or accepted correction. Acceptance records the interpretation once without acquiring RAW headers, pixels or GPU readiness. Missing or incompatible photographs report failures when consumed; they do not undo the selected stage. [Projects](projects.md#compatibility-is-about-the-processing-basis) describes the saved development facts and compatibility checks.
+
+Project versions retain their interpretation's acquired scan basis across Undo/Redo; accepting a new stage starts a fresh scope. The photo visit retains its selected source, viewport and layer workspace across reinterpretation. Captured-input owners — tools, pickers, source loading and view products — retire together, so earlier results cannot present as the new interpretation. Their physical work and compatible keyed cache entries can finish independently. Consumers request resources through [captured source inputs](../src/source/input.rs), which own lazy resolution and preparation rather than requiring each feature to reconstruct that protocol.
+
 ### Gamma colour pivot
 
 The pin beside gamma's neutral picker opens the ordinary area picker. Apply captures evidence; Cancel preserves an existing anchor. The pin is outlined while choosing and filled when locked; clicking it cancels selection or releases the lock. Capture and release are transient, outside dirty state and history. The document retains accepted evidence across photo visits, retiring it when its source leaves or its upstream measurement basis changes. Crop, view, look and output changes preserve it.
@@ -92,14 +98,14 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 | Work | Presentation and retained use |
 | --- | --- |
-| RAW import, project metadata Open/Save, correction estimation/validation, input/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
+| RAW import, project metadata Open/Save, correction estimation/validation, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation, including the first photo after Open | Nonblocking progressive display; cached previews remain usable while precise inputs prepare |
 | Reference preparation, picker measurement | A delayed working modal; quick measurements complete without showing a dialog |
 | Shared region preparation and running Analyze | A delayed working modal with counted or indeterminate progress and Cancel |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
-New installs an empty document without resource preparation. Opening accepts [project metadata](projects.md#prepare-before-replacing) before loading photos; correction-resource failures appear in the [flat-field section](flat-field.md#save-the-accepted-result). Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
+New installs an empty document without resource preparation. Input-stage acceptance is synchronous after any confirmation; selected-photo preparation remains nonblocking. Opening accepts [project metadata](projects.md#prepare-before-replacing) before loading photos; correction-resource failures appear in the [flat-field section](flat-field.md#save-the-accepted-result). Save/Export are unavailable until control edits, active tools and working modals finish; blocked requests are not replayed. Shared region preparation owns its feedback independently of the tools awaiting its result.
 
 [Activities](../src/editor/activity.rs) are scoped handles carrying caller-supplied status, progress, modality and cancellation feedback. Keep the handle in the async workflow; destruction removes its feedback. Worker reporters and UI snapshots observe weakly. Feature state and explicit modality govern admission; the presence of nonmodal feedback does not make the editor unavailable.
 

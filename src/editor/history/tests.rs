@@ -670,9 +670,9 @@ fn failed_and_stale_restoration_preserve_state_and_history_until_acceptance() {
             editor.restore_history(Direction::Undo, cx);
             let request = editor.document_pending.unwrap();
             assert_eq!(editor.document.state.project, accepted);
-            editor.document_prepared(request + 1, Err("stale".into()));
+            editor.history_restored(request + 1, Err("stale".into()), cx);
             assert_eq!(editor.document_pending, Some(request));
-            editor.document_prepared(request, Err("missing RAW".into()));
+            editor.history_restored(request, Err("invalid snapshot".into()), cx);
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.history.undo.len(), 1);
             assert!(editor.document.history.redo.is_empty());

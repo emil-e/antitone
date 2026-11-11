@@ -539,38 +539,42 @@ fn acquisition_requests_resolve_registered_headers_and_defer_new_sources_to_stag
     let fresh = file.path().with_file_name("new-reference.dng");
     for digital in [false, true] {
         if digital {
-            editor
-                .document
-                .redevelop_for_input(crate::processing::InputSettings::Digital)
-                .unwrap();
+            editor.document.project.input = crate::processing::InputSettings::Digital;
         }
         for request in [
             editor.reference_preview_input(fresh.clone()),
             editor.source_input(fresh.clone()),
         ] {
             assert_eq!(
-                request.wb,
+                request.source.input().development_wb(),
                 if digital {
                     None
                 } else {
                     Some(crate::project::UNITY_WB)
                 }
             );
-            assert!(request.expected.is_none());
+            assert!(request.source.development().is_none());
         }
         for request in [
             editor.reference_preview_input(file.path().to_owned()),
             editor.source_input(file.path().to_owned()),
         ] {
+            let development = request.source.development().expect("registered photo");
             assert_eq!(
-                request.wb,
-                Some(if digital {
-                    [2., 1., 3., 1.]
-                } else {
-                    crate::project::UNITY_WB
-                })
+                development.mode(),
+                crate::project::DevelopmentMode::for_input(editor.input())
             );
-            assert!(request.expected.is_some());
+            if digital {
+                assert!(
+                    development.resolved().is_err(),
+                    "capture does not pre-resolve a new interpretation"
+                );
+            } else {
+                assert_eq!(
+                    development.resolved().unwrap().decode.white_balance,
+                    crate::project::UNITY_WB
+                );
+            }
         }
     }
 }
@@ -589,12 +593,16 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
     editor.document = document;
     editor.developments = Some(source_loading::SourceLoader::new());
     let request = editor.reference_preview_input(file.path().to_owned());
-    assert_eq!(request.load_key().unwrap(), expected_key);
+    assert_eq!(request.source.cached_key().unwrap(), expected_key);
     let sources = request
         .sources
+        .as_ref()
         .expect("registered reference has an acquisition provider");
-    let reused =
-        pollster::block_on(sources.load_source(expected_key, source_loading::Priority::Foreground))
-            .unwrap();
-    assert!(Arc::ptr_eq(&reused, scan.source()));
+    let reused = pollster::block_on(
+        request
+            .source
+            .source(sources.as_ref(), source_loading::Priority::Foreground),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&reused.prepared.source, scan.source()));
 }

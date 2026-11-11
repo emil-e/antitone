@@ -30,10 +30,14 @@ impl evaluation::Source for CameraCodes {
     }
 }
 
-fn project() -> (Project, SourceId) {
-    let mut project = Project::default();
+fn project(input: crate::processing::InputSettings) -> (Project, SourceId) {
+    let mut project = Project {
+        input,
+        ..Default::default()
+    };
     let id = project
         .add_source(Source {
+            development_mode: crate::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: "graph-input.dng".into(),
             development: SourceDevelopment {
@@ -53,7 +57,7 @@ fn project() -> (Project, SourceId) {
 }
 
 fn recipe() -> ImageRecipe {
-    let (project, id) = project();
+    let (project, id) = project(Default::default());
     project.image_recipe(id).unwrap()
 }
 
@@ -168,8 +172,7 @@ fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive(
 #[test]
 fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposure_is_not() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (project, id) = project(crate::processing::InputSettings::Digital);
     let correction = Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [0, 0, 3, 1],
@@ -266,8 +269,7 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
 fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_physical_views() {
     use crate::adjustment_layers::AdjustmentLayerSettings;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let source = project.source_mut(id).unwrap();
     source.development.dimensions = [1000, 800];
     source.development.active_area = [0, 0, 1000, 800];
@@ -384,8 +386,7 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
         gpu::source::SourceGeometry,
     };
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let source = project.source_mut(id).unwrap();
     source.development.dimensions = [64, 48];
     source.development.active_area = [0, 0, 64, 48];
@@ -420,7 +421,14 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
         "control: the supplied repair must change original working pixels"
     );
 
-    let matrix = DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
+    let matrix = DMat3::from_cols_array_2d(
+        &recipe
+            .neutral
+            .source_development
+            .resolved()
+            .unwrap()
+            .camera_to_ap1,
+    );
     let camera = ProcessingSource::new_continuous(
         &device,
         &vec![[16383.75, 32767.5, 49151.25, 0.]; 32 * 24],
@@ -502,8 +510,7 @@ fn filtered_recipe_keeps_the_photographs_mask_extent_instead_of_redefining_it_fr
     use crate::gpu::view::request::SourceRequest;
 
     let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
-    let (mut project, id) = project();
-    project.input = crate::processing::InputSettings::Digital;
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let mut layer = AdjustmentLayer::global(AdjustmentLayerSettings {
         exposure: 1.,
         ..Default::default()

@@ -5,7 +5,7 @@ fn picker_view_and_navigation_are_owned_without_overwriting_normal_preferences()
     for view in [View::Working, View::Source] {
         for source in [false, true] {
             let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-            editor.load_input(InputSettings::Digital);
+            editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
             let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             editor.document.project.orientation.turn_clockwise();
             editor.photo_orientation_mut().flips.horizontal = true;

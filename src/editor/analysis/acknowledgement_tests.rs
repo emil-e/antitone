@@ -50,6 +50,94 @@ fn start_cpu(
 }
 
 #[test]
+fn cancel_during_actual_camera_capture_keeps_feedback_until_the_worker_acknowledges() {
+    struct ObservedCapture {
+        inner: Arc<dyn crate::source::SourceProvider>,
+        observer: Arc<dyn Fn() + Send + Sync>,
+    }
+    impl crate::source::SourceProvider for ObservedCapture {
+        fn load_source(
+            &self,
+            key: crate::source::SourceKey,
+            priority: crate::source::Priority,
+        ) -> crate::source::SourceFuture<'_> {
+            self.inner.load_source(key, priority)
+        }
+        fn camera_capture_observer(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+            Some(self.observer.clone())
+        }
+    }
+    let loader = source_loading::SourceLoader::new();
+    let editor = fixture(loader.clone());
+    let (entered, starts) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let (returned, returns) = mpsc::channel();
+    let resume = Mutex::new(resume);
+    let provider = Arc::new(ObservedCapture {
+        inner: loader.provider(None),
+        observer: Arc::new(move || {
+            entered.send(()).unwrap();
+            resume.lock().unwrap().recv_timeout(LIMIT).unwrap();
+            returned.send(()).unwrap();
+        }),
+    });
+    let continued = Rc::new(Cell::new(false));
+    with_application(editor, |app| {
+        let completed = continued.clone();
+        app.enter(|editor, cx| {
+            let request = editor.analysis_request().unwrap();
+            editor.document.analysis_fit_work = Some(Box::new(move |request, stopped| {
+                Box::pin(async move {
+                    let id = request.document.project.order[0];
+                    let physical = request
+                        .document
+                        .source_input(id, &Default::default())
+                        .unwrap();
+                    let captured = SamplingInputs::default()
+                        .acquire(id, &physical, provider.as_ref(), &stopped)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    completed.set(true);
+                    assert!(captured.is_none());
+                    Ok(None)
+                })
+            }));
+            editor.start_analysis(request, cx);
+        });
+        let deadline = std::time::Instant::now() + LIMIT;
+        loop {
+            app.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "camera capture did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        app.update(Editor::cancel_analysis);
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.analysis_fitting());
+            assert!(editor.interaction_blocked() && !editor.file_available());
+            assert!(editor.activities.view().unwrap().cancel.is_none());
+        });
+        assert!(!continued.get());
+        assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        release.send(()).unwrap();
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
+        returns.recv_timeout(LIMIT).unwrap();
+        assert!(continued.get());
+        app.read(|editor| {
+            assert!(editor.activities.view().is_none());
+            assert!(editor.status.contains("cancelled"), "{}", editor.status);
+        });
+    });
+    loader.close_and_wait().unwrap();
+}
+
+#[test]
 fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting() {
     for fitting in [false, true] {
         let scheduler = source_loading::SourceLoader::new();

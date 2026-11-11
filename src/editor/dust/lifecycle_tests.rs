@@ -1076,24 +1076,34 @@ fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admi
 }
 
 #[test]
-fn failed_candidates_preserve_repairs_and_new_retires_them_and_late_work() {
-    for fail_first in [false, true] {
-        let e = editor();
-        crate::application::test_support::with_application(e, |app| {
-            app.enter(|e, cx| {
+fn input_keeps_repair_instructions_and_new_retires_them_and_late_work() {
+    for switch_first in [false, true] {
+        crate::application::test_support::with_application(editor(), |app| {
+            let (source, active, request) = app.enter(|e, cx| {
                 let source = e.document.visit.current_source.unwrap();
                 let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
                 e.schedule_dust(e.dust_signature().unwrap(), cx);
-                let request = captured_request(e);
-                if fail_first {
-                    e.start_document(
-                        Preparation::Input(e.document.capture(), e.document.visit.current_source),
-                        cx,
+                (source, active, captured_request(e))
+            });
+            if switch_first {
+                app.enter(|e, cx| {
+                    e.request_input(crate::processing::InputSettings::Digital, cx);
+                    if e.dialogs.is_open() {
+                        e.dialogs.answer_for_test("Switch stage");
+                    }
+                });
+                app.run_until(std::time::Duration::from_secs(5), |e| {
+                    e.document.input_change.is_none()
+                });
+                app.read(|e| {
+                    assert_eq!(
+                        e.document.project.input,
+                        crate::processing::InputSettings::Digital
                     );
-                    let id = e.document_pending.unwrap();
-                    e.document_prepared(id, Err("not prepared".into()));
                     assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
-                }
+                });
+            }
+            app.update(|e| {
                 e.new_project();
                 assert!(e.dust_repairs(source).is_none());
                 e.receive_dust(request.request, Ok(Some(response(&request, active))));

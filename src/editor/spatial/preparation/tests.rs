@@ -12,28 +12,33 @@ fn captured(
     pixels: Vec<[f32; 3]>,
     scale: f64,
 ) -> CapturedSource {
-    CapturedSource {
-        input: crate::spatial_metadata::Input {
-            source: SourceId(id),
-            revision: crate::source::FileRevision::read(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
-            )
-            .unwrap(),
-            development: SourceDevelopment {
-                decode: Development::new("authored-camera-raster".into(), [1.; 4]),
-                dimensions: [area.x + area.width, area.y + area.height],
-                active_area: [area.x, area.y, area.width, area.height],
-                camera_model: "authored".into(),
-                camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-            },
-            correction: None,
+    let input = crate::spatial_metadata::Input {
+        source: SourceId(id),
+        revision: crate::source::FileRevision::read(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        )
+        .unwrap(),
+        development: SourceDevelopment {
+            decode: Development::new("authored-camera-raster".into(), [1.; 4]),
+            dimensions: [area.x + area.width, area.y + area.height],
+            active_area: [area.x, area.y, area.width, area.height],
+            camera_model: "authored".into(),
+            camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
         },
-        camera: Arc::new(AnalysisInput::authored(
-            SourceRaster::new(area, size).unwrap(),
-            pixels,
-            crate::processing::CAMERA_INPUT_FLOOR * scale,
-        )),
-    }
+        correction: None,
+    };
+    let camera = Arc::new(AnalysisInput::authored(
+        SourceRaster::new(area, size).unwrap(),
+        pixels,
+        crate::processing::CAMERA_INPUT_FLOOR * scale,
+    ));
+    let key = crate::source::SourceKey::for_load(
+        std::path::Path::new("authored"),
+        crate::source::FileKey::unversioned(std::path::Path::new("authored")),
+        &input.development,
+    );
+    let camera = crate::source::CameraSamples::authored(key, input.development.clone(), camera);
+    CapturedSource { input, camera }
 }
 
 #[test]
@@ -111,7 +116,7 @@ fn geometry_keeps_dark_sites_that_are_ineligible_for_numerical_analysis() {
         16.,
     );
     for i in 0..3 {
-        assert!(!frame.camera.above_native_floor(i).unwrap());
+        assert!(!frame.camera.pixels().above_native_floor(i).unwrap());
     }
     let frames = geometry_frames(vec![frame], &|| Ok(())).unwrap();
     assert_eq!(frames[0].size, [3, 1]);

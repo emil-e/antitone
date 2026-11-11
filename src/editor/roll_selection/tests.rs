@@ -9,6 +9,7 @@ fn fixture(index: usize) -> Editor {
             .state
             .register_with_development(
                 Source {
+                    development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: format!("photo-{index}.ARW").into(),
                     development: crate::project::SourceDevelopment {

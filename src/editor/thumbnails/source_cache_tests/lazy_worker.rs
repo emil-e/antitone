@@ -18,19 +18,12 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
             queue,
         };
         let id = document.project.order[0];
-        let path = document.source_path(id).unwrap();
-        let source = document.project.source(id).unwrap();
         let ready = services
             .prepare(
                 source::Request {
-                    reference: Arc::default(),
-                    input: document.project.input,
-                    path: path.clone(),
-                    wb: wb(&document),
-                    expected: Some(source.clone()),
+                    source: document.source_input(id).unwrap(),
                     correction: None,
                     sources: Some(scheduler.provider(Some(document.cache.clone()))),
-                    file: document.file_key(&path),
                 },
                 crate::cancellation::Cancellation::default(),
             )

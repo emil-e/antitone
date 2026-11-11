@@ -11,6 +11,7 @@ fn fixture() -> (Project, SourceId) {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::Unity,
             path: "negative.ARW".into(),
             development: SourceDevelopment {
                 decode: Development::new("0.22.0".into(), [1.; 4]),

@@ -50,8 +50,6 @@ mod operation_tests;
 #[cfg(test)]
 mod ownership_tests;
 #[cfg(all(test, target_os = "macos"))]
-mod performance;
-#[cfg(all(test, target_os = "macos"))]
 mod preparation_async_tests;
 #[cfg(all(test, target_os = "macos"))]
 pub(super) mod preparation_tests;
@@ -1307,17 +1305,14 @@ fn review_windows(
 
 fn assemble_review(
     request: &analysis::Request,
-    device: &wgpu::Device,
     cancelled: impl Fn() -> bool,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Option<Approved>, Error> {
     if cancelled() {
         return Ok(None);
     }
-    request.document.validate_for_device(device)?;
-    request.document.project.require_scan_sources()?;
     let order = &request.document.project.order;
-    let metadata = request.document.ready_spatial_metadata();
+    let metadata = &request.document.spatial_metadata;
     let mut entries = Vec::with_capacity(order.len());
     let mut files = Vec::with_capacity(order.len());
     for (index, &source) in order.iter().enumerate() {
@@ -1347,13 +1342,12 @@ fn assemble_review(
 
 async fn prepare_review(
     request: analysis::Request,
-    device: wgpu::Device,
     cancelled: Cancellation,
     progress: impl FnMut(usize, usize) + Send + 'static,
 ) -> Result<Option<Approved>, Error> {
     let stopped = cancelled.clone();
     background::compute(&cancelled, move || {
-        assemble_review(&request, &device, || stopped.is_cancelled(), progress)
+        assemble_review(&request, || stopped.is_cancelled(), progress)
     })
     .await
     .map(Option::flatten)
@@ -1402,7 +1396,7 @@ struct FitInput {
     correction: Option<Arc<Correction>>,
     sources: Option<Arc<dyn SourceProvider>>,
     sampling_inputs: SamplingInputs,
-    exposures: Arc<crate::exposure_metadata::Store>,
+    initialization: Arc<crate::source::Initialization>,
 }
 
 pub(super) struct Confirmation {
@@ -1414,7 +1408,6 @@ pub(super) struct Confirmation {
 async fn sampling_review(
     request: analysis::Request,
     activity: Activity,
-    device: Option<wgpu::Device>,
     cancelled: Cancellation,
     cx: UiContext<'_, Editor>,
 ) {
@@ -1427,17 +1420,11 @@ async fn sampling_review(
         {
             return work(request.clone(), cancelled.clone()).await;
         }
-        match device {
-            Some(device) => prepare_review(
-                request.clone(),
-                device,
-                cancelled.clone(),
-                move |done, total| produced.progress(done, total),
-            )
-            .await
-            .map_err(|error| error.to_string()),
-            None => Err("GPU device unavailable".into()),
-        }
+        prepare_review(request.clone(), cancelled.clone(), move |done, total| {
+            produced.progress(done, total)
+        })
+        .await
+        .map_err(|error| error.to_string())
     }
     .await;
     drop(activity);
@@ -1482,7 +1469,7 @@ async fn fit_and_accept(
         correction,
         sources,
         sampling_inputs,
-        exposures,
+        initialization,
     } = fit;
     let produced = activity.reporter();
     let result = async {
@@ -1506,23 +1493,32 @@ async fn fit_and_accept(
             })
             .ok_or("GPU resources unavailable")?;
         let captured = request.clone();
-        let state = background::compute(&cancelled, move || {
-            let renderer = renderers.get(&device, &queue)?;
-            fit::Fit::new(device, queue, renderer, captured, correction)
+        let resources = fit::Resources {
+            correction,
+            sources,
+            sampling_inputs,
+            initialization,
+        };
+        let renderer = background::compute(&cancelled, move || {
+            renderers
+                .get(&device, &queue)
+                .map(|renderer| (device, queue, renderer))
         })
         .await
         .map_err(|error| error.to_string())?;
+        let Some((device, queue, renderer)) = renderer else {
+            return Ok(None);
+        };
+        let state = fit::Fit::acquire(device, queue, renderer, captured, resources, &cancelled)
+            .await
+            .map_err(|error| error.to_string())?;
         let Some(state) = state else {
             return Ok(None);
         };
         state
-            .run(
-                sources,
-                sampling_inputs,
-                exposures,
-                cancelled.clone(),
-                move |done, total| produced.progress(done, total),
-            )
+            .run(cancelled.clone(), move |done, total| {
+                produced.progress(done, total)
+            })
             .await
             .map_err(|error| error.to_string())
             .map(|outcome| outcome.map(Box::new))
@@ -1550,7 +1546,7 @@ impl Editor {
             .is_some_and(|op| matches!(op.phase, Phase::Fitting))
     }
 
-    fn begin_analysis_preparation(&mut self) -> (Activity, Option<wgpu::Device>) {
+    fn begin_analysis_preparation(&mut self) -> Activity {
         let cancelled = self
             .document
             .analysis_operation()
@@ -1570,12 +1566,7 @@ impl Editor {
         self.document.thumbnails.cancel();
 
         self.status = "Preparing per-photo analysis areas…".into();
-        (
-            activity,
-            self.source_services
-                .as_ref()
-                .map(|source| source.device.clone()),
-        )
+        activity
     }
 
     fn finish_analysis_work(&mut self) {
@@ -1620,8 +1611,8 @@ impl Editor {
                     Some(editor.begin_analysis_preparation())
                 })
                 .flatten();
-            if let Some((activity, device)) = prepared {
-                sampling_review(request, activity, device, cancelled, cx.clone()).await;
+            if let Some(activity) = prepared {
+                sampling_review(request, activity, cancelled, cx.clone()).await;
             } else {
                 cx.update(|editor| editor.document.set_analysis_operation(None));
             }
@@ -1669,7 +1660,7 @@ impl AnalyzeTool {
             correction: editor.document.correction.prepared().cloned(),
             sources: editor.source_provider(),
             sampling_inputs: editor.document.sampling_inputs.clone(),
-            exposures: editor.document.exposures.clone(),
+            initialization: editor.document.initialization.clone(),
         })
     }
 

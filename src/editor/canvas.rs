@@ -551,12 +551,13 @@ impl Editor {
             })
         };
         let (capture, repairs) = self.canvas_calculation(ui, image, cx)?;
+        let target = self.document.target();
         if (working || !repairs.0.is_empty())
-            && self.document.visit.working_view.observe(
-                physical_frame,
-                capture.clone(),
-                self.document.target(),
-            )
+            && self
+                .document
+                .visit
+                .working_view
+                .observe(physical_frame, capture.clone(), target)
         {
             self.discard_original();
         }
@@ -589,10 +590,7 @@ impl Editor {
                 Ok(view) => view,
                 Err(error) => {
                     self.document.visit.working_view.error = Some(error.to_string());
-                    self.document
-                        .visit
-                        .working_view
-                        .hold(self.document.target(), compare)
+                    self.document.visit.working_view.hold(target, compare)
                 }
             };
         if purpose.is_some()

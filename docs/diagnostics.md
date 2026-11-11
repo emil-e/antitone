@@ -113,27 +113,6 @@ ANTITONE_RAW_ROOT=/absolute/read-only-samples ANTITONE_REGION_ROLL=roll-name \
   -- --ignored --nocapture
 ```
 
-### Bounded area-preparation profiling
-
-The ignored `profile_complete_roll_area_preparation` diagnostic runs production shared detection and assembles its review windows directly — no Editor, thumbnails or window. Each invocation currently covers one complete 2–40-source roll with a 240-second cooperative timeout; native calls cannot be interrupted mid-call.
-
-Run the two arms as separate processes with fresh output directories. The **cold** arm means an empty application source store, not an uncached filesystem; the **warm** arm seeds only the last ordered source under a 600 MiB optional budget, so it is a partially warm document, not a fully resident roll. That seed can be evicted before its turn. Reports count each source request and the cache misses separately from actual native developments:
-
-```sh
-export ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence
-export ANTITONE_RAW_ROOT=/absolute/read-only-samples
-export ANTITONE_REGION_ROLL=roll-name
-ANTITONE_REGION_PERF_ARM=cold ANTITONE_REGION_OUTPUT="$PWD/.cache/region-cold" \
-  cargo test --locked --offline --release --features editor --lib \
-  profile_complete_roll_area_preparation -- --ignored --nocapture
-ANTITONE_REGION_PERF_ARM=warm ANTITONE_REGION_OUTPUT="$PWD/.cache/region-warm" \
-  ANTITONE_REGION_PERF_COMPARE="$PWD/.cache/region-cold/report.json" \
-  cargo test --locked --offline --release --features editor --lib \
-  profile_complete_roll_area_preparation -- --ignored --nocapture
-```
-
-Reports separate shared detection from review assembly, with actual per-source native development counts and nested open/unpack/develop timings. **Sum exclusive stage times and inspect residual wall time** — the inclusive totals overlap. Cold detection checks one development per source; repeated review assembly must consume the finished results without further native work. A successful run measures preparation only, not import, numerical Analyze, UI latency or photographic border accuracy.
-
 ### Marked crop quality and original-pixel inspection
 
 Crop quality is a consumer question: report wanted content lost, unwanted border admitted and abstention separately. The read-only [crop diagnostic](../native/crop_quality/mod.rs) uses normal `.antitone` projects and the production proposal/margin functions, without running Analyze or accepting edits. Supply a private manifest with project paths relative to the manifest and marks/windows in **original developed-source coordinates** (including any active-area origin — not oriented, cropped or preview coordinates):

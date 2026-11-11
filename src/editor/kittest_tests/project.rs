@@ -147,10 +147,16 @@ fn reset_shared_balance_component(harness: &mut Harness<'_, Editor>, label: &str
 fn individual_roll_white_balance_resets_work_in_both_input_stages() {
     for digital in [false, true] {
         tools::calibrated_harness(|mut harness| {
+            if digital {
+                harness.enter(|editor, cx| {
+                    editor.request_input(crate::processing::InputSettings::Digital, cx);
+                    if editor.document.input_change.is_some() {
+                        editor.dialogs.answer_for_test("Switch stage");
+                    }
+                });
+                wait_opened_photo(&mut harness);
+            }
             harness.update(|editor| {
-                if digital {
-                    editor.document.project.input = crate::processing::InputSettings::Digital;
-                }
                 editor.document.project.roll.wb = Balance {
                     warmth: 0.2,
                     tint: -0.15,
@@ -517,5 +523,95 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         harness.update(|editor| editor.document.path = saved_path);
         harness.read(|editor| assert!(!editor.files.pending()));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
+    });
+}
+
+#[test]
+fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate() {
+    fn open_stage(harness: &mut Harness<'_, Editor>, value: &str) {
+        let controls: Vec<_> = harness
+            .query_all_by_role(egui::accesskit::Role::ComboBox)
+            .filter(|node| node.accesskit_node().value().as_deref() == Some(value))
+            .collect();
+        assert_eq!(controls.len(), 1, "unique input-stage dropdown");
+        assert!(!controls[0].accesskit_node().is_disabled());
+        controls[0].click();
+    }
+    let raw = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unavailable.dng");
+    std::fs::copy(raw.path(), &path).unwrap();
+    editor_harness(|mut harness, _| {
+        stage(&mut harness, "Roll");
+        open_stage(&mut harness, "Negative");
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Digital").click();
+        harness.step();
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.project.input,
+                crate::processing::InputSettings::Digital
+            )
+        });
+        harness.enter(|editor, cx| editor.add_raws(vec![path.clone()], cx));
+        wait_opened_photo(&mut harness);
+        let (source, records) = harness.read(|editor| {
+            assert_eq!(
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .white_balance(),
+                [2., 1., 3., 1.]
+            );
+            (
+                editor.document.visit.current_source,
+                editor.document.project.sources.clone(),
+            )
+        });
+        std::fs::remove_file(&path).unwrap();
+        stage(&mut harness, "Roll");
+        open_stage(&mut harness, "Digital");
+        harness.try_run_realtime().unwrap();
+        assert!(
+            !harness
+                .get_by_label("Negative")
+                .accesskit_node()
+                .is_disabled(),
+            "stage option unavailable: {:?}",
+            harness.read(|e| (
+                e.document.project.input,
+                e.editing(),
+                e.interaction_blocked(),
+                e.tool_interacting(),
+                e.dialogs.is_open(),
+                e.document_pending,
+                e.status.clone()
+            ))
+        );
+        harness.get_by_label("Negative").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            editor.document.input_change.is_none() && !editor.document.visit.source.pending()
+        });
+        harness.read(|editor| {
+            assert!(editor.document.project.input.is_negative());
+            assert_eq!(editor.document.project.sources, records);
+            assert_eq!(editor.document.visit.current_source, source);
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(editor.document_pending.is_none());
+        });
+        harness.try_run_realtime().unwrap();
+        assert!(harness.output().shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Photo unavailable"
+        )));
+        save_capture(
+            &harness.render().unwrap(),
+            "input-missing-photo-negative-offscreen",
+        );
     });
 }

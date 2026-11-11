@@ -17,7 +17,7 @@ fn document(count: usize) -> (Document, tempfile::TempDir) {
     (document, directory)
 }
 
-fn wanted(document: &Document) -> Vec<(usize, ImageKey, PathBuf, Source)> {
+fn wanted(document: &Document) -> Vec<(usize, ImageKey, PathBuf)> {
     document
         .project
         .order
@@ -28,7 +28,6 @@ fn wanted(document: &Document) -> Vec<(usize, ImageKey, PathBuf, Source)> {
                 index,
                 key(document, *id),
                 document.source_path(*id).unwrap(),
-                document.project.source(*id).unwrap().clone(),
             )
         })
         .collect()

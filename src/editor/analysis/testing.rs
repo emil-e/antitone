@@ -63,7 +63,7 @@ impl Editor {
     ) {
         self.document
             .set_analysis_operation(Some(Operation::new(Phase::Review)));
-        let (id, device) = self.begin_analysis_preparation();
+        let activity = self.begin_analysis_preparation();
         let cancelled = self
             .document
             .analysis_operation()
@@ -73,7 +73,7 @@ impl Editor {
         let retire = cancelled.cancel_on_drop();
         let task = cx.spawn(move |cx| async move {
             let _retire = retire;
-            sampling_review(request, id, device, cancelled, cx).await;
+            sampling_review(request, activity, cancelled, cx).await;
         });
         self.document.analysis_operation_mut().unwrap().task = task;
     }

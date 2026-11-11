@@ -22,6 +22,7 @@ fn project() -> (Project, SourceId) {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            development_mode: antitone::project::DevelopmentMode::Unity,
             path: "negative.ARW".into(),
             development: SourceDevelopment {
                 decode: Development::new("test".into(), [1.; 4]),

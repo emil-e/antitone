@@ -473,7 +473,11 @@ fn shortcut(h: &mut Harness<'_, Editor>, redo: bool) {
         egui::Key::Z,
     );
     h.step();
-    wait_for(h, |e| !e.interaction_blocked());
+    wait_for(h, |e| {
+        !e.interaction_blocked()
+            && !e.document.visit.source.pending()
+            && !e.document.correction.pending()
+    });
 }
 
 fn native_action(h: &mut Harness<'_, Editor>, action: crate::platform::menu::Action) {

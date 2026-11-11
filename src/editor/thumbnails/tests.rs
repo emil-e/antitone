@@ -31,23 +31,43 @@ pub(super) fn service_job(
                 .map(|(_, product)| product.clone())
         })
         .flatten();
+    let reference = Arc::new(
+        key.recipe
+            .as_ref()
+            .ok()
+            .and_then(|recipe| recipe.as_ref())
+            .and_then(|recipe| recipe.neutral.reference.clone())
+            .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+    );
+    let input = key
+        .recipe
+        .as_ref()
+        .ok()
+        .and_then(|recipe| recipe.as_ref())
+        .map_or_else(InputSettings::default, |recipe| recipe.neutral.input);
+    let physical = crate::source::Input::photo(
+        path.clone(),
+        key.source.file.clone(),
+        input,
+        reference.clone(),
+        crate::source::input::Photograph {
+            record: source.clone(),
+            development: key.source.development.clone(),
+            basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
+                &source,
+            ))),
+            expected_camera: Some(source.development.camera_model.clone()),
+        },
+    );
     Job {
+        physical,
         generation: thumbnails.generation.clone(),
         cancelled: crate::cancellation::Cancellation::default(),
-        reference: Arc::new(
-            key.recipe
-                .as_ref()
-                .ok()
-                .and_then(|recipe| recipe.as_ref())
-                .and_then(|recipe| recipe.neutral.reference.clone())
-                .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
-        ),
+        reference,
         ticket: thumbnails
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
         key,
-        path,
-        source,
         correction,
         render,
         priority: if render {
@@ -121,6 +141,7 @@ pub(super) fn fixture() -> Document {
         document
             .register_with_development(
                 Source {
+                    development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path,
                     development: SourceDevelopment {
@@ -155,9 +176,10 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         } else {
             Ok(None)
         },
-        source: SourceKey::new(
+        source: SourceKey::for_document(
             document.project.source(id).unwrap(),
             document.file_key(&document.source_path(id).unwrap()),
+            document,
         ),
         target: OutputTarget::DisplayP3,
         field: document
@@ -1463,14 +1485,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.request_thumbnail(
-                image_key,
-                e.document.source_path(last).unwrap(),
-                e.document.state.project.source(last).unwrap().clone(),
-                true,
-                source_loading::Priority::Eager,
-                cx,
-            )
+            e.request_thumbnail(image_key, true, source_loading::Priority::Eager, cx)
         });
         let old = take_submission(app, &requests);
         app.enter(|e, cx| {

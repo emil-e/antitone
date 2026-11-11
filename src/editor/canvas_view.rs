@@ -17,12 +17,35 @@ pub(super) struct Displayed {
 /// Image and interaction state selected by the shared canvas and viewer controls.
 #[derive(Default)]
 pub(super) struct CanvasView {
-    pub ready: Option<Ready>,
     pub viewport: Viewport,
+    pub(super) input: CanvasInput,
+}
+
+#[derive(Default)]
+pub(super) struct CanvasInput {
+    pub ready: Option<Ready>,
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     pub preview_rendered: Option<Preview>,
     pub selection_timing: Option<Arc<super::SelectionTiming>>,
     pub original: OriginalView,
+}
+
+impl CanvasView {
+    pub fn retire_input(&mut self) {
+        self.input = Default::default();
+    }
+}
+
+impl std::ops::Deref for CanvasView {
+    type Target = CanvasInput;
+    fn deref(&self) -> &Self::Target {
+        &self.input
+    }
+}
+impl std::ops::DerefMut for CanvasView {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.input
+    }
 }
 
 impl super::Editor {

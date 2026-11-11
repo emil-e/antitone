@@ -358,31 +358,35 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
 }
 
 #[test]
-fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
+fn input_switch_preserves_the_selected_layer_and_its_workspace() {
     pollster::block_on(async {
         let (editor, _, _) = processing::tests::fixture().await;
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
+            let (id, accepted, source) = app.enter(|editor, cx| {
                 let id = ids(editor)[1];
                 editor.select_adjustment_layer(Target::Layer(id));
                 editor.document.visit.adjustment_layers.show_coverage = true;
-
-                let accepted = editor.document.state.project.clone();
-                let visit = editor.document.visit.view;
-                editor.start_document(
-                    Preparation::Input(
-                        editor.document.capture(),
-                        editor.document.visit.current_source,
-                    ),
-                    cx,
+                let accepted = editor.document.state.project.sources.clone();
+                let source = editor.document.visit.current_source;
+                editor.request_input(crate::processing::InputSettings::Digital, cx);
+                if editor.dialogs.is_open() {
+                    editor.dialogs.answer_for_test("Switch stage");
+                }
+                (id, accepted, source)
+            });
+            app.run_until(std::time::Duration::from_secs(5), |editor| {
+                editor.document.input_change.is_none()
+            });
+            app.read(|editor| {
+                assert_eq!(
+                    editor.document.project.input,
+                    crate::processing::InputSettings::Digital
                 );
-                let request = editor.document_pending.unwrap();
-                editor.document_prepared(request, Err("candidate rejected".into()));
-                assert_eq!(editor.document.visit.view, visit);
+                assert_eq!(editor.document.visit.current_source, source);
                 assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
-                assert!((editor.tab == 1));
+                assert_eq!(editor.tab, 1);
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
-                assert_eq!(editor.document.state.project, accepted);
+                assert_eq!(editor.document.project.sources, accepted);
             });
         });
     });
