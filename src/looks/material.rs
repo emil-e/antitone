@@ -143,12 +143,6 @@ impl Selection {
             Self::Monochrome(v) => Paper::Monochrome(v.paper),
         }
     }
-    pub fn authoring_grid(self) -> u32 {
-        match self {
-            Self::Colour(v) => v.authoring_grid(),
-            Self::Monochrome(_) => super::authoring::DEFAULT_GRID,
-        }
-    }
     pub fn bake(self, size: u32, cancel: &AtomicBool) -> Result<LookAsset, Error> {
         match self {
             Self::Colour(v) => spektrafilm::Model::new(v, cancel)?.bake(size, cancel),

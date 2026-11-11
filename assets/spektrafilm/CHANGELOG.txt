@@ -12,15 +12,13 @@ Antitone modifications:
   dye/base spectra, input-gamut coordinates and enlarger calibration.
 - Share the Hanatos input spectral family rather than installing a full
   camera-negative exposure LUT for every stock.
-- Calibrate print time on a controlled neutral AP1 0.18 to output XYZ Y=0.1,
-  retaining the frozen complete-rendering reference's printing convention.
+- Calibrate print time on a controlled neutral AP1 0.18 to viewed XYZ Y=0.1
+  through the common authoring-reference finish.
   This is a rendering convention, not a photographic or stock-fidelity fit.
 - Sample each paper-density readout together with the pinned inverse
   authoring DRT, storing ACEScct/AP1 values.
-- Add a positive-to-paper adapter using the existing 0.6 ACEScct/stops
-  convention, with a controlled neutral 0.18 anchor.
 - Use the historical Academy universal reference and a convex APD-action
-  spectral selector for Supra Endura paper-only, with a supplied base prior,
+  spectral selector for every colour medium's paper-only entry, with a supplied base prior,
   constant-Y radial adapter boundary and low-positive receiver tangent.
   Retain the scalar neutral log-exposure law, original paper photometry and
   common exposure solve, including the neutral path's tone-dependent tint.
@@ -30,9 +28,9 @@ Antitone modifications:
   its derived functional coefficients rely on the source's implementation
   non-enforcement covenant, with the original notices retained separately
   in NOTICE-Academy-APD.txt rather than relicensed by the spektrafilm licenses.
-- Target Supra Endura gamut compression directly to the p3rec50 authoring
-  reference and omit its separate lightness rolloff. Retain fixed exposure
-  calibration independently of output finishing; other media are unchanged.
+- Use common p3rec50 authoring-reference gamut compression without a
+  separate lightness rolloff for every medium, in calibration and final readout.
+- Bake new treatments on the shared 65-cubed float32 authoring grid.
 - Generate compact source conformance observations for native tests.
 
 No source photograph, publisher artwork, Python runtime, grain/halation

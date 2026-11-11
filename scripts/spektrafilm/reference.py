@@ -98,7 +98,7 @@ def source(path):
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
-        "distribution": "Private trial; public redistribution permission for APD reference data remains unestablished.",
+        "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
     }
 
 

@@ -1,6 +1,6 @@
 //! Reference-negative paper entry with native-tone exposure anchoring.
 mod reference;
-use super::{data, develop_print_morph, reference_exposure};
+use super::{data, develop_print_morph, neutral_exposure};
 use crate::{
     Error,
     looks::{failure, require},
@@ -86,10 +86,10 @@ impl Driver {
     ) -> Result<DVec3, Error> {
         if rgb.x == rgb.y && rgb.y == rgb.z {
             // Preserve the entire neutral input law, including signed and HDR values.
-            return Ok(reference_exposure(paper, rgb, mapping));
+            return Ok(neutral_exposure(paper, rgb.x, mapping));
         }
         let brightness = self.input_luminance.dot(rgb);
-        let neutral = reference_exposure(paper, DVec3::splat(brightness), mapping);
+        let neutral = neutral_exposure(paper, brightness, mapping);
         let first = paper.log_exposure[0];
         let last = *paper.log_exposure.last().expect("validated paper curve");
         // At either constant material endpoint the target is independent of colour.

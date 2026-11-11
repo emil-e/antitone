@@ -65,7 +65,17 @@ def validate(folder, files=None):
         raise ValueError("spectral family shape")
     if not all(float("-inf") < v[0] < float("inf") for v in struct.iter_unpack("<e", spectra)):
         raise ValueError("nonfinite spectral family")
+    if (
+        set(provenance["positive_drivers"]) != paper
+        or set(provenance["paper_output_validation"]) != paper
+    ):
+        raise ValueError("incomplete reference entry/finishing coverage")
     for medium in catalog["paper"]:
+        if medium["positive_driver"] != {
+            key: provenance["positive_drivers"][medium["id"]][key]
+            for key in ["input_luminance", "photometry", "reference"]
+        }:
+            raise ValueError("reference driver/provenance mismatch")
         values = zlib.decompress(files[medium["scanner_file"]])
         if len(values) != size**3 * 12:
             raise ValueError("scanner component shape")

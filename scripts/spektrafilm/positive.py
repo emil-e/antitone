@@ -45,10 +45,8 @@ def expose(inputs, axis, curves, h0, driver, gain=0.6, gray=0.18):
             else (np.log2(x) + 9.72) / 17.52
         )
 
-    def reference(rgb):
-        return np.array(h0) - gain * 17.52 * (
-            np.array([encode(x) for x in rgb]) - encode(gray)
-        ) * np.log10(2)
+    def neutral_exposure(brightness):
+        return np.array(h0) - gain * 17.52 * (encode(brightness) - encode(gray)) * np.log10(2)
 
     def viewed_y(h):
         density = np.array([np.interp(h[i], axis, curves[:, i]) for i in range(3)])
@@ -56,9 +54,9 @@ def expose(inputs, axis, curves, h0, driver, gain=0.6, gray=0.18):
 
     result = []
     for rgb in np.atleast_2d(inputs):
-        neutral = reference(np.full(3, float(luminance @ rgb)))
+        neutral = neutral_exposure(float(luminance @ rgb))
         if rgb[0] == rgb[1] == rgb[2]:
-            result.append(reference(rgb))
+            result.append(neutral_exposure(float(rgb[0])))
             continue
         if np.max(neutral) <= axis[0] or np.min(neutral) >= axis[-1]:
             result.append(neutral)

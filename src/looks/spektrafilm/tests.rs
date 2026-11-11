@@ -22,8 +22,7 @@ struct Case {
 }
 #[derive(Deserialize)]
 struct PaperCase {
-    #[serde(default)]
-    physical_y: Option<Vec<f64>>,
+    physical_y: Vec<f64>,
     paper: String,
     input: Vec<DVec3>,
     paper_h: Vec<DVec3>,
@@ -56,15 +55,7 @@ fn source_evaluated_catalogue_has_every_selectable_pair_and_preserves_identity()
     assert_eq!(expected_papers, actual_papers);
     assert_eq!(f.paper_only.len(), Paper::all().len());
     for case in &f.paper_only {
-        if case.paper == "kodak_supra_endura" {
-            assert_eq!(
-                case.physical_y
-                    .as_ref()
-                    .expect("Supra source photometry is required")
-                    .len(),
-                case.input.len()
-            );
-        }
+        assert_eq!(case.physical_y.len(), case.input.len());
     }
     for case in &f.cases {
         assert_eq!(case.reference_rgb.len(), case.input.len());
@@ -143,10 +134,10 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
             assert!((h - case.paper_h[i]).abs().max_element() < 1e-12);
             let d = develop_print_morph(model.paper, h);
             assert!((d - case.paper_density[i]).abs().max_element() < 1e-12);
-            if let Some(expected) = &case.physical_y {
-                let driver = model.paper.positive_driver.as_ref().unwrap();
-                assert!((driver.luminance(model.paper, h) - expected[i]).abs() < 2e-14);
-            }
+            assert!(
+                (model.paper.positive_driver.luminance(model.paper, h) - case.physical_y[i]).abs()
+                    < 2e-14
+            );
             assert!(model.encoded(*input).unwrap().is_finite());
         }
         let neutral = model
@@ -159,91 +150,87 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
 }
 
 #[test]
-fn supra_brightness_anchor_preserves_the_neutral_path_and_is_not_a_no_op() {
-    let model = Model::new(
-        Selection {
-            negative: None,
-            paper: Paper::from_id("kodak_supra_endura").unwrap(),
-        },
-        &AtomicBool::new(false),
-    )
-    .unwrap();
-    assert!(model.film.is_none());
+fn every_media_reference_retains_scalar_tone_and_supplies_nontrivial_colour_at_fixed_y() {
     let mapping = &data::catalog().paper_mapping;
-    let baseline = |rgb: DVec3| {
-        let stops = 17.52
-            * (rgb.map(photographic::encode)
-                - DVec3::splat(photographic::encode(mapping.gray_ap1)));
-        model.paper.positive_gray_log_h
-            - stops * (mapping.exposure_compression * std::f64::consts::LOG10_2)
-    };
-    for value in [-1., -0.02, 0., 0.003, 0.0078125, 0.18, 1., 16., 1024.] {
-        let input = DVec3::splat(value);
-        assert!(
-            (model.paper_exposure(input).unwrap() - baseline(input))
-                .abs()
-                .max_element()
-                < 1e-12
-        );
-        let unchanged = model
-            .scanner
-            .sample(develop_print_morph(model.paper, baseline(input)));
-        assert!(
-            (model.encoded(input).unwrap() - unchanged)
-                .abs()
-                .max_element()
-                < 1e-12
-        );
-    }
-    let colour = DVec3::new(0.32, 0.16, 0.10);
-    let driver = model.paper.positive_driver.as_ref().unwrap();
-    let target_h = baseline(DVec3::splat(driver.input_luminance.dot(colour)));
-    let target_y = driver.luminance(model.paper, target_h);
-    assert!((driver.luminance(model.paper, baseline(colour)) - target_y).abs() > 1e-6);
-    assert!(
-        (driver.luminance(model.paper, model.paper_exposure(colour).unwrap()) - target_y).abs()
-            < 2e-12
-    );
-    let uncalibrated = model
-        .scanner
-        .sample(develop_print_morph(model.paper, baseline(colour)));
-    assert!(
-        (model.encoded(colour).unwrap() - uncalibrated)
-            .abs()
-            .max_element()
-            > 1e-5
-    );
-}
-
-#[test]
-fn spectral_reference_adapter_changes_only_supra_paper_input() {
-    for paper in &data::catalog().paper {
-        assert_eq!(
-            paper.positive_driver.is_some(),
-            paper.id == "kodak_supra_endura"
-        );
+    for paper in Paper::all() {
         let model = Model::new(
             Selection {
                 negative: None,
-                paper: Paper::from_id(&paper.id).unwrap(),
+                paper,
             },
             &AtomicBool::new(false),
         )
         .unwrap();
-        let input = DVec3::new(0.32, 0.16, 0.10);
-        let original = reference_exposure(paper, input, &data::catalog().paper_mapping);
-        let actual = model.paper_exposure(input).unwrap();
-        if paper.positive_driver.is_none() {
-            assert_eq!(actual, original);
-        } else {
-            let difference = actual - original;
+        assert!(model.film.is_none());
+        let driver = &model.paper.positive_driver;
+        let baseline = |brightness| {
+            let offset = mapping.exposure_compression
+                * 17.52
+                * (photographic::encode(brightness) - photographic::encode(mapping.gray_ap1))
+                * std::f64::consts::LOG10_2;
+            model.paper.positive_gray_log_h - DVec3::splat(offset)
+        };
+        for value in [-1., -0.02, 0., 0.003, 0.0078125, 0.18, 1., 16., 1024.] {
+            let expected = baseline(value);
+            let actual = model.paper_exposure(DVec3::splat(value)).unwrap();
+            assert!(
+                (actual - expected).abs().max_element() < 1e-12,
+                "{}",
+                paper.id()
+            );
+            assert_eq!(
+                model.encoded(DVec3::splat(value)).unwrap(),
+                model
+                    .scanner
+                    .sample(develop_print_morph(model.paper, actual))
+            );
+        }
+        for colour in [DVec3::new(0.32, 0.16, 0.10), DVec3::new(0.05, 0.18, 0.30)] {
+            let neutral = baseline(driver.input_luminance.dot(colour));
+            let actual = model.paper_exposure(colour).unwrap();
+            assert!(
+                (driver.luminance(model.paper, actual) - driver.luminance(model.paper, neutral))
+                    .abs()
+                    < 2e-12,
+                "{}",
+                paper.id()
+            );
+            let difference = actual - neutral;
             assert!(
                 (difference - DVec3::splat(difference.x))
                     .abs()
                     .max_element()
-                    > 0.001
+                    > 1e-6,
+                "{}",
+                paper.id()
+            );
+            assert!(
+                (model.encoded(colour).unwrap()
+                    - model
+                        .scanner
+                        .sample(develop_print_morph(model.paper, neutral)))
+                .abs()
+                .max_element()
+                    > 1e-5,
+                "{}",
+                paper.id()
             );
         }
+    }
+}
+
+#[test]
+fn every_media_record_requires_its_reference_driver() {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&data::decompress("catalog.json.z").unwrap()).unwrap();
+    for i in 0..value["paper"].as_array().unwrap().len() {
+        let driver = value["paper"][i]
+            .as_object_mut()
+            .unwrap()
+            .remove("positive_driver")
+            .unwrap();
+        assert!(serde_json::from_value::<data::Catalog>(value.clone()).is_err());
+        value["paper"][i]["positive_driver"] = driver;
     }
 }
 

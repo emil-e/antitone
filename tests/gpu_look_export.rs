@@ -134,20 +134,22 @@ fn repaired_tiff_applies_the_scene_look_after_neutral_replacement_and_matches_sc
 }
 
 #[test]
-fn supra_paper_only_tiff_matches_scalar_for_both_outputs_without_another_negative() {
+fn every_colour_medium_paper_only_tiff_matches_scalar_for_both_outputs_without_another_negative() {
     use antitone::looks::spektrafilm::{Model, Paper, Selection};
-    let selection = Selection {
-        negative: None,
-        paper: Paper::from_id("kodak_supra_endura").unwrap(),
-    };
-    let asset = Model::new(selection, &std::sync::atomic::AtomicBool::new(false))
-        .unwrap()
-        .bake(
-            selection.authoring_grid(),
-            &std::sync::atomic::AtomicBool::new(false),
-        )
-        .unwrap();
-    compare_tiff(false, Arc::new(asset));
+    for paper in Paper::all() {
+        let selection = Selection {
+            negative: None,
+            paper,
+        };
+        let asset = Model::new(selection, &std::sync::atomic::AtomicBool::new(false))
+            .unwrap()
+            .bake(
+                antitone::looks::authoring::DEFAULT_GRID,
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .unwrap();
+        compare_tiff(false, Arc::new(asset));
+    }
 }
 
 fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {

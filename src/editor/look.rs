@@ -1,11 +1,12 @@
 use super::*;
+#[cfg(test)]
+use crate::looks::spektrafilm::Selection;
 use crate::looks::{
     LookAsset, LookOrigin,
+    authoring::DEFAULT_GRID,
     cache::Cache,
     material::{self, Selection as MaterialSelection},
 };
-#[cfg(test)]
-use crate::looks::{authoring::DEFAULT_GRID, spektrafilm::Selection};
 use crate::project::Project;
 use std::{
     collections::HashSet,
@@ -163,18 +164,20 @@ pub(super) fn prepare_asset(
     let asset = match source {
         Source::Loaded(asset) => asset.as_ref().clone(),
         Source::Photochemical(selection) => {
-            let grid = selection.authoring_grid();
-            let cached = cache.and_then(|cache| match cache.load_photochemical(selection, grid) {
-                Ok(asset) => asset,
-                Err(error) => {
-                    log::warn!(error = error.to_string().as_str(); "lut_cache_ignored");
-                    None
-                }
-            });
+            let cached =
+                cache.and_then(
+                    |cache| match cache.load_photochemical(selection, DEFAULT_GRID) {
+                        Ok(asset) => asset,
+                        Err(error) => {
+                            log::warn!(error = error.to_string().as_str(); "lut_cache_ignored");
+                            None
+                        }
+                    },
+                );
             match cached {
                 Some(asset) => asset,
                 None => {
-                    let result = selection.bake(grid, cancel);
+                    let result = selection.bake(DEFAULT_GRID, cancel);
                     let asset = match result {
                         Ok(asset) => asset,
                         Err(_) if cancel.load(Ordering::Relaxed) => return Ok(None),

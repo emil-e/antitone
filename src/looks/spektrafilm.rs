@@ -68,14 +68,6 @@ pub struct Selection {
     pub paper: Paper,
 }
 impl Selection {
-    /// Finer sampling resolves the reference adapter's saturated exposure curvature.
-    pub fn authoring_grid(self) -> u32 {
-        if self.negative.is_none() && self.paper.id() == "kodak_supra_endura" {
-            129
-        } else {
-            super::authoring::DEFAULT_GRID
-        }
-    }
     pub fn name(self) -> String {
         self.negative.map_or_else(
             || self.paper.name().to_owned(),
@@ -270,13 +262,12 @@ fn film_cmy_to_print_log_raw(film: &data::Film, pair: &data::Pair, d: DVec3) -> 
         .map(f64::log10)
 }
 
-// An idealized RGB-record negative-equivalent reference, not measured printer
-// densities. The ordinary branch is g*log10(x/gray); its low/signed tangent
-// retains the shared scalar tone convention without clipping working AP1.
-fn reference_exposure(paper: &data::Paper, rgb: DVec3, mapping: &data::Mapping) -> DVec3 {
-    let stops = 17.52
-        * (rgb.map(photographic::encode) - DVec3::splat(photographic::encode(mapping.gray_ap1)));
-    paper.positive_gray_log_h - stops * (mapping.exposure_compression * std::f64::consts::LOG10_2)
+// Shared scalar tone convention, including the signed/low-light tangent.
+// Colour enters only through the spectral reference, not independent RGB stops.
+fn neutral_exposure(paper: &data::Paper, brightness: f64, mapping: &data::Mapping) -> DVec3 {
+    let stops = 17.52 * (photographic::encode(brightness) - photographic::encode(mapping.gray_ap1));
+    paper.positive_gray_log_h
+        - DVec3::splat(stops * mapping.exposure_compression * std::f64::consts::LOG10_2)
 }
 
 pub struct Model {
@@ -299,16 +290,15 @@ impl Model {
         })
     }
     fn paper_exposure(&self, rgb: DVec3) -> Result<DVec3, Error> {
-        match (&self.film, &self.paper.positive_driver) {
-            (Some(film), _) => Ok(film
+        match &self.film {
+            Some(film) => Ok(film
                 .printing
                 .sample(develop(film.profile, film.expose(rgb)))),
-            (None, Some(driver)) => driver.expose(rgb, self.paper, &data::catalog().paper_mapping),
-            (None, None) => Ok(reference_exposure(
-                self.paper,
-                rgb,
-                &data::catalog().paper_mapping,
-            )),
+            None => {
+                self.paper
+                    .positive_driver
+                    .expose(rgb, self.paper, &data::catalog().paper_mapping)
+            }
         }
     }
     pub fn encoded(&self, rgb: DVec3) -> Result<DVec3, Error> {

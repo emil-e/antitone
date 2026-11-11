@@ -1,6 +1,6 @@
 Historical Academy APD/ADX reference
 
-Antitone's Supra paper-only adapter uses derived functional coefficients from
+Antitone's colour paper-only adapter uses derived functional coefficients from
 S-2008-002, Academy Density Exchange Encoding (ADX) and the Spectral
 Responsivities Defining Academy Printing Density (APD), Version 1.1,
 November 18, 2010. This implementation relies on the source's IP
