@@ -440,9 +440,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                     .unwrap()
                     .development
                     .dimensions[0] += 1;
-                editor
-                    .validate_document_candidate(&editor.document)
-                    .unwrap();
+                editor.document.project.require_runtime().unwrap();
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.pending_preview.is_none());
 
@@ -800,9 +798,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         .adjustment
                         .invert = false;
                 }
-                editor
-                    .validate_document_candidate(&editor.document)
-                    .unwrap();
+                editor.document.project.require_runtime().unwrap();
             });
         });
     });

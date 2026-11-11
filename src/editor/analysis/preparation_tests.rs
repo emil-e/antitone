@@ -101,7 +101,11 @@ fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission(
     ));
     request.document.project.require_runtime().unwrap();
     assert!(
-        request.document.validate_for_device(&device).is_err(),
+        crate::gpu::lut3d::Lut::require_limits(
+            &device.limits(),
+            request.document.project.output.lut.as_ref().unwrap().lut()
+        )
+        .is_err(),
         "the look must actually fail the unrelated GPU admission check"
     );
     let before = request.document.project.clone();

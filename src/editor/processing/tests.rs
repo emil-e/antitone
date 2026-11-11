@@ -237,7 +237,8 @@ fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
             ..editor.calibration().unwrap()
         };
         editor.set_dmax(Some(calibration.dmax));
-        editor.document.validate_for_device(&device).unwrap();
+        crate::editor::tests::photograph(&editor.document.capture(), second, &device.limits())
+            .unwrap();
         let source = editor.document.project.source(second).unwrap();
         let actual = editor
             .positive_processing_for_source(

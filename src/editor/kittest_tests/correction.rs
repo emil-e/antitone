@@ -724,9 +724,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                     Ok(())
                 })
                 .unwrap();
-            editor
-                .validate_document_candidate(&editor.document)
-                .unwrap();
+            editor.document.project.require_runtime().unwrap();
         });
         if harness.read(|editor| editor.document.source) {
             harness.get_by_label("View source").click();

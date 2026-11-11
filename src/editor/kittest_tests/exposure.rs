@@ -408,9 +408,12 @@ fn cold_open_preserves_metadata_and_valid_extreme_normalized_layers_render() {
                 "{}",
                 editor.status
             );
-            editor
-                .validate_document_candidate(&editor.document)
-                .unwrap();
+            crate::editor::tests::photograph(
+                &editor.document.capture(),
+                id,
+                &editor.source_services.as_ref().unwrap().device.limits(),
+            )
+            .unwrap();
             let displayed = editor.canvas_frame.displayed.as_ref().unwrap();
             assert!(!displayed.view.spec.is_inspection());
             let recipe = editor
@@ -471,9 +474,12 @@ fn cold_open_preserves_metadata_and_valid_extreme_normalized_layers_render() {
         h.step();
         super::workflow::wait_settled(&mut h);
         h.read(|editor| {
-            editor
-                .validate_document_candidate(&editor.document)
-                .unwrap();
+            crate::editor::tests::photograph(
+                &editor.document.capture(),
+                id,
+                &editor.source_services.as_ref().unwrap().device.limits(),
+            )
+            .unwrap();
             assert!(
                 !editor
                     .canvas_frame

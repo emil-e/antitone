@@ -333,7 +333,7 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
                 "the retired source must be released after stale delivery"
             );
             assert_eq!(editor.document.state.project, expected);
-            editor.document.validate().unwrap();
+            editor.document.project.require_runtime().unwrap();
             let path = std::env::temp_dir().join(format!(
                 "antitone-empty-removal-{}.json",
                 std::process::id()

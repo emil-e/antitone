@@ -120,7 +120,7 @@ fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
     }
     assert_eq!(candidate.project.order, before.order);
     assert_eq!(candidate.project.analysis_area, Some(array(picture)));
-    candidate.validate().unwrap();
+    candidate.project.require_runtime().unwrap();
     let mut malformed = proposal(&editor.document);
     malformed.photos.pop();
     assert!(proposed_document(&editor.document, malformed, Some(picture)).is_err());
@@ -210,7 +210,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             Some(rect([52, 42, 720, 540])),
         )
         .unwrap();
-        candidate.validate().unwrap();
+        candidate.project.require_runtime().unwrap();
         let result = if mode == 0 {
             Err("sampling failed".into())
         } else {

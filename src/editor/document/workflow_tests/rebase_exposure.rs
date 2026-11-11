@@ -180,7 +180,7 @@ fn relative_save_as_preserves_recorded_normalization_without_render_admission() 
     document.project.source_mut(id).unwrap().path = raw.path().file_name().unwrap().into();
     document.capture_source_files().unwrap();
     range_stack(&mut document, id);
-    document.validate_with_device(None).unwrap();
+    crate::editor::tests::photograph(&document, id, &Default::default()).unwrap();
     let scope: crate::editor::document_scope::DocumentScope = document.into();
 
     scope
@@ -189,7 +189,7 @@ fn relative_save_as_preserves_recorded_normalization_without_render_admission() 
         .unwrap();
     let snapshot = scope.capture();
     assert!(
-        snapshot.validate_with_device(None).is_err(),
+        crate::editor::tests::photograph(&snapshot, id, &Default::default()).is_err(),
         "known amplification makes this otherwise admitted stack unsafe"
     );
     for path in [&old, &new] {
@@ -200,7 +200,7 @@ fn relative_save_as_preserves_recorded_normalization_without_render_admission() 
             reopened.reference_exposure(reopened.project.source(id).unwrap()),
             Some(&reference(3.))
         );
-        assert!(reopened.validate_with_device(None).is_err());
+        assert!(crate::editor::tests::photograph(&reopened, id, &Default::default()).is_err());
     }
 }
 
@@ -216,7 +216,7 @@ fn history_and_persistence_preserve_settings_while_known_normalization_guards_re
     let selected = document.project.order[0];
     let offscreen = document.project.order[1];
     range_stack(&mut document, offscreen);
-    document.validate_with_device(None).unwrap();
+    crate::editor::tests::photograph(&document, offscreen, &Default::default()).unwrap();
     editor.document.install(document);
     let historical = editor.document.state.project.clone();
 
@@ -233,10 +233,11 @@ fn history_and_persistence_preserve_settings_while_known_normalization_guards_re
     let mut target = editor.document.capture();
     assert!(target.exposure_metadata.entries.is_empty());
     target.project = historical;
-    let device = &editor.source_services.as_ref().unwrap().device;
     assert!(
-        target.validate_for_device(device).is_ok(),
-        "unresolved domains remain lazily admitted"
+        target
+            .reference_exposure(target.project.source(offscreen).unwrap())
+            .is_none(),
+        "the retained version must not snapshot a viewing-resolved baseline"
     );
     let removed = editor.document.state.project.clone();
 
@@ -260,17 +261,23 @@ fn history_and_persistence_preserve_settings_while_known_normalization_guards_re
             assert!(!e.interaction_blocked() && !e.document.write.pending());
             let snapshot = e.document.capture();
             assert!(
-                snapshot
-                    .validate_for_device(&e.source_services.as_ref().unwrap().device)
-                    .is_err()
+                crate::editor::tests::photograph(
+                    &snapshot,
+                    offscreen,
+                    &e.source_services.as_ref().unwrap().device.limits(),
+                )
+                .is_err()
             );
             let saved = snapshot.save(&output, crate::project::Save::New).unwrap();
             let reopened = Document::open(&output).unwrap();
             assert_eq!(reopened.project, saved.project);
             assert!(
-                reopened
-                    .validate_for_device(&e.source_services.as_ref().unwrap().device)
-                    .is_err()
+                crate::editor::tests::photograph(
+                    &reopened,
+                    offscreen,
+                    &e.source_services.as_ref().unwrap().device.limits(),
+                )
+                .is_err()
             );
             assert_eq!(e.document.state.project, target.project);
         });

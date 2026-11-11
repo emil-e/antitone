@@ -1,4 +1,5 @@
 use super::*;
+mod admission;
 mod collisions;
 mod content;
 use crate::editor::{Thumbnails, tests::complete_document_operation};

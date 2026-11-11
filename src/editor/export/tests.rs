@@ -34,7 +34,6 @@ impl Editor {
         if !self.document.project.input.ready() {
             return Ok(None);
         }
-        self.validate_document_candidate(&self.document)?;
         let id = self
             .document
             .visit

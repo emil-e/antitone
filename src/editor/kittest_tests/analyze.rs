@@ -246,9 +246,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         }
         editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(ids[0]));
 
-        editor
-            .validate_document_candidate(&editor.document)
-            .unwrap();
+        editor.document.project.require_runtime().unwrap();
     });
     harness.step();
     let before = harness.read(|editor| editor.document.state.project.clone());
