@@ -1,4 +1,4 @@
-//! One scoped lookup for live production, active images and optionally retained GPU storage.
+//! One scoped lookup for live production, active images and optionally retained image storage.
 use super::*;
 use futures_util::{
     FutureExt,
@@ -34,6 +34,7 @@ impl ImageFormat {
 pub enum ImageBacking {
     Buffer,
     Texture,
+    Host,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,31 +56,43 @@ impl ImageLayout {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(super) enum ImageStorage {
     Buffer(wgpu::Buffer),
     Texture(wgpu::Texture),
+    Host(Arc<[[f32; 4]]>),
 }
-pub struct GpuImage {
+impl PartialEq for ImageStorage {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Buffer(a), Self::Buffer(b)) => a == b,
+            (Self::Texture(a), Self::Texture(b)) => a == b,
+            (Self::Host(a), Self::Host(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+impl Eq for ImageStorage {}
+pub struct ImageValue {
     pub(super) storage: ImageStorage,
     // The charge follows physical image owners, including recorded consumers, not UI retention.
     admission: std::sync::OnceLock<Arc<cache::Lease>>,
 }
-impl std::fmt::Debug for GpuImage {
+impl std::fmt::Debug for ImageValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GpuImage")
+        f.debug_struct("ImageValue")
             .field("storage", &self.storage)
             .finish_non_exhaustive()
     }
 }
-impl PartialEq for GpuImage {
+impl PartialEq for ImageValue {
     fn eq(&self, other: &Self) -> bool {
         self.storage == other.storage
     }
 }
-impl Eq for GpuImage {}
+impl Eq for ImageValue {}
 
-impl GpuImage {
+impl ImageValue {
     fn stored(storage: ImageStorage) -> Arc<Self> {
         Arc::new(Self {
             storage,
@@ -89,7 +102,6 @@ impl GpuImage {
     pub fn texture(texture: wgpu::Texture) -> Arc<Self> {
         Self::stored(ImageStorage::Texture(texture))
     }
-    #[cfg(feature = "editor")]
     pub(super) fn admit(&self, lease: Arc<cache::Lease>) {
         let _ = self.admission.set(lease);
     }
@@ -97,6 +109,15 @@ impl GpuImage {
         self.admission.get().is_some()
     }
 
+    pub fn host(pixels: Vec<[f32; 4]>) -> Arc<Self> {
+        Self::stored(ImageStorage::Host(pixels.into()))
+    }
+    pub fn as_host(&self) -> Option<&[[f32; 4]]> {
+        match &self.storage {
+            ImageStorage::Host(pixels) => Some(pixels),
+            _ => None,
+        }
+    }
     pub fn new(pixels: wgpu::Buffer) -> Arc<Self> {
         Self::stored(ImageStorage::Buffer(pixels))
     }
@@ -123,6 +144,7 @@ impl GpuImage {
 
     fn bytes(&self) -> Option<u64> {
         match &self.storage {
+            ImageStorage::Host(pixels) => Some(pixels.len() as u64 * 16),
             ImageStorage::Buffer(pixels) => pixels
                 .usage()
                 .contains(wgpu::BufferUsages::STORAGE)
@@ -153,13 +175,13 @@ impl GpuImage {
         }
     }
 }
-type ImageResult = Result<Arc<GpuImage>, Arc<Error>>;
+type ImageResult = Result<Arc<ImageValue>, Arc<Error>>;
 type SharedResult = Shared<BoxFuture<'static, ImageResult>>;
 
 pub struct Image<D> {
     pub identity: RetainedKey,
     pub descriptor: Arc<D>,
-    pub image: Arc<GpuImage>,
+    pub image: Arc<ImageValue>,
 }
 impl<D> Clone for Image<D> {
     fn clone(&self) -> Self {
@@ -185,11 +207,12 @@ impl std::fmt::Debug for BufferImage {
 #[cfg(feature = "editor")]
 impl BufferImage {
     pub(crate) fn recorded(
-        definition: &ImageNode,
+        definition: &super::Value,
         region: CellRegion,
         pixels: wgpu::Buffer,
     ) -> Result<Self, Error> {
-        let Some(identity) = definition.identity() else {
+        let output = definition.output(region)?;
+        let Some(identity) = output.identity() else {
             return Ok(Self::Submitted(pixels));
         };
         let layout = ImageLayout {
@@ -198,7 +221,7 @@ impl BufferImage {
             format: ImageFormat::Rgba32Float,
             backing: ImageBacking::Buffer,
         };
-        let image = GpuImage::new(pixels);
+        let image = ImageValue::new(pixels);
         super::materialized::validate(layout.domain, layout, &image)?;
         Ok(Self::Produced(Image {
             identity: identity.clone(),
@@ -209,7 +232,7 @@ impl BufferImage {
 
     pub(crate) fn submitted(&self, scope: &Materializations) {
         if let Self::Produced(image) = self {
-            scope.submitted_image(image);
+            scope.publish(image, false);
         }
     }
 }
@@ -246,11 +269,54 @@ impl PartialEq for BufferImage {
 }
 
 impl<D> std::ops::Deref for Image<D> {
-    type Target = GpuImage;
-    fn deref(&self) -> &GpuImage {
+    type Target = ImageValue;
+    fn deref(&self) -> &ImageValue {
         &self.image
     }
 }
+pub(super) struct InlineProducer {
+    scope: Weak<State>,
+    token: Arc<()>,
+    result: WeakShared<BoxFuture<'static, ImageResult>>,
+    send: Option<futures_channel::oneshot::Sender<ImageResult>>,
+    stopped: std::sync::atomic::AtomicBool,
+}
+impl InlineProducer {
+    pub(super) fn cancel_when_unshared(&self) -> bool {
+        if self.stopped.load(std::sync::atomic::Ordering::Acquire) {
+            return true;
+        }
+        let scope = self.scope.upgrade();
+        let mut entries = scope.as_ref().map(|scope| scope.entries.lock().unwrap());
+        // The caller owns one future; this weak upgrade adds one temporary owner.
+        // Retire under the store lock so new requests cannot join a stopping producer.
+        let owners = self
+            .result
+            .upgrade()
+            .and_then(|result| result.strong_count())
+            .unwrap_or(0);
+        if owners > 2 {
+            return false;
+        }
+        if let Some(entries) = entries.as_mut() {
+            entries.retain(|entry| !Arc::ptr_eq(&entry.token, &self.token));
+        }
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::Release);
+        true
+    }
+    pub(super) fn complete(mut self, result: Result<Arc<ImageValue>, Error>) {
+        let _ = self.send.take().unwrap().send(result.map_err(Arc::new));
+    }
+}
+impl Drop for InlineProducer {
+    fn drop(&mut self) {
+        if let Some(send) = self.send.take() {
+            let _ = send.send(Err(Arc::new(Error::Cancelled)));
+        }
+    }
+}
+
 pub struct ImageFuture<D> {
     identity: RetainedKey,
     descriptor: Arc<D>,
@@ -288,23 +354,38 @@ struct State {
     pressure_override: Mutex<Option<crate::sys::MemoryPressure>>,
     entries: Mutex<VecDeque<Entry>>,
 }
+#[derive(Clone, Copy)]
+pub(super) struct RequestPolicy {
+    pub budget: Option<Budget>,
+    pub retain: bool,
+}
+
 struct Entry {
     token: Arc<()>,
     key: RetainedKey,
     descriptor: Arc<dyn Any + Send + Sync>,
-    value: Value,
-    retained: Option<Arc<GpuImage>>,
+    value: EntryState,
+    budget: Option<Budget>,
+    retain: bool,
+    retained: Option<Arc<ImageValue>>,
     lease: Option<Arc<cache::Lease>>,
     initializer: Option<Weak<cache::RetainedBuffer>>,
 }
-enum Value {
-    Producing(WeakShared<BoxFuture<'static, ImageResult>>),
-    Complete(Weak<GpuImage>),
+enum EntryState {
+    Recording {
+        result: WeakShared<BoxFuture<'static, ImageResult>>,
+    },
+    Producing {
+        result: WeakShared<BoxFuture<'static, ImageResult>>,
+        inline: bool,
+    },
+    Complete(Weak<ImageValue>),
 }
-impl Value {
+impl EntryState {
     fn result(&self) -> Option<SharedResult> {
         match self {
-            Self::Producing(weak) => weak.upgrade(),
+            Self::Recording { .. } => None,
+            Self::Producing { result, .. } => result.upgrade(),
             Self::Complete(weak) => Some(
                 futures_util::future::ready(Ok(weak.upgrade()?))
                     .boxed()
@@ -312,24 +393,28 @@ impl Value {
             ),
         }
     }
-    fn image(&self) -> Option<Arc<GpuImage>> {
+    fn image(&self) -> Option<Arc<ImageValue>> {
         match self {
             Self::Complete(weak) => weak.upgrade(),
             _ => None,
         }
     }
 }
-#[derive(Debug, PartialEq)]
-struct GeneratedLayout(u64);
 
 fn sweep(entries: &mut VecDeque<Entry>) {
     entries.retain(|entry| match &entry.value {
-        Value::Producing(weak) => weak.upgrade().is_some(),
-        Value::Complete(weak) => weak.strong_count() != 0,
+        EntryState::Producing { result, .. } | EntryState::Recording { result } => {
+            result.upgrade().is_some()
+        }
+        EntryState::Complete(weak) => weak.strong_count() != 0,
     });
 }
 
 impl Materializations {
+    pub(super) fn programs(&self) -> &Arc<Programs> {
+        &self.0.programs
+    }
+
     pub(super) fn new(programs: Arc<Programs>, retention: cache::Allowance) -> Self {
         Self(Arc::new(State {
             programs,
@@ -348,6 +433,30 @@ impl Materializations {
         sweep(&mut entries);
         entries.len()
     }
+    #[cfg(all(test, feature = "editor"))]
+    pub(super) fn pending_consumers<D: Any + Send + Sync>(
+        &self,
+        key: &RetainedKey,
+        matches: impl Fn(&D) -> bool,
+    ) -> usize {
+        self.0
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|entry| {
+                entry.key == *key && entry.descriptor.downcast_ref::<D>().is_some_and(&matches)
+            })
+            .filter_map(|entry| match &entry.value {
+                EntryState::Producing { result: value, .. } => value
+                    .upgrade()
+                    .and_then(|value| value.strong_count())
+                    .map(|count| count.saturating_sub(1)),
+                _ => None,
+            })
+            .sum()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -410,25 +519,41 @@ impl Materializations {
     }
 
     fn find_entry<D: Any + Send + Sync>(
+        &self,
         entries: &mut VecDeque<Entry>,
         key: &RetainedKey,
         can_supply: impl Fn(&D) -> bool,
+        policy: RequestPolicy,
     ) -> Option<ImageFuture<D>> {
+        let budget = policy.budget;
         sweep(entries);
         let index = entries.iter().rposition(|entry| {
             entry.key == *key
+                && !matches!(entry.value, EntryState::Recording { .. })
+                && (matches!(entry.value, EntryState::Complete(_))
+                    || budget.is_none()
+                    || entry.budget.is_none()
+                    || entry.budget == budget)
                 && entry
                     .descriptor
                     .downcast_ref::<D>()
                     .is_some_and(&can_supply)
         })?;
-        let entry = entries.remove(index).unwrap();
+        let mut entry = entries.remove(index).unwrap();
         let image = ImageFuture {
             identity: entry.key.clone(),
             descriptor: entry.descriptor.clone().downcast().ok()?,
             result: entry.value.result()?,
         };
-        entries.push_back(entry);
+        entry.retain |= policy.retain;
+        if policy.retain
+            && let Some(value) = entry.value.image()
+        {
+            let bytes = value.bytes()?;
+            self.completed(entries, entry, &value, bytes);
+        } else {
+            entries.push_back(entry);
+        }
         Some(image)
     }
     pub fn find<D: Any + Send + Sync>(
@@ -436,7 +561,23 @@ impl Materializations {
         key: &RetainedKey,
         can_supply: impl Fn(&D) -> bool,
     ) -> Option<ImageFuture<D>> {
-        Self::find_entry(&mut self.0.entries.lock().unwrap(), key, can_supply)
+        self.find_entry(
+            &mut self.0.entries.lock().unwrap(),
+            key,
+            can_supply,
+            RequestPolicy {
+                budget: None,
+                retain: false,
+            },
+        )
+    }
+    pub(super) fn find_for<D: Any + Send + Sync>(
+        &self,
+        key: &RetainedKey,
+        can_supply: impl Fn(&D) -> bool,
+        policy: RequestPolicy,
+    ) -> Option<ImageFuture<D>> {
+        self.find_entry(&mut self.0.entries.lock().unwrap(), key, can_supply, policy)
     }
     pub(super) fn ready<D: Any + Send + Sync>(&self, key: &RetainedKey) -> Vec<Image<D>> {
         let mut entries = self.0.entries.lock().unwrap();
@@ -511,11 +652,11 @@ impl Materializations {
         &self,
         entries: &mut VecDeque<Entry>,
         mut entry: Entry,
-        image: &Arc<GpuImage>,
+        image: &Arc<ImageValue>,
         bytes: u64,
     ) {
-        entry.value = Value::Complete(Arc::downgrade(image));
-        if image.admitted() {
+        entry.value = EntryState::Complete(Arc::downgrade(image));
+        if !entry.retain || image.admitted() {
             entry.lease = None;
         } else if entry.lease.is_none() {
             entry.lease = self.reserve(entries, bytes);
@@ -524,29 +665,45 @@ impl Materializations {
         entries.push_back(entry);
     }
 
-    #[cfg(feature = "editor")]
-    fn submitted_image(&self, image: &Image<ImageLayout>) {
+    #[cfg(all(test, feature = "editor"))]
+    pub(in crate::gpu::evaluation) fn submitted_image(&self, image: &Image<ImageLayout>) {
+        self.publish(image, true);
+    }
+
+    /// Phase inputs stay discoverable through their round owners without displacing
+    /// retained calculation results. An independent retained request keeps its ownership.
+    pub(in crate::gpu::evaluation) fn submitted_input(&self, image: &Image<ImageLayout>) {
+        self.publish(image, false);
+    }
+
+    pub(in crate::gpu::evaluation) fn publish(&self, image: &Image<ImageLayout>, retain: bool) {
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
         let existing = entries.iter().position(|entry| {
             entry.key == image.identity
                 && entry.descriptor.downcast_ref::<ImageLayout>() == Some(image.descriptor.as_ref())
-                && entry
-                    .value
-                    .image()
-                    .is_some_and(|value| Arc::ptr_eq(&value, &image.image))
+                && match &entry.value {
+                    EntryState::Producing { .. } => true,
+                    EntryState::Recording { .. } => false,
+                    EntryState::Complete(value) => value
+                        .upgrade()
+                        .is_some_and(|value| Arc::ptr_eq(&value, &image.image)),
+                }
         });
-        let entry = existing
+        let mut entry = existing
             .map(|index| entries.remove(index).unwrap())
             .unwrap_or_else(|| Entry {
                 token: Arc::new(()),
                 key: image.identity.clone(),
                 descriptor: image.descriptor.clone(),
-                value: Value::Complete(Arc::downgrade(&image.image)),
+                value: EntryState::Complete(Arc::downgrade(&image.image)),
+                budget: None,
+                retain: false,
                 retained: None,
                 lease: None,
                 initializer: None,
             });
+        entry.retain |= retain;
         self.completed(&mut entries, entry, &image.image, image.descriptor.bytes());
     }
 
@@ -561,16 +718,97 @@ impl Materializations {
     where
         D: Any + Send + Sync + PartialEq,
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<Arc<GpuImage>, Error>> + Send + 'static,
+        Fut: Future<Output = Result<Arc<ImageValue>, Error>> + Send + 'static,
+    {
+        self.obtain_for(
+            key,
+            descriptor,
+            bytes,
+            RequestPolicy {
+                budget: None,
+                retain: true,
+            },
+            produce,
+        )
+    }
+
+    pub(super) fn obtain_for<D, F, Fut>(
+        &self,
+        key: RetainedKey,
+        descriptor: Arc<D>,
+        bytes: u64,
+        policy: RequestPolicy,
+        produce: F,
+    ) -> ImageFuture<D>
+    where
+        D: Any + Send + Sync + PartialEq,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Arc<ImageValue>, Error>> + Send + 'static,
     {
         let mut entries = self.0.entries.lock().unwrap();
-        if let Some(image) = Self::find_entry::<D>(&mut entries, &key, |d| d == descriptor.as_ref())
+        if let Some(image) =
+            self.find_entry::<D>(&mut entries, &key, |d| d == descriptor.as_ref(), policy)
         {
             return image;
         }
-        self.create(&mut entries, key, descriptor, bytes, async move {
+        self.create(&mut entries, key, descriptor, bytes, policy, async move {
             produce().await.map_err(Arc::new)
         })
+    }
+
+    /// Claim work on the current worker, or join an already running unit.
+    pub(super) fn claim_unit(
+        &self,
+        key: RetainedKey,
+        layout: Arc<ImageLayout>,
+        budget: Budget,
+    ) -> (ImageFuture<ImageLayout>, Option<InlineProducer>) {
+        let mut entries = self.0.entries.lock().unwrap();
+        // A queued root/batch cannot be awaited by a worker it may depend on. Fulfil its
+        // calculation here; when its continuation runs, it can reuse the completed value.
+        let mut reserved_retention = None;
+        entries.retain(|entry| {
+            let queued = entry.key == key
+                && entry.descriptor.downcast_ref::<ImageLayout>() == Some(layout.as_ref())
+                && (entry.budget.is_none() || entry.budget == Some(budget))
+                && matches!(entry.value, EntryState::Producing { inline: false, .. });
+            if queued {
+                reserved_retention = Some(reserved_retention.unwrap_or(false) || entry.retain);
+            }
+            !queued
+        });
+        let policy = RequestPolicy {
+            budget: Some(budget),
+            retain: reserved_retention.unwrap_or(true),
+        };
+        if let Some(value) = self.find_entry(
+            &mut entries,
+            &key,
+            |stored: &ImageLayout| stored == layout.as_ref(),
+            policy,
+        ) {
+            return (value, None);
+        }
+        let (send, receive) = futures_channel::oneshot::channel();
+        let bytes = layout.bytes();
+        let value = self.create(&mut entries, key, layout, bytes, policy, async move {
+            receive
+                .await
+                .unwrap_or_else(|_| Err(Arc::new(Error::Cancelled)))
+        });
+        let entry = entries.back_mut().unwrap();
+        let EntryState::Producing { inline, .. } = &mut entry.value else {
+            unreachable!()
+        };
+        *inline = true;
+        let producer = InlineProducer {
+            scope: Arc::downgrade(&self.0),
+            token: entry.token.clone(),
+            result: value.result.downgrade().unwrap(),
+            send: Some(send),
+            stopped: false.into(),
+        };
+        (value, Some(producer))
     }
 
     fn create<D: Any + Send + Sync>(
@@ -579,6 +817,7 @@ impl Materializations {
         key: RetainedKey,
         descriptor: Arc<D>,
         bytes: u64,
+        policy: RequestPolicy,
         produce: impl Future<Output = ImageResult> + Send + 'static,
     ) -> ImageFuture<D> {
         let token = Arc::new(());
@@ -614,7 +853,12 @@ impl Materializations {
             token,
             key: key.clone(),
             descriptor: descriptor.clone(),
-            value: Value::Producing(result.downgrade().unwrap()),
+            value: EntryState::Producing {
+                result: result.downgrade().unwrap(),
+                inline: false,
+            },
+            budget: policy.budget,
+            retain: policy.retain,
             retained: None,
             lease: None,
             initializer: None,
@@ -636,23 +880,52 @@ impl Materializations {
     where
         D: Any + Send + Sync + PartialEq,
         F: FnOnce(Vec<usize>) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<Vec<Arc<GpuImage>>, Error>> + Send + 'static,
+        Fut: Future<Output = Result<Vec<Arc<ImageValue>>, Error>> + Send + 'static,
     {
-        type Batch = Shared<BoxFuture<'static, Result<Vec<Arc<GpuImage>>, Arc<Error>>>>;
+        self.obtain_many_for(
+            requests
+                .into_iter()
+                .map(|(key, layout, bytes)| {
+                    (
+                        key,
+                        layout,
+                        bytes,
+                        RequestPolicy {
+                            budget: None,
+                            retain: true,
+                        },
+                    )
+                })
+                .collect(),
+            produce,
+        )
+    }
+
+    pub(super) fn obtain_many_for<D, F, Fut>(
+        &self,
+        requests: Vec<(RetainedKey, Arc<D>, u64, RequestPolicy)>,
+        produce: F,
+    ) -> Vec<ImageFuture<D>>
+    where
+        D: Any + Send + Sync + PartialEq,
+        F: FnOnce(Vec<usize>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Vec<Arc<ImageValue>>, Error>> + Send + 'static,
+    {
+        type Batch = Shared<BoxFuture<'static, Result<Vec<Arc<ImageValue>>, Arc<Error>>>>;
         let batch = Arc::new(std::sync::OnceLock::<Batch>::new());
         let mut entries = self.0.entries.lock().unwrap();
         let mut missing = Vec::new();
         let mut outputs = Vec::new();
-        for (index, (key, descriptor, bytes)) in requests.into_iter().enumerate() {
+        for (index, (key, descriptor, bytes, policy)) in requests.into_iter().enumerate() {
             let output = if let Some(found) =
-                Self::find_entry::<D>(&mut entries, &key, |d| d == descriptor.as_ref())
+                self.find_entry::<D>(&mut entries, &key, |d| d == descriptor.as_ref(), policy)
             {
                 found
             } else {
                 let slot = missing.len();
                 missing.push(index);
                 let batch = batch.clone();
-                self.create(&mut entries, key, descriptor, bytes, async move {
+                self.create(&mut entries, key, descriptor, bytes, policy, async move {
                     batch
                         .get()
                         .expect("batch registered before publication")
@@ -674,20 +947,20 @@ impl Materializations {
         outputs
     }
 
-    pub(crate) fn generated(
+    pub(crate) fn generated_image(
         &self,
         device: &wgpu::Device,
         key: &RetainedKey,
-        bytes: u64,
+        layout: ImageLayout,
         retain: bool,
         required: bool,
     ) -> Option<Arc<cache::RetainedBuffer>> {
+        let descriptor = layout;
+        let bytes = layout.bytes();
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
         let existing = entries.iter().position(|entry| {
-            entry.key == *key
-                && entry.descriptor.downcast_ref::<GeneratedLayout>()
-                    == Some(&GeneratedLayout(bytes))
+            entry.key == *key && entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)
         });
         if let Some(index) = existing {
             let mut entry = entries.remove(index).unwrap();
@@ -697,7 +970,11 @@ impl Materializations {
                 .and_then(Weak::upgrade)
                 .or_else(|| {
                     let image = entry.value.image()?;
-                    Some(Arc::new(cache::RetainedBuffer::reused(key.clone(), image)))
+                    Some(Arc::new(cache::RetainedBuffer::reused(
+                        key.clone(),
+                        entry.descriptor.clone(),
+                        image,
+                    )))
                 });
             if let Some(resource) = &resource {
                 entry.initializer = Some(Arc::downgrade(resource));
@@ -708,9 +985,7 @@ impl Materializations {
             }
         }
         let pending = entries.iter().any(|entry| {
-            entry.key == *key
-                && entry.descriptor.downcast_ref::<GeneratedLayout>()
-                    == Some(&GeneratedLayout(bytes))
+            entry.key == *key && entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)
         });
         let lease = if pending || !retain {
             None
@@ -720,7 +995,7 @@ impl Materializations {
         if lease.is_none() && !required {
             return None;
         }
-        let image = GpuImage::new(device.create_buffer(&wgpu::BufferDescriptor {
+        let image = ImageValue::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("evaluation generated value"),
             size: bytes,
             usage: wgpu::BufferUsages::STORAGE
@@ -728,7 +1003,8 @@ impl Materializations {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
-        let publication = lease.map(|lease| {
+        let descriptor: Arc<dyn Any + Send + Sync> = Arc::new(descriptor);
+        let publication = {
             let (sender, receiver) = futures_channel::oneshot::channel();
             let result = async move {
                 receiver
@@ -741,10 +1017,14 @@ impl Materializations {
             entries.push_back(Entry {
                 token: token.clone(),
                 key: key.clone(),
-                descriptor: Arc::new(GeneratedLayout(bytes)),
-                value: Value::Producing(result.downgrade().unwrap()),
+                descriptor: descriptor.clone(),
+                value: EntryState::Recording {
+                    result: result.downgrade().unwrap(),
+                },
+                budget: None,
+                retain,
                 retained: None,
-                lease: Some(lease),
+                lease,
                 initializer: None,
             });
             Publication {
@@ -753,19 +1033,17 @@ impl Materializations {
                 token,
                 result,
             }
-        });
-        let token = publication
-            .as_ref()
-            .map(|publication| publication.token.clone());
+        };
+        let token = publication.token.clone();
         let resource = Arc::new(cache::RetainedBuffer::pending(
             key.clone(),
+            descriptor,
             image,
-            publication,
+            Some(publication),
         ));
-        if let Some(token) = token
-            && let Some(entry) = entries
-                .iter_mut()
-                .find(|entry| Arc::ptr_eq(&entry.token, &token))
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| Arc::ptr_eq(&entry.token, &token))
         {
             entry.initializer = Some(Arc::downgrade(&resource));
         }
@@ -780,7 +1058,7 @@ pub(super) struct Publication {
     result: SharedResult,
 }
 impl Publication {
-    pub fn submitted(mut self, image: &Arc<GpuImage>) {
+    pub fn submitted(mut self, image: &Arc<ImageValue>) {
         if let Some(sender) = self.sender.take() {
             let _ = sender.send(Ok(image.clone()));
         }

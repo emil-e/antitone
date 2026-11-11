@@ -1,5 +1,7 @@
 use crate::{Error, rendering::OutputTarget};
-use std::{borrow::Cow, sync::Arc};
+#[cfg(test)]
+use std::borrow::Cow;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::aces;
@@ -68,7 +70,6 @@ impl RendererCache {
     }
 
     pub(crate) fn set_retention_budget(&self, bytes: u64) {
-        let bytes = bytes.min(crate::gpu::evaluation::CachePolicy::default().generated_bytes);
         let mut budget = self.retention_budget.lock().unwrap();
         *budget = Some(bytes);
         if let Some(Ok(renderer)) = self.renderer.get() {
@@ -171,7 +172,10 @@ impl RenderBinding {
 }
 
 pub(crate) struct TargetResources {
+    pub math: Arc<str>,
+    #[cfg(test)]
     pub pipeline: wgpu::RenderPipeline,
+    #[cfg(test)]
     pub layout: wgpu::BindGroupLayout,
     pub tables: [wgpu::TextureView; 2],
     pub sampler: wgpu::Sampler,
@@ -184,11 +188,6 @@ pub struct GpuRenderer {
     pub(crate) submissions: crate::gpu::submission::SubmissionGate,
     #[cfg(feature = "raw")]
     _pressure: crate::sys::MemoryPressureWatch,
-    #[cfg(all(
-        test,
-        any(feature = "editor", all(feature = "raw", feature = "render"))
-    ))]
-    pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
@@ -203,7 +202,7 @@ pub struct GpuRenderer {
 }
 
 impl GpuRenderer {
-    /// Shared device-scoped evaluation and its fixed generated-value retention policy.
+    /// Shared device-scoped evaluation and its optional calculated-image retention allowance.
     pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
         &self.evaluation
     }
@@ -234,38 +233,23 @@ impl GpuRenderer {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
         #[cfg(feature = "raw")]
         let pressure = evaluation.materializations().watch_pressure();
-        #[cfg(all(
-            test,
-            any(feature = "editor", all(feature = "raw", feature = "render"))
-        ))]
-        let repairs = crate::gpu::repairs::Kernels::new(device).await?;
         let look_validation = Arc::new(crate::gpu::lut3d::Validation::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("image fullscreen triangle"),
-            source: wgpu::ShaderSource::Wgsl(VERTEX.into()),
-        });
         let targets = [
-            target_resources(device, queue, &vertex, OutputTarget::Srgb)?,
-            target_resources(device, queue, &vertex, OutputTarget::DisplayP3)?,
+            target_resources(device, queue, OutputTarget::Srgb)?,
+            target_resources(device, queue, OutputTarget::DisplayP3)?,
         ];
         #[cfg(feature = "ui")]
         let display = display_pipeline(device);
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        crate::gpu::evaluation::Reference::prewarm(&evaluation)?;
         #[cfg(feature = "editor")]
         crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &evaluation)?;
         let renderer = Arc::new(Self {
             submissions,
             #[cfg(feature = "raw")]
             _pressure: pressure,
-            #[cfg(all(
-                test,
-                any(feature = "editor", all(feature = "raw", feature = "render"))
-            ))]
-            repairs,
             #[cfg(feature = "ui")]
             display,
             targets,
@@ -276,6 +260,7 @@ impl GpuRenderer {
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
+        crate::gpu::evaluation::Reference::prewarm(&renderer.evaluation, &renderer)?;
         #[cfg(feature = "ui")]
         crate::gpu::photograph::PhotographGraph::prewarm_resident(device, &renderer)?;
         Ok(renderer)
@@ -337,8 +322,7 @@ impl GpuRenderer {
             crate::rendering::OutputReference::DisplayReferred(target),
             luts,
         )?;
-        let image =
-            reference.presentation(source.definition().clone(), self, destination, region)?;
+        let image = reference.compose(source.definition().clone(), self)?;
         let evaluation = self.evaluation.request(
             image,
             Region {
@@ -350,10 +334,11 @@ impl GpuRenderer {
                 scratch_bytes: device.limits().max_buffer_size,
             },
         )?;
-        let recorded = self.evaluation.record(
+        let recorded = self.evaluation.record_to_texture(
             evaluation,
             self.evaluation.materializations(),
             vec![source.clone()],
+            destination,
         )?;
         let validation = reference.look_id().map(|_| self.look_validation.clone());
         Ok(RenderBinding {
@@ -433,19 +418,12 @@ pub(crate) fn target_function_glsl(target: OutputTarget) -> Result<String, Error
     aces::adapt(target_assets(target).0).map(|(code, _)| code)
 }
 
-fn target_resources(
+#[cfg(test)]
+fn reference_target_pipeline(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     vertex: &wgpu::ShaderModule,
-    target: OutputTarget,
-) -> Result<TargetResources, Error> {
-    let (code, tables) = target_assets(target);
-    let (generated, hue_values) = aces::adapt(code)?;
-    let hues = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("immutable pinned OCIO cusp hue values"),
-        contents: bytemuck::cast_slice(&hue_values),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    generated: &str,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     let code = format!(
         r#"#version 450
 layout(set=0,binding=3) uniform sampler aces_sampler;
@@ -520,6 +498,32 @@ void main() {{
         Some(&layout),
         wgpu::TextureFormat::Rgba32Float,
     );
+
+    (pipeline, layout)
+}
+
+fn target_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: OutputTarget,
+) -> Result<TargetResources, Error> {
+    let (code, tables) = target_assets(target);
+    let (generated, hue_values) = aces::adapt(code)?;
+    #[cfg(test)]
+    let (pipeline, layout) = {
+        let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reference target triangle"),
+            source: wgpu::ShaderSource::Wgsl(VERTEX.into()),
+        });
+        reference_target_pipeline(device, &vertex, &generated)
+    };
+    #[cfg(not(test))]
+    drop(generated);
+    let hues = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("immutable pinned OCIO cusp hue values"),
+        contents: bytemuck::cast_slice(&hue_values),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let sampler = device.create_sampler(&Default::default());
     let mut views = Vec::new();
     for (index, bytes) in tables.into_iter().enumerate() {
@@ -563,7 +567,10 @@ void main() {{
         views.push(lut.create_view(&Default::default()));
     }
     Ok(TargetResources {
+        math: crate::gpu::evaluation::display_code(target)?,
+        #[cfg(test)]
         pipeline,
+        #[cfg(test)]
         layout,
         tables: views.try_into().unwrap(),
         sampler,

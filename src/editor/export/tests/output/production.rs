@@ -85,10 +85,12 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             editor.document.state.project.output.lut = with_look.then(|| look.clone());
             let path = directory.path().join(format!("look-{with_look}.tif"));
             assert!(
-                !editor
+                editor
                     .document
-                    .dust
-                    .has_evaluation(id, crate::dust_repair::RepairId(1))
+                    .visit
+                    .working_view
+                    .completed_capture()
+                    .is_none()
             );
             editor = wait(editor, |editor, cx| {
                 editor.export(
@@ -118,10 +120,12 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 reference = Some(pixels);
             }
             assert!(
-                !editor
+                editor
                     .document
-                    .dust
-                    .has_evaluation(id, crate::dust_repair::RepairId(1))
+                    .visit
+                    .working_view
+                    .completed_capture()
+                    .is_none()
             );
         }
         let path = directory.path().join("cancelled.tif");

@@ -7,7 +7,7 @@ use antitone::{
     frame_raster::FrameRaster,
     geometry::{SourceRegion, TextureMapping},
     gpu::{
-        evaluation::ImageNode, grading::Grading, interpretation::InputTransform,
+        evaluation::Value, grading::Grading, interpretation::InputTransform,
         parameters::ProcessingParameters,
     },
     gpu_scopes::{GpuScopes, ScopePaint},
@@ -18,7 +18,7 @@ use antitone::{
 use glam::DMat3;
 use std::sync::Arc;
 
-pub type Calculation = Arc<dyn Fn(&GpuImage) -> Result<Arc<ImageNode>, Error> + Send + Sync>;
+pub type Calculation = Arc<dyn Fn(&GpuImage) -> Result<Value, Error> + Send + Sync>;
 
 pub fn photograph(
     limits: &wgpu::Limits,

@@ -90,7 +90,7 @@ enum Allocation {
     Texture(wgpu::Texture, wgpu::TextureView),
     RenderTarget(wgpu::Texture, wgpu::TextureView),
     Retained(Arc<RetainedBuffer>),
-    Resident(Arc<GpuImage>),
+    Resident(Arc<ImageValue>),
 }
 
 impl Allocation {
@@ -148,8 +148,10 @@ impl Allocation {
                 },
                 Storage::Data(bytes),
             ) => buffer.size() >= bytes.len() as u64,
-            (Self::Retained(value), Storage::Retained { key, bytes }) => {
-                value.key == *key && value.pixels.size() == *bytes
+            (Self::Retained(value), Storage::Image { key, layout, .. }) => {
+                value.key == *key
+                    && value.descriptor.downcast_ref::<ImageLayout>() == Some(layout)
+                    && value.pixels.size() == layout.bytes()
             }
             (Self::Resident(image), Storage::ResidentBuffer(next)) => Arc::ptr_eq(image, next),
             (Self::RenderTarget(texture, _), Storage::RenderTarget(next)) => texture == next,
@@ -197,13 +199,21 @@ impl Allocation {
     }
 }
 
+#[derive(Clone)]
+enum Program {
+    Compute(wgpu::ComputePipeline),
+    Render(wgpu::RenderPipeline),
+}
 #[derive(Default)]
-pub struct Programs(std::sync::Mutex<HashMap<(Arc<str>, &'static str), wgpu::ComputePipeline>>);
+pub struct Programs {
+    compiled: std::sync::Mutex<HashMap<(Arc<str>, &'static str), Program>>,
+    pub(super) libraries: sampling::Libraries,
+}
 
 #[cfg(all(test, feature = "editor"))]
 impl Programs {
     pub fn len(&self) -> usize {
-        self.0.lock().unwrap().len()
+        self.compiled.lock().unwrap().len()
     }
 }
 
@@ -224,6 +234,7 @@ pub struct Executor {
     pool: Vec<Option<Allocation>>,
     retained: Vec<Arc<RetainedBuffer>>,
     scope: Materializations,
+    pub(super) working: HostWorkingSet,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     pub timestamps: Option<(wgpu::QuerySet, u32)>,
 }
@@ -259,44 +270,78 @@ impl Executor {
             pool: Vec::new(),
             retained: Vec::new(),
             scope,
+            working: HostWorkingSet::default(),
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             timestamps: None,
         }
     }
 
+    pub(super) fn with_working(mut self, working: HostWorkingSet) -> Self {
+        self.working = working;
+        self
+    }
+
     pub fn admit(limits: &wgpu::Limits, plan: &Plan) -> Result<(), Error> {
-        if !plan.domain.contains_region(plan.region)
-            || plan.peak_scratch_bytes > plan.scratch_budget
-        {
+        if !plan.domain.contains_region(plan.region) {
             return Err(Error::InvalidParameter(
+                "evaluation plan exceeds captured domain or budget",
+            ));
+        }
+        if plan.peak_scratch_bytes > plan.scratch_budget {
+            return Err(Error::WorkingAllowance(
                 "evaluation plan exceeds captured domain or budget",
             ));
         }
         let bytes = u64::from(plan.region.width) * u64::from(plan.region.height) * 16;
         if bytes > limits.max_buffer_size || bytes > limits.max_storage_buffer_binding_size {
-            return Err(Error::InvalidParameter(
+            return Err(Error::WorkingAllowance(
                 "evaluation output exceeds GPU limits",
             ));
         }
         for tile in &plan.tiles {
+            if tile.fragment.resources.iter().any(|storage| matches!(storage, Storage::ResidentBuffer(image) if image.as_buffer().is_none())) {
+                return Err(Error::InvalidParameter("resident GPU input requires buffer storage"));
+            }
             if tile.last_use[tile.result.resource.0] != tile.fragment.work.len() {
                 return Err(Error::InvalidParameter(
                     "evaluation result lifetime ends before its sink",
                 ));
             }
             for storage in &tile.slots {
+                if let Storage::Image { layout, pixels, .. } = storage {
+                    if layout.format != ImageFormat::Rgba32Float
+                        || layout.backing != ImageBacking::Buffer
+                        || !layout.domain.contains_region(layout.region)
+                    {
+                        return Err(Error::InvalidParameter(
+                            "generated image requires a complete float buffer layout",
+                        ));
+                    }
+                    if let Some(image) = pixels {
+                        super::materialized::validate(layout.domain, *layout, image)?;
+                    }
+                }
                 let invalid = match storage {
-                    Storage::Buffer(bytes)
-                    | Storage::Retained { bytes, .. }
-                    | Storage::Input { bytes, .. } => {
+                    Storage::Buffer(bytes) | Storage::Input { bytes, .. } => {
                         *bytes > limits.max_buffer_size
                             || *bytes > limits.max_storage_buffer_binding_size
                     }
-                    Storage::ResidentBuffer(image) => image.as_buffer().is_none_or(|buffer| {
-                        !buffer.usage().contains(wgpu::BufferUsages::STORAGE)
-                            || buffer.size() > limits.max_buffer_size
+                    Storage::Image { layout, .. } => {
+                        layout.bytes() > limits.max_buffer_size
+                            || layout.bytes() > limits.max_storage_buffer_binding_size
+                    }
+                    Storage::ResidentBuffer(image) => {
+                        let buffer = image.as_buffer().ok_or(Error::InvalidParameter(
+                            "resident GPU input requires buffer storage",
+                        ))?;
+                        if !buffer.usage().contains(wgpu::BufferUsages::STORAGE) {
+                            return Err(Error::InvalidParameter(
+                                "evaluation resource exceeds GPU limits",
+                            ));
+                        }
+                        buffer.size() > limits.max_buffer_size
                             || buffer.size() > limits.max_storage_buffer_binding_size
-                    }),
+                    }
                     Storage::Data(bytes) => {
                         bytes.len() as u64 > limits.max_storage_buffer_binding_size
                             || bytes.len() as u64 > limits.max_buffer_size
@@ -308,33 +353,78 @@ impl Executor {
                         size.iter().any(|v| *v > limits.max_texture_dimension_2d)
                     }
                     Storage::RenderTarget(texture) => {
-                        texture.format() != wgpu::TextureFormat::Rgba32Float
+                        if texture.format() != wgpu::TextureFormat::Rgba32Float
                             || texture.dimension() != wgpu::TextureDimension::D2
                             || texture.depth_or_array_layers() != 1
                             || texture.sample_count() != 1
                             || !texture
                                 .usage()
                                 .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
-                            || [texture.width(), texture.height()]
-                                .iter()
-                                .any(|v| *v > limits.max_texture_dimension_2d)
+                        {
+                            return Err(Error::InvalidParameter(
+                                "evaluation resource exceeds GPU limits",
+                            ));
+                        }
+                        [texture.width(), texture.height()]
+                            .iter()
+                            .any(|v| *v > limits.max_texture_dimension_2d)
                     }
                 };
                 if invalid {
-                    return Err(Error::InvalidParameter(
+                    return Err(Error::WorkingAllowance(
                         "evaluation resource exceeds GPU limits",
                     ));
                 }
             }
             for work in &tile.fragment.work {
-                if let Work::Compute { groups, .. } = work
-                    && groups
-                        .iter()
-                        .any(|v| *v == 0 || *v > limits.max_compute_workgroups_per_dimension)
+                if let Work::Copy {
+                    source,
+                    target,
+                    source_offset,
+                    target_offset,
+                    bytes,
+                } = work
                 {
-                    return Err(Error::InvalidParameter(
-                        "evaluation dispatch exceeds GPU limits",
-                    ));
+                    let capacity = |resource: Resource| match &tile.fragment.resources[resource.0] {
+                        Storage::Buffer(bytes) | Storage::Input { bytes, .. } => Some(*bytes),
+                        Storage::Image { layout, .. } => Some(layout.bytes()),
+                        Storage::ResidentBuffer(image) => image.as_buffer().map(wgpu::Buffer::size),
+                        _ => None,
+                    };
+                    if *bytes == 0
+                        || source_offset % 4 != 0
+                        || target_offset % 4 != 0
+                        || bytes % 4 != 0
+                        || capacity(*source).is_none_or(|capacity| {
+                            source_offset
+                                .checked_add(*bytes)
+                                .is_none_or(|end| end > capacity)
+                        })
+                        || capacity(*target).is_none_or(|capacity| {
+                            target_offset
+                                .checked_add(*bytes)
+                                .is_none_or(|end| end > capacity)
+                        })
+                    {
+                        return Err(Error::InvalidParameter(
+                            "value copy exceeds its declared storage",
+                        ));
+                    }
+                }
+                if let Work::Compute { groups, .. } = work {
+                    if groups.contains(&0) {
+                        return Err(Error::InvalidParameter(
+                            "evaluation dispatch exceeds GPU limits",
+                        ));
+                    }
+                    if groups
+                        .iter()
+                        .any(|v| *v > limits.max_compute_workgroups_per_dimension)
+                    {
+                        return Err(Error::WorkingAllowance(
+                            "evaluation dispatch exceeds GPU limits",
+                        ));
+                    }
                 }
             }
         }
@@ -359,15 +449,31 @@ impl Executor {
         work: &[Work],
     ) -> Result<(), Error> {
         for work in work {
-            if let Work::Compute {
-                code,
-                entry,
-                bindings,
-                ..
-            } = work
+            let bindings = match work {
+                Work::Compute { bindings, .. } | Work::Render { bindings, .. } => Some(bindings),
+                _ => None,
+            };
+            if bindings.is_some_and(|bindings| bindings.iter().any(|(_,binding)|
+                matches!(binding, Binding::Shared(Shared::Image { image, .. }) if image.as_host().is_some()))) {
+                return Err(Error::InvalidParameter("GPU bindings require resident storage"));
+            }
+            let (code, entry, bindings, render) = match work {
+                Work::Compute {
+                    code,
+                    entry,
+                    bindings,
+                    ..
+                } => (code, *entry, bindings, false),
+                Work::Render {
+                    program: RenderProgram::Shader(code),
+                    bindings,
+                    ..
+                } => (code, "present_main", bindings, true),
+                _ => continue,
+            };
             {
-                let key = (code.clone(), *entry);
-                if self.programs.0.lock().unwrap().contains_key(&key) {
+                let key = (code.clone(), entry);
+                if self.programs.compiled.lock().unwrap().contains_key(&key) {
                     continue;
                 }
 
@@ -380,7 +486,11 @@ impl Executor {
                     .iter()
                     .map(|(binding, resource)| wgpu::BindGroupLayoutEntry {
                         binding: *binding,
-                        visibility: wgpu::ShaderStages::COMPUTE,
+                        visibility: if render {
+                            wgpu::ShaderStages::FRAGMENT
+                        } else {
+                            wgpu::ShaderStages::COMPUTE
+                        },
                         count: None,
                         ty: binding_type(resource),
                     })
@@ -394,20 +504,52 @@ impl Executor {
                     bind_group_layouts: &[Some(&layout)],
                     immediate_size: 0,
                 });
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
+                let pipeline = if render {
+                    Program::Render(device.create_render_pipeline(
+                        &wgpu::RenderPipelineDescriptor {
+                            label: Some("evaluation value attachment"),
+                            layout: Some(&layout),
+                            vertex: wgpu::VertexState {
+                                module: &module,
+                                entry_point: Some("main"),
+                                compilation_options: Default::default(),
+                                buffers: &[],
+                            },
+                            fragment: Some(wgpu::FragmentState {
+                                module: &module,
+                                entry_point: Some(entry),
+                                compilation_options: Default::default(),
+                                targets: &[Some(wgpu::ColorTargetState {
+                                    format: wgpu::TextureFormat::Rgba32Float,
+                                    blend: None,
+                                    write_mask: wgpu::ColorWrites::ALL,
+                                })],
+                            }),
+                            primitive: Default::default(),
+                            depth_stencil: None,
+                            multisample: Default::default(),
+                            multiview_mask: None,
+                            cache: None,
+                        },
+                    ))
+                } else {
+                    Program::Compute(device.create_compute_pipeline(
+                        &wgpu::ComputePipelineDescriptor {
+                            label: Some(entry),
+                            layout: Some(&layout),
+                            module: &module,
+                            entry_point: Some(entry),
+                            compilation_options: Default::default(),
+                            cache: None,
+                        },
+                    ))
+                };
                 if let Some(error) = pollster::block_on(scope.pop()) {
                     return Err(Error::Gpu(error.to_string()));
                 }
 
                 self.programs
-                    .0
+                    .compiled
                     .lock()
                     .unwrap()
                     .entry(key)
@@ -512,7 +654,7 @@ impl Executor {
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
         mut produce: impl FnMut(
-            &Arc<ImageNode>,
+            &value::Value,
             PlannedImage,
             (&wgpu::Buffer, u64),
         ) -> Result<WorkCounts, Error>,
@@ -560,13 +702,8 @@ impl Executor {
                 }
             }
 
-            for (index, work) in tile.fragment.work.iter().enumerate() {
+            for work in &tile.fragment.work {
                 if let Work::Produce { image, output } = work {
-                    if index != 0 {
-                        return Err(Error::InvalidParameter(
-                            "worker production must precede encoded work",
-                        ));
-                    }
                     if cancelled() {
                         return Ok(None);
                     }
@@ -655,6 +792,41 @@ impl Executor {
         for (_index, work) in work {
             match work {
                 Work::Produce { .. } => {}
+                Work::Copy {
+                    source,
+                    target,
+                    source_offset,
+                    target_offset,
+                    bytes,
+                } => {
+                    let buffer = |resource| match get(resource) {
+                        Allocation::Input { slot, .. } => inputs[*slot],
+                        allocation => allocation.buffer(),
+                    };
+                    let source = buffer(*source);
+                    let target = buffer(*target);
+                    if source == target
+                        || !source.usage().contains(wgpu::BufferUsages::COPY_SRC)
+                        || !target.usage().contains(wgpu::BufferUsages::COPY_DST)
+                        || source_offset
+                            .checked_add(*bytes)
+                            .is_none_or(|end| end > source.size())
+                        || target_offset
+                            .checked_add(*bytes)
+                            .is_none_or(|end| end > target.size())
+                    {
+                        return Err(Error::InvalidParameter(
+                            "value copy exceeds its buffer capabilities",
+                        ));
+                    }
+                    encoder.copy_buffer_to_buffer(
+                        source,
+                        *source_offset,
+                        target,
+                        *target_offset,
+                        *bytes,
+                    );
+                }
                 Work::Upload { source, output } => {
                     let queue = queue.ok_or(Error::InvalidParameter(
                         "record-only execution requires resident input",
@@ -700,9 +872,13 @@ impl Executor {
                         stats.initialized();
                     }
 
-                    let pipeline = self.programs.0.lock().unwrap()[&(code.clone(), *entry)].clone();
+                    let Program::Compute(pipeline) =
+                        self.programs.compiled.lock().unwrap()[&(code.clone(), *entry)].clone()
+                    else {
+                        unreachable!()
+                    };
                     let layout = pipeline.get_bind_group_layout(0);
-                    let group = bind(device, &layout, bindings, &bound, inputs)?;
+                    let group = bind(device, &layout, bindings, &bound)?;
                     let descriptor = wgpu::ComputePassDescriptor::default();
                     #[cfg(all(test, target_os = "macos", feature = "export"))]
                     let descriptor = wgpu::ComputePassDescriptor {
@@ -728,12 +904,26 @@ impl Executor {
                     pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
                 }
                 Work::Render {
-                    pipeline,
-                    layout,
+                    program,
                     bindings,
                     target,
                 } => {
-                    let group = bind(device, layout, bindings, &bound, inputs)?;
+                    let (pipeline, layout) = match program {
+                        RenderProgram::Captured { pipeline, layout } => {
+                            (pipeline.clone(), layout.clone())
+                        }
+                        RenderProgram::Shader(code) => {
+                            let Program::Render(pipeline) = self.programs.compiled.lock().unwrap()
+                                [&(code.clone(), "present_main")]
+                                .clone()
+                            else {
+                                unreachable!()
+                            };
+                            let layout = pipeline.get_bind_group_layout(0);
+                            (pipeline, layout)
+                        }
+                    };
+                    let group = bind(device, &layout, bindings, &bound)?;
                     let view = match get(*target) {
                         Allocation::Texture(_, view) | Allocation::RenderTarget(_, view) => view,
                         _ => unreachable!(),
@@ -751,7 +941,7 @@ impl Executor {
                         })],
                         ..Default::default()
                     });
-                    pass.set_pipeline(pipeline);
+                    pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, &group, &[]);
                     pass.draw(0..3, 0..1);
                 }
@@ -906,20 +1096,31 @@ impl Executor {
                         uniform,
                     }
                 }
-                Storage::Retained { key, bytes } => {
-                    let Some(value) = self.scope.generated(
-                        device,
-                        key,
-                        *bytes,
-                        mode != Materialization::Record,
-                        mode != Materialization::Capture,
-                    ) else {
-                        continue;
+                Storage::Image {
+                    key,
+                    layout,
+                    pixels,
+                } => {
+                    let value = if let Some(image) = pixels {
+                        Arc::new(RetainedBuffer::reused(
+                            key.clone(),
+                            Arc::new(*layout),
+                            image.clone(),
+                        ))
+                    } else {
+                        // Execution owns these intermediates; image/unit demands choose retention.
+                        let Some(value) = self
+                            .scope
+                            .generated_image(device, key, *layout, false, true)
+                        else {
+                            continue;
+                        };
+                        value
                     };
                     if !value.ready() {
                         stats.buffers_allocated(1);
                         #[cfg(all(test, feature = "editor"))]
-                        crate::gpu::test_support::evaluation_buffer_created(*bytes);
+                        crate::gpu::test_support::evaluation_buffer_created(layout.bytes());
                     }
                     self.retained.push(value.clone());
                     Allocation::Retained(value)
@@ -1126,11 +1327,13 @@ impl Recorded {
     }
 
     #[cfg(test)]
-    pub fn cached<T: std::any::Any>(&self) -> Option<&Arc<RetainedBuffer>> {
-        self.executor
-            .retained
-            .iter()
-            .find(|value| value.key.get::<T>().is_some())
+    pub fn cached_image(&self, meaning: Meaning) -> Option<&Arc<RetainedBuffer>> {
+        self.executor.retained.iter().find(|value| {
+            value
+                .descriptor
+                .downcast_ref::<ImageLayout>()
+                .is_some_and(|layout| layout.domain.meaning == meaning)
+        })
     }
 
     pub fn submitted(&self) {
@@ -1169,9 +1372,7 @@ fn binding_type(resource: &Binding) -> wgpu::BindingType {
         min_binding_size: None,
     };
     match resource {
-        Binding::Read(_) | Binding::Input { .. } => {
-            buffer(wgpu::BufferBindingType::Storage { read_only: true })
-        }
+        Binding::Read(_) => buffer(wgpu::BufferBindingType::Storage { read_only: true }),
         Binding::Write(_) => buffer(wgpu::BufferBindingType::Storage { read_only: false }),
         Binding::Uniform(_) => buffer(wgpu::BufferBindingType::Uniform),
         Binding::Shared(Shared::Image { view: None, .. }) => {
@@ -1220,7 +1421,6 @@ fn bind<'a>(
     layout: &wgpu::BindGroupLayout,
     bindings: &[(u32, Binding)],
     get: &impl Fn(Resource) -> wgpu::BindingResource<'a>,
-    inputs: &[&'a wgpu::Buffer],
 ) -> Result<wgpu::BindGroup, Error> {
     let entries = bindings
         .iter()
@@ -1242,23 +1442,6 @@ fn bind<'a>(
                 ) => wgpu::BindingResource::TextureView(view),
                 Binding::Shared(Shared::Sampler(sampler)) => {
                     wgpu::BindingResource::Sampler(sampler)
-                }
-                Binding::Input { slot, bytes } => {
-                    let buffer = inputs
-                        .get(*slot)
-                        .ok_or(Error::InvalidParameter("missing resident input binding"))?;
-                    if buffer.size() < *bytes
-                        || !buffer.usage().contains(wgpu::BufferUsages::STORAGE)
-                    {
-                        return Err(Error::InvalidParameter(
-                            "resident input differs from declared storage",
-                        ));
-                    }
-                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(*bytes),
-                    })
                 }
                 other => get(other.local().unwrap()),
             };

@@ -7,7 +7,6 @@ use crate::{
     halation::HalationParameters,
     image_mtf::ImageMtfParameters,
     pixel_pipeline::{EffectDefinition, PixelPipeline, PixelStage},
-    processing_support::Support,
 };
 
 // Recreate the unrefined view composition with the same native effect operators. Only
@@ -16,13 +15,10 @@ use crate::{
 struct Unrefined(PixelStage);
 
 impl EffectDefinition for Unrefined {
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        self.0.support(pitch)
-    }
     fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         self.0.compose(input)
     }
 }
@@ -343,15 +339,11 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .as_ref()
             .unwrap()
             .field();
-        if budget > 1 {
-            assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
-            assert!(
-                b.unwrap().ready(),
-                "Amount, Colour and fixed-support halation reuse the initialized field"
-            );
-        } else {
-            assert!(a.is_none() && b.is_none());
-        }
+        assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
+        assert!(
+            b.unwrap().ready(),
+            "Amount, Colour and fixed-support halation reuse the live initialized field even without optional retention"
+        );
         edited.ensure_submitted(
             &device,
             &queue,

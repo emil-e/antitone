@@ -4,6 +4,9 @@ use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use std::fs;
 
+#[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
+#[path = "support/output.rs"]
+mod authored_export;
 #[path = "support/sony_fixture.rs"]
 mod fixture;
 #[path = "support/fixture_path.rs"]
@@ -496,7 +499,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
         gpu::{flat::GpuFlatField, submission::SubmissionGate},
-        gpu_export::{self, Format, Request},
+        gpu_export::Format,
         processing::{Calibration, InputSettings, RollSettings},
         renderer::GpuRenderer,
         rendering::OutputTarget,
@@ -566,11 +569,11 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         ] {
             let actual = directory.path().join("gpu-output");
             let expected = directory.path().join("scalar-output");
-            gpu_export::write(
+            authored_export::write(
                 &renderer,
                 &device,
                 (&queue, &SubmissionGate::default()),
-                Request {
+                authored_export::Request {
                     scan: &scan,
                     field: field.clone(),
                     input,

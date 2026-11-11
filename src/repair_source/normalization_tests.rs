@@ -1,4 +1,5 @@
 use super::*;
+use crate::scan::Scan;
 use crate::{
     dust_repair::{RepairId, RepairOrigin, SupportMask},
     processing::{Calibration, InputSettings, Pipeline, RollSettings},

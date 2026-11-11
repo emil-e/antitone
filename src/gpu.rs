@@ -25,6 +25,7 @@ pub(crate) mod rgb16;
 pub(crate) mod test_support;
 
 pub(crate) mod grain;
+#[cfg(test)]
 pub(crate) mod image_mtf;
 #[cfg(any(
     feature = "editor",

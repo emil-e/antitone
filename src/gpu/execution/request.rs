@@ -1,7 +1,6 @@
 //! Captured processing and sample-storage choices, independent of file encoding.
 
-use crate::{Error, geometry::Composition, gpu::evaluation::ImageNode, rendering::OutputTarget};
-use std::sync::Arc;
+use crate::{Error, geometry::Composition, gpu::evaluation::Value, rendering::OutputTarget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SampleEncoding {
@@ -39,7 +38,7 @@ impl OutputBlock {
 
 /// A complete calculation and its output footprint. Publication rights stay with the consumer.
 pub(crate) struct Request {
-    pub definition: Arc<ImageNode>,
+    pub definition: Value,
     pub composition: Composition,
     pub encoding: SampleEncoding,
 }

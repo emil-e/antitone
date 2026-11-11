@@ -6,7 +6,7 @@ use crate::{
     flat_field::FlatField,
     geometry::Composition,
     processing::{InputSettings, RollSettings},
-    project::{Project, Source, SourceId},
+    project::{Project, Source, SourceDevelopment, SourceId},
 };
 use std::sync::Arc;
 
@@ -33,6 +33,42 @@ pub struct ImageRecipe {
     pub halation: crate::halation::HalationSettings,
     pub luts: crate::looks::LutChain,
     pub repairs: Vec<Repair>,
+}
+
+impl NeutralRecipe {
+    #[cfg(feature = "raw")]
+    /// The consumer owns the immutable source lease and freshness fence, not the selected viewer.
+    pub fn require_scan(&self, scan: &crate::scan::Scan) -> Result<(), Error> {
+        scan.source().require_input(&self.input)?;
+        let actual = SourceDevelopment::from_metadata(
+            &scan.source().metadata(),
+            scan.source().white_balance(),
+        )?;
+        if !self.source_development.resolved()?.same_processing(&actual)
+            || self.correction.as_ref() != scan.flat_field()
+        {
+            return Err(Error::Raw(
+                "captured recipe differs from developed source".into(),
+            ));
+        }
+        if !self.input.is_negative()
+            && let Some(reference) = &self.reference
+            && scan.reference_exposure.as_ref().map(|value| value.ev()) != Some(reference.ev())
+        {
+            return Err(Error::Raw(
+                "captured recipe differs from recorded exposure baseline".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn processing_transform(&self) -> Result<(InputSettings, glam::DMat3), Error> {
+        let matrix = self.input.positive_matrix(
+            glam::DMat3::from_cols_array_2d(&self.source_development.resolved()?.camera_to_ap1),
+            self.reference.as_ref().map(|reference| reference.ev()),
+        )?;
+        Ok((self.input, matrix))
+    }
 }
 
 impl ImageRecipe {
@@ -66,20 +102,24 @@ impl ImageRecipe {
 impl Project {
     /// Capture accepted intent without acquiring pixels or resolving repairs.
     pub fn image_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
-        self.capture_image(self.source(id)?, |_| {})
+        let reference = self
+            .exposure_metadata
+            .as_ref()
+            .filter(|metadata| metadata.valid())
+            .and_then(|metadata| metadata.entries.iter().find(|entry| entry.source == id))
+            .map(|entry| entry.reference.clone());
+        self.image_recipe_with_reference(self.source(id)?, reference)
     }
 
-    /// The owning entry point supplies effective edits inside capture. Only the completed
-    /// value leaves this operation; publication uses ordinary shared ownership.
-    pub(crate) fn capture_image(
+    pub(crate) fn image_recipe_with_reference(
         &self,
         source: &Source,
-        effective: impl FnOnce(&mut ImageRecipe),
+        reference: Option<crate::exposure_reference::ReferenceExposure>,
     ) -> Result<ImageRecipe, Error> {
         source
             .repairs
             .validate(source.development.active_area.into())?;
-        let mut recipe = ImageRecipe {
+        Ok(ImageRecipe {
             neutral: NeutralRecipe {
                 source: source.id,
                 source_development: crate::development_metadata::Development::captured(
@@ -91,17 +131,7 @@ impl Project {
                         .unwrap_or(&Default::default()),
                 ),
                 input: self.input,
-                reference: self
-                    .exposure_metadata
-                    .as_ref()
-                    .filter(|metadata| metadata.valid())
-                    .and_then(|metadata| {
-                        metadata
-                            .entries
-                            .iter()
-                            .find(|entry| entry.source == source.id)
-                    })
-                    .map(|entry| entry.reference.clone()),
+                reference,
                 correction: self.active_flat_field().map(|field| field.map.clone()),
             },
             roll: self.roll,
@@ -122,10 +152,6 @@ impl Project {
                 .filter(|repair| repair.enabled)
                 .cloned()
                 .collect(),
-        };
-        // Effective instructions can still await a valid donor or evaluated pixels.
-        // Their accepted source records remain validated and unchanged.
-        effective(&mut recipe);
-        Ok(recipe)
+        })
     }
 }

@@ -17,7 +17,6 @@ pub(super) enum OriginalPurpose {
 #[derive(Clone, PartialEq)]
 pub(super) struct Demand {
     pub capture: crate::gpu::photograph::request::PhotographRequest,
-    pub repairs: crate::gpu::repairs::Snapshot,
     pub target: OutputTarget,
     pub view: Option<ViewRequest>,
     pub composition: Composition,
@@ -34,7 +33,6 @@ impl Demand {
         source: source::Context,
     ) -> Self {
         Self {
-            repairs: input.repairs.clone(),
             capture: crate::gpu::photograph::request::PhotographRequest::Fixture(input),
             target,
             view,
@@ -115,7 +113,6 @@ impl Request {
                     .correction
                     .as_ref()
                     .map(|correction| correction.gpu.clone()),
-                &demand.repairs,
                 demand.target,
             )?;
             crate::refinement::refine_definition(
@@ -291,7 +288,6 @@ impl OriginalView {
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
         use crate::frame_raster::FrameRaster;
         use crate::gpu::view::RenderedView;
-        use crate::gpu::view::request::SourceRequest;
         let owner = &*self;
         let Some((view, image)) = owner.settled() else {
             return Ok(None);
@@ -315,27 +311,10 @@ impl OriginalView {
         };
         let identity =
             crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
-        let spec = match &wanted.capture {
-            crate::gpu::photograph::request::PhotographRequest::Recipe(recipe)
-            | crate::gpu::photograph::request::PhotographRequest::BeforeLooks(recipe) => {
-                SourceRequest::for_recipe(frame, recipe)?
-            }
-            crate::gpu::photograph::request::PhotographRequest::Inspection(_) => {
-                SourceRequest::for_frame(frame)?
-            }
-            #[cfg(test)]
-            crate::gpu::photograph::request::PhotographRequest::Fixture(input)
-                if input.grade().is_some() =>
-            {
-                SourceRequest::for_processing(frame, input)?
-            }
-            #[cfg(test)]
-            crate::gpu::photograph::request::PhotographRequest::Fixture(_) => {
-                SourceRequest::for_frame(frame)?
-            }
-        }
-        .with_identity(identity)
-        .with_repairs(wanted.repairs.clone());
+        let spec = wanted
+            .capture
+            .source_request(frame)?
+            .with_identity(identity);
         if let Some(rendered) = &owner.rendered
             && Arc::ptr_eq(&rendered.image, &image)
             && rendered.capture == wanted.capture

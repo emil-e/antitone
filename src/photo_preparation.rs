@@ -121,6 +121,68 @@ pub(crate) fn proxy(
     CameraProxy::new(proxy.clone(), value)
 }
 
+/// Prepare a captured photograph without changing its caller's source or intent.
+pub(crate) fn native_image(
+    scan: &Scan,
+    recipe: &crate::image_recipe::ImageRecipe,
+) -> Result<(Scan, crate::image_recipe::ImageRecipe), Error> {
+    let reference = recipe
+        .neutral
+        .reference
+        .clone()
+        .or_else(|| scan.reference_exposure.clone())
+        .map_or_else(OnceLock::new, OnceLock::from);
+    let prepared = native(None, &reference, recipe.neutral.input, scan.source())?;
+    let mut scan = prepared.scan();
+    scan.set_flat_field(recipe.neutral.correction.clone());
+    let mut recipe = recipe.clone();
+    recipe.neutral.reference = image_reference(&recipe, prepared.reference.as_ref());
+    recipe.neutral.require_scan(&scan)?;
+    Ok((scan, recipe))
+}
+
+/// Bind an available preparation fact only when the capture does not already specify it.
+pub(crate) fn ready_image(
+    recipe: &Arc<crate::image_recipe::ImageRecipe>,
+    reference: &OnceLock<ReferenceExposure>,
+) -> Arc<crate::image_recipe::ImageRecipe> {
+    let mut prepared = recipe.clone();
+    let reference = image_reference(recipe, reference.get());
+    if recipe.neutral.reference != reference {
+        Arc::make_mut(&mut prepared).neutral.reference = reference;
+    }
+    prepared
+}
+
+fn image_reference(
+    recipe: &crate::image_recipe::ImageRecipe,
+    available: Option<&ReferenceExposure>,
+) -> Option<ReferenceExposure> {
+    recipe
+        .neutral
+        .reference
+        .as_ref()
+        .or_else(|| {
+            (!recipe.neutral.input.is_negative())
+                .then_some(available)
+                .flatten()
+        })
+        .cloned()
+}
+
+pub(crate) fn proxy_image(
+    recipe: &Arc<crate::image_recipe::ImageRecipe>,
+    reference: &OnceLock<ReferenceExposure>,
+    pixels: &Arc<CameraPixels>,
+    preview: PreviewResult,
+) -> (CameraProxy, Arc<crate::image_recipe::ImageRecipe>) {
+    // A recorded capture wins over a transient memo, as it does for original preparation.
+    let recorded = recipe.neutral.reference.clone().map(OnceLock::from);
+    let reference = recorded.as_ref().unwrap_or(reference);
+    let proxy = proxy(reference, recipe.neutral.input, pixels, preview);
+    (proxy, ready_image(recipe, reference))
+}
+
 fn resolve(
     preview: PreviewResult,
     sample: impl FnOnce() -> Result<Arc<CameraPixels>, Error>,

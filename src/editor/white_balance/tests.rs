@@ -37,14 +37,14 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
             None,
         )
         .unwrap();
-    let expected = RollInput::capture(&editor)
-        .measure(
-            &mut measurement::capture_scan(&editor).unwrap(),
-            region,
-            editor.source_services.as_ref().unwrap(),
-            &|| false,
-        )
-        .unwrap();
+    let expected = query::roll(
+        editor.source_services.as_ref().unwrap(),
+        &mut measurement::capture_scan(&editor).unwrap(),
+        region,
+        roll_input(&editor).unwrap(),
+        &|| false,
+    )
+    .unwrap();
     // The independent f64 path checks the captured prefix; production evaluates f32 pixels.
     assert!((expected.warmth - reference.warmth).abs() < 1e-6);
     assert!((expected.tint - reference.tint).abs() < 1e-6);
@@ -806,8 +806,11 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     let mut captured_image = measurement::capture_scan(&editor).unwrap();
     let mut zero_image = measurement::capture_scan(&editor).unwrap();
     zero_image.reference_exposure = None;
-    let control = LayerInput::capture(&editor)
-        .unwrap()
+    let mut control = LayerInput::capture(&editor).unwrap();
+    control.recipe.neutral.reference = Some(ReferenceExposure::Unavailable(
+        crate::exposure_reference::UnavailableReference::NoUsablePreview,
+    ));
+    let control = control
         .measure(
             &mut zero_image,
             Coverage::rectangle(patch),

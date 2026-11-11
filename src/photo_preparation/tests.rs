@@ -78,6 +78,72 @@ fn negative_preparation_does_not_require_a_file_preview_or_an_exposure_memo() {
     assert!(prepared.reference.is_none());
 }
 
+#[test]
+fn native_and_proxy_preparation_share_captured_reference_precedence_without_mutating_inputs() {
+    use crate::project::Project;
+    let file = crate::raw::fixture::bayer_dng();
+    let reference = |ev| {
+        ReferenceExposure::Matched(exposure_reference::StartingExposure {
+            ev,
+            samples: 1024,
+            spread: 0.,
+        })
+    };
+    let mut scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    scan.reference_exposure = Some(reference(-2.));
+    let mut project = Project {
+        input: InputSettings::Digital,
+        ..Default::default()
+    };
+    let metadata = scan.source().metadata();
+    let source = crate::project::Source {
+        development_mode: crate::project::DevelopmentMode::AsShot,
+        id: crate::project::SourceId(0),
+        path: file.path().to_owned(),
+        development: SourceDevelopment::from_metadata(&metadata, scan.source().white_balance())
+            .unwrap(),
+        adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
+        repairs: Default::default(),
+        orientation: metadata.photo_orientation().unwrap(),
+        crop: None,
+    };
+    let id = project.add_source(source).unwrap();
+    let pixels = Arc::new(CameraPixels::from_scan(&scan).unwrap());
+    for (recorded, expected_ev) in [
+        (None, -2.),
+        (Some(reference(1.)), 1.),
+        (
+            Some(ReferenceExposure::Unavailable(Unavailable::NoUsablePreview)),
+            0.,
+        ),
+    ] {
+        let mut authored = project.image_recipe(id).unwrap();
+        authored.neutral.reference = recorded.clone();
+        let authored = Arc::new(authored);
+        let memo = OnceLock::from(reference(-2.));
+        let (native, native_recipe) = native_image(&scan, &authored).unwrap();
+        let (proxy, proxy_recipe) = proxy_image(&authored, &memo, &pixels, Ok(None));
+        assert_eq!(
+            native.reference_exposure.as_ref().unwrap().ev(),
+            expected_ev
+        );
+        assert_eq!(proxy.reference.as_ref().unwrap().ev(), expected_ev);
+        for prepared in [&native_recipe, &*proxy_recipe] {
+            let (input, matrix) = prepared.neutral.processing_transform().unwrap();
+            assert_eq!(input, InputSettings::Digital);
+            assert_eq!(matrix, scan.camera_to_ap1 * expected_ev.exp2());
+        }
+        assert_eq!(authored.neutral.reference, recorded);
+        assert_eq!(scan.reference_exposure.as_ref().unwrap().ev(), -2.);
+        assert_eq!(memo.get().unwrap().ev(), -2.);
+        if recorded.is_some() {
+            assert!(Arc::ptr_eq(&authored, &proxy_recipe));
+        }
+    }
+}
+
 #[cfg(feature = "ocio-reference")]
 fn control(desired: f64, adobe: bool) -> (CameraPixels, Preview) {
     use crate::rendering::{CpuRenderer, OutputTarget};

@@ -1,5 +1,6 @@
 //! Isolated authored native-output cost comparison, including codec work.
 use super::*;
+use crate::gpu_export::authored::Request;
 use std::{
     sync::{
         Arc,

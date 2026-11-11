@@ -779,9 +779,9 @@ fn wait_for_with_timeout(
         harness.read(|editor| {
             assert!(
                 Instant::now() < deadline,
-                "Editor wait timed out at {caller}: {}; working updating={} error={:?}, dust error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}, crop layout={}, kernels={}, preview={}, source view={}",
+                "Editor wait timed out at {caller}: {}; working updating={} error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}, crop layout={}, kernels={}, preview={}, source view={}",
                 editor.status, editor.document.visit.working_view.updating, editor.document.visit.working_view.error,
-                editor.document.visit.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.document.visit.canvas.original.refining(),
+                editor.dust_signature().map(|_| editor.dust_images().len()), editor.document.visit.canvas.original.refining(),
                 editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id,
                 editor.document.crop_edit().is_some_and(|edit| edit.layout.is_some()),
                 editor.document.visit.working_view.kernels.get().is_some(), editor.active_canvas().preview_rendered.is_some(), editor.document.source

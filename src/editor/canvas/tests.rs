@@ -79,7 +79,7 @@ fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
     );
     assert_source_corners(uv, frame, crop);
     app.pump();
-    assert!(app.read(|editor| editor.document.visit.working.task.is_some()));
+    assert!(app.read(|editor| editor.document.visit.working_view.task.is_some()));
     drop(admission);
     app.run_until(Duration::from_secs(20), |editor| {
         editor.document.visit.working_view.support_ready()

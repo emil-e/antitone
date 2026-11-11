@@ -24,13 +24,16 @@ pub mod camera_response;
     feature = "project",
     any(feature = "editor", feature = "export")
 ))]
-pub mod neutral_readout;
+#[cfg(all(test, feature = "editor"))]
+mod neutral_readout;
 pub(crate) mod operations;
 #[cfg(feature = "project")]
 mod recipe;
 #[cfg(feature = "project")]
 #[cfg(feature = "project")]
 pub(crate) use recipe::RecipeGraph;
+#[cfg(all(test, feature = "editor"))]
+mod provenance_tests;
 #[cfg(feature = "editor")]
 pub(crate) mod request;
 #[cfg(all(feature = "ui", feature = "render"))]
@@ -38,7 +41,7 @@ mod resident;
 pub(crate) mod shader;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
-use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, Repairs, ResidentCamera};
+use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, ResidentCamera};
 #[cfg(all(feature = "render", any(feature = "ui", feature = "editor")))]
 mod prewarm;
 #[cfg(test)]
@@ -48,13 +51,13 @@ use assembly::Assembly;
 
 /// Corrected camera light is available independently of positive calibration or grading.
 pub(crate) struct CameraGraph {
-    pub codes: Arc<ImageNode>,
-    pub camera: Arc<ImageNode>,
+    pub codes: Value,
+    pub camera: Value,
     input: CameraInput,
 }
 
 impl CameraGraph {
-    fn new(codes: Arc<ImageNode>, input: CameraInput) -> Result<Self, Error> {
+    fn new(codes: Value, input: CameraInput) -> Result<Self, Error> {
         if codes.domain().meaning != Meaning::CameraCodes {
             return Err(Error::InvalidParameter(
                 "camera graph requires camera codes",
@@ -69,10 +72,7 @@ impl CameraGraph {
         })
     }
 
-    fn inspection(
-        &self,
-        view: crate::gpu::interpretation::InspectionView,
-    ) -> Result<Arc<ImageNode>, Error> {
+    fn inspection(&self, view: crate::gpu::interpretation::InspectionView) -> Result<Value, Error> {
         Ok(Assembly::captured(Captured::new(
             self.input.clone(),
             Interpretation::Packed(view.parameters()?),
@@ -85,108 +85,68 @@ impl CameraGraph {
 /// Captured camera, neutral and photographic image boundaries.
 /// Each boundary is calculated by its captured operations.
 pub struct PhotographGraph {
-    pub codes: Arc<ImageNode>,
-    pub camera: Arc<ImageNode>,
-    pub camera_positive: Arc<ImageNode>,
-    pub unrepaired: Arc<ImageNode>,
-    pub neutral: Arc<ImageNode>,
-    pub roll: Arc<ImageNode>,
-    pub graded: Arc<ImageNode>,
-    pub(crate) processed: Arc<ImageNode>,
+    pub codes: Value,
+    pub camera: Value,
+    pub camera_positive: Value,
+    pub unrepaired: Value,
+    pub neutral: Value,
+    pub roll: Value,
+    pub graded: Value,
+    pub(crate) processed: Value,
 }
 
 impl PhotographGraph {
-    #[cfg(all(
-        feature = "raw",
-        feature = "project",
-        any(feature = "editor", feature = "export")
-    ))]
-    pub(super) fn unrepaired_readout(
-        source: Arc<ImageNode>,
-        field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
-        encoding: crate::processing::RollSettings,
-    ) -> Result<Arc<ImageNode>, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
-            return Err(Error::InvalidParameter(
-                "photographic conversion requires original camera cells",
-            ));
-        }
-
-        let capture = Captured::new(
-            CameraInput {
-                matrix: program.matrix,
-                field,
-                continuous: true,
-                mapping: Mapping::Originals,
-            },
-            Interpretation::Program(program, encoding),
-        )?;
-
-        let mut assembly = Assembly::captured(capture);
-        assembly.encoded = encoding.exposure != 0.;
-
-        assembly.unrepaired(source)
-    }
-
     #[cfg(feature = "editor")]
     pub(super) fn native_positive(
-        camera: Arc<ImageNode>,
+        camera: Value,
         program: crate::gpu::interpretation::InputTransform,
-        encoding: crate::processing::RollSettings,
-    ) -> Result<Arc<ImageNode>, Error> {
-        Assembly::native(program, encoding).interpret(camera)
+    ) -> Result<Value, Error> {
+        Assembly::native(program).interpret(camera)
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn resident_camera_bytes(image: &Arc<ImageNode>) -> u64 {
-        let mut node = Some(image);
-        while let Some(current) = node {
-            if let Some(camera) = (current.operation().as_ref() as &dyn std::any::Any)
-                .downcast_ref::<ResidentCamera>()
-            {
-                return camera.pixels.size();
-            }
-            node = current.input();
-        }
-        0
-    }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn has_correction(
-        image: &Arc<ImageNode>,
-        field: Option<&Arc<GpuFlatField>>,
-    ) -> bool {
-        let mut image = Some(image);
-        while let Some(node) = image {
+    pub(crate) fn resident_camera_bytes(image: &Value) -> u64 {
+        let mut buffers = Vec::new();
+        for node in image.ancestors() {
             if let Some(camera) =
-                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Camera>()
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<ResidentCamera>()
+                && !buffers.contains(&&camera.pixels)
             {
-                return camera.captured.field.as_ref().map(|field| field.field())
-                    == field.map(|field| field.field());
+                buffers.push(&camera.pixels);
             }
-            image = node.input();
         }
-        false
+        buffers.into_iter().map(wgpu::Buffer::size).sum()
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn has_correction(image: &Value, field: Option<&Arc<GpuFlatField>>) -> bool {
+        let mut found = false;
+        for node in image.ancestors() {
+            if let Some(camera) = node.parameters::<operations::CameraIdentity>() {
+                if camera.field.as_ref() != field.map(|field| field.field()) {
+                    return false;
+                }
+                found = true;
+            }
+        }
+        found
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn input_transform(
-        image: &Arc<ImageNode>,
-    ) -> Option<crate::gpu::interpretation::InputTransform> {
+        image: &Value,
+    ) -> Result<Option<crate::gpu::interpretation::InputTransform>, Error> {
         Assembly::input_transform(image)
     }
 
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn filtered(
         grading: &Grading,
-        neutral: Arc<ImageNode>,
+        neutral: Value,
         stages: &crate::pixel_pipeline::PixelPipeline,
         presentation: crate::frame_raster::FrameRaster,
         processing: crate::frame_raster::FrameRaster,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let output = view_domain(presentation, neutral.domain().grid.coverage);
         let scale = std::array::from_fn(|i| {
             f64::from(processing.output[i]) / f64::from(presentation.output[i])
@@ -196,10 +156,10 @@ impl PhotographGraph {
 
     #[cfg(feature = "editor")]
     pub(crate) fn inspection_view(
-        neutral: Arc<ImageNode>,
+        neutral: Value,
         parameters: ProcessingParameters,
         presentation: crate::frame_raster::FrameRaster,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let output = view_domain(presentation, neutral.domain().grid.coverage);
         window(inspect(neutral, parameters)?, output.finite()?)
     }
@@ -207,20 +167,20 @@ impl PhotographGraph {
     /// Individually selected original cells, retaining their physical correction coordinates.
     #[cfg(feature = "editor")]
     pub(crate) fn camera_samples(
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         positions: &[[u32; 2]],
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         Self::camera_patches(source, field, positions, [1, 1])
     }
 
     #[cfg(feature = "editor")]
     fn camera_patches(
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         origins: &[[u32; 2]],
         patch: [u32; 2],
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let height = u32::try_from(origins.len())
             .ok()
             .and_then(|count| count.checked_mul(patch[1]))
@@ -266,10 +226,7 @@ impl PhotographGraph {
     }
 
     /// Corrected original camera light, excluding interpretation and recorded positive exposure.
-    pub fn camera_light(
-        source: Arc<ImageNode>,
-        field: Option<Arc<GpuFlatField>>,
-    ) -> Result<Arc<ImageNode>, Error> {
+    pub fn camera_light(source: Value, field: Option<Arc<GpuFlatField>>) -> Result<Value, Error> {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
         {
@@ -291,45 +248,36 @@ impl PhotographGraph {
         Ok(Assembly::captured(captured).camera(source))
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn repaired_reconstruction(
-        base: &Arc<ImageNode>,
-        snapshot: crate::gpu::repairs::Snapshot,
-    ) -> Result<Arc<ImageNode>, Error> {
-        let input = base.input().ok_or(Error::InvalidParameter(
-            "repair reconstruction requires an unrepaired neutral base",
-        ))?;
-        if base.domain().bounds.is_some()
-            || base.domain().meaning != Meaning::Neutral
-            || input.domain().meaning != Meaning::Neutral
-            || input.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
-            return Err(Error::InvalidParameter(
-                "repair reconstruction requires original neutral cells",
-            ));
-        }
-        snapshot.require_area(input.domain().finite()?.source()?)?;
-        let repaired = Repairs::image(
-            input.clone(),
-            snapshot,
-            crate::gpu::repairs::shader().into(),
-            Mapping::Originals,
-        );
-        Ok(ImageNode::captured(
-            base.domain(),
-            Some(repaired),
-            base.operation().clone(),
-        ))
-    }
-
     /// Capture original-cell operations; these arguments are also used by analytic consumers.
-    pub(crate) fn original(
+    /// Author a complete original-grid working-positive calculation from operation arguments.
+    pub fn original_image(
         limits: &wgpu::Limits,
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         program: crate::gpu::interpretation::InputTransform,
         grading: Grading,
-        repairs: crate::gpu::repairs::Snapshot,
+        repairs: &[crate::dust_repair::Repair],
+        stages: &crate::pixel_pipeline::PixelPipeline,
+    ) -> Result<Value, Error> {
+        Ok(Self::original(
+            limits,
+            source,
+            field,
+            program,
+            grading,
+            repairs.to_vec(),
+            stages,
+        )?
+        .processed)
+    }
+
+    pub(crate) fn original(
+        limits: &wgpu::Limits,
+        source: Value,
+        field: Option<Arc<GpuFlatField>>,
+        program: crate::gpu::interpretation::InputTransform,
+        grading: Grading,
+        repairs: Vec<crate::dust_repair::Repair>,
         stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         if source.domain().meaning != Meaning::CameraCodes
@@ -356,11 +304,11 @@ impl PhotographGraph {
     }
 
     pub(crate) fn inspection_original(
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         matrix: glam::DMat3,
         view: crate::gpu::interpretation::InspectionView,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
         {
@@ -383,7 +331,7 @@ impl PhotographGraph {
     #[cfg(test)]
     pub(crate) fn new(
         limits: &wgpu::Limits,
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
@@ -394,7 +342,7 @@ impl PhotographGraph {
     #[cfg(test)]
     pub(crate) fn new_with_stages(
         limits: &wgpu::Limits,
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
@@ -406,7 +354,7 @@ impl PhotographGraph {
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn preview_with_input(
         limits: &wgpu::Limits,
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         input: &AuthoredPhotograph,
         frame: crate::frame_raster::FrameRaster,
@@ -431,7 +379,7 @@ impl PhotographGraph {
     #[cfg(test)]
     fn original_assembly(
         limits: &wgpu::Limits,
-        source: &Arc<ImageNode>,
+        source: &Value,
         field: Option<Arc<GpuFlatField>>,
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
@@ -443,9 +391,6 @@ impl PhotographGraph {
                 "photographic conversion requires original camera cells",
             ));
         }
-        input
-            .repairs
-            .require_area(source.domain().finite()?.source()?)?;
         if let Some(grading) = input.grade() {
             grading.require_extent(source.domain().finite()?.source()?)?;
         }
@@ -477,7 +422,9 @@ impl PhotographGraph {
                 "processing source layout differs from plan",
             ));
         }
-        if !input.repairs.0.is_empty() && source.geometry().is_none() {
+        if (!input.repairs.is_empty() || !input.replacements.is_empty())
+            && source.geometry().is_none()
+        {
             return Err(Error::Gpu(
                 "repair rendering needs original source geometry".into(),
             ));
@@ -490,7 +437,7 @@ impl PhotographGraph {
             grid: Grid::from_raster(raster),
             meaning: Meaning::CameraCodes,
         };
-        let camera = ImageNode::new(
+        let camera = Value::from_operation(
             domain,
             None,
             ResidentCamera {
@@ -527,13 +474,13 @@ impl PhotographGraph {
                     "photographic conversion matrix differs from captured input",
                 ));
             }
-            input.validate_repairs(limits, input.repairs.bound())?;
+            input.validate_controls(limits)?;
         }
 
         let captured = Captured::new(
             definition,
             match input.source_transform() {
-                Some(program) => Interpretation::Program(*program, Default::default()),
+                Some(program) => Interpretation::Program(*program),
                 None if !input.is_positive() => Interpretation::Packed(input.parameters()),
                 None => Interpretation::Unavailable,
             },
@@ -541,6 +488,7 @@ impl PhotographGraph {
         let mut assembly = Assembly::captured(captured.clone());
         if input.parameters().graded() {
             assembly.repairs = input.repairs.clone();
+            assembly.replacements = input.replacements.clone();
         }
 
         if input.parameters().graded() {
@@ -577,16 +525,18 @@ fn view_domain(frame: crate::frame_raster::FrameRaster, coverage: u32) -> Domain
 pub(crate) struct NeutralInput {
     pub interpretation: crate::gpu::interpretation::SourceInterpretation,
     pub field: Option<Arc<GpuFlatField>>,
-    pub repairs: crate::gpu::repairs::Snapshot,
+    pub repairs: Vec<crate::dust_repair::Repair>,
+    #[cfg(test)]
+    pub replacements: Vec<crate::gpu::repairs::fixtures::Replacement>,
 }
 
 #[cfg(feature = "editor")]
 impl NeutralInput {
     pub fn original_views(
         &self,
-        source: Arc<ImageNode>,
+        source: Value,
         frames: impl IntoIterator<Item = crate::frame_raster::FrameRaster>,
-    ) -> Result<Vec<Arc<ImageNode>>, Error> {
+    ) -> Result<Vec<Value>, Error> {
         let neutral = self.originals(source)?;
         frames
             .into_iter()
@@ -605,7 +555,7 @@ impl NeutralInput {
             .collect()
     }
 
-    pub fn originals(&self, source: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn originals(&self, source: Value) -> Result<Value, Error> {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
         {
@@ -613,8 +563,6 @@ impl NeutralInput {
                 "neutral conversion requires original camera cells",
             ));
         }
-        self.repairs
-            .require_area(source.domain().finite()?.source()?)?;
         self.compose(
             source,
             CameraInput {
@@ -630,7 +578,7 @@ impl NeutralInput {
         &self,
         source: &ProcessingSource,
         raster: crate::gpu::raster::Raster,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         if u64::from(raster.size()[0]) * u64::from(raster.size()[1])
             != u64::from(source.pixel_count())
         {
@@ -646,7 +594,7 @@ impl NeutralInput {
             grid: Grid::from_raster(raster),
             meaning: Meaning::CameraCodes,
         };
-        let image = ImageNode::new(
+        let image = Value::from_operation(
             domain,
             None,
             ResidentCamera {
@@ -668,46 +616,46 @@ impl NeutralInput {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn recompose_resident(
-        &self,
-        image: &Arc<ImageNode>,
-    ) -> Result<Arc<ImageNode>, Error> {
-        let mut node = Some(image);
-        while let Some(current) = node {
+    pub(crate) fn recompose_resident(&self, image: &Value) -> Result<Value, Error> {
+        let mut argument: Option<(&crate::gpu::evaluation::value::Value, Mapping, bool)> = None;
+        for current in image.ancestors() {
             if let Some(camera) =
                 (current.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Camera>()
-                && let Some(input) = current.input()
+                && let Some(input) = current.unary_input()
                 && let Some(resident) = (input.operation().as_ref() as &dyn std::any::Any)
                     .downcast_ref::<ResidentCamera>()
             {
-                let root = self.compose(
-                    input.clone(),
-                    CameraInput {
-                        matrix: self.interpretation.matrix(),
-                        field: self.field.clone(),
-                        continuous: resident.continuous,
-                        mapping: camera.captured.mapping,
-                    },
-                )?;
-                return reconstruct(root, image.domain());
+                if argument.is_some_and(|(prior, _, _)| !prior.same_definition(input)) {
+                    return Err(Error::InvalidParameter(
+                        "calculation mixes resident camera arguments",
+                    ));
+                }
+                argument = Some((input, camera.captured.mapping, resident.continuous));
             }
-            node = current.input();
         }
-        Err(Error::InvalidParameter(
-            "calculation has no resident camera argument",
-        ))
+        let Some((input, mapping, continuous)) = argument else {
+            return Err(Error::InvalidParameter(
+                "calculation has no resident camera argument",
+            ));
+        };
+        let root = self.compose(
+            input.clone(),
+            CameraInput {
+                matrix: self.interpretation.matrix(),
+                field: self.field.clone(),
+                continuous,
+                mapping,
+            },
+        )?;
+        reconstruct(root, image.domain())
     }
 
-    fn compose(
-        &self,
-        source: Arc<ImageNode>,
-        definition: CameraInput,
-    ) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, source: Value, definition: CameraInput) -> Result<Value, Error> {
         let captured = Captured::new(
             definition,
             match self.interpretation {
                 crate::gpu::interpretation::SourceInterpretation::Photograph(program) => {
-                    Interpretation::Program(program, Default::default())
+                    Interpretation::Program(program)
                 }
                 crate::gpu::interpretation::SourceInterpretation::Inspection(_) => {
                     Interpretation::Packed(ProcessingParameters::source())
@@ -716,6 +664,10 @@ impl NeutralInput {
         )?;
         let mut assembly = Assembly::captured(captured);
         assembly.repairs = self.repairs.clone();
+        #[cfg(test)]
+        {
+            assembly.replacements = self.replacements.clone();
+        }
 
         assembly.neutral(source)
     }

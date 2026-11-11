@@ -3,65 +3,28 @@
 use super::CellRegion as Rect;
 use super::*;
 
-mod pointwise;
+mod library;
+mod linkage;
+mod parsed;
+#[cfg(all(test, feature = "editor"))]
+pub(super) use parsed::testing as library_testing;
+pub(super) use parsed::{Libraries, Library};
 
-pub enum SampleInput {
+#[derive(Clone)]
+pub(crate) enum SampleInput {
     Raster(PlannedImage),
     Callable(Sampled),
 }
 
-pub enum Access {
+pub(crate) enum Access {
     Raster,
     Callable,
 }
 
-pub trait SampleProducer: Send + Sync {
-    fn access(&self) -> Access;
-
-    fn emit(
-        &self,
-        fragment: &mut Fragment,
-        input: Option<SampleInput>,
-        domain: Domain,
-        region: Rect,
-    ) -> Result<Sampled, Error>;
-}
-
-pub trait SampleProduction: Send + Sync {
-    /// Declares a calculation that cannot be represented by one sampled dispatch.
-    fn requires_worker(&self) -> bool {
-        false
-    }
-
-    /// Related roots may share upstream traversal; None leaves each root to ordinary production.
-    fn produce_many(
-        &self,
-        _outputs: &[(&Arc<ImageNode>, Production<'_>)],
-    ) -> Result<Option<WorkCounts>, Error> {
-        Ok(None)
-    }
-
-    /// Writes the complete requested output. Cancellation is an error.
-    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>)
-    -> Result<WorkCounts, Error>;
-}
-
-pub trait SampleConsumer: Send + Sync {
-    fn production(&self) -> Option<&dyn SampleProduction> {
-        None
-    }
-
-    fn emit(
-        &self,
-        fragment: &mut Fragment,
-        input: Sampled,
-        output: PlannedImage,
-    ) -> Result<(), Error>;
-}
-
-/// ABI: fn(vec2i) -> vec4f, addressed on the declared input grid. Code/resources are
-/// explicit; the shader's mathematics remains opaque to planning and execution.
-pub struct Sampled {
+/// Image samplers return vec4f on their declared grid; the value compiler also uses
+/// typed unit-local records. Code/resources are explicit; mathematics stays opaque.
+#[derive(Clone)]
+pub(crate) struct Sampled {
     pub code: Arc<str>,
     pub symbol: String,
     pub bindings: Vec<(u32, Binding)>,
@@ -73,6 +36,15 @@ impl Sampled {
     }
 
     pub(super) fn buffer(fragment: &mut Fragment, region: Rect, pixels: Binding) -> Self {
+        Self::buffer_type(fragment, region, pixels, "vec4f")
+    }
+
+    pub(super) fn buffer_type(
+        fragment: &mut Fragment,
+        region: Rect,
+        pixels: Binding,
+        ty: &str,
+    ) -> Self {
         let parameters = fragment.uniform(&region.packed());
         Self {
             code: r#"
@@ -87,19 +59,64 @@ fn sample_buffer(p: vec2i) -> vec4f {
     return sample_pixels[u32(local.y) * sample_rectangle.z + u32(local.x)];
 }
 "#
+            .replace("vec4f", ty)
             .into(),
             symbol: "sample_buffer".into(),
             bindings: vec![(32, pixels), (33, parameters)],
         }
     }
 
+    #[cfg(feature = "render")]
+    pub(super) fn render(self, fragment: &mut Fragment, output: PlannedImage) -> Result<(), Error> {
+        let mut slot = 64;
+        let sample = self.namespaced(fragment, "attachment_", &mut slot)?;
+        let region = fragment.uniform(&[
+            output.region.packed(),
+            [u32::from(output.domain.grid.coverage != 0), 0, 0, 0],
+        ]);
+        let code = format!(
+            r#"
+{}
+{}
+@group(0) @binding({slot}) var<uniform> attachment_region:array<vec4u,2>;
+@fragment fn present_main(@builtin(position) position:vec4f)->@location(0) vec4f {{
+    let cell=bitcast<vec2i>(attachment_region[0].xy)+vec2i(position.xy);
+    let value={}(cell);
+    if value.w<0.0 {{return value;}}
+    if attachment_region[1].x!=0u && (u32(value.w)&8u)==0u {{return vec4f(0.0);}}
+    return vec4f(value.rgb,1.0);
+}}
+"#,
+            sample.code,
+            crate::renderer::VERTEX,
+            sample.symbol
+        );
+        let mut bindings = sample.bindings;
+        bindings.push((slot, region));
+        fragment.work.push(Work::Render {
+            program: RenderProgram::Shader(code.into()),
+            bindings,
+            target: output.resource,
+        });
+        Ok(())
+    }
+
     pub fn materialize(self, fragment: &mut Fragment, output: PlannedImage) -> Result<(), Error> {
+        self.materialize_type(fragment, output, "vec4f")
+    }
+
+    pub(super) fn materialize_type(
+        self,
+        fragment: &mut Fragment,
+        output: PlannedImage,
+        ty: &str,
+    ) -> Result<(), Error> {
         let parameters = fragment.uniform(&output.region.packed());
         let call = format!("{}(vec2i(p))", self.symbol);
         let code = format!(
             r#"
 {}
-@group(0) @binding(21) var<storage, read_write> sample_result: array<vec4f>;
+@group(0) @binding(21) var<storage, read_write> sample_result: array<{ty}>;
 @group(0) @binding(22) var<uniform> sample_output: vec4u;
 
 @compute @workgroup_size(64)

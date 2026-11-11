@@ -46,7 +46,7 @@ fn evaluate(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &crate::renderer::GpuRenderer,
-    root: Arc<ImageNode>,
+    root: Value,
     region: SourceRegion,
     policy: Policy,
 ) -> (Vec<[f32; 4]>, usize) {
@@ -100,7 +100,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         area,
     )
     .unwrap();
-    input.repairs = crate::gpu::repairs::Snapshot::logical(vec![evaluated]).unwrap();
+    input.replacements = crate::gpu::repairs::fixtures::replacements(&[evaluated]).unwrap();
     let stages = crate::pixel_pipeline::PixelPipeline {
         stages: vec![crate::pixel_pipeline::PixelStage::new(
             crate::image_mtf::ImageMtfParameters { sigma: 1. },
@@ -126,7 +126,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         .unwrap();
         reconstruct(photograph.processed, domain).unwrap()
     };
-    let read = |root: Arc<ImageNode>, scratch_bytes, must_stream| {
+    let read = |root: Value, scratch_bytes, must_stream| {
         let request = context
             .request(
                 root,
@@ -408,7 +408,8 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
     };
     let repaired =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.4, 2.6, 0.7])).unwrap());
-    let snapshot = crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
+    let snapshot =
+        crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(&repaired)).unwrap();
     let region = SourceRegion::from([area.x + 7, area.y + 9, 51, 35]);
     let matrix = super::test_support::matrix();
     let (roll, stack) = super::test_support::settings(area.try_into().unwrap());
@@ -434,7 +435,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         );
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
         let mut input = AuthoredPhotograph::from(pipeline);
-        input.repairs = snapshot.clone();
+        input.replacements = snapshot.clone();
         let photo = PhotographGraph::new(
             &device.limits(),
             source(codes.clone()),
@@ -550,7 +551,6 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             photo.neutral.clone(),
             Meaning::Neutral,
             Function {
-                linked: Default::default(),
                 code: r#"
 fn double(p: vec4f, pos: vec2f) -> vec4f {
     return vec4f(p.rgb * 2., p.w);

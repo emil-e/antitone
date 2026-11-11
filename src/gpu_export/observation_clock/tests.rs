@@ -1,11 +1,12 @@
 use super::*;
+use crate::gpu_export::authored::Request;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     crop::Crop,
     export::Overwrite,
     geometry::Composition,
     gpu::submission::SubmissionGate,
-    gpu_export::{self, Format, Request},
+    gpu_export::authored::{self as gpu_export, Format},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,

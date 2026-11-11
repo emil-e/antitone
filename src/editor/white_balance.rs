@@ -1,15 +1,12 @@
 use super::{
-    AdjustmentLayerSettings, Balance, Editor, InputSettings, RollSettings, SourceId, UiContext,
+    AdjustmentLayerSettings, Balance, Editor, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
     measurement,
     picking::{self, Display, View},
 };
-use crate::{
-    Error,
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerSnapshot},
-    coverage::Coverage,
-    scan::Scan,
-};
+use crate::{Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, scan::Scan};
+#[cfg(test)]
+use crate::{adjustment_layers::AdjustmentLayer, processing::InputSettings};
 
 mod query;
 
@@ -22,75 +19,45 @@ pub(super) const LAYER: Display = Display {
     ..Display::sample("WB neutral", View::Working)
 };
 
-pub(super) struct RollInput {
-    pub input: InputSettings,
-    pub roll: RollSettings,
-}
-
-impl RollInput {
-    pub fn capture(editor: &Editor) -> Self {
-        Self {
-            input: editor.input(),
-            roll: RollSettings {
-                wb: Balance::default(),
-                ..editor.document.project.roll
-            },
-        }
-    }
-
-    pub fn measure(
-        self,
-        image: &mut Scan,
-        region: Coverage,
-        services: &super::source::Services,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<Balance, Error> {
-        query::roll(services, image, region, self, cancelled)
-    }
+pub(super) fn roll_input(editor: &Editor) -> Result<crate::image_recipe::ImageRecipe, String> {
+    let mut recipe = editor
+        .positive_recipe(
+            editor.input(),
+            editor.document.project_snapshot().roll,
+            editor.photo_settings(),
+        )
+        .map_err(|error| error.to_string())?;
+    recipe.roll.wb = Balance::default();
+    Ok(recipe)
 }
 
 pub(super) struct LayerInput {
-    pub input: InputSettings,
-    pub roll: RollSettings,
-    pub upstream: AdjustmentLayerSnapshot,
-    pub layer: AdjustmentLayer,
+    pub recipe: crate::image_recipe::ImageRecipe,
+    pub index: usize,
 }
 
 impl LayerInput {
     pub fn capture(editor: &Editor) -> Result<Self, String> {
-        let source = editor
-            .document
-            .visit
-            .current_source
-            .and_then(|id| editor.document.project.source(id).ok())
-            .ok_or("No source for WB")?;
+        let recipe = editor
+            .positive_recipe(
+                editor.input(),
+                editor.document.project_snapshot().roll,
+                editor.photo_settings(),
+            )
+            .map_err(|error| error.to_string())?;
+        let project = editor.document.project_snapshot();
+        let source = project
+            .source(recipe.neutral.source)
+            .map_err(|error| error.to_string())?;
         let Target::Layer(id) = editor.adjustment_layer_target() else {
             return Err("Select an adjustment layer for WB".into());
         };
-        let records = &source
+        let index = source
             .adjustment_layers
             .as_ref()
-            .ok_or("No adjustment layers for WB")?
-            .layers;
-        let index = records
-            .iter()
-            .position(|record| record.id == id)
+            .and_then(|layers| layers.layers.iter().position(|record| record.id == id))
             .ok_or("Unknown WB layer")?;
-        let upstream = AdjustmentLayerSnapshot::new(
-            records[..index]
-                .iter()
-                .map(|record| record.adjustment)
-                .collect(),
-        )
-        .map_err(|error| error.to_string())?;
-        let mut layer = records[index].adjustment;
-        layer.photo = editor.photo_settings();
-        Ok(Self {
-            input: editor.input(),
-            roll: editor.document.project.roll,
-            upstream,
-            layer,
-        })
+        Ok(Self { recipe, index })
     }
 
     pub fn measure(
@@ -109,7 +76,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
-            RollInput::capture(editor),
+            roll_input(editor)?,
         ))
     });
     let (image, services, input) = match captured {
@@ -127,7 +94,9 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+            query::roll(services, &mut image, region, input, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })

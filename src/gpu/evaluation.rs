@@ -22,15 +22,24 @@ mod context;
 mod context_tests;
 
 mod contract;
+mod unit;
+pub mod value;
+mod working;
+pub use unit::*;
+pub use working::HostWorkingSet;
 
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
-pub use context::{CachePolicy, Context, Evaluation, Production, Region};
+pub use context::{CachePolicy, Context, Evaluation, Production, Region, Worker};
 pub use execute::{Sink, WorkCounts};
 pub use plan::Budget;
 
 #[cfg(all(test, feature = "editor"))]
 mod contract_tests;
+#[cfg(all(test, feature = "editor"))]
+mod dependency_tests;
+#[cfg(all(test, feature = "editor"))]
+mod unit_runtime_tests;
 
 mod execute;
 
@@ -57,7 +66,7 @@ pub(crate) use supplied::SuppliedImage;
 
 pub(crate) use materializations::BufferImage;
 pub use materializations::{
-    GpuImage, Image, ImageBacking, ImageFormat, ImageFuture, ImageLayout, Materializations,
+    Image, ImageBacking, ImageFormat, ImageFuture, ImageLayout, ImageValue, Materializations,
 };
 
 #[cfg(all(test, feature = "editor"))]
@@ -82,7 +91,7 @@ mod reference;
 mod reconstruction_tests;
 
 #[cfg(feature = "render")]
-pub(crate) use reference::Reference;
+pub use reference::Reference;
 
 #[cfg(all(test, feature = "editor"))]
 mod reference_tests;
@@ -92,7 +101,6 @@ mod resident;
 #[cfg(all(test, feature = "editor"))]
 mod resident_camera_tests;
 
-#[cfg(feature = "render")]
 pub(crate) use resident::borrowed_input;
 #[cfg(test)]
 pub(crate) use resident::raster_input;
@@ -116,6 +124,7 @@ pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use grain::grain;
 pub(crate) use operators::{gaussian, window};
+pub use value::Value;
 mod reconstruction;
 #[cfg(feature = "render")]
 use operators::*;
@@ -131,9 +140,9 @@ pub(crate) use reconstruction::{
     supplied_mask as reconstruction_mask_for_test,
 };
 pub(crate) use reconstruction::{
-    accumulate_supplied, reconstruct, reconstruct_cells, reconstruct_complete,
+    accumulate_supplied, reconstruct, reconstruct_cells, reconstruct_complete, reconstruct_tiled,
 };
-pub use sampling::{
-    Access, SampleConsumer, SampleInput, SampleProducer, SampleProduction, Sampled,
-};
+#[cfg(feature = "render")]
+pub(crate) use sampling::display_code;
+pub(crate) use sampling::{Access, SampleInput, Sampled};
 use std::sync::Arc;

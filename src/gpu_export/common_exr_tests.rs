@@ -1,6 +1,7 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerPipeline;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu_export::authored::{Request, write};
 use crate::processing::Calibration;
 use crate::working_precision;
 use exr::prelude::*;
@@ -56,7 +57,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
             let expected = directory
                 .path()
                 .join(format!("reference-{name}-{precision:?}.exr"));
-            super::write(
+            write(
                 &renderer,
                 &device,
                 (&queue, &gate),

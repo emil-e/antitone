@@ -31,29 +31,26 @@ pub(super) fn gamma(
     services: &super::super::source::Services,
     scan: &mut Scan,
     coverage: Coverage,
-    input: InputSettings,
+    recipe: crate::image_recipe::ImageRecipe,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Balance, Error> {
-    let calibration = input.calibration().ok_or(Error::InvalidParameter(
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &recipe)?;
+    let (input, matrix) = recipe.neutral.processing_transform()?;
+    let negative = input.negative_input().ok_or(Error::InvalidParameter(
         "gamma fitting requires a negative input",
     ))?;
-    let negative = input
-        .with_calibration((calibration).validate()?)
-        .negative_input()
-        .ok_or(Error::InvalidParameter(
-            "gamma fitting requires a negative input",
-        ))?;
-
-    let matrix = scan.camera_to_ap1;
     let fit = GammaNeutral::new(negative, matrix)?;
 
-    let samples = Samples::new(services, scan, coverage, cancelled)?;
+    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let result = fit.fit(
         |candidate| {
             let readout = samples.camera_response(candidate)?;
-            Ok(samples.mean(readout.image, cancelled)? * readout.decode_gain)
+            samples.mean(readout, cancelled)
         },
         FORWARD_RESIDUAL_FLOOR,
     );

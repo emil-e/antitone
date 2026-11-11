@@ -145,15 +145,16 @@ impl Document {
     pub(super) fn image_recipe(&self, id: SourceId) -> Result<crate::image_recipe::ImageRecipe> {
         let source = self.project.source(id)?;
         let origin = self.exposure_origin(id).expect("registered photo locator");
-        self.project.capture_image(source, |recipe| {
-            recipe.neutral.source_development = crate::development_metadata::Development::captured(
-                source,
-                &origin,
-                self.project.input,
-                &self.development_metadata,
-            );
-            recipe.neutral.reference = self.reference_exposure(source).cloned();
-        })
+        let mut recipe = self
+            .project
+            .image_recipe_with_reference(source, self.reference_exposure(source).cloned())?;
+        recipe.neutral.source_development = crate::development_metadata::Development::captured(
+            source,
+            &origin,
+            self.project.input,
+            &self.development_metadata,
+        );
+        Ok(recipe)
     }
 
     pub(super) fn source_input(
@@ -230,25 +231,6 @@ impl Document {
 
     fn has_normalization(&self, source: &Source) -> Result<bool> {
         Ok(self.reference_exposure(source).is_some())
-    }
-
-    pub(super) fn positive_matrix(
-        &self,
-        source: &Source,
-        input: crate::processing::InputSettings,
-    ) -> Result<glam::DMat3> {
-        input.positive_matrix(
-            glam::DMat3::from_cols_array_2d(
-                &self
-                    .image_recipe(source.id)?
-                    .neutral
-                    .source_development
-                    .resolved()?
-                    .camera_to_ap1,
-            ),
-            self.reference_exposure(source)
-                .map(|reference| reference.ev()),
-        )
     }
 
     pub fn dirty(&self) -> bool {
@@ -385,15 +367,9 @@ impl Document {
             {
                 continue;
             }
-            {
-                let refined = input;
-                super::processing::validate_source_with_matrix(
-                    device,
-                    refined,
-                    self.project.roll,
-                    source,
-                    self.positive_matrix(source, refined)?,
-                )?;
+            let recipe = self.image_recipe(source.id)?;
+            if input.ready() {
+                recipe.validate(&device.map(wgpu::Device::limits).unwrap_or_default())?;
             }
         }
         Ok(())

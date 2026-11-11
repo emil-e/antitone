@@ -14,17 +14,17 @@ pub(super) fn roll(
     services: &super::super::source::Services,
     scan: &mut Scan,
     coverage: Coverage,
-    input: RollInput,
+    input: crate::image_recipe::ImageRecipe,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Balance, Error> {
-    let samples = Samples::new(services, scan, coverage, cancelled)?;
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let (mut scan, input) = crate::photo_preparation::native_image(scan, &input)?;
+    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
-    let photograph = samples.photograph(
-        input.input,
-        input.roll,
-        AdjustmentLayerSnapshot::new(vec![])?,
-    )?;
+    let photograph = samples.photograph(&input)?;
 
     crate::color::neutral_wb(samples.mean(photograph.roll, cancelled)?)
 }
@@ -36,10 +36,15 @@ pub(super) fn layer(
     input: LayerInput,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Balance, Error> {
-    let samples = Samples::new(services, scan, coverage, cancelled)?;
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &input.recipe)?;
+    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
-    let weights = Grading::weight_image(samples.source.clone(), input.layer)?;
+    let layer = recipe.grade.layers()[input.index];
+    let weights = Grading::weight_image(samples.source.clone(), layer)?;
     let mut covered = false;
     samples.read(weights, cancelled, |_, pixel, _| {
         if !pixel[0].is_finite() || !(0. ..=1.).contains(&pixel[0]) {
@@ -58,7 +63,7 @@ pub(super) fn layer(
     let white = cones * DVec3::ONE;
     let result = crate::sampling::fit_white_balance_model(
         |coordinates| {
-            let mut selected = input.layer;
+            let mut selected = layer;
             selected.photo.wb = Balance {
                 warmth: coordinates.x,
                 tint: coordinates.y,
@@ -66,13 +71,11 @@ pub(super) fn layer(
             selected.photo.contrast = 1.;
             selected.photo.saturation = 1.;
 
-            let mut layers = input.upstream.layers().to_vec();
+            let mut layers = recipe.grade.layers()[..input.index].to_vec();
             layers.push(selected);
-            let photograph = samples.photograph(
-                input.input,
-                input.roll,
-                AdjustmentLayerSnapshot::new(layers)?,
-            )?;
+            let mut candidate = recipe.clone();
+            candidate.grade = AdjustmentLayerSnapshot::new(layers)?;
+            let photograph = samples.photograph(&candidate)?;
 
             let response = cones * samples.mean(photograph.graded, cancelled)?;
             if !response.is_finite() || response.min_element() <= 0. {

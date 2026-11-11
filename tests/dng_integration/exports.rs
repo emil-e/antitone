@@ -1,4 +1,7 @@
+#[path = "../support/output.rs"]
+mod authored_export;
 use super::*;
+use authored_export::Request;
 #[path = "../support/working_precision.rs"]
 mod working_precision;
 use antitone::{
@@ -6,7 +9,7 @@ use antitone::{
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::submission::SubmissionGate,
-    gpu_export::{self, Format, Request},
+    gpu_export::Format,
     processing::{Calibration, InputSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -107,7 +110,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     ] {
         let actual_path = directory.path().join(format!("gpu.{extension}"));
         let expected_path = directory.path().join(format!("scalar.{extension}"));
-        gpu_export::write(
+        authored_export::write(
             &renderer,
             &device,
             (&queue, &SubmissionGate::default()),

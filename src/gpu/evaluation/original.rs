@@ -78,7 +78,7 @@ impl Source for Native {
 }
 
 /// Capture native camera-code acquisition, including the consumer's recorded exposure context.
-pub fn camera_source(scan: &crate::scan::Scan) -> Result<Arc<ImageNode>, Error> {
+pub fn camera_source(scan: &crate::scan::Scan) -> Result<Value, Error> {
     let bounds = scan.area.try_into()?;
     let mut snapshot =
         crate::scan::Scan::with_reference(scan.source().clone(), scan.reference_exposure.clone());
@@ -104,7 +104,7 @@ pub(crate) fn original_chain(
     input: &AuthoredPhotograph,
     reference: crate::rendering::OutputReference,
     stages: &crate::pixel_pipeline::PixelPipeline,
-) -> Result<Arc<ImageNode>, Error> {
+) -> Result<Value, Error> {
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }

@@ -123,7 +123,7 @@ fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     context: &Context,
-    image: Arc<ImageNode>,
+    image: Value,
     region: Rect,
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
@@ -263,11 +263,24 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
                 PixelStage::new(TentConvolution::new(2.2).unwrap()),
             ],
         };
+        let original = source(Arc::new(data.clone()));
+        let image = pipeline.compose(original.clone()).unwrap();
+        let bounds = data.domain.finite().unwrap();
+        let requested = Rect::new([bounds.x + 2, bounds.y + 2], [3, 3]);
         assert_eq!(
-            pipeline.support(data.domain.grid.pitch).unwrap(),
-            crate::processing_support::Support([2, 1])
+            image
+                .regions_for(
+                    &original,
+                    requested,
+                    Budget {
+                        tile: [5, 4],
+                        scratch_bytes: 2 << 20
+                    }
+                )
+                .unwrap(),
+            vec![requested.expanded([2, 1], Some(bounds)).unwrap()],
+            "the composed calculations own the convolution halo"
         );
-        let image = pipeline.compose(source(Arc::new(data.clone()))).unwrap();
         let expected = tent(
             &curve(&data.pixels, coverage, 1.2, 0.15),
             size,
@@ -375,13 +388,14 @@ fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() 
             stages: vec![PixelStage::new(first), PixelStage::new(second)],
         };
         let image = pipeline.compose(source(Arc::new(data.clone()))).unwrap();
-        let plan = Plan::new(
+        let plan = Plan::with_policy(
             image.clone(),
             domain.finite().unwrap(),
             Budget {
                 tile: [13, 11],
                 scratch_bytes: 1 << 20,
             },
+            Policy::Composed,
         )
         .unwrap();
         let fragment = &plan.tiles[0].fragment;

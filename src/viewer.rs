@@ -35,8 +35,8 @@ struct ImageProcessing {
     source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
     aces_group: std::sync::Mutex<Option<crate::renderer::RenderBinding>>,
-    camera: std::sync::Mutex<Option<Arc<crate::gpu::evaluation::ImageNode>>>,
-    last_calculation: std::sync::Mutex<Option<Arc<crate::gpu::evaluation::ImageNode>>>,
+    camera: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
+    last_calculation: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
 }
 
 pub struct GpuImage {
@@ -421,10 +421,7 @@ impl GpuImage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        (root, luts): (
-            &Arc<crate::gpu::evaluation::ImageNode>,
-            &crate::looks::LutChain,
-        ),
+        (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
         mapping: TextureMapping,
         context: Option<egui::Context>,
     ) -> Result<(), Error> {
@@ -439,10 +436,7 @@ impl GpuImage {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (root, luts): (
-            &Arc<crate::gpu::evaluation::ImageNode>,
-            &crate::looks::LutChain,
-        ),
+        (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
         mapping: TextureMapping,
         context: Option<egui::Context>,
     ) -> Result<(), Error> {
@@ -570,7 +564,7 @@ pub struct ImagePaint {
         egui::Context,
     )>,
     image: Arc<GpuImage>,
-    calculation: Option<Arc<crate::gpu::evaluation::ImageNode>>,
+    calculation: Option<crate::gpu::evaluation::Value>,
     luts: crate::looks::LutChain,
     context: Option<egui::Context>,
     uv: TextureMapping,
@@ -611,7 +605,7 @@ impl ImagePaint {
 
     pub fn with_calculation(
         image: Arc<GpuImage>,
-        calculation: Option<Arc<crate::gpu::evaluation::ImageNode>>,
+        calculation: Option<crate::gpu::evaluation::Value>,
         luts: crate::looks::LutChain,
         uv: impl Into<TextureMapping>,
     ) -> Result<Self, Error> {

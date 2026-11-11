@@ -13,10 +13,9 @@ struct Functions {
 impl Grading {
     /// Conservative charge for grading arguments retained by a calculation, including shared parents.
     #[cfg(feature = "editor")]
-    pub(crate) fn captured_bytes(image: &Arc<ImageNode>) -> u64 {
+    pub(crate) fn captured_bytes(image: &Value) -> u64 {
         let mut bytes = 0;
-        let mut image = Some(image);
-        while let Some(node) = image {
+        for node in image.ancestors() {
             if let Some(grade) =
                 (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Grade>()
             {
@@ -35,7 +34,6 @@ impl Grading {
                     bytes += layers.retained_bytes() as u64;
                 }
             }
-            image = node.input();
         }
         bytes
     }
@@ -85,59 +83,55 @@ impl Grade {
 }
 
 impl Operation for Grade {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(self.definition.clone()))
     }
 
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
     }
 
-    fn pointwise(&self) -> Option<Function> {
-        self.coordinates().is_none().then(|| self.function.clone())
-    }
-
-    fn lower(
-        &self,
-        fragment: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let geometry = self.coordinates().ok_or(Error::InvalidParameter(
-            "pointwise grading requires shader composition",
-        ))?;
-        let input = input.unwrap();
-        let mut bindings = self.function.lower_bindings(fragment);
-        bindings.extend([
-            (
-                5,
-                fragment.uniform(&crate::gpu::flat::FieldGeometry::uncorrected(Some(
-                    geometry,
-                ))),
-            ),
-            (20, Binding::Read(input.resource)),
-            (21, Binding::Write(output.resource)),
-            (
-                22,
-                fragment.uniform(&[
-                    output.region.x as u32,
-                    output.region.y as u32,
-                    output.region.width,
-                    geometry.size()[0],
-                ]),
-            ),
-        ]);
-        fragment.compute(
-            format!(
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let operation = if let Some(geometry) = self.coordinates() {
+            let code = format!(
                 "{}\n{}",
                 self.function.code,
                 include_str!("camera_adjustments.wgsl")
-            ),
-            "camera_adjustments",
-            bindings,
-            output.cells(),
-        );
-        Ok(())
+            );
+            let mut function = self.function.clone();
+            function.bindings.push((
+                5,
+                FunctionBinding::Uniform(
+                    bytemuck::bytes_of(&crate::gpu::flat::FieldGeometry::uncorrected(Some(
+                        geometry,
+                    )))
+                    .into(),
+                ),
+            ));
+            value::Operation::new(
+                "camera-coordinate grading v1",
+                self.definition.clone(),
+                code,
+                "camera_adjustments",
+                value::Access::Pointwise,
+            )
+            .with_bindings(function.bindings)
+        } else {
+            value::Operation::pointwise_function(
+                "photographic grading v1",
+                self.definition.clone(),
+                self.function.clone(),
+            )
+        };
+        value::Calculation::new(domain, output, vec![inputs[0].request(output)?], operation)
+            .map(Some)
     }
 }
 
@@ -154,10 +148,26 @@ impl Grading {
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
             [0, 0, 1, 1].into(),
         )?;
-        for active_layers in [false, true] {
-            let mut grading = grade.for_grid(domain.grid.coverage);
-            grading.active_layers = active_layers;
-            context.prewarm_image(grading.compose(borrowed_input(domain))?)?;
+        for coordinates in [
+            None,
+            Some(crate::gpu::source::SourceGeometry::new(
+                [0, 0, 1, 1],
+                [1, 1],
+            )?),
+        ] {
+            for active_layers in [false, true] {
+                let mut grading = grade
+                    .for_grid(domain.grid.coverage)
+                    .with_camera_coordinates(coordinates);
+                grading.active_layers = active_layers;
+                context.prewarm_image(grading.compose(borrowed_input(domain))?)?;
+                if active_layers {
+                    context.prewarm_image(grading.layers(borrowed_input(Domain {
+                        meaning: Meaning::Graded,
+                        ..domain
+                    }))?)?;
+                }
+            }
         }
         Ok(())
     }
@@ -185,11 +195,11 @@ impl Grading {
         self
     }
 
-    pub fn roll(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn roll(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Neutral {
             return Err(Error::InvalidParameter("Roll requires neutral AP1"));
         }
-        Ok(ImageNode::new(
+        Ok(Value::from_operation(
             Domain {
                 meaning: Meaning::Graded,
                 ..input.domain()
@@ -202,14 +212,14 @@ impl Grading {
         ))
     }
 
-    pub fn layers(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn layers(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter(
                 "adjustment layers require graded AP1",
             ));
         }
         Ok(if self.active_layers {
-            ImageNode::new(
+            Value::from_operation(
                 input.domain(),
                 Some(input),
                 Grade {
@@ -227,7 +237,7 @@ impl Grading {
         })
     }
 
-    pub fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn compose(&self, input: Value) -> Result<Value, Error> {
         self.layers(self.roll(input)?)
     }
 }

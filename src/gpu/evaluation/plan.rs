@@ -3,6 +3,10 @@
 use super::CellRegion as Rect;
 use super::*;
 
+mod required;
+mod values;
+use required::productions_are_required;
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Policy {
     #[default]
@@ -11,7 +15,7 @@ pub enum Policy {
 }
 
 /// Per-calculation working allowance, separate from optional cache retention.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
     pub tile: [u32; 2],
     pub scratch_bytes: u64,
@@ -28,7 +32,7 @@ pub struct Tile {
 /// Captured, lazy traversal. Only one tile's physical plan is retained during execution.
 #[derive(Clone)]
 pub struct Job {
-    root: Arc<ImageNode>,
+    root: value::Value,
     region: Rect,
     budget: Budget,
     policy: Policy,
@@ -38,7 +42,8 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(root: Arc<ImageNode>, region: Rect, budget: Budget) -> Result<Self, Error> {
+    pub fn new(root: impl Into<value::Value>, region: Rect, budget: Budget) -> Result<Self, Error> {
+        let root = root.into();
         region.validate()?;
         if budget.tile.contains(&0) || !root.domain.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation job demand"));
@@ -60,9 +65,13 @@ impl Job {
         self
     }
 
-    pub(super) fn image(&self) -> &Arc<ImageNode> {
+    pub(super) fn image(&self) -> &value::Value {
         &self.root
     }
+    pub(super) fn materializations(&self) -> Option<&Materializations> {
+        self.materializations.as_ref()
+    }
+
     pub(super) fn budget(&self) -> Budget {
         self.budget
     }
@@ -84,6 +93,86 @@ impl Job {
     pub(super) fn with_supplied(mut self, supplied: Arc<[SuppliedImage]>) -> Self {
         self.supplied = supplied;
         self
+    }
+
+    pub(super) fn probe(&self, region: Rect) -> Result<Plan, Error> {
+        let mut fragment = Fragment::with_programs(
+            self.materializations
+                .as_ref()
+                .map(|scope| scope.programs().clone()),
+        );
+        let result = evaluate_region(
+            &self.root,
+            region,
+            &mut fragment,
+            Planning {
+                policy: self.policy,
+                scope: self.materializations.as_ref(),
+                supplied: &self.supplied,
+                scratch_bytes: self.budget.scratch_bytes,
+                tile: self.budget.tile,
+                limits: self.limits.as_ref(),
+            },
+        )?;
+        Plan::from_work(fragment, result, u64::MAX)
+    }
+
+    #[cfg(feature = "render")]
+    pub(crate) fn texture_plan(&self, texture: &wgpu::Texture) -> Result<Plan, Error> {
+        if self.root.domain.meaning != Meaning::Display
+            || texture.format() != wgpu::TextureFormat::Rgba32Float
+            || texture.dimension() != wgpu::TextureDimension::D2
+            || texture.depth_or_array_layers() != 1
+            || texture.sample_count() != 1
+            || !texture
+                .usage()
+                .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+            || [texture.width(), texture.height()] != [self.region.width, self.region.height]
+            || self.budget.tile[0] < self.region.width
+            || self.budget.tile[1] < self.region.height
+        {
+            return Err(Error::InvalidParameter(
+                "display attachment differs from composed image",
+            ));
+        }
+        let planning = Planning {
+            policy: self.policy,
+            scope: self.materializations.as_ref(),
+            supplied: &self.supplied,
+            scratch_bytes: self.budget.scratch_bytes,
+            tile: self.budget.tile,
+            limits: self.limits.as_ref(),
+        };
+        for callable in [true, false] {
+            let mut fragment = Fragment::with_programs(
+                self.materializations
+                    .as_ref()
+                    .map(|scope| scope.programs().clone()),
+            );
+            let sample = if callable {
+                sample_region(&self.root, self.region, &mut fragment, planning)
+            } else {
+                evaluate_region(&self.root, self.region, &mut fragment, planning)
+                    .map(|image| Sampled::raster(&mut fragment, image))
+            };
+            if let Ok(sample) = sample
+                && productions_are_required(&self.root, self.region, &fragment.work, planning)
+                    .unwrap_or(false)
+            {
+                let output = PlannedImage {
+                    domain: self.root.domain,
+                    region: self.region,
+                    resource: fragment.resource(Storage::RenderTarget(texture.clone())),
+                };
+                sample.render(&mut fragment, output)?;
+                if planning.fits(&fragment, output)? {
+                    return Plan::from_work(fragment, output, self.budget.scratch_bytes);
+                }
+            }
+        }
+        Err(Error::InvalidParameter(
+            "display attachment exceeds the working allowance",
+        ))
     }
 
     pub fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
@@ -124,6 +213,21 @@ pub struct Plan {
 }
 
 impl Plan {
+    pub(super) fn requires_production(&self, root: &value::Value) -> Result<bool, Error> {
+        for work in self.tiles.iter().flat_map(|tile| &tile.fragment.work) {
+            if let Work::Produce { image, output } = work
+                && image.domain() == root.domain()
+                && root.domain().contains_region(output.region)
+                && image
+                    .output(output.region)?
+                    .same_value(&root.output(output.region)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn from_work(
         fragment: Fragment,
         result: PlannedImage,
@@ -141,7 +245,7 @@ impl Plan {
         let tile = schedule(fragment, result)?;
         let bytes = tile.slots.iter().map(Storage::bytes).sum();
         if bytes > budget {
-            return Err(Error::InvalidParameter(
+            return Err(Error::WorkingAllowance(
                 "evaluation tile exceeds scratch budget",
             ));
         }
@@ -155,22 +259,22 @@ impl Plan {
     }
 
     #[cfg(all(test, feature = "editor"))]
-    pub fn new(root: Arc<ImageNode>, region: Rect, budget: Budget) -> Result<Self, Error> {
+    pub fn new(root: impl Into<value::Value>, region: Rect, budget: Budget) -> Result<Self, Error> {
         Self::with_policy(root, region, budget, Policy::Materialized)
     }
 
     #[cfg(test)]
     pub fn with_policy(
-        root: Arc<ImageNode>,
+        root: impl Into<value::Value>,
         region: Rect,
         budget: Budget,
         policy: Policy,
     ) -> Result<Self, Error> {
-        Self::with_materializations(root, region, budget, policy, None, &[], None)
+        Self::with_materializations(root.into(), region, budget, policy, None, &[], None)
     }
 
     fn with_materializations(
-        root: Arc<ImageNode>,
+        root: value::Value,
         region: Rect,
         budget: Budget,
         policy: Policy,
@@ -195,7 +299,8 @@ impl Plan {
                     height: budget.tile[1].min((region.bottom() - y) as u32),
                 };
 
-                let mut fragment = Fragment::default();
+                let mut fragment =
+                    Fragment::with_programs(scope.map(|scope| scope.programs().clone()));
                 let result = evaluate_region(
                     &root,
                     region,
@@ -205,6 +310,7 @@ impl Plan {
                         scope,
                         supplied,
                         scratch_bytes: budget.scratch_bytes,
+                        tile: budget.tile,
                         limits,
                     },
                 )?;
@@ -212,7 +318,7 @@ impl Plan {
 
                 let bytes = tile.slots.iter().map(Storage::bytes).sum();
                 if bytes > budget.scratch_bytes {
-                    return Err(Error::InvalidParameter(
+                    return Err(Error::WorkingAllowance(
                         "evaluation tile exceeds scratch budget",
                     ));
                 }
@@ -237,6 +343,7 @@ pub(super) struct Planning<'a> {
     pub scope: Option<&'a Materializations>,
     pub supplied: &'a [SuppliedImage],
     pub scratch_bytes: u64,
+    pub tile: [u32; 2],
     pub limits: Option<&'a wgpu::Limits>,
 }
 
@@ -246,11 +353,24 @@ impl Planning<'_> {
         if tile.slots.iter().map(Storage::bytes).sum::<u64>() > self.scratch_bytes {
             return Ok(false);
         }
+        let baseline = wgpu::Limits::default();
+        if !tile
+            .fragment
+            .work
+            .iter()
+            .all(|work| bindings_fit(work, self.limits.unwrap_or(&baseline)))
+        {
+            return Ok(false);
+        }
         Ok(self.limits.is_none_or(|limits| {
             tile.slots.iter().all(|storage| match storage {
-                Storage::Buffer(bytes) | Storage::Retained { bytes, .. } => {
+                Storage::Buffer(bytes) => {
                     *bytes <= limits.max_buffer_size
                         && *bytes <= limits.max_storage_buffer_binding_size
+                }
+                Storage::Image { layout, .. } => {
+                    layout.bytes() <= limits.max_buffer_size
+                        && layout.bytes() <= limits.max_storage_buffer_binding_size
                 }
                 Storage::Texture(size) => {
                     size.iter().all(|v| *v <= limits.max_texture_dimension_2d)
@@ -261,31 +381,44 @@ impl Planning<'_> {
     }
 }
 
-pub(super) fn probe(
-    root: &Arc<ImageNode>,
-    region: Rect,
-    budget: Budget,
-    scope: &Materializations,
-    limits: &wgpu::Limits,
-) -> Result<Plan, Error> {
-    let mut fragment = Fragment::default();
-    let result = evaluate_region(
-        root,
-        region,
-        &mut fragment,
-        Planning {
-            policy: Policy::Composed,
-            scope: Some(scope),
-            supplied: &[],
-            scratch_bytes: budget.scratch_bytes,
-            limits: Some(limits),
-        },
-    )?;
-    Plan::from_work(fragment, result, u64::MAX)
+fn bindings_fit(work: &Work, limits: &wgpu::Limits) -> bool {
+    let bindings = match work {
+        Work::Compute { bindings, .. } | Work::Render { bindings, .. } => bindings,
+        _ => return true,
+    };
+    let mut counts = [0u32; 5];
+    for (_, binding) in bindings {
+        let kind = match binding {
+            Binding::Shared(Shared::Buffer(buffer))
+                if buffer.usage().contains(wgpu::BufferUsages::UNIFORM) =>
+            {
+                1
+            }
+            Binding::Read(_)
+            | Binding::Write(_)
+            | Binding::Shared(Shared::Buffer(_) | Shared::Image { view: None, .. }) => 0,
+            Binding::Uniform(_) => 1,
+            Binding::Texture(_)
+            | Binding::Shared(Shared::Texture(_) | Shared::Image { view: Some(_), .. }) => 2,
+            Binding::Shared(Shared::StorageTexture(_)) => 3,
+            Binding::Shared(Shared::Sampler(_)) => 4,
+        };
+        counts[kind] += 1;
+    }
+    counts
+        .into_iter()
+        .zip([
+            limits.max_storage_buffers_per_shader_stage,
+            limits.max_uniform_buffers_per_shader_stage,
+            limits.max_sampled_textures_per_shader_stage,
+            limits.max_storage_textures_per_shader_stage,
+            limits.max_samplers_per_shader_stage,
+        ])
+        .all(|(used, maximum)| used <= maximum)
 }
 
-fn evaluate_region(
-    node: &Arc<ImageNode>,
+pub(super) fn evaluate_region(
+    node: &value::Value,
     region: Rect,
     fragment: &mut Fragment,
     planning: Planning<'_>,
@@ -304,133 +437,168 @@ fn evaluate_region(
     }
 
     if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
-        if let Some(image) = stored.raster(fragment, node.domain, region) {
+        let output = node.output(region)?;
+        if let Some(image) = stored.raster(fragment, node.domain, region, output.identity()) {
             return Ok(image);
         }
-        let output = fragment.image(node.domain, region);
+        let output = value::image_resource(fragment, node, region, planning.scope.is_some());
         stored.sample(fragment).materialize(fragment, output)?;
         return Ok(output);
     }
 
-    if node
-        .operation
-        .sample_consumer()
-        .and_then(|consumer| consumer.production())
-        .is_some_and(|production| production.requires_worker())
-    {
-        let output = fragment.image(node.domain, region);
+    let original = node.request(region)?;
+    let budget = Budget {
+        tile: planning.tile,
+        scratch_bytes: planning.scratch_bytes,
+    };
+    if !unit::single_unit(node, region, budget)? {
+        let output = value::image_resource(fragment, node, region, false);
         fragment.work.push(Work::Produce {
-            image: node.clone(),
+            image: original,
+            output,
+        });
+        return Ok(output);
+    }
+    let calculation = match unit::calculation(node, region, budget) {
+        Ok(calculation) => calculation,
+        Err(Error::WorkingAllowance(_)) => {
+            let output = value::image_resource(fragment, node, region, false);
+            fragment.work.push(Work::Produce {
+                image: original,
+                output,
+            });
+            return Ok(output);
+        }
+        Err(error) => return Err(error),
+    };
+    let node = calculation.clone();
+    let discover = planning.scope.is_some() && value::pixel_kernel(&node);
+
+    if policy == Policy::Composed
+        && let Some(graph) = value::FunctionGraph::new(&node)?
+        && graph.may_fuse(planning.limits)
+    {
+        let sample = graph.emit(fragment, |source, demand, fragment| {
+            if policy == Policy::Composed {
+                sample_region(source, demand, fragment, planning)
+            } else {
+                evaluate_region(source, demand, fragment, planning)
+                    .map(|image| Sampled::raster(fragment, image))
+            }
+        })?;
+        if productions_are_required(&original, region, &fragment.work[checkpoint.1..], planning)? {
+            let output = value::image_resource(fragment, &original, region, discover);
+            sample.materialize(fragment, output)?;
+            if planning.fits(fragment, output)? {
+                return Ok(output);
+            }
+        }
+        fragment.resources.truncate(checkpoint.0);
+        fragment.work.truncate(checkpoint.1);
+    }
+
+    let recorded = values::record(&original, &node, region, fragment, planning)?;
+    if let Some(output) = recorded {
+        if productions_are_required(&original, region, &fragment.work[checkpoint.1..], planning)?
+            && planning.fits(fragment, output)?
+        {
+            return Ok(output);
+        }
+        fragment.resources.truncate(checkpoint.0);
+        fragment.work.truncate(checkpoint.1);
+        let output = value::image_resource(fragment, &original, region, false);
+        fragment.work.push(Work::Produce {
+            image: original,
             output,
         });
         return Ok(output);
     }
 
-    if policy == Policy::Composed {
-        if node.operation.sample_producer().is_some() {
-            let sample = sample_region(node, region, fragment, planning)?;
-            let output = fragment.image(node.domain, region);
-            sample.materialize(fragment, output)?;
-            return Ok(output);
-        }
-        if let Some(consumer) = node.operation.sample_consumer() {
-            let upstream = node
-                .input
-                .as_ref()
-                .ok_or(Error::InvalidParameter("sampling consumer has no input"))?;
-            let demand = node
-                .operation
-                .input(region)?
-                .ok_or(Error::InvalidParameter("sampling consumer has no demand"))?;
-            let sample = sample_region(upstream, demand, fragment, planning)?;
-            let output = fragment.image(node.domain, region);
-            consumer.emit(fragment, sample, output)?;
-            if consumer.production().is_some() && !planning.fits(fragment, output)? {
-                fragment.resources.truncate(checkpoint.0);
-                fragment.work.truncate(checkpoint.1);
-                let output = fragment.image(node.domain, region);
-                fragment.work.push(Work::Produce {
-                    image: node.clone(),
-                    output,
-                });
-                return Ok(output);
-            }
-            return Ok(output);
-        }
+    let lowering = super::unit::lowered(calculation, region, budget)?;
+    if matches!(lowering, super::unit::Lowering::Deferred) {
+        let output = value::image_resource(fragment, &original, region, discover);
+        fragment.work.push(Work::Produce {
+            image: original,
+            output,
+        });
+        return Ok(output);
     }
-
-    if node.operation.pointwise().is_some() {
-        let sample = sample_region(node, region, fragment, planning)?;
-        let output = fragment.image(node.domain, region);
-        sample.materialize(fragment, output)?;
+    if let super::unit::Lowering::Source(source) = lowering {
+        let output = value::image_resource(fragment, &original, region, discover);
+        fragment.work.push(Work::Upload { source, output });
         return Ok(output);
     }
 
-    let mut input = match (&node.input, node.operation.input(region)?) {
-        (Some(input), Some(demand)) => Some(evaluate_region(input, demand, fragment, planning)?),
-        (None, None) => None,
-        _ => {
-            return Err(Error::InvalidParameter(
-                "operation input contract differs from composition",
-            ));
+    if policy == Policy::Composed
+        && !value::is_copy(&node)
+        && value::sampler(&node)
+            .is_some_and(|producer| matches!(producer.access(), Access::Callable))
+    {
+        let sample = sample_region(&original, region, fragment, planning)?;
+        let output = value::image_resource(fragment, &original, region, discover);
+        sample.materialize(fragment, output)?;
+        if productions_are_required(&original, region, &fragment.work[checkpoint.1..], planning)?
+            && planning.fits(fragment, output)?
+        {
+            return Ok(output);
         }
-    };
-    let in_place = node.operation.in_place();
-    let output = if in_place {
-        let mut input = input.ok_or(Error::InvalidParameter(
-            "in-place operation requires an image",
-        ))?;
-        if !input.domain.same_grid(node.domain) || input.region != region {
-            return Err(Error::InvalidParameter(
-                "in-place operation changes its grid",
-            ));
-        }
-        if matches!(
-            fragment.resources[input.resource.0],
-            Storage::Input {
-                writable: false,
-                ..
-            } | Storage::ResidentBuffer(_)
-        ) {
-            let copy = fragment.image(input.domain, input.region);
-            lower_map(
-                fragment,
-                input,
-                copy,
-                vec![Function {
-                    linked: Default::default(),
-                    code: r#"
-fn evaluation_own_input(p: vec4f, position: vec2f) -> vec4f {
-    return p;
-}
-"#
-                    .into(),
-                    symbol: "evaluation_own_input",
-                    bindings: vec![],
-                }],
-            )?;
-            // The operation still receives an actual in-place pair, now with owned storage.
-            input = copy;
-        }
-        PlannedImage {
-            domain: node.domain,
-            ..input
-        }
-    } else {
-        fragment.image(node.domain, region)
-    };
-    if in_place {
-        input = Some(PlannedImage {
-            resource: output.resource,
-            ..input.unwrap()
-        });
+        fragment.resources.truncate(checkpoint.0);
+        fragment.work.truncate(checkpoint.1);
     }
-    node.operation.lower(fragment, input, output)?;
+
+    let super::unit::Lowering::Gpu {
+        phase,
+        inputs: operands,
+    } = lowering
+    else {
+        return Err(Error::InvalidParameter("GPU stage has no phase"));
+    };
+    let inputs = phase
+        .reads
+        .into_iter()
+        .map(|read| {
+            let upstream = operands
+                .get(read.input)
+                .ok_or(Error::InvalidParameter("read references an unknown input"))?;
+            evaluate_region(upstream, read.region, fragment, planning)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let output = value::image_resource(fragment, &original, region, discover);
+    let slots = phase
+        .inputs
+        .iter()
+        .map(|binding| match binding {
+            UnitValue::Read(index) => inputs
+                .get(*index)
+                .map(|input| input.resource)
+                .ok_or(Error::InvalidParameter("unknown phase read")),
+            UnitValue::Output => Ok(output.resource),
+            UnitValue::State(_) => Err(Error::InvalidParameter("unit state was not deferred")),
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let result = phase.kernel.lower(fragment, &slots)?;
+    if result != output {
+        return Err(Error::InvalidParameter(
+            "GPU phase changed its result layout",
+        ));
+    }
+    if !productions_are_required(&original, region, &fragment.work[checkpoint.1..], planning)?
+        || !planning.fits(fragment, output)?
+    {
+        fragment.resources.truncate(checkpoint.0);
+        fragment.work.truncate(checkpoint.1);
+        let output = value::image_resource(fragment, &original, region, discover);
+        fragment.work.push(Work::Produce {
+            image: original,
+            output,
+        });
+        return Ok(output);
+    }
     Ok(output)
 }
 
 pub(super) fn sample_region(
-    node: &Arc<ImageNode>,
+    node: &value::Value,
     region: Rect,
     fragment: &mut Fragment,
     planning: Planning<'_>,
@@ -444,100 +612,104 @@ pub(super) fn sample_region(
     if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
         return Ok(stored.sample(fragment));
     }
-    if let Some(function) = node.operation.pointwise() {
-        let mut functions = vec![function];
-        let mut cursor = node.clone();
-        let upstream = loop {
-            let upstream = cursor
-                .input
-                .as_ref()
-                .ok_or(Error::InvalidParameter("pointwise node has no input"))?
-                .clone();
-            if !cursor.domain.same_grid(upstream.domain)
-                || !upstream.domain.contains_region(region)
-                || cursor.operation.input(region)? != Some(region)
-            {
-                return Err(Error::InvalidParameter(
-                    "pointwise contract changes the grid",
-                ));
-            }
-            if Stored::find(scope, planning.supplied, &upstream, region)?.is_some() {
-                break upstream;
-            }
-            let Some(next) = upstream.operation.pointwise() else {
-                break upstream;
-            };
-            functions.push(next);
-            cursor = upstream;
-        };
-        functions.reverse();
-        let input = if policy == Policy::Composed {
-            sample_region(&upstream, region, fragment, planning)?
-        } else {
-            let raster = evaluate_region(&upstream, region, fragment, planning)?;
-            Sampled::raster(fragment, raster)
-        };
-        return input.map(fragment, node.domain, region, functions);
-    }
-    if let Some(producer) = node.operation.sample_producer() {
-        let input = match (node.input.as_ref(), node.operation.input(region)?) {
-            (Some(upstream), Some(demand)) => Some(match producer.access() {
-                Access::Raster => {
-                    SampleInput::Raster(evaluate_region(upstream, demand, fragment, planning)?)
-                }
-                Access::Callable => {
-                    SampleInput::Callable(sample_region(upstream, demand, fragment, planning)?)
-                }
-            }),
-            (None, None) => None,
-            _ => {
-                return Err(Error::InvalidParameter(
-                    "sample input differs from image definition",
-                ));
-            }
-        };
-        producer.emit(fragment, input, node.domain, region)
-    } else {
+    let budget = Budget {
+        tile: planning.tile,
+        scratch_bytes: planning.scratch_bytes,
+    };
+    if !unit::single_unit(node, region, budget)? {
         let input = evaluate_region(node, region, fragment, planning)?;
+        return Ok(Sampled::raster(fragment, input));
+    }
+    let original = node;
+    let calculation = match unit::calculation(node, region, budget) {
+        Ok(calculation) => calculation,
+        Err(Error::WorkingAllowance(_)) => {
+            let input = evaluate_region(original, region, fragment, planning)?;
+            return Ok(Sampled::raster(fragment, input));
+        }
+        Err(error) => return Err(error),
+    };
+    if let Some(alias) = calculation.value()
+        && !alias.same_capture(original)
+    {
+        return sample_region(alias, region, fragment, planning);
+    }
+    let node = &calculation;
+    if policy == Policy::Composed
+        && let Some(graph) = value::FunctionGraph::new(node)?
+        && graph.may_fuse(planning.limits)
+    {
+        return graph.emit(fragment, |source, demand, fragment| {
+            if policy == Policy::Composed {
+                sample_region(source, demand, fragment, planning)
+            } else {
+                evaluate_region(source, demand, fragment, planning)
+                    .map(|image| Sampled::raster(fragment, image))
+            }
+        });
+    }
+    if let Some(producer) = value::sampler(node) {
+        let inputs = producer
+            .reads(region)?
+            .into_iter()
+            .map(|read| {
+                let upstream = node
+                    .input_value(read.input)
+                    .ok_or(Error::InvalidParameter("read references an unknown input"))?;
+                let demand = read.region;
+                Ok(match producer.read_access(read.input) {
+                    Access::Raster => {
+                        SampleInput::Raster(evaluate_region(upstream, demand, fragment, planning)?)
+                    }
+                    Access::Callable if policy == Policy::Composed => {
+                        SampleInput::Callable(sample_region(upstream, demand, fragment, planning)?)
+                    }
+                    Access::Callable => {
+                        let image = evaluate_region(upstream, demand, fragment, planning)?;
+                        SampleInput::Callable(Sampled::raster(fragment, image))
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        producer.emit(fragment, inputs, node.domain(), region)
+    } else {
+        let input = evaluate_region(original, region, fragment, planning)?;
         Ok(Sampled::raster(fragment, input))
     }
 }
 
-fn lower_map(
-    fragment: &mut Fragment,
-    input: PlannedImage,
-    output: PlannedImage,
-    functions: Vec<Function>,
-) -> Result<(), Error> {
-    Sampled::raster(fragment, input)
-        .map(fragment, output.domain, output.region, functions)?
-        .materialize(fragment, output)
-}
-
-fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Error> {
+pub(super) fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Error> {
+    // These dependencies refer to immutable calculations, not this command buffer's temporaries.
+    // Fulfil them before encoding, so no unit waits for an unsubmitted parent encoder.
+    fragment
+        .work
+        .sort_by_key(|work| !matches!(work, Work::Produce { .. }));
     if matches!(
         fragment.resources[result.resource.0],
         Storage::ResidentBuffer(_)
+            | Storage::Image {
+                pixels: Some(_),
+                ..
+            }
     ) {
         let output = fragment.image(result.domain, result.region);
         Sampled::raster(&mut fragment, result).materialize(&mut fragment, output)?;
         result = output;
     }
+    if let Storage::Image {
+        layout,
+        pixels: None,
+        ..
+    } = &fragment.resources[result.resource.0]
+    {
+        fragment.resources[result.resource.0] = Storage::Buffer(layout.bytes());
+    }
     let end = fragment.work.len();
     let mut initialized = fragment
         .resources
         .iter()
-        .map(|r| {
-            matches!(
-                r,
-                Storage::Uniform(_)
-                    | Storage::Data(_)
-                    | Storage::Input { .. }
-                    | Storage::ResidentBuffer(_)
-            )
-        })
+        .map(Storage::starts_initialized)
         .collect::<Vec<_>>();
-    let mut uploads = 0;
     for work in &fragment.work {
         let bindings = match work {
             Work::Produce { output, .. } => {
@@ -545,8 +717,21 @@ fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Er
                 continue;
             }
             Work::Upload { output, .. } => {
-                uploads += 1;
                 initialized[output.resource.0] = true;
+                continue;
+            }
+            Work::Copy { source, target, .. } => {
+                if !initialized[source.0] {
+                    return Err(Error::InvalidParameter(
+                        "fragment copies an uninitialized resource",
+                    ));
+                }
+                if fragment.resources[target.0].read_only() {
+                    return Err(Error::InvalidParameter(
+                        "fragment copies into a read-only resource",
+                    ));
+                }
+                initialized[target.0] = true;
                 continue;
             }
             Work::Compute { bindings, .. } | Work::Render { bindings, .. } => bindings,
@@ -562,13 +747,7 @@ fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Er
         }
         for (_, binding) in bindings {
             if let Binding::Write(r) = binding {
-                if matches!(
-                    fragment.resources[r.0],
-                    Storage::Input {
-                        writable: false,
-                        ..
-                    } | Storage::ResidentBuffer(_)
-                ) {
+                if fragment.resources[r.0].read_only() {
                     return Err(Error::InvalidParameter(
                         "fragment writes a read-only resident input",
                     ));
@@ -580,13 +759,23 @@ fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Er
             initialized[target.0] = true;
         }
     }
-    if uploads > 1 || !initialized[result.resource.0] {
+    if !initialized[result.resource.0] {
         return Err(Error::InvalidParameter(
-            "evaluation slice requires one source and an initialized result",
+            "evaluation result is not initialized",
         ));
     }
 
-    let mut first = vec![usize::MAX; fragment.resources.len()];
+    let mut first = fragment
+        .resources
+        .iter()
+        .map(|storage| {
+            if storage.starts_initialized() {
+                0
+            } else {
+                usize::MAX
+            }
+        })
+        .collect::<Vec<_>>();
     let mut last = vec![0; fragment.resources.len()];
     for (index, work) in fragment.work.iter().enumerate() {
         for Resource(id) in work.resources() {
@@ -597,8 +786,14 @@ fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Er
     first[result.resource.0] = first[result.resource.0].min(end);
     last[result.resource.0] = end;
 
-    // CPU uploads precede submission. Immutable uniforms must not alias even when GPU uses
-    // do not overlap; otherwise a later upload would overwrite an earlier dispatch's constants.
+    // Queue writes precede submission of this command buffer. Uploaded source data and
+    // immutable constants cannot alias storage merely because encoded uses do not overlap.
+    for work in &fragment.work {
+        if let Work::Upload { output, .. } = work {
+            first[output.resource.0] = 0;
+            last[output.resource.0] = end;
+        }
+    }
     for (id, storage) in fragment.resources.iter().enumerate() {
         if matches!(storage, Storage::Uniform(_) | Storage::Data(_)) {
             first[id] = 0;

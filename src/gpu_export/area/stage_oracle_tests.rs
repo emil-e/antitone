@@ -1,6 +1,7 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu_export::authored::{Request, write};
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
@@ -12,11 +13,26 @@ use crate::{
 fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_linear_target() {
     let (device, queue, renderer) = super::super::tests::context();
     let gate = SubmissionGate::default();
-    let scan = Scan::open(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        None,
-    )
-    .unwrap();
+    let fixture_directory = tempfile::tempdir().unwrap();
+    let mut bytes =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
+            .unwrap();
+    assert_eq!(bytes.len(), 98_950, "declared authored single-strip source");
+    let strip = bytes.len() - 256 * 192 * 2;
+    for y in 94..98 {
+        for x in 158..162 {
+            let at = strip + (y * 256 + x) * 2;
+            assert_eq!(
+                u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()),
+                3264,
+                "defect begins in the declared uniform plateau"
+            );
+            bytes[at..at + 2].copy_from_slice(&192_u16.to_le_bytes());
+        }
+    }
+    let path = fixture_directory.path().join("marked.dng");
+    std::fs::write(&path, bytes).unwrap();
+    let scan = Scan::open(&path, None).unwrap();
     let a = scan.area;
     let composition = Composition::with_crop(
         a,
@@ -65,7 +81,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     .unwrap();
     let pipeline =
         AdjustmentLayerPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
-    let centre = [a.x + a.width / 2, a.y + a.height / 2];
+    let centre = [160, 96];
     let repair = Repair {
         id: RepairId(1),
         enabled: true,
@@ -74,15 +90,13 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
             .unwrap(),
         offset: [64, 0],
     };
-    // Declared canonical neutral values isolate application/stage order from healer accuracy.
-    let neutral = DVec3::new(0.25, 0.5, 0.75);
+    // The scalar input is independent of GPU interpretation; healer fitting is shared.
     let evaluated = Arc::new(
-        crate::dust_repair::evaluate(&repair, a, |_| Ok(neutral.as_vec3().to_array())).unwrap(),
-    );
-    assert!(
-        evaluated
-            .pixels()
-            .all(|(_, v)| v == neutral.as_vec3().to_array())
+        crate::repair_source::evaluate(
+            &crate::scan::ImageSource::new(&scan, calibration).unwrap(),
+            &repair,
+        )
+        .unwrap(),
     );
     let asset = Arc::new(
         crate::looks::LookAsset::new(
@@ -96,9 +110,9 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                     (0..8)
                         .map(|i| {
                             [
-                                -1.98 + 4. * (i % 2) as f32,
-                                -1.97 + 4. * ((i / 2) % 2) as f32,
-                                -1.99 + 4. * (i / 4) as f32,
+                                -1.8 + 4. * (i % 2) as f32,
+                                -1.9 + 4. * ((i / 2) % 2) as f32,
+                                -1.85 + 4. * (i / 4) as f32,
                             ]
                         })
                         .collect(),
@@ -137,13 +151,13 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                 input: calibration.into(),
                 roll,
                 grade: grade.clone(),
-                repairs: std::slice::from_ref(&evaluated),
+                repairs: std::slice::from_ref(&repair),
                 composition,
                 format: Format::Tiff(target),
                 luts: (look.clone()).into(),
             };
             let (result, pixels) = crate::export_timing::pixels::capture(|| {
-                super::super::write(
+                write(
                     &renderer,
                     &device,
                     (&queue, &gate),
@@ -168,7 +182,9 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                             pipeline
                                 .grade_neutral(
                                     InvertedPixel {
-                                        rgb: neutral,
+                                        rgb: DVec3::from_array(
+                                            evaluated.pixel(*p, [0.; 3]).map(f64::from),
+                                        ),
                                         floored: [false; 3],
                                     },
                                     *p,
@@ -242,7 +258,9 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     }
     assert!(
         repair_effect > 0.01,
-        "fixture must distinguish omitted canonical repair"
+        "the marked defect must distinguish omitted healing: area={a:?}, centre={centre:?}, effect={repair_effect}, raw={:?}, healed={:?}",
+        scan.pixel(centre[0], centre[1]).unwrap(),
+        evaluated.pixel(centre, [0.; 3])
     );
     assert!(
         look_effect > 0.001,

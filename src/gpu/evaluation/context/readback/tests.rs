@@ -25,7 +25,7 @@ impl Source for Pattern {
     }
 }
 
-fn image(reads: Arc<AtomicUsize>) -> Arc<ImageNode> {
+fn image(reads: Arc<AtomicUsize>) -> Value {
     let domain = Domain {
         bounds: Some([11, 17, 7, 5].into()),
         grid: Grid {
@@ -55,7 +55,7 @@ fn transform(pixel: vec4f, position: vec2f) -> vec4f {
     )
 }
 
-fn request(context: &Context, image: Arc<ImageNode>, scratch_bytes: u64) -> Evaluation {
+fn request(context: &Context, image: Value, scratch_bytes: u64) -> Evaluation {
     context
         .request(
             image.clone(),
@@ -213,59 +213,75 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
 
 #[test]
 fn host_float_delivery_rejects_a_packed_result_before_copying() {
-    struct Packed;
-
-    impl Operation for Packed {
-        fn input(&self, _: CellRegion) -> Result<Option<CellRegion>, Error> {
-            Ok(None)
-        }
-
-        fn lower(
-            &self,
-            fragment: &mut Fragment,
-            _: Option<PlannedImage>,
-            output: PlannedImage,
-        ) -> Result<(), Error> {
-            fragment.resources[output.resource.0] =
-                Storage::Data(vec![0; output.cells() as usize * 8].into());
-            Ok(())
-        }
-    }
-
     let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let context = renderer.evaluation();
-    let image = ImageNode::new(
-        Domain {
-            bounds: Some([0, 0, 1, 1].into()),
-            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
+    let scope = context.test_materializations(false);
+    let gate = crate::gpu::submission::SubmissionGate::default();
+    let submissions = Arc::new(AtomicUsize::new(0));
+    let observed = submissions.clone();
+    gate.observe_submissions(Arc::new(move || {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let working = HostWorkingSet::default();
+    let worker = Worker {
+        context,
+        queue: &queue,
+        gate: &gate,
+        scope: &scope,
+        working: &working,
+        budget: Budget {
+            tile: [1, 1],
+            scratch_bytes: 64,
         },
-        None,
-        Packed,
-    );
-    let evaluation = context
-        .request(
-            image.clone(),
-            Region {
-                bounds: image.domain.finite().unwrap(),
-                grid: image.domain.grid,
+        cancelled: &|| false,
+        progress: &|| {},
+    };
+    let domain = Domain {
+        bounds: Some([0, 0, 1, 1].into()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Graded,
+    };
+    let plan = |bytes: Vec<u8>| {
+        let mut fragment = Fragment::default();
+        let resource = fragment.resource(Storage::Data(bytes.into()));
+        Plan::from_work(
+            fragment,
+            PlannedImage {
+                domain,
+                region: domain.finite().unwrap(),
+                resource,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 64,
-            },
+            64,
         )
-        .unwrap();
+        .unwrap()
+    };
     assert!(matches!(
-        context.read(
-            &queue,
-            &Default::default(),
-            &evaluation,
-            || false,
+        worker.read_plans(
+            std::iter::once(Ok(plan(vec![0; 8]))),
+            WorkCounts::default(),
             |_, _| panic!("packed float delivery")
         ),
         Err(Error::InvalidParameter(
             "host float delivery requires a complete RGBA buffer"
         ))
     ));
+    assert_eq!(submissions.load(Ordering::Relaxed), 0);
+    let expected = [1f32, -0.5, 2., 0.25];
+    let mut delivered = Vec::new();
+    assert!(
+        worker
+            .read_plans(
+                std::iter::once(Ok(plan(bytemuck::cast_slice(&expected).to_vec()))),
+                WorkCounts::default(),
+                |region, values| {
+                    assert_eq!(region, domain.finite().unwrap());
+                    delivered.extend_from_slice(values);
+                    Ok(())
+                }
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(delivered, vec![expected]);
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
 }

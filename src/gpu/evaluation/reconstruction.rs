@@ -5,7 +5,10 @@ use glam::{DMat2, DVec2};
 
 #[cfg(test)]
 mod fixture;
+mod phases;
+#[cfg(all(test, feature = "editor"))]
 mod streaming;
+mod support;
 #[cfg(test)]
 pub(crate) use fixture::{encode_supplied, supplied_mask};
 #[cfg(all(test, feature = "editor"))]
@@ -23,22 +26,34 @@ impl Mapping {
             self.start[i] + point[0] * self.axes[0][i] + point[1] * self.axes[1][i]
         })
     }
-    fn admit_region(self, region: Rect) -> Result<(), Error> {
-        region.validate()?;
+    fn roundoff(self, region: Rect) -> [f64; 2] {
         let packed = self.packed();
         let extent = [
             region.x.unsigned_abs().max(region.right().unsigned_abs()),
             region.y.unsigned_abs().max(region.bottom().unsigned_abs()),
         ];
+        std::array::from_fn(|i| {
+            8. * f64::from(f32::EPSILON)
+                * (packed.start[i].abs()
+                    + (0..2)
+                        .map(|axis| packed.axes[axis][i].abs() * f64::from(extent[axis]))
+                        .sum::<f64>())
+        })
+    }
+    fn integral(self) -> bool {
+        self.start
+            .iter()
+            .chain(self.axes.iter().flatten())
+            .all(|value| value.fract() == 0.)
+    }
+    fn admit_region(self, region: Rect) -> Result<(), Error> {
+        region.validate()?;
+        let roundoff = self.roundoff(region);
         let step = self.axes[0][0]
             .hypot(self.axes[0][1])
             .min(self.axes[1][0].hypot(self.axes[1][1]));
-        for i in 0..2 {
-            let magnitude = packed.start[i].abs()
-                + (0..2)
-                    .map(|axis| packed.axes[axis][i].abs() * f64::from(extent[axis]))
-                    .sum::<f64>();
-            if !magnitude.is_finite() || 8. * f64::from(f32::EPSILON) * magnitude >= step.min(1.) {
+        for error in roundoff {
+            if !error.is_finite() || error >= step.min(1.) {
                 return Err(Error::InvalidParameter(
                     "reconstruction exceeds GPU grid precision",
                 ));
@@ -56,7 +71,7 @@ impl Mapping {
 }
 
 pub(crate) fn accumulate_supplied(
-    image: &Arc<ImageNode>,
+    image: &Value,
     fragment: &mut Fragment,
     input: Sampled,
     (samples, affected): (Rect, Rect),
@@ -71,22 +86,24 @@ pub(crate) fn accumulate_supplied(
     operation.accumulate(fragment, input, (samples, affected), output, metadata)
 }
 
-pub(crate) fn reconstruct(input: Arc<ImageNode>, output: Domain) -> Result<Arc<ImageNode>, Error> {
-    reconstructed(input, output, false)
+pub(crate) fn reconstruct(input: Value, output: Domain) -> Result<Value, Error> {
+    reconstructed(input, output, false, false)
 }
 
-pub(crate) fn reconstruct_complete(
-    input: Arc<ImageNode>,
-    output: Domain,
-) -> Result<Arc<ImageNode>, Error> {
-    reconstructed(input, output, true)
+pub(crate) fn reconstruct_complete(input: Value, output: Domain) -> Result<Value, Error> {
+    reconstructed(input, output, true, false)
+}
+
+pub(crate) fn reconstruct_tiled(input: Value, output: Domain) -> Result<Value, Error> {
+    reconstructed(input, output, false, true)
 }
 
 fn reconstructed(
-    input: Arc<ImageNode>,
+    input: Value,
     output: Domain,
     complete: bool,
-) -> Result<Arc<ImageNode>, Error> {
+    tiled: bool,
+) -> Result<Value, Error> {
     let source = DMat2::from_cols_array_2d(&input.domain.grid.axes);
     if !source.is_finite() || source.determinant() == 0. {
         return Err(Error::InvalidParameter("invalid reconstruction input grid"));
@@ -105,16 +122,17 @@ fn reconstructed(
             axes,
         },
         complete,
+        tiled,
     )
 }
 
 // Exact local-grid mappings avoid losing an integral padding offset through rounded world origins.
 pub(crate) fn reconstruct_cells(
-    input: Arc<ImageNode>,
+    input: Value,
     output: Domain,
     base: [f64; 2],
     scale: [f64; 2],
-) -> Result<Arc<ImageNode>, Error> {
+) -> Result<Value, Error> {
     reconstruct_mapped(
         input,
         output,
@@ -126,19 +144,20 @@ pub(crate) fn reconstruct_cells(
 }
 
 pub(crate) fn reconstruct_mapped(
-    input: Arc<ImageNode>,
+    input: Value,
     output: Domain,
     mapping: Mapping,
-) -> Result<Arc<ImageNode>, Error> {
-    mapped(input, output, mapping, false)
+) -> Result<Value, Error> {
+    mapped(input, output, mapping, false, false)
 }
 
 fn mapped(
-    input: Arc<ImageNode>,
+    input: Value,
     output: Domain,
     mapping: Mapping,
     complete: bool,
-) -> Result<Arc<ImageNode>, Error> {
+    tiled: bool,
+) -> Result<Value, Error> {
     if let Some(bounds) = output.bounds {
         mapping.admit_region(bounds)?;
     }
@@ -189,10 +208,11 @@ fn mapped(
             ));
         }
     }
-    Ok(ImageNode::new(
+    Ok(Value::from_operation(
         output,
         Some(input.clone()),
         Reconstruction {
+            tiled,
             input: input.domain,
             mapping,
             packed,
@@ -228,7 +248,15 @@ struct Support {
     coverage: crate::coverage::Coverage,
 }
 
-struct Reconstruction {
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Geometry {
+    integers: [[u32; 4]; 4],
+    vectors: [[f32; 4]; 2],
+}
+
+pub(super) struct Reconstruction {
+    tiled: bool,
     input: Domain,
     mapping: Mapping,
     packed: Mapping,
@@ -265,39 +293,32 @@ impl Reconstruction {
         Ok(())
     }
 
-    fn requires_reduction(&self) -> bool {
-        let width = self.packed.axes[0][0].abs() + self.packed.axes[1][0].abs();
-        let height = self.packed.axes[0][1].abs() + self.packed.axes[1][1].abs();
-        (width.ceil() + 2.).min(
-            self.input
-                .bounds
-                .map_or(f64::INFINITY, |bounds| f64::from(bounds.width)),
-        ) * (height.ceil() + 2.).min(
-            self.input
-                .bounds
-                .map_or(f64::INFINITY, |bounds| f64::from(bounds.height)),
-        ) > 65536.
-    }
-
     fn code(input: &Sampled, masked: bool) -> Arc<str> {
         let support = if masked {
             r#"@group(0) @binding(25) var<storage,read> reconstruction_support:array<u32>;
-fn reconstruction_admitted(p:vec2i)->bool {
+fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {
     let local=vec2u(p)-geometry.sample_bounds.xy;
     let index=local.y*(geometry.sample_bounds.z-geometry.sample_bounds.x)+local.x;
     return (reconstruction_support[index/32u]&(1u<<(index%32u)))!=0u;
 }"#
         } else {
-            "fn reconstruction_admitted(p:vec2i)->bool {return true;}"
+            "fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {return true;}"
         };
         format!(
             "{}\n{}\nfn reconstruction_sample(p: vec2i) -> vec4f {{ return {}(p); }}\n{}\n{}",
-            include_str!("footprint.wgsl"),
+            [
+                include_str!("reconstruction_geometry.wgsl"),
+                include_str!("footprint.wgsl")
+            ]
+            .join("\n"),
             input.code,
             input.symbol,
             support,
             [
                 include_str!("reconstruction_status.wgsl"),
+                include_str!("reconstruction_mean.wgsl"),
+                include_str!("reconstruction_contribution.wgsl"),
+                include_str!("reconstruction_flags.wgsl"),
                 include_str!("reconstruct.wgsl")
             ]
             .join("\n"),
@@ -311,6 +332,13 @@ fn reconstruction_admitted(p:vec2i)->bool {
         output: Rect,
         samples: Rect,
     ) -> Option<Binding> {
+        let mask = self.support_mask(output, samples)?;
+        Some(Binding::Read(
+            fragment.resource(Storage::Data(bytemuck::cast_slice(&mask).into())),
+        ))
+    }
+
+    fn support_mask(&self, output: Rect, samples: Rect) -> Option<Vec<u32>> {
         let support = self.support?;
         let b = support.output;
         if self
@@ -345,9 +373,7 @@ fn reconstruction_admitted(p:vec2i)->bool {
                 }
             }
         }
-        Some(Binding::Read(
-            fragment.resource(Storage::Data(bytemuck::cast_slice(&mask).into())),
-        ))
+        Some(mask)
     }
 
     fn geometry(
@@ -357,6 +383,10 @@ fn reconstruction_admitted(p:vec2i)->bool {
         whole: Rect,
         samples: Rect,
     ) -> Binding {
+        fragment.uniform(&self.geometry_parameters(output, whole, samples))
+    }
+
+    fn geometry_parameters(&self, output: Rect, whole: Rect, samples: Rect) -> Geometry {
         let source_bounds = self.input.bounds.map_or([0; 4], |b| {
             [b.x as u32, b.y as u32, b.right() as u32, b.bottom() as u32]
         });
@@ -379,30 +409,99 @@ fn reconstruction_admitted(p:vec2i)->bool {
         let start = self
             .mapping
             .point([f64::from(output.x), f64::from(output.y)]);
-        let mut bytes = bytemuck::cast_slice(&integers).to_vec();
-        bytes.extend_from_slice(bytemuck::cast_slice(&[
-            (start[0] - f64::from(samples.x)) as f32,
-            (start[1] - f64::from(samples.y)) as f32,
-            self.mapping.axes[0][0] as f32,
-            self.mapping.axes[0][1] as f32,
-            self.mapping.axes[1][0] as f32,
-            self.mapping.axes[1][1] as f32,
-            if self.support.is_some() { 1. } else { 0. },
-            if self.input.bounds.is_some() { 1. } else { 0. },
-        ]));
-        Binding::Uniform(fragment.resource(Storage::Uniform(bytes.into())))
+        Geometry {
+            integers,
+            vectors: [
+                [
+                    (start[0] - f64::from(samples.x)) as f32,
+                    (start[1] - f64::from(samples.y)) as f32,
+                    self.mapping.axes[0][0] as f32,
+                    self.mapping.axes[0][1] as f32,
+                ],
+                [
+                    self.mapping.axes[1][0] as f32,
+                    self.mapping.axes[1][1] as f32,
+                    if self.support.is_some() { 1. } else { 0. },
+                    if self.input.bounds.is_some() { 1. } else { 0. },
+                ],
+            ],
+        }
     }
 }
 
+pub(crate) fn unit_cells(budget: Budget) -> u64 {
+    (budget.scratch_bytes / 128).min(
+        budget
+            .scratch_bytes
+            .saturating_sub(phases::PHASE_HEADROOM + 64)
+            / 112,
+    )
+}
+
 impl Operation for Reconstruction {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new((self.mapping, self.support)))
     }
 
-    fn sample_consumer(&self) -> Option<&dyn SampleConsumer> {
-        Some(self)
+    fn describe(
+        &self,
+        output: Output,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        _requested: &[Rect],
+    ) -> Result<Output, Error> {
+        if !self.tiled {
+            return Ok(output);
+        }
+        let demand = self.reads(output.region)?[0].region;
+        let contributing = self.source_parts(demand, output.region);
+        Ok(Output::calculated(
+            output.domain,
+            output.region,
+            self.key(),
+            [inputs[0].content_for(demand, &contributing)?],
+        ))
     }
-    fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
+
+    fn work_units(&self, region: Rect, budget: Budget) -> Result<WorkUnits, Error> {
+        if self.tiled {
+            region.validate()?;
+            let side = unit_cells(budget).isqrt().clamp(1, 256) as i64;
+            let first = [
+                i64::from(region.x).div_euclid(side) * side,
+                i64::from(region.y).div_euclid(side) * side,
+            ];
+            let last = [i64::from(region.right()), i64::from(region.bottom())];
+            return Ok(Box::new(
+                (first[1]..last[1])
+                    .step_by(side as usize)
+                    .flat_map(move |y| {
+                        (first[0]..last[0]).step_by(side as usize).map(move |x| {
+                            let low = [x.max(i64::from(region.x)), y.max(i64::from(region.y))];
+                            let high = [(x + side).min(last[0]), (y + side).min(last[1])];
+                            Rect::new(
+                                low.map(|v| v as i32),
+                                [(high[0] - low[0]) as u32, (high[1] - low[1]) as u32],
+                            )
+                        })
+                    }),
+            ));
+        }
+        region.validate()?;
+        Ok(Box::new(std::iter::once(region)))
+    }
+
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: Rect,
+        budget: Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        self.express(inputs[0].clone(), domain, output, budget)
+            .map(Some)
+    }
+    fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
         self.mapping.admit_region(region)?;
         let x = [f64::from(region.x), f64::from(region.right())];
         let y = [f64::from(region.y), f64::from(region.bottom())];
@@ -420,17 +519,7 @@ impl Operation for Reconstruction {
         }
         // Integral mappings are exact within the admitted f32 coordinate range.
         // Their half-open support needs no extra roundoff halo.
-        let guard = if self
-            .mapping
-            .start
-            .iter()
-            .chain(self.mapping.axes.iter().flatten())
-            .all(|value| value.fract() == 0.)
-        {
-            0.
-        } else {
-            1.
-        };
+        let guard = if self.mapping.integral() { 0. } else { 1. };
         for i in 0..2 {
             low[i] = low[i].floor() - guard;
             high[i] = high[i].ceil() + guard;
@@ -453,7 +542,8 @@ impl Operation for Reconstruction {
         }
         let low = low.map(|v| v as i32);
         let high = high.map(|v| v as i32);
-        Ok(Some(
+        Ok(vec![crate::gpu::evaluation::Read::new(
+            0,
             Rect::new(
                 low,
                 [
@@ -462,70 +552,6 @@ impl Operation for Reconstruction {
                 ],
             )
             .validate()?,
-        ))
-    }
-    fn lower(
-        &self,
-        fragment: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let sample = Sampled::raster(fragment, input.unwrap());
-        self.emit(fragment, sample, output)
-    }
-}
-impl SampleProduction for Reconstruction {
-    fn requires_worker(&self) -> bool {
-        self.requires_reduction()
-    }
-
-    fn produce_many(
-        &self,
-        outputs: &[(&Arc<ImageNode>, Production<'_>)],
-    ) -> Result<Option<WorkCounts>, Error> {
-        streaming::batch::produce(outputs)
-    }
-
-    fn produce(
-        &self,
-        worker: &Production<'_>,
-        input: &Arc<ImageNode>,
-    ) -> Result<WorkCounts, Error> {
-        self.produce_image(worker, input)
-    }
-}
-
-impl SampleConsumer for Reconstruction {
-    fn production(&self) -> Option<&dyn SampleProduction> {
-        Some(self)
-    }
-
-    fn emit(
-        &self,
-        fragment: &mut Fragment,
-        input: Sampled,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        if self.requires_reduction() {
-            return Err(Error::InvalidParameter(
-                "reconstruction requires bounded worker production",
-            ));
-        }
-        let samples = self.input(output.region)?.unwrap();
-        let support = self.support_binding(fragment, output.region, samples);
-        let uniform = self.geometry(fragment, output.region, output.region, samples);
-        let code = Self::code(&input, support.is_some());
-        let mut bindings = input.bindings;
-        if let Some(support) = support {
-            if bindings.iter().any(|(slot, _)| *slot == 25) {
-                return Err(Error::InvalidParameter(
-                    "sample code collides with reconstruction support ABI",
-                ));
-            }
-            bindings.push((25, support));
-        }
-        bindings.extend([(21, Binding::Write(output.resource)), (22, uniform)]);
-        fragment.compute(code, "main", bindings, output.cells());
-        Ok(())
+        )])
     }
 }

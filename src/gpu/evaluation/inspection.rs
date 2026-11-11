@@ -1,5 +1,4 @@
 //! Source viewing is an ordinary captured colour operation, not a second photographic recipe.
-use super::CellRegion as Rect;
 use super::*;
 
 #[repr(C)]
@@ -10,9 +9,9 @@ struct Inspection {
 }
 
 pub(crate) fn inspect(
-    input: Arc<ImageNode>,
+    input: Value,
     parameters: crate::gpu::parameters::ProcessingParameters,
-) -> Result<Arc<ImageNode>, Error> {
+) -> Result<Value, Error> {
     if input.domain.meaning != Meaning::Inspection {
         return Err(Error::InvalidParameter(
             "inspection requires source working light",
@@ -22,19 +21,14 @@ pub(crate) fn inspect(
         columns: parameters.post.map(|column| column.to_array()),
         coverage: [input.domain.grid.coverage, 0, 0, 0],
     };
-    Ok(ImageNode::new(input.domain, Some(input), operation))
-}
-
-impl Operation for Inspection {
-    fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(*self))
-    }
-
-    fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(region))
-    }
-
-    fn pointwise(&self) -> Option<Function> {
-        Some(Function::new(include_str!("inspection.wgsl"), "inspect_source").with_uniform(0, self))
-    }
+    value::pointwise(
+        input,
+        Meaning::Inspection,
+        value::Operation::pointwise_function(
+            "source inspection v1",
+            operation,
+            Function::new(include_str!("inspection.wgsl"), "inspect_source")
+                .with_uniform(0, &operation),
+        ),
+    )
 }

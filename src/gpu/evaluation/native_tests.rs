@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicU64;
 
 struct Case {
     scan: Arc<crate::scan::Scan>,
-    node: Arc<ImageNode>,
+    node: Value,
     input: AuthoredPhotograph,
     demand: crate::refinement::ViewRequest,
 }

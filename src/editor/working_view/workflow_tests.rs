@@ -10,6 +10,8 @@ use std::sync::atomic::Ordering;
 
 mod coalescing;
 mod inputs;
+mod regional_identity;
+mod retention;
 
 fn request_working(
     e: &mut Editor,
@@ -69,11 +71,7 @@ fn fixture() -> (
         renderers: Arc::default(),
     });
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
-    e.document
-        .visit
-        .working_view
-        .mailbox
-        .pressure(memory::Pressure::Normal);
+    e.document.visit.camera.pressure(memory::Pressure::Normal);
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
 }
@@ -147,7 +145,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     == small.processing_fixture(),
                 "fallback presentation retains its own processing, not the newer pipeline"
             );
-            assert!(e.document.visit.working.task.is_some());
+            assert!(e.document.visit.working_view.task.is_some());
             let working = &mut e.document.visit.working_view;
             working.acquired(Completion {
                 owner: Arc::downgrade(&working.mailbox),
@@ -210,7 +208,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
         });
         app.enter(|e, access| request_working(e, small.clone(), input, access));
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working.task.is_none()
+            e.document.visit.working_view.task.is_none()
         });
         app.read(|e| {
             assert!(e.document.visit.working_view.support_ready());
@@ -359,7 +357,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
                 "partially acquired buffers must remain private"
             );
             assert!(
-                e.document.visit.working.task.is_some(),
+                e.document.visit.working_view.task.is_some(),
                 "latest support remains pending while the previous submission is parked"
             );
         });
@@ -386,7 +384,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
                         .can_use(underlay)
                         .unwrap())
             );
-            assert!(e.document.visit.working.task.is_none());
+            assert!(e.document.visit.working_view.task.is_none());
         });
     });
     // Input preparation remains useful across layout changes. The obsolete calculation
@@ -483,7 +481,7 @@ fn physical_support_completes_without_backend_or_another_paint() {
         app.read(|e| {
             assert!(e.document.visit.working_view.source().unwrap().spec == spec);
             assert!(e.document.visit.working_view.underlay().is_some());
-            assert!(e.document.visit.working.task.is_none());
+            assert!(e.document.visit.working_view.task.is_none());
             assert!(
                 e.document.visit.working_view.displayed.is_none(),
                 "colour capture remains frame-bound"
@@ -688,7 +686,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
 }
 
 #[test]
-fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchanged() {
+fn authored_repair_changes_require_new_values_without_prepared_patch_arguments() {
     let mut e = crate::editor::tests::authored_fixture(&["patches.dng"]);
     e.set_dmin(Some(DVec3::splat(0.8)));
     e.set_dmax(Some(DVec3::splat(0.2)));
@@ -711,22 +709,13 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
     );
     assert_eq!(recipe.repairs.len(), 1);
     let pixels = e.source_context().unwrap();
-    let scan = pixels.scan().unwrap();
-    let source = crate::scan::ImageSource::new(&scan, recipe.neutral.input).unwrap();
-    let evaluated = Arc::new(crate::repair_source::evaluate(&source, &recipe.repairs[0]).unwrap());
-    let device = e.document.visit.working_view.device().unwrap();
-    let resolved = crate::gpu::repairs::Snapshot(vec![
-        crate::gpu::repairs::Patch::new(device, evaluated).unwrap(),
-    ]);
-    let processing = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let initial = Demand {
-        spec: SourceRequest::for_processing(frame, &processing).unwrap(),
+        spec: SourceRequest::for_recipe(frame, &recipe).unwrap(),
         pixels,
         capture: PhotographRequest::Recipe(recipe),
     };
-    assert!(initial.spec.repairs.0.is_empty());
     with_application(e, |app| {
         app.enter(|e, cx| e.request_working(initial, cx));
         app.run_until(Duration::from_secs(15), |e| {
@@ -741,26 +730,30 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
                 .unwrap()
                 .clone()
         });
-        let mut hydrated = (*old.request).clone();
-        hydrated.spec = hydrated.spec.with_repairs(resolved.clone());
-        assert!(old.request.capture == hydrated.capture);
-        assert!(!old.satisfies(&hydrated));
+        let mut changed = (*old.request).clone();
+        let mut recipe = (**changed.capture.recipe().unwrap()).clone();
+        recipe.repairs[0].offset = [-39, 0];
+        changed.capture = PhotographRequest::Recipe(Arc::new(recipe));
         assert!(
-            !old.supports(&hydrated),
-            "matching intent cannot substitute missing resolved arguments"
+            old.request.capture != changed.capture,
+            "the donor instruction must actually change"
         );
-        app.enter(|e, cx| e.request_working(hydrated.clone(), cx));
+        assert!(!old.satisfies(&changed));
+        assert!(
+            !old.supports(&changed),
+            "an old repaired raster cannot supply a changed donor calculation"
+        );
+        app.enter(|e, cx| e.request_working(changed.clone(), cx));
         app.read(|e| assert!(!e.document.visit.working_view.support_ready()));
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
         app.read(|e| {
             let ready = e.document.visit.working_view.frame.as_ref().unwrap();
-            assert!(ready.request.same_calculation(&hydrated));
+            assert!(ready.request.same_calculation(&changed));
             for source in std::iter::once(&ready.source).chain(ready.underlay.as_ref()) {
-                let calculation = hydrated.calculation(source).unwrap();
+                let calculation = changed.calculation(source).unwrap();
                 assert!(source.definition.same_definition(&calculation.native));
-                assert!(!source.definition.same_definition(&source.basis));
             }
         });
     });
@@ -782,7 +775,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             app.pump();
             app.read(|e| {
                 assert!(!e.document.visit.working_view.support_ready());
-                assert!(e.document.visit.working.task.is_some());
+                assert!(e.document.visit.working_view.task.is_some());
             });
         }
         drop(hold);
@@ -822,7 +815,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
         let ui = egui::Context::default();
         let (rendered, device, queue, gate) = app.update(|e| {
             assert!(
-                e.document.visit.working.task.is_none(),
+                e.document.visit.working_view.task.is_none(),
                 "output-only demand must not reacquire originals"
             );
             let services = e.source_services.as_ref().unwrap();
@@ -959,7 +952,7 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
                 e.document.visit.working_view.source().is_none()
                     && e.document.visit.working_view.underlay().is_none()
             );
-            assert!(e.document.visit.working.task.is_none());
+            assert!(e.document.visit.working_view.task.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -1008,7 +1001,7 @@ fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working
         app.pump();
         app.read(|editor| {
             assert!(
-                editor.document.visit.working.task.is_some()
+                editor.document.visit.working_view.task.is_some()
                     && !editor.document.visit.working_view.support_ready()
             )
         });
@@ -1064,18 +1057,18 @@ fn closing_after_save_does_not_dispatch_new_working_demand() {
                 cx,
             );
             request_working(e, spec.clone(), input.clone(), cx);
-            assert!(e.document.visit.working.task.is_some());
+            assert!(e.document.visit.working_view.task.is_some());
         });
         app.run_until(Duration::from_secs(15), |e| e.allow_close);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working.task.is_none()
+            e.document.visit.working_view.task.is_none()
         });
         app.enter(|e, cx| {
             assert!(!e.document.write.pending() && !e.interaction_blocked());
             e.document.visit.working_view.clear();
             request_working(e, spec, input, cx);
             assert!(
-                e.document.visit.working.task.is_none(),
+                e.document.visit.working_view.task.is_none(),
                 "an approved close admits no new acquisition"
             );
         });

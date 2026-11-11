@@ -185,6 +185,20 @@ The compact-header check covers normal/narrow 1×/2× layouts, disclosure and me
 
 Capture a [debug session](#collecting-a-session-log) to inspect import/development, selected-preview/switch, thumbnail, acquisition and original-view events for a reported workload. Match phases and inputs; filesystem caching is uncontrolled. Backend Ready or paint-command recording is not GPU completion or physical presentation, and no minimum hardware target or general latency threshold is established. The `authored_` [worker checks](development.md#feature-specific-checks) use repository fixtures; their deadlines detect stalled tests, not unacceptable photographic latency.
 
+### Dust interaction latency
+
+The [offscreen Dust diagnostic](../src/editor/kittest_tests/dust/latency.rs) releases twelve pointer clicks using the default brush, real donor search and the complete working-view path:
+
+```sh
+ANTITONE_DUST_RAW=/absolute/read-only-photo.ARW \
+  cargo test --locked --offline --release --features ui-tests --lib \
+  profile_dust_pointer_to_gpu_display -- --ignored --nocapture
+```
+
+Set `ANTITONE_DUST_LARGE=1` for a 4780×2508 window at 1:1 zoom, a near-square synthetic crop and alternating 90/116/58-source-pixel brushes. The report prints detail/underlay grids separately from window capture size. Halfway through, successive pans and another stroke exercise layout replacement; the report records whether acquisition was pending. This exercises large-frame retention, larger masks and superseded layouts.
+
+It reports donor acceptance and matching-frame GPU completion, including harness rendering/readback overhead. It uses fixed synthetic Negative anchors and predefined source positions, so choose inputs with room for separate valid repairs; timings do not assess photographic healing quality or native presentation. Application session events separately record stroke release, donor acceptance, working acquisition phases and colour submission/completion.
+
 ### Separating input, queue work and presentation
 
 Enable hosted [latency tracing](../src/platform/latency.rs) when kernel timings cannot explain an interaction:

@@ -56,6 +56,49 @@ fn project(input: crate::processing::InputSettings) -> (Project, SourceId) {
     (project, id)
 }
 
+#[test]
+fn a_gamma_question_is_an_independent_intent_evaluated_by_the_same_graph() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (mut project, id) = project(Default::default());
+    project.input = crate::processing::InputSettings::Negative {
+        dmin: Some(DVec3::ONE),
+        dmax: Some(DVec3::splat(0.125)),
+        response: crate::processing::Response {
+            toe: 1.,
+            shoulder: 0.,
+        },
+        gamma: 1.,
+        balance: Default::default(),
+    };
+    let captured = Arc::new(project.image_recipe(id).unwrap());
+    let mut question = (*captured).clone();
+    if let crate::processing::InputSettings::Negative { gamma, .. } = &mut question.neutral.input {
+        *gamma = 2.;
+    }
+    assert_eq!(captured.neutral.input.gamma(), 1.);
+    let codes = evaluation::source(Arc::new(CameraCodes));
+    let graph = |recipe| {
+        RecipeGraph::originals(codes.clone(), None, recipe)
+            .unwrap()
+            .photograph(&device.limits())
+            .unwrap()
+            .processed
+    };
+    let first = graph(&captured);
+    let second = graph(&question);
+    assert!(!first.same_definition(&second));
+    for (image, gamma) in [(first, 1_f64), (second, 2_f64)] {
+        let native = [0.25_f64, 0.5, 0.75]
+            .map(|sample| ((1. / sample).powf(1. / gamma) - 1.) / (8_f64.powf(1. / gamma) - 1.));
+        let expected = [native[0] * 1.2, native[1] * 0.8, native[2] * 0.4];
+        for pixel in read(&renderer, &queue, image) {
+            for channel in 0..3 {
+                assert!((f64::from(pixel[channel]) - expected[channel]).abs() < 2e-6);
+            }
+        }
+    }
+}
+
 fn recipe() -> ImageRecipe {
     let (project, id) = project(Default::default());
     project.image_recipe(id).unwrap()
@@ -64,7 +107,7 @@ fn recipe() -> ImageRecipe {
 fn read(
     renderer: &crate::renderer::GpuRenderer,
     queue: &wgpu::Queue,
-    image: Arc<ImageNode>,
+    image: Value,
 ) -> Vec<[f32; 4]> {
     let domain = image.domain();
     let request = renderer
@@ -142,7 +185,7 @@ fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive(
     let recipe = recipe();
     assert!(!recipe.neutral.input.ready());
     let source = evaluation::source(Arc::new(CameraCodes));
-    let graph = RecipeGraph::originals(source, None, &recipe, &Default::default()).unwrap();
+    let graph = RecipeGraph::originals(source, None, &recipe).unwrap();
     near(
         &read(&renderer, &queue, graph.source.camera.clone()),
         DVec3::new(0.25, 0.5, 0.75),
@@ -181,22 +224,18 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
         )
         .unwrap(),
     );
-    let recipe = project
-        .capture_image(project.source(id).unwrap(), |recipe| {
-            recipe.neutral.reference = Some(crate::exposure_reference::ReferenceExposure::Matched(
-                crate::exposure_reference::StartingExposure {
-                    ev: 1.,
-                    samples: 128,
-                    spread: 0.,
-                },
-            ));
-            recipe.neutral.correction = Some(correction.clone());
-        })
-        .unwrap();
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.reference = Some(crate::exposure_reference::ReferenceExposure::Matched(
+        crate::exposure_reference::StartingExposure {
+            ev: 1.,
+            samples: 128,
+            spread: 0.,
+        },
+    ));
+    recipe.neutral.correction = Some(correction.clone());
     let field = Arc::new(GpuFlatField::new(&device, correction).unwrap());
     let source = evaluation::source(Arc::new(CameraCodes));
-    let graph =
-        RecipeGraph::originals(source.clone(), Some(field), &recipe, &Default::default()).unwrap();
+    let graph = RecipeGraph::originals(source.clone(), Some(field), &recipe).unwrap();
     let camera = graph.source.camera.clone();
     let positive = graph.interpreted().unwrap().unrepaired;
     let inspection = graph
@@ -248,7 +287,7 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
         let mut upstream = branch;
         while upstream.domain().meaning != Meaning::Camera {
             upstream = upstream
-                .input()
+                .unary_input()
                 .expect("branch retains corrected camera input")
                 .clone();
         }
@@ -257,7 +296,7 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
             "view choices cannot redefine camera correction"
         );
     }
-    let missing_field = RecipeGraph::originals(source, None, &recipe, &Default::default());
+    let missing_field = RecipeGraph::originals(source, None, &recipe);
     assert!(
         missing_field.is_err(),
         "an accepted correction cannot silently disappear"
@@ -307,8 +346,7 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
     );
     let codes = evaluation::source(Arc::new(PatternCodes([0, 0, 1000, 800].into())));
     let direct = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
-    let captured =
-        RecipeGraph::originals(codes.clone(), None, &recipe, &Default::default()).unwrap();
+    let captured = RecipeGraph::originals(codes.clone(), None, &recipe).unwrap();
     let original = captured.photograph(&device.limits()).unwrap();
     let original_direct = PhotographGraph::new_with_stages(
         &device.limits(),
@@ -343,7 +381,7 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
     clean.output.grain.enabled = false;
     clean.output.halation.enabled = false;
     let clean = clean.image_recipe(id).unwrap();
-    let clean = RecipeGraph::originals(codes.clone(), None, &clean, &Default::default())
+    let clean = RecipeGraph::originals(codes.clone(), None, &clean)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
@@ -401,24 +439,44 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
     let recipe = project.image_recipe(id).unwrap();
     let area = recipe.composition.area();
     assert_eq!(recipe.repairs.len(), 1);
-    let repaired = [-0.125, 2., 0.25];
-    let evaluated =
-        crate::dust_repair::evaluate(&recipe.repairs[0], area, |_| Ok(repaired)).unwrap();
-    let repairs = crate::gpu::repairs::Snapshot::logical(vec![Arc::new(evaluated)]).unwrap();
-    let codes = evaluation::source(Arc::new(PatternCodes(area)));
-    let original = RecipeGraph::originals(codes, None, &recipe, &repairs)
+    struct DefectiveCodes(crate::geometry::SourceRegion);
+    impl evaluation::Source for DefectiveCodes {
+        fn domain(&self) -> Domain {
+            PatternCodes(self.0).domain()
+        }
+        fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            let mut pixels = PatternCodes(self.0).read(region)?;
+            for y in region.y..region.bottom() {
+                for x in region.x..region.right() {
+                    if (16..18).contains(&x) && (16..18).contains(&y) {
+                        pixels[region.index([x, y])] = [0.; 4];
+                    }
+                }
+            }
+            Ok(pixels)
+        }
+    }
+    let codes = evaluation::source(Arc::new(DefectiveCodes(area)));
+    let original = RecipeGraph::originals(codes, None, &recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
-    let patch = read(
+    let probe = CellRegion::new([16, 16], [1, 1]);
+    let damaged = read(
         &renderer,
         &queue,
-        window(original.neutral, CellRegion::new([16, 16], [1, 1])).unwrap(),
+        window(original.unrepaired, probe).unwrap(),
     );
     assert_eq!(
-        &patch[0][..3],
-        &repaired,
-        "control: the supplied repair must change original working pixels"
+        &damaged[0][..3],
+        &[0.; 3],
+        "the source fixture must contain an actual defect"
+    );
+    let patch = read(&renderer, &queue, window(original.neutral, probe).unwrap());
+    assert!(
+        patch[0][..3].iter().all(|value| value.is_finite())
+            && patch[0][..3].iter().any(|value| value.abs() > 1e-3),
+        "control: the authored repair must change original working pixels"
     );
 
     let matrix = DMat3::from_cols_array_2d(
@@ -444,13 +502,11 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
             region: area,
             size: [32, 24],
         })
-        .unwrap()
-        .with_repairs(repairs);
+        .unwrap();
     let request = super::super::request::PhotographRequest::Recipe(Arc::new(recipe.clone()));
     let graph = request
         .sampled_graph(&device.limits(), &camera, None, spec)
         .unwrap();
-    assert!(graph.request.repairs.0.is_empty());
     assert_eq!(request.recipe().unwrap().repairs, recipe.repairs);
     let pixels = read(
         &renderer,
@@ -526,7 +582,7 @@ fn filtered_recipe_keeps_the_photographs_mask_extent_instead_of_redefining_it_fr
     project.source_mut(id).unwrap().adjustment_layers = Some(layers);
     let recipe = project.image_recipe(id).unwrap();
     let codes = evaluation::source(Arc::new(CameraCodes));
-    let neutral = RecipeGraph::originals(codes, None, &recipe, &Default::default())
+    let neutral = RecipeGraph::originals(codes, None, &recipe)
         .unwrap()
         .interpreted()
         .unwrap()

@@ -690,7 +690,7 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
         assert!(
             positive_view
                 .capture
-                .processing(&device.limits(), &positive_view.spec.repairs)
+                .processing(&device.limits())
                 .unwrap()
                 .grade()
                 .is_some()
@@ -755,7 +755,7 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
         assert!(
             source_view
                 .capture
-                .processing(&device.limits(), &source_view.spec.repairs)
+                .processing(&device.limits())
                 .unwrap()
                 .grade()
                 .is_none()

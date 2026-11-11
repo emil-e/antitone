@@ -135,7 +135,13 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
         editor.source_services.as_ref().unwrap(),
         &mut measurement::capture_scan(&editor).unwrap(),
         region,
-        input,
+        editor
+            .positive_recipe(
+                input,
+                editor.document.project_snapshot().roll,
+                editor.photo_settings(),
+            )
+            .unwrap(),
         &|| false,
     )
     .unwrap();

@@ -9,7 +9,9 @@ fn interpret_positive(scan: vec3f) -> ProcessedPixel {
     var rgb: array<f32, 3>;
     var flags = 0u;
     for(var c = 0u; c < 3u; c++) {
-        if scan[c] <= 0.0 {
+        if scan[c] == parameters.dmax[c] && scan[c] > 0.0 {
+            rgb[c] = photographic_exp(parameters.anchor.w);
+        } else if scan[c] <= 0.0 {
             flags |= 1u << c;
             rgb[c] = parameters.tail[c].y + parameters.tail[c].z;
         } else {
@@ -56,6 +58,7 @@ fn invert_film(density: f32, c: u32) -> f32 {
     if a == 0.0 {
         return 0.0;
     }
-    return sign(a)
-        * exp((response_log_abs_expm1(a) - parameters.anchor[c]) / beta + parameters.anchor.w);
+    return sign(a) * photographic_exp(
+            (response_log_abs_expm1(a) - parameters.anchor[c]) / beta + parameters.anchor.w,
+        );
 }

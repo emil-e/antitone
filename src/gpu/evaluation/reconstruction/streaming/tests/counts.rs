@@ -9,7 +9,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
         axes: [[512., 0.], [0., 256.]],
     };
     let inner = reconstruct_mapped(input, output(mapping, [0, 0, 1, 1].into()), mapping).unwrap();
-    let root = ImageNode::new(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let budget = Budget {
@@ -83,11 +83,16 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                 .unwrap()
                 .unwrap(),
             _ => Production {
-                context: &context,
-                queue: &queue,
-                gate: &gate,
-                scope: &context.materializations(),
-                budget,
+                worker: Worker {
+                    context: &context,
+                    queue: &queue,
+                    gate: &gate,
+                    scope: &context.materializations(),
+                    budget,
+                    working: &HostWorkingSet::default(),
+                    cancelled: &|| false,
+                    progress: &|| {},
+                },
                 layout: ImageLayout {
                     domain: root.domain,
                     region: root.domain.finite().unwrap(),
@@ -95,8 +100,6 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                     backing: ImageBacking::Buffer,
                 },
                 pixels: &pixels,
-                cancelled: &|| false,
-                progress: &|| {},
             }
             .produce(&evaluation)
             .unwrap(),

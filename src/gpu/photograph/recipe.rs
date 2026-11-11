@@ -1,11 +1,12 @@
 //! Complete intent becomes a graph here. Source sampling and view quality determine where
 //! reconstruction belongs; consumers choose endpoints, not photographic stage order.
 
+#[cfg(feature = "editor")]
+use super::assembly::EffectOutput;
 use super::*;
 use crate::gpu::interpretation::InputTransform;
 use crate::image_recipe::ImageRecipe;
 use crate::image_recipe::quality::sampling_stages;
-use crate::pixel_pipeline::EffectDefinition;
 
 #[cfg(all(test, feature = "render"))]
 mod tests;
@@ -17,16 +18,14 @@ use crate::image_recipe::quality::Quality;
 pub(crate) struct RecipeGraph<'a> {
     recipe: &'a ImageRecipe,
     pub source: CameraGraph,
-    repairs: crate::gpu::repairs::Snapshot,
     quality: Quality,
 }
 
 impl<'a> RecipeGraph<'a> {
     pub fn originals(
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         recipe: &'a ImageRecipe,
-        repairs: &crate::gpu::repairs::Snapshot,
     ) -> Result<Self, Error> {
         PhotographGraph::require_recipe_source(&source, field.as_ref(), recipe)?;
         Ok(Self {
@@ -42,14 +41,13 @@ impl<'a> RecipeGraph<'a> {
                     mapping: Mapping::Originals,
                 },
             )?,
-            repairs: repairs.clone(),
             quality: Quality::Originals,
         })
     }
 
     #[cfg(all(feature = "ui", feature = "render"))]
     pub fn sampled_camera(
-        codes: Arc<ImageNode>,
+        codes: Value,
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
         recipe: &'a ImageRecipe,
@@ -74,7 +72,6 @@ impl<'a> RecipeGraph<'a> {
                     mapping: Mapping::Resident(source.geometry()),
                 },
             )?,
-            repairs: Default::default(),
             quality: Quality::CameraProxy,
         })
     }
@@ -88,13 +85,32 @@ impl<'a> RecipeGraph<'a> {
         Ok(())
     }
 
+    /// Original-grid photographic measurements bypass repair and downstream emulation.
+    #[cfg(feature = "editor")]
+    pub(crate) fn measurement(&self, limits: &wgpu::Limits) -> Result<PhotographGraph, Error> {
+        PhotographGraph::original(
+            limits,
+            self.source.codes.clone(),
+            self.source.input.field.clone(),
+            InputTransform::from_recipe(&self.recipe.neutral)?,
+            Grading::new(
+                limits,
+                self.recipe.roll,
+                self.recipe.grade.clone(),
+                self.recipe.neutral.source_development.active_area().into(),
+            )?,
+            Default::default(),
+            &Default::default(),
+        )
+    }
+
     fn interpretation(&self) -> Result<Assembly, Error> {
         let program = InputTransform::from_recipe(&self.recipe.neutral)?;
         let mut camera = self.source.input.clone();
         camera.matrix = program.matrix;
         Ok(Assembly::captured(Captured::new(
             camera,
-            Interpretation::Program(program, Default::default()),
+            Interpretation::Program(program),
         )?))
     }
 
@@ -126,17 +142,15 @@ impl<'a> RecipeGraph<'a> {
             }
             grading = grading.with_camera_coordinates(geometry);
         }
-        Assembly::photographic(
-            limits,
-            camera,
-            program,
-            grading,
-            if self.quality.includes_repairs() {
-                self.repairs.clone()
-            } else {
-                Default::default()
-            },
-        )
+        Assembly::photographic(limits, camera, program, grading, Default::default())
+    }
+
+    fn repair(&self, image: Value) -> Result<Value, Error> {
+        if self.quality.includes_repairs() {
+            crate::gpu::repairs::definition::compose(image, &self.recipe.repairs)
+        } else {
+            Ok(image)
+        }
     }
 
     /// Original samples: correction → interpretation → AP1 → repairs → Roll → layers
@@ -146,18 +160,10 @@ impl<'a> RecipeGraph<'a> {
         let assembly = self.assembly(limits, 0)?;
         let source =
             assembly.interpret_camera(self.source.codes.clone(), self.source.camera.clone())?;
-        let neutral = assembly.repair(source.unrepaired.clone())?;
-        let finish = finish(&assembly, neutral, self.recipe, None)?;
-        Ok(PhotographGraph {
-            codes: source.codes,
-            camera: source.camera,
-            camera_positive: source.camera_positive,
-            unrepaired: source.unrepaired,
-            neutral: finish.neutral,
-            roll: finish.roll,
-            graded: finish.graded,
-            processed: finish.processed,
-        })
+        let neutral = self.repair(source.unrepaired.clone())?;
+        Ok(assembly
+            .finish(neutral, &sampling_stages(self.recipe)?, None)?
+            .with_source(source))
     }
 
     #[cfg(feature = "editor")]
@@ -172,35 +178,15 @@ impl<'a> RecipeGraph<'a> {
             frame,
             &stages,
             crate::acquisition::Sampling::NeutralFootprints,
-        )?;
-        let plan = if let Some(grid) = native_grid {
-            if grid.composition != layout.presentation.composition
-                || grid.min != layout.presentation.min
-                || grid.max != layout.presentation.max
-            {
-                return Err(Error::InvalidParameter(
-                    "view grids describe different footprints",
-                ));
-            }
-            if (0..2).any(|axis| grid.output[axis] < layout.plan.output().output[axis]) {
-                return Err(Error::InvalidParameter(
-                    "acquired view grid is too coarse for processing",
-                ));
-            }
-            crate::acquisition::Plan::new(crate::acquisition::Request {
-                output: grid,
-                stages: &stages,
-                sampling: crate::acquisition::Sampling::NeutralFootprints,
-            })?
-        } else {
-            layout.plan
-        };
+        )?
+        .with_native_grid(native_grid)?;
+        let plan = layout.plan;
         let assembly = self.assembly(limits, 8)?;
         let source =
             assembly.interpret_camera(self.source.codes.clone(), self.source.camera.clone())?;
-        let repaired = assembly.repair(source.unrepaired.clone())?;
+        let repaired = self.repair(source.unrepaired.clone())?;
         // Repair original working positives, then filter before the view's nonlinear grade.
-        let neutral = reconstruct(
+        let neutral = crate::gpu::evaluation::reconstruct_tiled(
             repaired,
             Domain {
                 bounds: None,
@@ -211,19 +197,11 @@ impl<'a> RecipeGraph<'a> {
                 meaning: Meaning::Neutral,
             },
         )?;
-        let output = Presentation::new(layout.presentation, plan.output(), 8);
-        let finish = finish(&assembly, neutral, self.recipe, Some(output))?;
+        let output = EffectOutput::new(layout.presentation, plan.output(), 8);
         Ok((
-            PhotographGraph {
-                codes: source.codes,
-                camera: source.camera,
-                camera_positive: source.camera_positive,
-                unrepaired: source.unrepaired,
-                neutral: finish.neutral,
-                roll: finish.roll,
-                graded: finish.graded,
-                processed: finish.processed,
-            },
+            assembly
+                .finish(neutral, &stages, Some(output))?
+                .with_source(source),
             plan,
         ))
     }
@@ -238,78 +216,21 @@ impl<'a> RecipeGraph<'a> {
     }
 }
 
-struct Finished {
-    neutral: Arc<ImageNode>,
-    roll: Arc<ImageNode>,
-    graded: Arc<ImageNode>,
-    processed: Arc<ImageNode>,
-}
-
-/// Reduction is between spatial stages and footprint-integrated grain for filtered views.
-struct Presentation {
-    domain: Domain,
-    scale: [f64; 2],
-}
-
-impl Presentation {
-    #[cfg(feature = "editor")]
-    fn new(
-        presentation: crate::frame_raster::FrameRaster,
-        processing: crate::frame_raster::FrameRaster,
-        coverage: u32,
-    ) -> Self {
-        Self {
-            domain: view_domain(presentation, coverage),
-            scale: std::array::from_fn(|i| {
-                f64::from(processing.output[i]) / f64::from(presentation.output[i])
-            }),
-        }
+impl ImageRecipe {
+    pub(crate) fn validate(
+        &self,
+        limits: &wgpu::Limits,
+    ) -> Result<crate::gpu::parameters::ProcessingParameters, Error> {
+        let program = InputTransform::from_recipe(&self.neutral)?;
+        admission::prepare(
+            limits,
+            program.input,
+            self.roll,
+            &self.grade,
+            program.matrix,
+            self.neutral.source_development.active_area().into(),
+        )
     }
-
-    fn reconstruct(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        if image.domain().same_grid(self.domain) {
-            window(image, self.domain.finite()?)
-        } else {
-            reconstruct_cells(image, self.domain, [0.; 2], self.scale)
-        }
-    }
-}
-
-fn finish(
-    assembly: &Assembly,
-    neutral: Arc<ImageNode>,
-    recipe: &ImageRecipe,
-    presentation: Option<Presentation>,
-) -> Result<Finished, Error> {
-    let film = recipe.grain.parameters(recipe.composition.crop().size)?;
-    let halation = recipe.halation.parameters(recipe.composition.crop().size)?;
-    let (roll, graded) = assembly.grade(neutral.clone())?;
-    let mut image = graded.clone();
-    if let Some(parameters) = film {
-        image = crate::image_mtf::ImageMtfParameters {
-            sigma: parameters.image_mtf_sigma,
-        }
-        .compose(image)?;
-    }
-    if let Some(parameters) = halation {
-        image = parameters.compose(image)?;
-    }
-    if let Some(presentation) = presentation {
-        image = presentation.reconstruct(image)?;
-    }
-    if let Some(parameters) = film.filter(|parameters| parameters.amplitude > 0.) {
-        image = crate::pixel_pipeline::Grain {
-            parameters: parameters.grain(),
-            seed: recipe.neutral.source.0,
-        }
-        .compose(image)?;
-    }
-    Ok(Finished {
-        neutral,
-        roll,
-        graded,
-        processed: image,
-    })
 }
 
 impl PhotographGraph {
@@ -319,7 +240,6 @@ impl PhotographGraph {
         scan: &crate::scan::Scan,
         field: Option<Arc<GpuFlatField>>,
         recipe: &crate::image_recipe::ImageRecipe,
-        repairs: &crate::gpu::repairs::Snapshot,
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(Self, crate::acquisition::Plan), Error> {
@@ -338,30 +258,25 @@ impl PhotographGraph {
                 "frame belongs to a different source grid",
             ));
         }
-        RecipeGraph::originals(source, field, recipe, repairs)?.physical_view(
-            limits,
-            frame,
-            native_grid,
-        )
+        RecipeGraph::originals(source, field, recipe)?.physical_view(limits, frame, native_grid)
     }
 
     pub(crate) fn from_recipe(
         limits: &wgpu::Limits,
-        source: Arc<ImageNode>,
+        source: Value,
         field: Option<Arc<GpuFlatField>>,
         recipe: &ImageRecipe,
-        repairs: &crate::gpu::repairs::Snapshot,
     ) -> Result<Self, Error> {
-        RecipeGraph::originals(source, field, recipe, repairs)?.photograph(limits)
+        RecipeGraph::originals(source, field, recipe)?.photograph(limits)
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn filtered_recipe(
         limits: &wgpu::Limits,
         spec: &crate::gpu::view::request::SourceRequest,
-        neutral: Arc<ImageNode>,
+        neutral: Value,
         recipe: &ImageRecipe,
-    ) -> Result<(Arc<ImageNode>, crate::acquisition::Plan), Error> {
+    ) -> Result<(Value, crate::acquisition::Plan), Error> {
         if neutral.domain().meaning != Meaning::Neutral {
             return Err(Error::InvalidParameter(
                 "a photograph requires its positive prefix",
@@ -371,7 +286,7 @@ impl PhotographGraph {
         let area = recipe.neutral.source_development.active_area().into();
         let grading = Grading::new(limits, recipe.roll, recipe.grade.clone(), area)?;
         grading.require_extent(spec.area)?;
-        if Self::input_transform(&neutral).is_some_and(|captured| captured != program) {
+        if Self::input_transform(&neutral)?.is_some_and(|captured| captured != program) {
             return Err(Error::Gpu("physical-view source is stale".into()));
         }
         admission::prepare(
@@ -381,18 +296,17 @@ impl PhotographGraph {
             &recipe.grade,
             program.matrix,
             area,
-            spec.repairs.bound(),
         )?;
-        spec.repairs.require_area(area)?;
-        let plan = spec.processing_plan(&sampling_stages(recipe)?)?;
+        let stages = sampling_stages(recipe)?;
+        let plan = spec.processing_plan(&stages)?;
         let assembly = Assembly::filtered(grading.for_grid(neutral.domain().grid.coverage));
-        let output = Presentation::new(spec.frame(), plan.output(), neutral.domain().grid.coverage);
-        let finished = finish(&assembly, neutral, recipe, Some(output))?;
+        let output = EffectOutput::new(spec.frame(), plan.output(), neutral.domain().grid.coverage);
+        let finished = assembly.finish(neutral, &stages, Some(output))?;
         Ok((finished.processed, plan))
     }
 
     fn require_recipe_source(
-        source: &Arc<ImageNode>,
+        source: &Value,
         field: Option<&Arc<GpuFlatField>>,
         recipe: &ImageRecipe,
     ) -> Result<(), Error> {
@@ -428,8 +342,8 @@ impl crate::gpu::view::request::SourceRequest {
 #[cfg(feature = "editor")]
 pub(crate) struct ViewGraph {
     pub request: crate::gpu::view::request::SourceRequest,
-    pub baseline: Arc<ImageNode>,
-    pub processed: Arc<ImageNode>,
+    pub baseline: Value,
+    pub processed: Value,
     pub plan: crate::acquisition::Plan,
 }
 
@@ -441,9 +355,8 @@ impl super::request::PhotographRequest {
         renderer: &crate::renderer::GpuRenderer,
         scan: &crate::scan::Scan,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        repairs: &crate::gpu::repairs::Snapshot,
         target: crate::rendering::OutputTarget,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         if scan.flat_field() != field.as_ref().map(|field| field.field()) {
             return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
         }
@@ -461,7 +374,6 @@ impl super::request::PhotographRequest {
                     crate::gpu::evaluation::camera_source(scan)?,
                     field,
                     recipe,
-                    repairs,
                 )?
                 .photograph(&device.limits())?
                 .processed
@@ -494,11 +406,7 @@ impl super::request::PhotographRequest {
         .compose(photograph, renderer)
     }
 
-    pub fn validate(
-        &self,
-        limits: &wgpu::Limits,
-        repairs: &crate::gpu::repairs::Snapshot,
-    ) -> Result<(), Error> {
+    pub fn validate(&self, limits: &wgpu::Limits) -> Result<(), Error> {
         match self {
             Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
                 let program = self.input_transform()?;
@@ -509,23 +417,18 @@ impl super::request::PhotographRequest {
                     &recipe.grade,
                     program.matrix,
                     recipe.neutral.source_development.active_area().into(),
-                    repairs.bound(),
                 )
                 .map(|_| ())
             }
-            Self::Inspection(_) if repairs.0.is_empty() => Ok(()),
-            Self::Inspection(_) => Err(Error::InvalidParameter(
-                "inspection bypasses photographic repairs",
-            )),
+            Self::Inspection(_) => Ok(()),
             #[cfg(test)]
-            Self::Fixture(input) => input.validate_repairs(limits, repairs.bound()),
+            Self::Fixture(input) => input.validate_controls(limits),
         }
     }
 
     pub fn source_request(
         &self,
         frame: crate::frame_raster::FrameRaster,
-        repairs: crate::gpu::repairs::Snapshot,
     ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
         use crate::gpu::view::request::SourceRequest;
         let request = match self {
@@ -540,7 +443,18 @@ impl super::request::PhotographRequest {
             #[cfg(test)]
             Self::Fixture(_) => SourceRequest::for_frame(frame)?,
         };
-        Ok(request.with_repairs(repairs))
+        Ok(request)
+    }
+
+    pub fn has_repairs(&self) -> bool {
+        match self {
+            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+                recipe.repairs.iter().any(|repair| repair.enabled)
+            }
+            Self::Inspection(_) => false,
+            #[cfg(test)]
+            Self::Fixture(input) => !input.repairs.is_empty() || !input.replacements.is_empty(),
+        }
     }
 
     pub fn input_transform(&self) -> Result<crate::gpu::interpretation::InputTransform, Error> {
@@ -566,15 +480,22 @@ impl super::request::PhotographRequest {
     pub fn neutral_input(
         &self,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        repairs: crate::gpu::repairs::Snapshot,
         matrix: glam::DMat3,
         quality: Quality,
     ) -> Result<super::NeutralInput, Error> {
         use crate::gpu::interpretation::SourceInterpretation;
-        let repairs = if self.recipe().is_some() && !quality.includes_repairs() {
-            Default::default()
-        } else {
-            repairs
+        let repairs = match self {
+            Self::Recipe(recipe) | Self::BeforeLooks(recipe) if quality.includes_repairs() => {
+                recipe.repairs.clone()
+            }
+            #[cfg(test)]
+            Self::Fixture(input) => input.repairs.clone(),
+            _ => Vec::new(),
+        };
+        #[cfg(test)]
+        let replacements = match self {
+            Self::Fixture(input) => input.replacements.clone(),
+            _ => Vec::new(),
         };
         let interpretation = match self {
             Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
@@ -585,14 +506,7 @@ impl super::request::PhotographRequest {
                 }
                 SourceInterpretation::Photograph(self.input_transform()?)
             }
-            Self::Inspection(_) => {
-                if !repairs.0.is_empty() {
-                    return Err(Error::InvalidParameter(
-                        "inspection bypasses photographic repairs",
-                    ));
-                }
-                SourceInterpretation::Inspection(matrix)
-            }
+            Self::Inspection(_) => SourceInterpretation::Inspection(matrix),
             #[cfg(test)]
             Self::Fixture(input) => input
                 .source_transform()
@@ -604,6 +518,8 @@ impl super::request::PhotographRequest {
             interpretation,
             field,
             repairs,
+            #[cfg(test)]
+            replacements,
         })
     }
 
@@ -627,11 +543,11 @@ impl super::request::PhotographRequest {
     pub fn retained_graph(
         &self,
         limits: &wgpu::Limits,
-        baseline: &Arc<ImageNode>,
+        baseline: &Value,
         field: Option<Arc<GpuFlatField>>,
         request: &crate::gpu::view::request::SourceRequest,
     ) -> Result<ViewGraph, Error> {
-        let baseline = self.retained_prefix(baseline, field, request.repairs.clone())?;
+        let baseline = self.retained_prefix(baseline, field)?;
         let (processed, plan) = self.filtered(limits, request, baseline.clone())?;
         Ok(ViewGraph {
             request: request.clone(),
@@ -646,22 +562,23 @@ impl super::request::PhotographRequest {
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
         spec: crate::gpu::view::request::SourceRequest,
-    ) -> Result<(crate::gpu::view::request::SourceRequest, Arc<ImageNode>), Error> {
+    ) -> Result<(crate::gpu::view::request::SourceRequest, Value), Error> {
         let geometry = source
             .geometry()
             .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
-        let input = self.neutral_input(
-            field.clone(),
-            spec.repairs.clone(),
-            source.camera_matrix(),
-            Quality::CameraProxy,
-        )?;
-        if !input.repairs.0.is_empty() {
+        let input =
+            self.neutral_input(field.clone(), source.camera_matrix(), Quality::CameraProxy)?;
+        if !input.repairs.is_empty() {
             return Err(Error::Gpu(
                 "repaired previews require original-coordinate acquisition".into(),
             ));
         }
-        let spec = spec.with_repairs(input.repairs.clone());
+        #[cfg(test)]
+        if !input.replacements.is_empty() {
+            return Err(Error::Gpu(
+                "repaired previews require original-coordinate acquisition".into(),
+            ));
+        }
         let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
         let root = if let Some(recipe) = self.recipe() {
             RecipeGraph::sampled_camera(
@@ -697,12 +614,11 @@ impl super::request::PhotographRequest {
 
     pub fn retained_prefix(
         &self,
-        source: &Arc<ImageNode>,
+        source: &Value,
         field: Option<Arc<GpuFlatField>>,
-        repairs: crate::gpu::repairs::Snapshot,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let program = self.input_transform()?;
-        self.neutral_input(field, repairs, program.matrix, Quality::CameraProxy)?
+        self.neutral_input(field, program.matrix, Quality::CameraProxy)?
             .recompose_resident(source)
     }
 
@@ -719,22 +635,14 @@ impl super::request::PhotographRequest {
         &self,
         limits: &wgpu::Limits,
         spec: &crate::gpu::view::request::SourceRequest,
-        neutral: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<
-        (
-            Arc<crate::gpu::evaluation::ImageNode>,
-            crate::acquisition::Plan,
-        ),
-        Error,
-    > {
+        neutral: crate::gpu::evaluation::Value,
+    ) -> Result<(crate::gpu::evaluation::Value, crate::acquisition::Plan), Error> {
         match self {
             Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
                 super::PhotographGraph::filtered_recipe(limits, spec, neutral, recipe)
             }
             Self::Inspection(view) => {
-                if neutral.domain().meaning != crate::gpu::evaluation::Meaning::Inspection
-                    || !spec.repairs.0.is_empty()
-                {
+                if neutral.domain().meaning != crate::gpu::evaluation::Meaning::Inspection {
                     return Err(Error::InvalidParameter(
                         "inspection requires its source-view prefix",
                     ));
@@ -760,17 +668,13 @@ impl super::request::PhotographRequest {
         scan: &crate::scan::Scan,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
         specs: &[crate::gpu::view::request::SourceRequest],
-    ) -> Result<Vec<Arc<crate::gpu::evaluation::ImageNode>>, Error> {
+    ) -> Result<Vec<crate::gpu::evaluation::Value>, Error> {
         let source = crate::gpu::evaluation::camera_source(scan)?;
         specs
             .iter()
             .map(|spec| {
-                let input = self.neutral_input(
-                    field.clone(),
-                    spec.repairs.clone(),
-                    scan.camera_to_ap1,
-                    Quality::PhysicalView,
-                )?;
+                let input =
+                    self.neutral_input(field.clone(), scan.camera_to_ap1, Quality::PhysicalView)?;
                 input
                     .original_views(source.clone(), [spec.plan.output()])?
                     .pop()
@@ -782,12 +686,8 @@ impl super::request::PhotographRequest {
     }
 
     #[cfg(test)]
-    pub fn processing(
-        &self,
-        limits: &wgpu::Limits,
-        repairs: &crate::gpu::repairs::Snapshot,
-    ) -> Result<AuthoredPhotograph, Error> {
-        let mut input = match self {
+    pub fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
+        let input = match self {
             Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
                 AuthoredPhotograph::from_recipe(limits, recipe)?
             }
@@ -795,7 +695,6 @@ impl super::request::PhotographRequest {
             #[cfg(test)]
             Self::Fixture(input) => input.clone(),
         };
-        input.repairs = repairs.clone();
         Ok(input)
     }
 }

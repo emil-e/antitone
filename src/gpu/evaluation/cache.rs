@@ -110,7 +110,8 @@ impl Allowance {
 pub(crate) struct RetainedBuffer {
     pub key: RetainedKey,
     pub pixels: wgpu::Buffer,
-    image: Arc<super::GpuImage>,
+    pub descriptor: Arc<dyn Any + Send + Sync>,
+    image: Arc<super::ImageValue>,
     ready: AtomicBool,
     admitted: bool,
     publication: std::sync::Mutex<Option<super::materializations::Publication>>,
@@ -118,7 +119,8 @@ pub(crate) struct RetainedBuffer {
 impl RetainedBuffer {
     pub(super) fn pending(
         key: RetainedKey,
-        image: Arc<super::GpuImage>,
+        descriptor: Arc<dyn Any + Send + Sync>,
+        image: Arc<super::ImageValue>,
         publication: Option<super::materializations::Publication>,
     ) -> Self {
         Self {
@@ -128,12 +130,17 @@ impl RetainedBuffer {
                 .expect("generated values use buffer storage")
                 .clone(),
             image,
+            descriptor,
             ready: AtomicBool::new(false),
             admitted: publication.is_some(),
             publication: std::sync::Mutex::new(publication),
         }
     }
-    pub(super) fn reused(key: RetainedKey, image: Arc<super::GpuImage>) -> Self {
+    pub(super) fn reused(
+        key: RetainedKey,
+        descriptor: Arc<dyn Any + Send + Sync>,
+        image: Arc<super::ImageValue>,
+    ) -> Self {
         Self {
             key,
             pixels: image
@@ -141,6 +148,7 @@ impl RetainedBuffer {
                 .expect("generated values use buffer storage")
                 .clone(),
             image,
+            descriptor,
             ready: AtomicBool::new(true),
             admitted: true,
             publication: std::sync::Mutex::new(None),

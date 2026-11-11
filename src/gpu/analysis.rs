@@ -97,10 +97,9 @@ impl ForwardModel for ResponseModel<'_> {
             domain,
             points: points.to_vec().into(),
         }));
-        let readout =
-            crate::gpu::photograph::camera_response::CameraReadout::normalized(camera, negative)?;
+        let readout = crate::gpu::photograph::camera_response::normalized(camera, negative)?;
         let request = self.context.request(
-            readout.image.clone(),
+            readout.clone(),
             evaluation::Region {
                 bounds: domain.finite()?,
                 grid: domain.grid,
@@ -143,7 +142,7 @@ impl ForwardModel for ResponseModel<'_> {
                         f64::from(pixel[0]),
                         f64::from(pixel[1]),
                         f64::from(pixel[2]),
-                    ) * readout.decode_gain;
+                    );
                     consume(index, positive)?;
                 }
                 Ok(())

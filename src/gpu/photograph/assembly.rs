@@ -4,8 +4,6 @@ use super::operations::{Native, Working};
 use super::*;
 use crate::gpu::grading::Grading;
 use crate::gpu::photograph::PhotographGraph;
-#[cfg(feature = "editor")]
-use crate::processing::RollSettings;
 use crate::{gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline};
 
 #[cfg(all(test, feature = "editor"))]
@@ -16,59 +14,79 @@ pub struct Assembly {
     pub capture: Option<Arc<Captured>>,
     pub grading: Option<Grading>,
     pub interpretation: Interpretation,
-    pub encoded: bool,
-    pub repairs: crate::gpu::repairs::Snapshot,
-    #[cfg(all(test, feature = "editor"))]
-    effect_output: Option<EffectOutput>,
+    pub repairs: Vec<crate::dust_repair::Repair>,
+    #[cfg(test)]
+    pub replacements: Vec<crate::gpu::repairs::fixtures::Replacement>,
 }
 
-/// Explicit view-grid transition inside the canonical post-grade effect component.
-#[cfg(all(test, feature = "editor"))]
+/// View-grid transition between spatial and footprint-integrated effects.
 #[derive(Clone, Copy)]
-struct EffectOutput {
+pub(super) struct EffectOutput {
     domain: Domain,
     offset: [u32; 2],
     scale: [f64; 2],
 }
 
-#[cfg(all(test, feature = "editor"))]
 impl EffectOutput {
-    fn compose(
-        self,
-        effects: &PixelPipeline,
-        input: Arc<ImageNode>,
-    ) -> Result<Arc<ImageNode>, Error> {
-        let split = effects.footprint_suffix();
-        let prefix = PixelPipeline {
-            stages: effects.stages[..split].to_vec(),
-        };
-        let suffix = PixelPipeline {
-            stages: effects.stages[split..].to_vec(),
-        };
-        if suffix
-            .stages
-            .iter()
-            .any(|stage| stage.support(self.domain.grid.pitch).0 != [0; 2])
-        {
-            return Err(Error::InvalidParameter(
-                "footprint-integrated effect requires neighbours",
-            ));
+    #[cfg(feature = "editor")]
+    pub(super) fn new(
+        presentation: crate::frame_raster::FrameRaster,
+        processing: crate::frame_raster::FrameRaster,
+        coverage: u32,
+    ) -> Self {
+        Self {
+            domain: view_domain(presentation, coverage),
+            offset: [0; 2],
+            scale: std::array::from_fn(|i| {
+                f64::from(processing.output[i]) / f64::from(presentation.output[i])
+            }),
         }
-        let image = prefix.compose(input)?;
-        let image = if image.domain().same_grid(self.domain) {
+    }
+
+    fn compose(self, effects: &PixelPipeline, mut image: Value) -> Result<Value, Error> {
+        let split = effects.footprint_suffix();
+        for stage in &effects.stages[..split] {
+            image = stage.compose(image)?;
+        }
+        image = if image.domain().same_grid(self.domain) {
             window(image, self.domain.finite()?)?
         } else {
             reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)?
         };
-        suffix.compose(image)
+        for stage in &effects.stages[split..] {
+            image = stage.compose(image)?;
+        }
+        Ok(image)
+    }
+}
+
+pub(super) struct Finished {
+    neutral: Value,
+    roll: Value,
+    graded: Value,
+    pub(super) processed: Value,
+}
+
+impl Finished {
+    pub(super) fn with_source(self, source: SourceImages) -> PhotographGraph {
+        PhotographGraph {
+            codes: source.codes,
+            camera: source.camera,
+            camera_positive: source.camera_positive,
+            unrepaired: source.unrepaired,
+            neutral: self.neutral,
+            roll: self.roll,
+            graded: self.graded,
+            processed: self.processed,
+        }
     }
 }
 
 pub(crate) struct SourceImages {
-    pub codes: Arc<ImageNode>,
-    pub camera: Arc<ImageNode>,
-    pub camera_positive: Arc<ImageNode>,
-    pub unrepaired: Arc<ImageNode>,
+    pub codes: Value,
+    pub camera: Value,
+    pub camera_positive: Value,
+    pub unrepaired: Value,
 }
 
 impl Assembly {
@@ -77,10 +95,9 @@ impl Assembly {
         definition: CameraInput,
         program: InputTransform,
         grading: Grading,
-        repairs: crate::gpu::repairs::Snapshot,
+        repairs: Vec<crate::dust_repair::Repair>,
     ) -> Result<Self, Error> {
         let area = grading.area;
-        repairs.require_area(area)?;
         admission::prepare(
             limits,
             program.input,
@@ -88,12 +105,9 @@ impl Assembly {
             grading.snapshot(),
             program.matrix,
             area,
-            repairs.bound(),
         )?;
-        let mut assembly = Self::captured(Captured::new(
-            definition,
-            Interpretation::Program(program, Default::default()),
-        )?);
+        let mut assembly =
+            Self::captured(Captured::new(definition, Interpretation::Program(program))?);
         assembly.grading = Some(grading);
         assembly.repairs = repairs;
         Ok(assembly)
@@ -106,23 +120,21 @@ impl Assembly {
             capture: Some(capture),
             grading: None,
             interpretation,
-            encoded: false,
             repairs: Default::default(),
-            #[cfg(all(test, feature = "editor"))]
-            effect_output: None,
+            #[cfg(test)]
+            replacements: Vec::new(),
         }
     }
 
     #[cfg(feature = "editor")]
-    pub fn native(program: InputTransform, encoding: RollSettings) -> Self {
+    pub fn native(program: InputTransform) -> Self {
         Self {
             capture: None,
             grading: None,
-            interpretation: Interpretation::Program(program, encoding),
-            encoded: encoding.exposure != 0.,
+            interpretation: Interpretation::Program(program),
             repairs: Default::default(),
             #[cfg(test)]
-            effect_output: None,
+            replacements: Vec::new(),
         }
     }
 
@@ -132,44 +144,51 @@ impl Assembly {
             capture: None,
             grading: Some(grading),
             interpretation: Interpretation::Unavailable,
-            encoded: false,
             repairs: Default::default(),
             #[cfg(test)]
-            effect_output: None,
+            replacements: Vec::new(),
         }
     }
 
     #[cfg(feature = "editor")]
     pub fn input_transform(
-        image: &Arc<ImageNode>,
-    ) -> Option<crate::gpu::interpretation::InputTransform> {
-        let mut image = Some(image);
-        while let Some(node) = image {
-            if let Some(native) =
-                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Native>()
-                && let Interpretation::Program(program, _) = native.interpretation
+        image: &Value,
+    ) -> Result<Option<crate::gpu::interpretation::InputTransform>, Error> {
+        let mut captured = None;
+        for node in image.ancestors() {
+            if let Some(native) = node.parameters::<super::operations::NativeIdentity>()
+                && let Interpretation::Program(program) = native.0
             {
-                return Some(program);
+                if captured.is_some_and(|prior| prior != program) {
+                    return Err(Error::InvalidParameter(
+                        "calculation mixes source interpretations",
+                    ));
+                }
+                captured = Some(program);
             }
-            image = node.input();
         }
-        None
+        Ok(captured)
     }
 
     pub fn photograph(
         self,
-        source: Arc<ImageNode>,
+        source: Value,
         stages: &PixelPipeline,
     ) -> Result<PhotographGraph, Error> {
         let images = self.source_images(source)?;
         let neutral = self.repair(images.unrepaired.clone())?;
+        Ok(self.finish(neutral, stages, None)?.with_source(images))
+    }
+
+    pub(super) fn finish(
+        &self,
+        neutral: Value,
+        stages: &PixelPipeline,
+        output: Option<EffectOutput>,
+    ) -> Result<Finished, Error> {
         let (roll, graded) = self.grade(neutral.clone())?;
-        let processed = self.effects(graded.clone(), stages)?;
-        Ok(PhotographGraph {
-            codes: images.codes,
-            camera: images.camera,
-            camera_positive: images.camera_positive,
-            unrepaired: images.unrepaired,
+        let processed = Self::effects(graded.clone(), stages, output)?;
+        Ok(Finished {
             neutral,
             roll,
             graded,
@@ -180,7 +199,7 @@ impl Assembly {
     #[cfg(all(test, feature = "editor"))]
     pub fn preview(
         mut self,
-        source: Arc<ImageNode>,
+        source: Value,
         stages: &PixelPipeline,
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
@@ -189,32 +208,12 @@ impl Assembly {
             frame,
             stages,
             crate::acquisition::Sampling::NeutralFootprints,
-        )?;
-        let plan = if let Some(grid) = native_grid {
-            if grid.composition != layout.presentation.composition
-                || grid.min != layout.presentation.min
-                || grid.max != layout.presentation.max
-            {
-                return Err(Error::InvalidParameter(
-                    "view grids describe different footprints",
-                ));
-            }
-            if (0..2).any(|axis| grid.output[axis] < layout.plan.output().output[axis]) {
-                return Err(Error::InvalidParameter(
-                    "acquired view grid is too coarse for processing",
-                ));
-            }
-            crate::acquisition::Plan::new(crate::acquisition::Request {
-                output: grid,
-                stages,
-                sampling: crate::acquisition::Sampling::NeutralFootprints,
-            })?
-        } else {
-            layout.plan
-        };
-        let native = self.source_images(source.clone())?;
+        )?
+        .with_native_grid(native_grid)?;
+        let plan = layout.plan;
+        let native = self.source_images(source)?;
         let repaired = self.repair(native.unrepaired.clone())?;
-        let neutral = reconstruct(
+        let neutral = reconstruct_tiled(
             repaired,
             Domain {
                 bounds: None,
@@ -225,59 +224,38 @@ impl Assembly {
                 meaning: Meaning::Neutral,
             },
         )?;
-        let presentation = layout.presentation;
         self.grading = self.grading.map(|grading| grading.for_grid(8));
-        self.effect_output = Some(EffectOutput {
-            domain: Domain {
-                bounds: Some(CellRegion::new([0, 0], presentation.output)),
-                grid: Grid {
-                    coverage: 8,
-                    ..Grid::from_frame(presentation)
-                },
-                meaning: Meaning::Graded,
-            },
-            offset: [0; 2],
-            scale: std::array::from_fn(|i| {
-                f64::from(plan.output().output[i]) / f64::from(presentation.output[i])
-            }),
-        });
-        let (roll, graded) = self.grade(neutral.clone())?;
-        let processed = self.effects(graded.clone(), stages)?;
+        let output = EffectOutput::new(layout.presentation, plan.output(), 8);
         Ok((
-            PhotographGraph {
-                codes: source,
-                camera: native.camera,
-                camera_positive: native.camera_positive,
-                unrepaired: native.unrepaired,
-                neutral,
-                roll,
-                graded,
-                processed,
-            },
+            self.finish(neutral, stages, Some(output))?
+                .with_source(native),
             plan,
         ))
     }
 
     #[cfg(all(test, feature = "editor"))]
     pub fn filtered_image(
-        mut self,
-        source: Arc<ImageNode>,
+        self,
+        source: Value,
         stages: &PixelPipeline,
         output: Domain,
         offset: [u32; 2],
         scale: [f64; 2],
-    ) -> Result<Arc<ImageNode>, Error> {
-        self.effect_output = Some(EffectOutput {
-            domain: output,
-            offset,
-            scale,
-        });
+    ) -> Result<Value, Error> {
         let (_, graded) = self.grade(source)?;
-        self.effects(graded, stages)
+        Self::effects(
+            graded,
+            stages,
+            Some(EffectOutput {
+                domain: output,
+                offset,
+                scale,
+            }),
+        )
     }
 
-    pub fn camera(&self, source: Arc<ImageNode>) -> Arc<ImageNode> {
-        ImageNode::new(
+    pub fn camera(&self, source: Value) -> Value {
+        Value::from_operation(
             Domain {
                 meaning: Meaning::Camera,
                 ..source.domain()
@@ -289,8 +267,8 @@ impl Assembly {
         )
     }
 
-    pub fn interpret(&self, camera: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        Ok(ImageNode::new(
+    pub fn interpret(&self, camera: Value) -> Result<Value, Error> {
+        Ok(Value::from_operation(
             Domain {
                 meaning: Meaning::NativePositive,
                 ..camera.domain()
@@ -300,11 +278,11 @@ impl Assembly {
         ))
     }
 
-    fn working(&self, native: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn working(&self, native: Value) -> Result<Value, Error> {
         let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
             "working conversion lacks captured camera metadata",
         ))?;
-        Ok(ImageNode::new(
+        Ok(Value::from_operation(
             Domain {
                 meaning: match self.interpretation {
                     Interpretation::Packed(parameters) if !parameters.graded() => {
@@ -319,16 +297,12 @@ impl Assembly {
         ))
     }
 
-    pub fn source_images(&self, codes: Arc<ImageNode>) -> Result<SourceImages, Error> {
+    pub fn source_images(&self, codes: Value) -> Result<SourceImages, Error> {
         let camera = self.camera(codes.clone());
         self.interpret_camera(codes, camera)
     }
 
-    pub fn interpret_camera(
-        &self,
-        codes: Arc<ImageNode>,
-        camera: Arc<ImageNode>,
-    ) -> Result<SourceImages, Error> {
+    pub fn interpret_camera(&self, codes: Value, camera: Value) -> Result<SourceImages, Error> {
         let camera_positive = self.interpret(camera.clone())?;
         let unrepaired = self.working(camera_positive.clone())?;
         Ok(SourceImages {
@@ -339,33 +313,71 @@ impl Assembly {
         })
     }
 
-    pub fn unrepaired(&self, codes: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn unrepaired(&self, codes: Value) -> Result<Value, Error> {
         Ok(self.source_images(codes)?.unrepaired)
     }
 
-    pub fn repair(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        if self.repairs.0.is_empty() {
+    pub fn repair(&self, image: Value) -> Result<Value, Error> {
+        let needed = !self.repairs.is_empty();
+        #[cfg(test)]
+        let needed = needed || !self.replacements.is_empty();
+        if !needed {
             return Ok(image);
         }
-        let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
-            "repair conversion lacks captured camera metadata",
-        ))?;
-        Ok(Repairs::image(
-            image,
-            self.repairs.clone(),
-            capture.code.clone(),
-            capture.mapping,
-        ))
+        let domain = image.domain();
+        // Resident original-cell arguments have local indices; masks name absolute source cells.
+        let image = if domain.grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
+            let Some(Mapping::Resident(Some(geometry))) =
+                self.capture.as_ref().map(|capture| capture.mapping)
+            else {
+                return Err(Error::InvalidParameter(
+                    "healing requires original neutral cells",
+                ));
+            };
+            let region = geometry.region();
+            if geometry.is_pair()
+                || geometry.size() != [region.width, region.height]
+                || domain.grid.axes != [[1., 0.], [0., 1.]]
+                || domain.grid.origin != [f64::from(region.x), f64::from(region.y)]
+            {
+                return Err(Error::InvalidParameter(
+                    "healing requires original neutral cells",
+                ));
+            }
+            crate::gpu::evaluation::reconstruct(
+                image,
+                Domain {
+                    bounds: Some(region.try_into()?),
+                    grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+                    meaning: domain.meaning,
+                },
+            )?
+        } else {
+            image
+        };
+        let image = if self.repairs.is_empty() {
+            image
+        } else {
+            crate::gpu::repairs::definition::compose(image, &self.repairs)?
+        };
+        #[cfg(test)]
+        let image = if self.replacements.is_empty() {
+            image
+        } else {
+            crate::gpu::repairs::definition::compose_images(image, self.replacements.clone())?
+        };
+        if image.domain() == domain {
+            Ok(image)
+        } else {
+            crate::gpu::evaluation::reconstruct(image, domain)
+        }
     }
 
-    pub fn neutral(&self, codes: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    pub fn neutral(&self, codes: Value) -> Result<Value, Error> {
         self.repair(self.unrepaired(codes)?)
     }
 
-    pub fn grade(
-        &self,
-        neutral: Arc<ImageNode>,
-    ) -> Result<(Arc<ImageNode>, Arc<ImageNode>), Error> {
+    pub fn grade(&self, neutral: Value) -> Result<(Value, Value), Error> {
         let Some(grading) = &self.grading else {
             return Ok((neutral.clone(), neutral));
         };
@@ -375,19 +387,13 @@ impl Assembly {
     }
 
     fn effects(
-        &self,
-        image: Arc<ImageNode>,
+        image: Value,
         effects: &PixelPipeline,
-    ) -> Result<Arc<ImageNode>, Error> {
-        if self.encoded && !effects.is_empty() {
-            return Err(Error::InvalidParameter(
-                "readout encoding cannot cross an added image operation",
-            ));
+        output: Option<EffectOutput>,
+    ) -> Result<Value, Error> {
+        match output {
+            Some(output) => output.compose(effects, image),
+            None => effects.compose(image),
         }
-        #[cfg(all(test, feature = "editor"))]
-        if let Some(output) = self.effect_output {
-            return output.compose(effects, image);
-        }
-        effects.compose(image)
     }
 }

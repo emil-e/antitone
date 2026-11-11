@@ -5,19 +5,22 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+#[path = "support/output.rs"]
+mod authored_export;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::submission::SubmissionGate,
-    gpu_export::{self, Format, Request},
+    gpu_export::Format,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
 };
+use authored_export::Request;
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
 fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
@@ -90,7 +93,10 @@ fn look(minimum: [f32; 3], maximum: [f32; 3]) -> Arc<LookAsset> {
 fn repairs(
     scan: &Scan,
     calibration: Calibration,
-) -> Vec<Arc<antitone::dust_repair::EvaluatedRepair>> {
+) -> (
+    Vec<antitone::dust_repair::Repair>,
+    Vec<Arc<antitone::dust_repair::EvaluatedRepair>>,
+) {
     use antitone::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let repair = Repair {
         id: RepairId(1),
@@ -99,14 +105,15 @@ fn repairs(
         support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
         offset: [-64, 0],
     };
-    let input = InputSettings::negative((calibration).validate().unwrap());
-    vec![Arc::new(
+    let input = InputSettings::negative(calibration.validate().unwrap());
+    let evaluated = vec![Arc::new(
         antitone::repair_source::evaluate(
             &antitone::scan::ImageSource::new(scan, input).unwrap(),
             &repair,
         )
         .unwrap(),
-    )]
+    )];
+    (vec![repair], evaluated)
 }
 
 fn rgb16(path: &Path) -> Vec<u16> {
@@ -129,10 +136,10 @@ fn repaired_tiff_applies_the_scene_look_after_neutral_replacement_and_matches_sc
 fn compare_tiff(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
-    let repairs = if repaired {
+    let (instructions, repairs) = if repaired {
         repairs(&scan, calibration)
     } else {
-        vec![]
+        (vec![], vec![])
     };
     let asset = look([-2.; 3], [2.; 3]);
     let pipeline = AdjustmentLayerPipeline::new(
@@ -149,7 +156,7 @@ fn compare_tiff(repaired: bool) {
         let expected = directory.path().join("cpu.tif");
         let bypass = directory.path().join("none.tif");
         for (path, selected) in [(&actual, Some(asset.clone())), (&bypass, None)] {
-            gpu_export::write(
+            authored_export::write(
                 &renderer,
                 &device,
                 (&queue, &gate),
@@ -162,7 +169,7 @@ fn compare_tiff(repaired: bool) {
                     grade: grade.clone(),
                     composition,
                     format: Format::Tiff(target),
-                    repairs: &repairs,
+                    repairs: &instructions,
                     luts: selected.into(),
                 },
                 path,
@@ -222,10 +229,10 @@ fn repaired_half_and_full_exr_bypass_the_look_in_pixels_and_attributes() {
 fn compare_exr(repaired: bool) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
-    let repairs = if repaired {
+    let (instructions, _repairs) = if repaired {
         repairs(&scan, calibration)
     } else {
-        vec![]
+        (vec![], vec![])
     };
     let narrow = look([0.99; 3], [1.; 3]);
     let directory = tempfile::tempdir().unwrap();
@@ -234,7 +241,7 @@ fn compare_exr(repaired: bool) {
         let plain = directory.path().join("plain.exr");
         let selected = directory.path().join("selected.exr");
         for (path, look) in [(&plain, None), (&selected, Some(narrow.clone()))] {
-            gpu_export::write(
+            authored_export::write(
                 &renderer,
                 &device,
                 (&queue, &gate),
@@ -247,7 +254,7 @@ fn compare_exr(repaired: bool) {
                     grade: grade.clone(),
                     composition,
                     format: Format::Exr(precision),
-                    repairs: &repairs,
+                    repairs: &instructions,
                     luts: look.into(),
                 },
                 path,
@@ -324,7 +331,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("crop.tif");
     let gate = SubmissionGate::default();
-    gpu_export::write(
+    authored_export::write(
         &renderer,
         &device,
         (&queue, &gate),
@@ -345,7 +352,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     )
     .unwrap();
     assert_eq!(rgb16(&path).len(), 3);
-    gpu_export::write(
+    authored_export::write(
         &renderer,
         &device,
         (&queue, &gate),
@@ -390,7 +397,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         ..roll
     };
     assert!(
-        gpu_export::write(
+        authored_export::write(
             &renderer,
             &device,
             (&queue, &gate),

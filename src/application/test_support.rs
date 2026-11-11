@@ -68,7 +68,9 @@ impl<'scope, T: 'scope> TestApplication<'scope, T> {
     }
 
     /// Await executor notifications without rendering or repeatedly polling state.
+    #[track_caller]
     pub fn run_until(&mut self, timeout: Duration, done: impl Fn(&T) -> bool) {
+        let caller = std::panic::Location::caller();
         let deadline = Instant::now() + timeout;
         loop {
             self.pump();
@@ -78,11 +80,11 @@ impl<'scope, T: 'scope> TestApplication<'scope, T> {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(
                 !remaining.is_zero(),
-                "application did not reach the expected state before its deadline"
+                "application did not reach the expected state before its deadline at {caller}"
             );
-            self.wakes
-                .recv_timeout(remaining)
-                .expect("application did not reach the expected state before its deadline");
+            self.wakes.recv_timeout(remaining).unwrap_or_else(|error| {
+                panic!("application did not reach the expected state before its deadline at {caller}: {error}")
+            });
             self.application.drive();
         }
     }

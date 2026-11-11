@@ -50,23 +50,16 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
         domain,
         pixels: pixels.clone(),
     }));
-    let readout = CameraReadout::normalized(camera, negative).unwrap();
+    let readout = normalized(camera, negative).unwrap();
 
-    assert_eq!(readout.image.domain().meaning, Meaning::NativePositive);
-    assert_eq!(
-        readout.image.domain().finite().unwrap(),
-        domain.finite().unwrap()
-    );
-    assert_eq!(readout.image.domain().grid, domain.grid);
-    assert_eq!(
-        readout.decode_gain, 1.,
-        "the finite response does not need a separate numerical encoding"
-    );
+    assert_eq!(readout.domain().meaning, Meaning::NativePositive);
+    assert_eq!(readout.domain().finite().unwrap(), domain.finite().unwrap());
+    assert_eq!(readout.domain().grid, domain.grid);
 
     let scalar = Inversion::new(negative).unwrap();
     let request = context
         .request(
-            readout.image,
+            readout,
             Region {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
@@ -108,7 +101,7 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
             f64::from(actual[0]),
             f64::from(actual[1]),
             f64::from(actual[2]),
-        ) * readout.decode_gain;
+        );
         let mut tolerance = expected.rgb.abs().max(DVec3::splat(1e-6)) * 2e-5;
 
         if index == 1 {

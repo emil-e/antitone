@@ -44,7 +44,7 @@ impl PhotographGraph {
     pub(crate) fn resident_codes(
         source: &ProcessingSource,
         raster: Raster,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         if u64::from(raster.size()[0]) * u64::from(raster.size()[1])
             != u64::from(source.pixel_count())
         {
@@ -57,7 +57,7 @@ impl PhotographGraph {
             grid: Grid::from_raster(raster),
             meaning: Meaning::CameraCodes,
         };
-        Ok(ImageNode::new(
+        Ok(Value::from_operation(
             domain,
             None,
             ResidentCamera {
@@ -71,11 +71,11 @@ impl PhotographGraph {
 
     pub(crate) fn resident_photograph(
         limits: &wgpu::Limits,
-        camera: Arc<ImageNode>,
+        camera: Value,
         definition: CameraInput,
         program: InputTransform,
         grading: Grading,
-        repairs: crate::gpu::repairs::Snapshot,
+        repairs: Vec<crate::dust_repair::Repair>,
         stages: &PixelPipeline,
     ) -> Result<Self, Error> {
         let Mapping::Resident(geometry) = definition.mapping else {
@@ -97,7 +97,7 @@ impl PhotographGraph {
                 ));
             }
         }
-        if !repairs.0.is_empty() && geometry.is_none() {
+        if !repairs.is_empty() && geometry.is_none() {
             return Err(Error::Gpu(
                 "repair rendering needs original source geometry".into(),
             ));
@@ -113,11 +113,11 @@ impl PhotographGraph {
     }
 
     pub(crate) fn resident_inspection(
-        camera: Arc<ImageNode>,
+        camera: Value,
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
         view: InspectionView,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         CameraGraph::new(
             camera,
             CameraInput {

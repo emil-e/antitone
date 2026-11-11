@@ -1081,7 +1081,6 @@ impl Editor {
                     .device()
                     .map(|device| device.limits())
                     .unwrap_or_default(),
-                &Default::default(),
             )
             .map_err(|error| error.to_string())
     }
@@ -1945,6 +1944,7 @@ impl Worker {
     fn positive(
         &self,
         job: &Job,
+        recipe: &Arc<crate::image_recipe::ImageRecipe>,
         proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
@@ -1952,26 +1952,12 @@ impl Worker {
         use crate::gpu::view::ViewKernels;
         use crate::gpu::view::ViewSource;
         use crate::gpu::view::request::SourceRequest;
-        let Some(recipe) = job
-            .key
-            .recipe
-            .as_ref()
-            .map_err(|error| Error::Gpu(error.clone()))?
-            .as_ref()
-        else {
-            return Err(Error::Gpu("positive thumbnail requires a recipe".into()));
-        };
         if !self.active(job) {
             return Ok(None);
         }
         let mut recipe = recipe.clone();
         Arc::make_mut(&mut recipe).neutral.source_development =
             job.physical.development().expect("photo development");
-        if let Some(reference) = job.reference.get()
-            && recipe.neutral.reference.as_ref() != Some(reference)
-        {
-            Arc::make_mut(&mut recipe).neutral.reference = Some(reference.clone());
-        }
         let tick = std::time::Instant::now();
         let renderer = self.renderers.get(&self.device, &self.queue)?;
         metrics.renderer_seconds = tick.elapsed().as_secs_f64();
@@ -2095,12 +2081,24 @@ impl Worker {
     fn finish(&self, mut work: Work) -> Completion {
         let mut proper = false;
         let mut produced = None;
+        let mut captured = None;
         let job = &work.job;
         let image = (|| {
             let proxy = match work.input? {
                 Input::Positive => {
                     proper = true;
-                    return self.positive(job, None, &mut work.metrics);
+                    let recipe = job
+                        .key
+                        .recipe
+                        .as_ref()
+                        .map_err(|error| Error::Gpu(error.clone()))?
+                        .as_ref()
+                        .ok_or(Error::Gpu("positive thumbnail requires a recipe".into()))?;
+                    captured = Some(crate::photo_preparation::ready_image(
+                        recipe,
+                        &job.reference,
+                    ));
+                    return self.positive(job, captured.as_ref().unwrap(), None, &mut work.metrics);
                 }
                 Input::Retired => return Ok(None),
                 Input::Proxy(proxy) => proxy,
@@ -2129,7 +2127,21 @@ impl Worker {
                 let prepared = work.prepared.as_ref().ok_or(Error::UnusableSample(
                     "positive proxy has not been acquired",
                 ))?;
-                return self.positive(job, Some(prepared), &mut work.metrics);
+                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
+                // Acquisition resolved the reference; the recipe's recorded value still wins.
+                let (prepared, recipe) = crate::photo_preparation::proxy_image(
+                    recipe,
+                    &job.reference,
+                    &prepared.data,
+                    Ok(None),
+                );
+                captured = Some(recipe);
+                return self.positive(
+                    job,
+                    captured.as_ref().unwrap(),
+                    Some(&prepared),
+                    &mut work.metrics,
+                );
             }
             make_image(
                 &self.device,
@@ -2156,10 +2168,8 @@ impl Worker {
             "thumbnail"
         );
         let mut key = job.key.clone();
-        if let Ok(Some(recipe)) = &mut key.recipe
-            && recipe.neutral.reference.as_ref() != job.reference.get()
-        {
-            Arc::make_mut(recipe).neutral.reference = job.reference.get().cloned();
+        if let Some(recipe) = captured {
+            key.recipe = Ok(Some(recipe));
         }
         Completion {
             outcome: Outcome {

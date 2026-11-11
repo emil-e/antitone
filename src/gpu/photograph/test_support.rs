@@ -102,7 +102,7 @@ impl CameraFixture {
             grid: Grid::from_raster(raster),
             meaning: Meaning::CameraCodes,
         };
-        let camera = ImageNode::new(
+        let camera = Value::from_operation(
             domain,
             None,
             ResidentCamera {
@@ -153,7 +153,7 @@ impl CameraFixture {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        image: Arc<ImageNode>,
+        image: Value,
     ) -> Result<(), Error> {
         self.context.require_device(device)?;
         let plan = self.context.request(

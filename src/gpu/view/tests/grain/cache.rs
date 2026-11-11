@@ -550,7 +550,8 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
                         .as_ref()
                         .unwrap()
                         .field()
-                        .is_none()
+                        .is_some(),
+                    "a live recording owns its required field independently of optional retention"
                 );
                 view.ensure_submitted(
                     &device,

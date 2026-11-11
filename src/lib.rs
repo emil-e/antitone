@@ -7,9 +7,9 @@ pub mod adjustment_layers;
 pub mod application;
 #[cfg(feature = "project")]
 pub mod auto_crop;
-#[cfg(feature = "editor")]
+#[cfg(any(feature = "editor", feature = "gpu"))]
 mod background;
-#[cfg(feature = "editor")]
+#[cfg(any(feature = "editor", feature = "gpu"))]
 mod cancellation;
 pub mod color;
 pub mod coverage;
@@ -154,6 +154,8 @@ pub const PROCESSING_MODEL_VERSION: u32 = 6;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     InvalidParameter(&'static str),
+    /// A valid calculation description needs a smaller execution unit or more resources.
+    WorkingAllowance(&'static str),
     InvalidCalibration {
         channel: usize,
         reason: &'static str,
@@ -176,6 +178,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidParameter(reason) => write!(f, "Invalid parameter: {reason}"),
+            Self::WorkingAllowance(reason) => write!(f, "Working allowance: {reason}"),
             Self::InvalidCalibration { channel, reason } => {
                 write!(f, "Invalid calibration in channel {channel}: {reason}")
             }

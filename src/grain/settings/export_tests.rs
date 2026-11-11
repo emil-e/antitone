@@ -5,9 +5,8 @@ use crate::{
     geometry::Composition,
     gpu::submission::SubmissionGate,
     gpu_export::{
-        Format, Request,
+        authored::{Format, Request, write},
         tests::{context, exr_pixels, tiff_pixels},
-        write,
     },
     processing::InputSettings,
     rendering::OutputTarget,

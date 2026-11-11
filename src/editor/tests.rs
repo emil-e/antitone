@@ -928,7 +928,7 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
 }
 
 #[test]
-fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
+fn neutral_proposals_have_independent_scopes_and_reject_out_of_range_controls() {
     let mut editor = fixture();
     let id = editor
         .document
@@ -1006,13 +1006,23 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         }
     );
     editor.set_gamma(0.1);
+    editor.preview_picker(PickerCase::Gamma);
+    calibration::set_gamma_balance(
+        &mut editor,
+        Balance {
+            warmth: 1.,
+            tint: 1.,
+        },
+    )
+    .unwrap();
+    editor.finish_pick(&crate::application::UiContext::render_only());
     let old = editor.balance();
     editor.preview_picker(PickerCase::Gamma);
     assert!(
         (calibration::set_gamma_balance(
             &mut editor,
             Balance {
-                warmth: 1.1,
+                warmth: 2.,
                 tint: 1.,
             }
         ))
@@ -1919,7 +1929,10 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.set_test_pick_region(Some(coverage));
     let input = white_balance::LayerInput::capture(&editor).unwrap();
     assert_eq!(
-        (input.roll, input.layer.photo),
+        (
+            input.recipe.roll,
+            input.recipe.grade.layers()[input.index].photo
+        ),
         (editor.document.project.roll, editor.photo_settings())
     );
 }
@@ -2098,7 +2111,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
 }
 
 #[test]
-fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
+fn export_owns_the_accepted_photo_snapshot_and_rejects_unrepresentable_masks() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
@@ -2132,28 +2145,26 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
     editor.set_test_busy(false);
     let id = editor.document.visit.current_source.unwrap();
     let mut layers = AdjustmentLayers::default();
-    for exposure in [-16., 16.] {
-        for _ in 0..7 {
-            layers
-                .add(
-                    "Recovery".into(),
-                    AdjustmentLayer {
-                        mask: AdjustmentLayerCoverage::Linear {
-                            start: SourcePoint([12., 7.]),
-                            end: SourcePoint([876., 583.]),
-                        },
-                        photo: AdjustmentLayerSettings {
-                            exposure,
-                            ..AdjustmentLayerSettings::default()
-                        },
-                        enabled: true,
-                        invert: false,
-                        strength: 1.,
-                    },
-                )
-                .unwrap();
-        }
-    }
+    layers
+        .add(
+            "Unrepresentable mask".into(),
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Radial {
+                    center: SourcePoint([12., 7.]),
+                    radii: [f64::MIN_POSITIVE, 1.],
+                    angle: 0.,
+                    feather: 0.5,
+                },
+                photo: AdjustmentLayerSettings {
+                    exposure: 1.,
+                    ..Default::default()
+                },
+                enabled: true,
+                invert: false,
+                strength: 1.,
+            },
+        )
+        .unwrap();
     editor
         .document
         .project
@@ -2166,7 +2177,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         .unwrap_err()
         .to_string();
     assert!(
-        rejection.contains("f32 intermediate working range"),
+        rejection.contains("mask coordinates exceed the f32 range"),
         "{rejection}"
     );
     editor.export(

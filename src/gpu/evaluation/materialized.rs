@@ -20,10 +20,14 @@ pub(super) struct Stored {
 
 struct Part {
     layout: ImageLayout,
-    image: Arc<GpuImage>,
+    image: Arc<ImageValue>,
 }
 
-pub(super) fn validate(domain: Domain, layout: ImageLayout, image: &GpuImage) -> Result<(), Error> {
+pub(super) fn validate(
+    domain: Domain,
+    layout: ImageLayout,
+    image: &ImageValue,
+) -> Result<(), Error> {
     layout.region.validate()?;
     if layout.domain != domain || !domain.contains_region(layout.region) {
         return Err(Error::InvalidParameter(
@@ -31,6 +35,9 @@ pub(super) fn validate(domain: Domain, layout: ImageLayout, image: &GpuImage) ->
         ));
     }
     match (layout.backing, &image.storage) {
+        (ImageBacking::Host, ImageStorage::Host(pixels))
+            if layout.format == ImageFormat::Rgba32Float
+                && pixels.len() as u64 * 16 == layout.bytes() => {}
         (ImageBacking::Buffer, ImageStorage::Buffer(pixels))
             if pixels.size() == layout.bytes()
                 && pixels.usage().contains(wgpu::BufferUsages::STORAGE) => {}
@@ -61,7 +68,7 @@ impl Stored {
     pub(super) fn find(
         scope: Option<&Materializations>,
         supplied: &[SuppliedImage],
-        definition: &ImageNode,
+        definition: &value::Value,
         region: Rect,
     ) -> Result<Option<Self>, Error> {
         let mut values: Vec<Part> = supplied
@@ -72,11 +79,13 @@ impl Stored {
                 image: image.image.clone(),
             })
             .collect();
-        if let Some((scope, identity)) = scope.zip(definition.identity()) {
+        let output = definition.output(region)?;
+        if let Some((scope, identity)) = scope.zip(output.identity()) {
             values.extend(
                 scope
                     .ready::<ImageLayout>(identity)
                     .into_iter()
+                    .filter(|image| image.descriptor.backing != ImageBacking::Host)
                     .map(|image| Part {
                         layout: *image.descriptor,
                         image: image.image,
@@ -126,6 +135,7 @@ impl Stored {
         f: &mut Fragment,
         domain: Domain,
         region: Rect,
+        identity: Option<&RetainedKey>,
     ) -> Option<PlannedImage> {
         let [part] = self.parts.as_slice() else {
             return None;
@@ -139,7 +149,14 @@ impl Stored {
         Some(PlannedImage {
             domain,
             region,
-            resource: f.resource(Storage::ResidentBuffer(part.image.clone())),
+            resource: f.resource(match identity {
+                Some(key) => Storage::Image {
+                    key: key.clone(),
+                    layout: part.layout,
+                    pixels: Some(part.image.clone()),
+                },
+                None => Storage::ResidentBuffer(part.image.clone()),
+            }),
         })
     }
 
@@ -164,6 +181,7 @@ impl Stored {
             let slot = 40 + i as u32;
             let name = format!("materialized_part_{i}");
             let sample = match &part.image.storage {
+                ImageStorage::Host(_) => unreachable!("host values are not resident GPU inputs"),
                 ImageStorage::Buffer(_) => {
                     let element = match layout.format {
                         ImageFormat::Rgba16Uint => "vec2u",

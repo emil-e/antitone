@@ -11,7 +11,7 @@ fn colour_adjustment_layer(stage: u32, row: u32, column: u32) -> f32 {
 fn photographic_post(input: array<f32, 3>, gain: f32) -> array<f32, 3> {
     var scaled: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {
-        scaled[c] = input[c] * gain;
+        scaled[c] = photographic_finite(input[c] * gain);
     }
     return matrix_product(parameters.post, scaled);
 }
@@ -20,11 +20,13 @@ fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: f32) -> array<f32, 3> 
     let exposure = exp(weight * colour_adjustment_layer(stage, 2u, 0u));
     var exposed: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {
-        exposed[c] = rgb[c] * exposure;
+        exposed[c] = photographic_finite(rgb[c] * exposure);
     }
     var cones = matrix_product(adjustment_layer_context.cones.columns, exposed);
     for(var c = 0u; c < 3u; c++) {
-        cones[c] *= exp(weight * colour_adjustment_layer(stage, 2u, c + 1u));
+        cones[c] = photographic_finite(
+                cones[c] * exp(weight * colour_adjustment_layer(stage, 2u, c + 1u)),
+            );
     }
     return matrix_product(adjustment_layer_context.inverse.columns, cones);
 }
@@ -52,7 +54,7 @@ fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3
         } else if ev != 0.0 {
             let gain = exp(weight * ev);
             for(var c = 0u; c < 3u; c++) {
-                rgb[c] *= gain;
+                rgb[c] = photographic_finite(rgb[c] * gain);
             }
         }
         let da = weight * colour_adjustment_layer_delta(stage, 3u, 0u, 1.0);

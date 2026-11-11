@@ -1,4 +1,4 @@
-//! Camera interpretation, working-space conversion and sparse repair operations.
+//! Camera interpretation and working-space conversion.
 
 use crate::Error;
 use crate::gpu::evaluation::*;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Interpretation {
-    Program(InputTransform, RollSettings),
+    Program(InputTransform),
     Packed(ProcessingParameters),
     Unavailable,
 }
@@ -21,7 +21,7 @@ pub enum Interpretation {
 impl PartialEq for Interpretation {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Program(a, ar), Self::Program(b, br)) => a == b && ar == br,
+            (Self::Program(a), Self::Program(b)) => a == b,
             (Self::Packed(a), Self::Packed(b)) => bytemuck::bytes_of(a) == bytemuck::bytes_of(b),
             (Self::Unavailable, Self::Unavailable) => true,
             _ => false,
@@ -32,9 +32,11 @@ impl PartialEq for Interpretation {
 impl Interpretation {
     fn parameters(&self) -> Result<ProcessingParameters, Error> {
         match self {
-            Self::Program(program, roll) => {
-                ProcessingParameters::interpret(program.input, *roll, glam::DMat3::IDENTITY)
-            }
+            Self::Program(program) => ProcessingParameters::interpret(
+                program.input,
+                RollSettings::default(),
+                glam::DMat3::IDENTITY,
+            ),
             Self::Packed(parameters) => Ok(*parameters),
             Self::Unavailable => Err(Error::InvalidParameter(
                 "neutral prefix requires captured input interpretation",
@@ -90,7 +92,6 @@ pub struct Captured {
     pub matrix: glam::DMat3,
     pub field: Option<Arc<GpuFlatField>>,
     pub mapping: Mapping,
-    pub code: Arc<str>,
 }
 
 impl Captured {
@@ -119,7 +120,6 @@ impl Captured {
             matrix,
             field,
             mapping,
-            code: crate::gpu::repairs::shader().into(),
         }))
     }
 
@@ -141,52 +141,19 @@ pub struct Camera {
 }
 
 #[derive(Debug, PartialEq)]
-struct CameraIdentity {
-    field: Option<Arc<crate::flat_field::FlatField>>,
+pub(super) struct CameraIdentity {
+    pub field: Option<Arc<crate::flat_field::FlatField>>,
     original_mapping: bool,
     geometry: Option<SourceGeometry>,
 }
 
-impl Operation for Camera {
-    fn sample_producer(&self) -> Option<&dyn SampleProducer> {
-        Some(self)
-    }
-
-    fn pointwise(&self) -> Option<Function> {
-        if !matches!(self.captured.mapping, Mapping::Originals) {
-            return None;
-        }
-        let capture = &self.captured;
-        let geometry = match &capture.field {
-            Some(field) => FieldGeometry::new(
-                field,
-                SourceGeometry::new(field.field().area(), [1, 1]).ok()?,
-            ),
-            None => FieldGeometry::uncorrected(None),
-        };
-        Some(capture.bind_field(
-            Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::shader::functions(),
-                    r#"
-fn corrected_camera_light(pixel: vec4f, position: vec2f) -> vec4f {
-    return vec4f(camera_light_at(pixel.rgb, vec2u(floor(position))), 0.0);
-}
-"#
-                ),
-                "corrected_camera_light",
-            ),
-            &geometry,
-        ))
-    }
-
-    fn identity(&self) -> Option<RetainedKey> {
+impl Camera {
+    fn identity(&self) -> CameraIdentity {
         let (original_mapping, geometry) = match self.captured.mapping {
             Mapping::Originals => (true, None),
             Mapping::Resident(geometry) => (false, geometry),
         };
-        Some(RetainedKey::new(CameraIdentity {
+        CameraIdentity {
             field: self
                 .captured
                 .field
@@ -194,129 +161,70 @@ fn corrected_camera_light(pixel: vec4f, position: vec2f) -> vec4f {
                 .map(|field| field.field.clone()),
             original_mapping,
             geometry,
-        }))
-    }
-
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
-    }
-
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let sample = Sampled::raster(f, input.unwrap());
-        self.emit(
-            f,
-            Some(SampleInput::Callable(sample)),
-            output.domain,
-            output.region,
-        )?
-        .materialize(f, output)
-    }
-}
-
-fn repair_geometry(
-    geometry: Option<SourceGeometry>,
-) -> Option<(crate::geometry::SourceRegion, SourceGeometry)> {
-    let geometry = geometry?;
-    let region = geometry.region();
-    (geometry.size() == [region.width, region.height]).then_some((region, geometry))
-}
-
-pub struct Repairs {
-    snapshot: crate::gpu::repairs::Snapshot,
-    code: Arc<str>,
-    mapping: Mapping,
-}
-
-impl Repairs {
-    pub fn image(
-        input: Arc<ImageNode>,
-        snapshot: crate::gpu::repairs::Snapshot,
-        code: Arc<str>,
-        mapping: Mapping,
-    ) -> Arc<ImageNode> {
-        if snapshot.0.is_empty() {
-            return input;
         }
-        ImageNode::new(
-            input.domain(),
-            Some(input),
-            Self {
-                snapshot,
-                code,
-                mapping,
-            },
-        )
     }
 }
-
-impl Operation for Repairs {
-    fn identity(&self) -> Option<RetainedKey> {
-        #[derive(Debug, PartialEq)]
-        struct Repaired(RetainedKey, bool, Option<SourceGeometry>);
-        Some(RetainedKey::new(Repaired(
-            RetainedKey::new(self.snapshot.content()),
-            matches!(self.mapping, Mapping::Originals),
-            match self.mapping {
-                Mapping::Originals => None,
-                Mapping::Resident(geometry) => geometry,
-            },
-        )))
+impl Operation for Camera {
+    fn key(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(self.identity()))
     }
-
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(vec![Read::new(0, region)])
     }
-
-    fn in_place(&self) -> bool {
-        true
-    }
-
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        _: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let Some((region, geometry)) = repair_geometry(self.mapping.geometry(output.region)?)
-        else {
-            return Ok(());
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let capture = &self.captured;
+        let original = matches!(capture.mapping, Mapping::Originals);
+        let geometry = if original {
+            capture
+                .field
+                .as_ref()
+                .map(|field| SourceGeometry::new(field.field().area(), [1, 1]))
+                .transpose()?
+        } else {
+            capture.mapping.geometry(output)?
         };
-        let geometry = f.uniform(&FieldGeometry::uncorrected(Some(geometry)));
-        let tile = f.uniform(&[
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            0u32,
-            0,
-            0,
-            0,
-        ]);
-        for patch in &self.snapshot.0 {
-            let pixels = patch.fragment_pixels(region);
-            if pixels.is_empty() {
-                continue;
-            }
-            let count = pixels.len() as u32;
-            let data = f.resource(Storage::Data(bytemuck::cast_slice(&pixels).into()));
-            f.compute(
-                self.code.clone(),
-                "repair_neutral",
-                vec![
-                    (1, Binding::Write(output.resource)),
-                    (5, geometry.clone()),
-                    (12, Binding::Read(data)),
-                    (13, tile.clone()),
-                ],
-                count,
-            );
-        }
-        Ok(())
+        let field = match &capture.field {
+            Some(field) => FieldGeometry::new(
+                field,
+                geometry.ok_or(Error::InvalidParameter(
+                    "corrected source requires geometry",
+                ))?,
+            ),
+            None => FieldGeometry::uncorrected(geometry),
+        };
+        let source = if original {
+            "source=vec2u(floor(position));"
+        } else {
+            "if field.grid.z != 0u { let xy=vec2u(cell);source=source_pixel(xy.y*field.dimensions.x+xy.x); }"
+        };
+        let code = format!(
+            "{}\nfn pixel(cell:vec2i, position:vec2f, value:vec4f)->vec4f {{ if value.w<0.0 {{return value;}} var source=vec2u(0u); {source} return vec4f(camera_light_at(value.rgb,source),0.0); }}",
+            crate::gpu::photograph::shader::functions()
+        );
+        let bindings = capture
+            .bind_field(Function::new(code.clone(), "pixel"), &field)
+            .bindings;
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            value::Operation::new(
+                "camera illumination v1",
+                self.identity(),
+                code,
+                "pixel",
+                value::Access::Pointwise,
+            )
+            .with_bindings(bindings),
+        )
+        .map(Some)
     }
 }
 
@@ -341,32 +249,52 @@ impl Native {
 }
 
 #[derive(Debug, PartialEq)]
-struct NativeIdentity(Interpretation);
+pub(super) struct NativeIdentity(pub Interpretation);
 
 impl Operation for Native {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(NativeIdentity(self.interpretation)))
     }
 
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
     }
 
-    fn pointwise(&self) -> Option<Function> {
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            value::Operation::pointwise_function(
+                "native camera interpretation v1",
+                NativeIdentity(self.interpretation),
+                self.function(),
+            ),
+        )
+        .map(Some)
+    }
+}
+
+impl Native {
+    pub(super) fn function(&self) -> Function {
         let parameters =
             native_parameters(&self.interpretation).expect("captured interpretation was admitted");
-        static FUNCTION: std::sync::OnceLock<Function> = std::sync::OnceLock::new();
-        let function = FUNCTION.get_or_init(|| {
-            Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::shader::functions(),
-                    include_str!("native.wgsl")
-                ),
-                "native_response",
-            )
-        });
-        Some(function.clone().with_uniform(2, &parameters))
+        Function::new(
+            format!(
+                "{}\n{}",
+                crate::gpu::photograph::shader::functions(),
+                include_str!("native.wgsl")
+            ),
+            "native_response",
+        )
+        .with_uniform(2, &parameters)
     }
 }
 
@@ -390,36 +318,57 @@ impl Working {
 struct WorkingIdentity(Interpretation, glam::DMat3);
 
 impl Operation for Working {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(WorkingIdentity(
             self.interpretation,
             self.matrix,
         )))
     }
 
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
     }
 
-    fn pointwise(&self) -> Option<Function> {
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            value::Operation::pointwise_function(
+                "native to working v1",
+                WorkingIdentity(self.interpretation, self.matrix),
+                self.function(),
+            ),
+        )
+        .map(Some)
+    }
+}
+
+impl Working {
+    pub(super) fn function(&self) -> Function {
         let parameters = self
             .interpretation
             .parameters()
             .expect("captured interpretation was admitted");
         let matrix = crate::gpu::parameters::CameraMatrix::new(self.matrix)
             .expect("captured camera matrix was admitted");
-        Some(
-            Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::shader::functions(),
-                    include_str!("working.wgsl")
-                ),
-                "native_to_working",
-            )
-            .with_uniform(2, &parameters)
-            .with_uniform(3, &matrix),
+        Function::new(
+            format!(
+                "{}\n{}",
+                crate::gpu::photograph::shader::functions(),
+                include_str!("working.wgsl")
+            ),
+            "native_to_working",
         )
+        .with_uniform(2, &parameters)
+        .with_uniform(3, &matrix)
     }
 }
 
@@ -439,129 +388,57 @@ pub struct ResidentCamera {
 }
 
 impl Operation for ResidentCamera {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(ResidentIdentity(
             self.identity.clone(),
             self.continuous,
         )))
     }
-
-    fn input(&self, _: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(None)
+    fn reads(&self, _: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(vec![])
     }
-    fn sample_producer(&self) -> Option<&dyn SampleProducer> {
-        Some(self)
-    }
-    fn lower(
-        &self,
-        fragment: &mut Fragment,
-        _: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        self.emit(fragment, None, output.domain, output.region)?
-            .materialize(fragment, output)
-    }
-}
-impl SampleProducer for ResidentCamera {
-    fn access(&self) -> Access {
-        Access::Callable
-    }
-    fn emit(
-        &self,
-        fragment: &mut Fragment,
-        _: Option<SampleInput>,
-        _: Domain,
-        _: CellRegion,
-    ) -> Result<Sampled, Error> {
-        let b = self.domain.finite()?;
-        let bounds = fragment.uniform(&b.packed());
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        _: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let (element, value) = if self.continuous {
             ("vec4f", "return resident_codes[index];")
         } else {
             (
                 "vec2u",
-                "let packed=resident_codes[index]; return vec4f(f32(packed.x & 65535u),f32(packed.x >> 16u),f32(packed.y & 65535u),0.0);",
+                "let packed=resident_codes[index];return vec4f(f32(packed.x&65535u),f32(packed.x>>16u),f32(packed.y&65535u),0.0);",
             )
         };
-        Ok(Sampled {
-            code: format!(
-                r#"
-@group(0) @binding(32) var<storage,read> resident_codes: array<{element}>;
-@group(0) @binding(33) var<uniform> resident_bounds: vec4u;
-fn sample_resident_camera(p:vec2i) -> vec4f {{
-    let local=vec2u(p)-resident_bounds.xy;
+        let code = format!(
+            r#"
+@group(0) @binding(0) var<storage,read> resident_codes:array<{element}>;
+@group(0) @binding(1) var<uniform> resident_bounds:vec4u;
+fn pixel(cell:vec2i,position:vec2f)->vec4f {{
+    let local=vec2u(cell)-resident_bounds.xy;
     let index=local.y*resident_bounds.z+local.x;
     {value}
-}}
-"#
+}}"#
+        );
+        let bounds = self.domain.finite()?.packed();
+        let function = Function::new(code.clone(), "pixel")
+            .with_shared(0, Shared::Buffer(self.pixels.clone()))
+            .with_uniform(1, &bounds);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![],
+            value::Operation::new(
+                "resident camera codes v1",
+                ResidentIdentity(self.identity.clone(), self.continuous),
+                code,
+                "pixel",
+                value::Access::Pointwise,
             )
-            .into(),
-            symbol: "sample_resident_camera".into(),
-            bindings: vec![
-                (32, Binding::Shared(Shared::Buffer(self.pixels.clone()))),
-                (33, bounds),
-            ],
-        })
-    }
-}
-
-impl SampleProducer for Camera {
-    fn access(&self) -> Access {
-        Access::Callable
-    }
-    fn emit(
-        &self,
-        fragment: &mut Fragment,
-        input: Option<SampleInput>,
-        domain: Domain,
-        region: CellRegion,
-    ) -> Result<Sampled, Error> {
-        let Some(SampleInput::Callable(input)) = input else {
-            return Err(Error::InvalidParameter(
-                "camera correction requires captured samples",
-            ));
-        };
-        let (function, coordinates) = if let Some(function) = self.pointwise() {
-            (function, domain)
-        } else {
-            let capture = &self.captured;
-            let geometry = capture.mapping.geometry(region)?;
-            let field = match &capture.field {
-                Some(field) => FieldGeometry::new(
-                    field,
-                    geometry.ok_or(Error::InvalidParameter(
-                        "corrected source requires geometry",
-                    ))?,
-                ),
-                None => FieldGeometry::uncorrected(geometry),
-            };
-            let function = Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::shader::functions(),
-                    r#"
-fn corrected_resident_camera_light(pixel:vec4f, position:vec2f) -> vec4f {
-    var source=vec2u(0u);
-    if field.grid.z != 0u {
-        let xy=vec2u(floor(position));
-        source=source_pixel(xy.y*field.dimensions.x+xy.x);
-    }
-    return vec4f(camera_light_at(pixel.rgb,source),0.0);
-}
-"#
-                ),
-                "corrected_resident_camera_light",
-            );
-            let function = capture.bind_field(function, &field);
-            // Nearest-centre development uses integral proxy indices, not rounded world positions.
-            (
-                function,
-                Domain {
-                    grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                    ..domain
-                },
-            )
-        };
-        input.map(fragment, coordinates, region, vec![function])
+            .with_bindings(function.bindings),
+        )
+        .map(Some)
     }
 }

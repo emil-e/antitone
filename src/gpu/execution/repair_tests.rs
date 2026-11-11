@@ -1,17 +1,10 @@
 use super::*;
-use crate::adjustment_layers::AdjustmentLayerSnapshot;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
-use crate::gpu::submission::SubmissionGate;
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::processing::Calibration;
-use crate::processing::RollSettings;
-use crate::{
-    adjustment_layers::AdjustmentLayerSettings,
-    dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
+use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
+use crate::gpu::{
+    evaluation as e,
+    repairs::{definition, fixtures},
+    submission::SubmissionGate,
 };
-use glam::DMat3;
-use glam::DVec3;
 use std::sync::Arc;
 
 #[test]
@@ -35,28 +28,20 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     };
     let evaluated =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.125, 2., 0.25])).unwrap());
-    let logical = crate::gpu::repairs::Snapshot::logical(vec![evaluated.clone()]).unwrap();
-    let photo = AdjustmentLayerSettings::default();
-    let grade = Arc::new(
-        AuthoredPhotograph::new(
-            &device.limits(),
-            Calibration {
-                dmin: DVec3::splat(0.8),
-                dmax: DVec3::splat(0.01),
-            },
-            RollSettings::default(),
-            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
-                photo,
-            )])
-            .unwrap(),
-            DMat3::IDENTITY,
-            area,
-        )
-        .unwrap(),
-    );
-    let kernel = crate::gpu::photograph::test_support::CameraFixture::with_context(
-        renderer.evaluation.clone(),
-    );
+    let base = fixtures::image(
+        e::Domain {
+            bounds: Some(area.try_into().unwrap()),
+            grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: e::Meaning::Neutral,
+        },
+        vec![[0.1, 0.2, 0.3, 0.]; area.width as usize * area.height as usize],
+    )
+    .unwrap();
+    let repaired = definition::compose_images(
+        base.clone(),
+        fixtures::replacements(std::slice::from_ref(&evaluated)).unwrap(),
+    )
+    .unwrap();
     let reconstruction = Reconstructor::new(&device).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -72,35 +57,43 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         usage: wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
+    let scope = renderer.evaluation.test_materializations(false);
     let mut repaired_count = 0;
     for origin in [[0, 0], [128, 0]] {
         let mut unit = Unit::new(composition, origin, [128; 2]).unwrap();
         unit.mapping.space[0] = 1;
-        let b = unit.bounds;
-        let size = [b.width, b.height];
-        let source = ProcessingSource::new_continuous(
-            &device,
-            &vec![[20000., 25000., 30000., 0.]; (size[0] * size[1]) as usize],
-            DMat3::IDENTITY,
-            Some(SourceGeometry::original_tile([b.x, b.y, b.width, b.height], size).unwrap()),
-        )
-        .unwrap();
-
-        let working = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: u64::from(size[0]) * u64::from(size[1]) * 16,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let render = |repaired| {
-            let mut encoder = device.create_command_encoder(&Default::default());
-            let mut input = crate::gpu::test_inputs::AuthoredPhotograph::from(grade.clone());
-            if repaired {
-                input.repairs = logical.clone();
-            }
-            kernel
-                .encode_grade(&device, &mut encoder, &source, &working, &input)
+        let render = |root: e::Value| {
+            let bounds = unit.bounds.try_into().unwrap();
+            let request = renderer
+                .evaluation
+                .request(
+                    root.clone(),
+                    e::Region {
+                        bounds,
+                        grid: root.domain().grid,
+                    },
+                    e::Budget {
+                        tile: [128; 2],
+                        scratch_bytes: 4 << 20,
+                    },
+                )
                 .unwrap();
+            let value = pollster::block_on(
+                renderer
+                    .evaluation
+                    .materialize(
+                        &queue,
+                        &gate,
+                        &scope,
+                        request,
+                        e::ImageFormat::Rgba32Float,
+                        e::ImageBacking::Buffer,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            let working: e::BufferImage = value.try_into().unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
             reconstruction
                 .encode(&device, &mut encoder, &unit, &texture, &working)
                 .unwrap();
@@ -108,8 +101,8 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                 .read(&device, gate.submit(&queue, [encoder.finish()]), [128; 2])
                 .unwrap()
         };
-        let plain = render(false);
-        let actual = render(true);
+        let plain = render(base.clone());
+        let actual = render(repaired.clone());
         for (index, (plain, actual)) in plain.iter().zip(actual).enumerate() {
             let point = [
                 start + origin[0] + index as u32 % 128,
@@ -117,14 +110,14 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
             ];
             if evaluated.support().contains(point) {
                 repaired_count += 1;
-                let expected = evaluated.pixel(point, [0.; 3]).map(f64::from);
+                let expected = evaluated.pixel(point, [0.; 3]);
                 for c in 0..3 {
                     assert!(
-                        (f64::from(actual[c]) - expected[c]).abs()
-                            <= 2e-5 + 2e-4 * expected[c].abs(),
+                        (actual[c] - expected[c]).abs() <= 2e-5 + 2e-4 * expected[c].abs(),
                         "{point:?} channel={c} actual={actual:?} expected={expected:?}"
                     );
                 }
+                assert_eq!(actual[3], plain[3]);
             } else {
                 assert_eq!(
                     plain.map(f32::to_bits),

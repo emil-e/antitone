@@ -4,6 +4,9 @@ use std::sync::Mutex;
 mod admission;
 mod counts;
 mod coverage;
+mod planning;
+mod resident;
+mod values;
 
 struct Pixels {
     domain: Domain,
@@ -27,7 +30,7 @@ impl Source for Pixels {
         Ok(values)
     }
 }
-fn fixture(size: [u32; 2], values: Vec<[f32; 4]>) -> (Arc<ImageNode>, Arc<Mutex<Vec<Rect>>>) {
+fn fixture(size: [u32; 2], values: Vec<[f32; 4]>) -> (Value, Arc<Mutex<Vec<Rect>>>) {
     let reads = Arc::new(Mutex::new(Vec::new()));
     (
         source(Arc::new(Pixels {
@@ -45,21 +48,34 @@ fn fixture(size: [u32; 2], values: Vec<[f32; 4]>) -> (Arc<ImageNode>, Arc<Mutex<
 #[derive(Debug, PartialEq)]
 struct Square;
 impl Operation for Square {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(Square))
     }
-    fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
     }
-    fn pointwise(&self) -> Option<Function> {
-        Some(Function {
-            linked: Default::default(),
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let function = Function {
             code:
                 "fn square(p: vec4f, position: vec2f) -> vec4f { return vec4f(p.rgb*p.rgb,p.w); }"
                     .into(),
             symbol: "square",
             bindings: vec![],
-        })
+        };
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            value::Operation::shader_function(self.key(), function),
+        )
+        .map(Some)
     }
 }
 
@@ -75,7 +91,7 @@ fn output(mapping: Mapping, region: Rect) -> Domain {
         meaning: Meaning::Graded,
     }
 }
-fn materialize(root: Arc<ImageNode>, tile: [u32; 2], scratch_bytes: u64) -> Vec<[f32; 4]> {
+fn materialize(root: Value, tile: [u32; 2], scratch_bytes: u64) -> Vec<[f32; 4]> {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -128,22 +144,24 @@ fn nested_large_aperture_stays_bounded_and_does_not_move_nonlinear_operations_ac
     };
     let coarse = reconstruct_mapped(source, output(first, [0, 0, 2, 1].into()), first).unwrap();
     assert!(
-        coarse
-            .operation
-            .sample_consumer()
-            .unwrap()
-            .production()
-            .unwrap()
-            .requires_worker(),
+        !crate::gpu::evaluation::unit::can_inline(
+            &coarse,
+            coarse.domain.finite().unwrap(),
+            Budget {
+                tile: [2, 1],
+                scratch_bytes: 32 << 20
+            }
+        )
+        .unwrap(),
         "control: the inner aperture must actually require bounded production"
     );
-    let squared = ImageNode::new(coarse.domain, Some(coarse), Square);
+    let squared = Value::from_operation(coarse.domain, Some(coarse), Square);
     let second = Mapping {
         start: [0.; 2],
         axes: [[1024., 0.], [0., 256.]],
     };
     let mean = reconstruct(squared, output(second, [0, 0, 1, 1].into())).unwrap();
-    let squared_mean = ImageNode::new(mean.domain, Some(mean.clone()), Square);
+    let squared_mean = Value::from_operation(mean.domain, Some(mean.clone()), Square);
     for (root, expected) in [
         (mean, [2.5, 0.625, 2.5, 11.]),
         (squared_mean, [6.25, 0.390625, 6.25, 11.]),
@@ -195,16 +213,18 @@ fn a_recordable_nested_aperture_uses_worker_production_when_its_input_exceeds_ad
     };
     let inner = reconstruct_mapped(input, output(map, [0, 0, 64, 32].into()), map).unwrap();
     assert!(
-        !inner
-            .operation
-            .sample_consumer()
-            .unwrap()
-            .production()
-            .unwrap()
-            .requires_worker(),
-        "control: aperture size alone must not force worker production"
+        crate::gpu::evaluation::unit::can_inline(
+            &inner,
+            Rect::new([0, 0], [1, 1]),
+            Budget {
+                tile: [64, 32],
+                scratch_bytes: 2 << 20
+            }
+        )
+        .unwrap(),
+        "control: the same aperture supports a callable with a locally fitting dependency"
     );
-    let root = ImageNode::new(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain, Some(inner), Square);
     let actual = materialize(root, [64, 32], 512 << 10);
     for pixel in actual {
         for (a, b) in pixel.into_iter().zip([1., 4., 1., 8.]) {
@@ -217,14 +237,14 @@ fn a_recordable_nested_aperture_uses_worker_production_when_its_input_exceeds_ad
 }
 
 #[test]
-fn nested_worker_admission_observes_individual_gpu_binding_limits_not_only_total_scratch() {
+fn nested_admission_observes_individual_gpu_binding_limits_not_only_total_scratch() {
     let (input, reads) = fixture([512, 512], vec![[0.25, -2., 3., 0.]; 512 * 512]);
     let map = Mapping {
         start: [0.; 2],
         axes: [[16., 0.], [0., 16.]],
     };
     let inner = reconstruct_mapped(input, output(map, [0, 0, 32, 32].into()), map).unwrap();
-    let root = ImageNode::new(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain, Some(inner), Square);
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -239,7 +259,7 @@ fn nested_worker_admission_observes_individual_gpu_binding_limits_not_only_total
     let scope = context.test_materializations(false);
     let budget = Budget {
         tile: [32, 32],
-        scratch_bytes: 8 << 20,
+        scratch_bytes: 32 << 20,
     };
     assert!(
         512 * 512 * 16 > device.limits().max_storage_buffer_binding_size
@@ -257,10 +277,19 @@ fn nested_worker_admission_observes_individual_gpu_binding_limits_not_only_total
         )
         .unwrap();
     let plan = request.plans().next().unwrap().unwrap();
-    assert!(matches!(
-        plan.tiles[0].fragment.work[0],
-        Work::Produce { .. }
-    ));
+    assert!(
+        plan.tiles
+            .iter()
+            .flat_map(|tile| &tile.slots)
+            .all(|storage| match storage {
+                Storage::Buffer(bytes) => *bytes <= device.limits().max_storage_buffer_binding_size,
+                Storage::Image { layout, .. } =>
+                    layout.bytes() <= device.limits().max_storage_buffer_binding_size,
+                _ => true,
+            }),
+        "every physical input binding must respect the device, not merely total scratch"
+    );
+    assert!(reads.lock().unwrap().is_empty());
     let image = pollster::block_on(
         context
             .materialize(
@@ -294,19 +323,22 @@ fn nested_reductions_execute_recursively_without_flattening_their_source_grids()
         axes: [[257., 0.], [0., 257.]],
     };
     let coarse = reconstruct_mapped(input, output(first, [0, 0, 257, 257].into()), first).unwrap();
-    let squared = ImageNode::new(coarse.domain, Some(coarse), Square);
+    let squared = Value::from_operation(coarse.domain, Some(coarse), Square);
     let second = Mapping {
         start: [0.; 2],
         axes: [[257. * 257., 0.], [0., 257. * 257.]],
     };
     let root = reconstruct(squared, output(second, [0, 0, 1, 1].into())).unwrap();
     assert!(
-        root.operation
-            .sample_consumer()
-            .unwrap()
-            .production()
-            .unwrap()
-            .requires_worker()
+        !crate::gpu::evaluation::unit::can_inline(
+            &root,
+            root.domain.finite().unwrap(),
+            Budget {
+                tile: [1, 1],
+                scratch_bytes: 32 << 20
+            }
+        )
+        .unwrap()
     );
     let actual = materialize(root, [1, 1], 32 << 20);
     let expected = 256.25_f32 / 257.;
@@ -330,7 +362,7 @@ fn nested_worker_admission_rejects_before_original_reads() {
         axes: [[512., 0.], [0., 256.]],
     };
     let inner = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
-    let root = ImageNode::new(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -373,7 +405,9 @@ fn nested_worker_admission_rejects_before_original_reads() {
             )
             .unwrap(),
     );
-    assert!(matches!(result,Err(error) if matches!(error.as_ref(),Error::InvalidParameter(_))));
+    assert!(
+        matches!(result,Err(error) if matches!(error.as_ref(),Error::WorkingAllowance("unit state exceeds the working allowance")))
+    );
     assert!(reads.lock().unwrap().is_empty());
     assert_eq!(context.retained_bytes(), 0);
 }
@@ -388,7 +422,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
         axes: [[512., 0.], [0., 256.]],
     };
     let inner = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
-    let root = ImageNode::new(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -424,11 +458,16 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
         .unwrap()
         .with_materializations(scope.clone());
     let result = Production {
-        context: &context,
-        queue: &queue,
-        gate: &gate,
-        scope: &scope,
-        budget,
+        worker: Worker {
+            context: &context,
+            queue: &queue,
+            gate: &gate,
+            scope: &scope,
+            budget,
+            working: &HostWorkingSet::default(),
+            cancelled: &|| stopped.load(Ordering::SeqCst),
+            progress: &|| {},
+        },
         layout: ImageLayout {
             domain: root.domain,
             region: root.domain.finite().unwrap(),
@@ -436,8 +475,6 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
             backing: ImageBacking::Buffer,
         },
         pixels: &pixels,
-        cancelled: &|| stopped.load(Ordering::SeqCst),
-        progress: &|| {},
     }
     .produce(&evaluation);
     assert!(matches!(result, Err(Error::Cancelled)));
@@ -581,7 +618,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
         })
         .collect();
     let (input, reads) = fixture([128, 64], values);
-    let input = ImageNode::new(input.domain, Some(input), Square);
+    let input = Value::from_operation(input.domain, Some(input), Square);
     let detail = Mapping {
         start: [32., 16.],
         axes: [[32., 0.], [0., 16.]],
@@ -658,7 +695,7 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
         })
         .collect();
     let (input, reads) = fixture(size, values);
-    let input = ImageNode::new(input.domain, Some(input), Square);
+    let input = Value::from_operation(input.domain, Some(input), Square);
     let map = Mapping {
         start: [0.; 2],
         axes: [[128., 0.], [0., 64.]],
@@ -974,10 +1011,29 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
         scope.clone(),
         Vec::new(),
     );
+    let direct = direct.unwrap();
+    assert!(direct.scratch_bytes() <= budget.scratch_bytes);
+    drop(direct);
+    let unit = root
+        .plan_unit(root.domain.finite().unwrap(), budget)
+        .unwrap()
+        .admit(budget)
+        .unwrap();
+    let UnitWork::Gpu(work) = unit.work else {
+        panic!("GPU reconstruction");
+    };
+    let phases = work.phases.collect::<Result<Vec<_>, _>>().unwrap();
     assert!(
-        matches!(direct, Err(Error::InvalidParameter(_))),
-        "record-only execution must not silently lower an unbounded sampled loop"
+        phases.len() > 1,
+        "a large aperture must remain bounded steps, not one sampled loop"
     );
+    assert!(
+        phases
+            .iter()
+            .flat_map(|phase| &phase.reads)
+            .all(|read| u64::from(read.region.width) * u64::from(read.region.height) <= 512 * 128)
+    );
+    assert_eq!(reads.lock().unwrap().len(), before);
     let image = pollster::block_on(
         context
             .materialize(
@@ -1002,8 +1058,8 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
     .unwrap();
     assert_eq!(reads.lock().unwrap().len(), before);
     assert!(
-        submissions.load(Ordering::SeqCst) > 1,
-        "control: exercise reduction despite fitting resident input"
+        submissions.load(Ordering::SeqCst) > 0,
+        "the bounded reduction must actually submit GPU work"
     );
     let actual = super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
     for (a, b) in actual[0][..3].iter().zip([1., -2., 4.]) {
@@ -1037,8 +1093,14 @@ fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     for (sigma, expected) in [
-        (100., "reconstruction neighbourhood exceeds working storage"),
-        (20_000., "evaluation raster exceeds GPU cell addressing"),
+        (
+            100.,
+            Error::WorkingAllowance("phase reads exceed the working allowance"),
+        ),
+        (
+            20_000.,
+            Error::InvalidParameter("evaluation raster exceeds GPU cell addressing"),
+        ),
     ] {
         let input = super::super::super::operators::gaussian(
             source(Arc::new(Unreadable(reads.clone()))),
@@ -1070,7 +1132,10 @@ fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
             || false,
             |_, _| panic!("inadmissible neighbourhood delivered"),
         );
-        assert!(matches!(result, Err(Error::InvalidParameter(message)) if message == expected));
+        assert!(
+            matches!((&result, &expected), (Err(Error::WorkingAllowance(message)), Error::WorkingAllowance(expected)) | (Err(Error::InvalidParameter(message)), Error::InvalidParameter(expected)) if message==expected),
+            "{result:?}"
+        );
         assert_eq!(reads.load(Ordering::Relaxed), 0);
     }
 }
@@ -1110,71 +1175,10 @@ fn insufficient_reduction_storage_rejects_before_acquiring_source_pixels() {
             )
             .unwrap(),
     );
-    assert!(matches!(result,Err(error) if matches!(error.as_ref(),Error::InvalidParameter(_))));
-    assert!(reads.lock().unwrap().is_empty());
-}
-
-#[test]
-fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_source_reads() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use wgpu::util::DeviceExt;
-    let (input, reads) = fixture([128, 64], vec![[1.; 4]; 128 * 64]);
-    let map = Mapping {
-        start: [0.; 2],
-        axes: [[128., 0.], [0., 64.]],
-    };
-    let root = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
-    let (device, queue, _) = crate::gpu::test_support::render_context();
-    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
-        contents: bytemuck::cast_slice(&[[1234_f32; 4]]),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-    });
-    let stopped = Arc::new(AtomicBool::new(false));
-    let submissions = Arc::new(AtomicUsize::new(0));
-    let gate = crate::gpu::submission::SubmissionGate::default();
-    let (stop, count) = (stopped.clone(), submissions.clone());
-    gate.observe_submissions(Arc::new(move || {
-        if count.fetch_add(1, Ordering::SeqCst) == 1 {
-            stop.store(true, Ordering::SeqCst);
-        }
-    }));
-    let scope = context.test_materializations(false);
-    let cancelled = || stopped.load(Ordering::SeqCst);
-    let worker = Production {
-        context: &context,
-        queue: &queue,
-        gate: &gate,
-        scope: &scope,
-        budget: Budget {
-            tile: [1, 1],
-            scratch_bytes: 64 << 10,
-        },
-        layout: ImageLayout {
-            domain: root.domain,
-            region: root.domain.finite().unwrap(),
-            format: ImageFormat::Rgba32Float,
-            backing: ImageBacking::Buffer,
-        },
-        pixels: &pixels,
-        cancelled: &cancelled,
-        progress: &|| {},
-    };
-    let result = root
-        .operation
-        .sample_consumer()
-        .unwrap()
-        .production()
-        .unwrap()
-        .produce(&worker, root.input.as_ref().unwrap());
-    assert!(matches!(result, Err(Error::Cancelled)));
-    assert_eq!(submissions.load(Ordering::SeqCst), 2);
-    assert_eq!(reads.lock().unwrap().len(), 1);
-    assert_eq!(
-        super::super::super::execute::read(&device, &queue, &pixels),
-        vec![[1234.; 4]]
+    assert!(
+        matches!(result,Err(error) if matches!(error.as_ref(),Error::WorkingAllowance("unit state exceeds the working allowance")))
     );
+    assert!(reads.lock().unwrap().is_empty());
 }
 
 #[test]

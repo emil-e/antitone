@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::gpu::{
-    evaluation::{ImageNode, Meaning},
+    evaluation::{Meaning, Value},
     grading::Grading,
     interpretation::{InputTransform, InspectionView},
     photograph::{PhotographGraph, operations::CameraInput},
@@ -11,7 +11,7 @@ use crate::gpu::{
 use crate::{looks::LutChain, pixel_pipeline::PixelPipeline};
 
 impl ImageProcessing {
-    fn camera(&self, raster: Raster) -> Result<Arc<ImageNode>, Error> {
+    fn camera(&self, raster: Raster) -> Result<Value, Error> {
         let mut camera = self.camera.lock().unwrap();
         let domain = crate::gpu::evaluation::Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new(
@@ -38,7 +38,7 @@ impl GpuImage {
         grading: Grading,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
         stages: &PixelPipeline,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let processing = self
             .processing
             .as_ref()
@@ -64,7 +64,7 @@ impl GpuImage {
         &self,
         parameters: ProcessingParameters,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let view = InspectionView::from_parameters(parameters)?;
         let processing = self
             .processing
@@ -88,7 +88,7 @@ impl GpuImage {
         &self,
         recipe: &crate::image_recipe::ImageRecipe,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let processing = self
             .processing
             .as_ref()
@@ -109,10 +109,7 @@ impl GpuImage {
     }
 
     #[cfg(test)]
-    pub(crate) fn legacy_calculation(
-        &self,
-        input: &AuthoredPhotograph,
-    ) -> Result<Arc<ImageNode>, Error> {
+    pub(crate) fn legacy_calculation(&self, input: &AuthoredPhotograph) -> Result<Value, Error> {
         self.require_processing(input)?;
         let Some(program) = input.source_transform() else {
             return self.inspection(input.parameters(), input.field.clone());
@@ -136,7 +133,7 @@ impl GpuImage {
         .processed)
     }
 
-    pub(crate) fn prepared_definition(&self) -> Option<Arc<ImageNode>> {
+    pub(crate) fn prepared_definition(&self) -> Option<Value> {
         self.processing
             .as_ref()?
             .last_calculation
@@ -145,7 +142,7 @@ impl GpuImage {
             .clone()
     }
 
-    pub fn require_calculation(&self, root: &Arc<ImageNode>, luts: &LutChain) -> Result<(), Error> {
+    pub fn require_calculation(&self, root: &Value, luts: &LutChain) -> Result<(), Error> {
         if self.processing.is_none() {
             return Err(Error::Gpu("rendered image has no source buffer".into()));
         }
@@ -174,7 +171,7 @@ impl GpuImage {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        root: &Arc<ImageNode>,
+        root: &Value,
         luts: &LutChain,
     ) -> Result<bool, Error> {
         self.require_calculation(root, luts)?;
@@ -201,7 +198,7 @@ impl GpuImage {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        root: &Arc<ImageNode>,
+        root: &Value,
         luts: &LutChain,
     ) -> Result<(), Error> {
         self.require_calculation(root, luts)?;
@@ -216,7 +213,7 @@ impl GpuImage {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        root: Arc<ImageNode>,
+        root: Value,
         luts: &LutChain,
     ) -> Result<(), Error> {
         let processing = self.processing.as_ref().expect("admitted working image");

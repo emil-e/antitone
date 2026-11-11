@@ -107,6 +107,18 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             width: 16,
             height: 16,
         });
+        let source = editor
+            .document
+            .find_source(&scan.source().file.path)
+            .unwrap();
+        let recipe = editor
+            .positive_recipe_for_source(
+                editor.input(),
+                editor.document.project_snapshot().roll,
+                editor.document.project.source(source).unwrap(),
+                editor.photo_settings(),
+            )
+            .unwrap();
         let samples = crate::editor::measurement::query::Samples::new(
             editor.source_services.as_ref().unwrap(),
             scan,
@@ -114,13 +126,7 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             &|| false,
         )
         .unwrap();
-        let photograph = samples
-            .photograph(
-                editor.document.project.input,
-                editor.document.project.roll,
-                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            )
-            .unwrap();
+        let photograph = samples.photograph(&recipe).unwrap();
         let mean = samples.mean(photograph.roll, &|| false).unwrap();
         let cones = crate::color::ap1_to_cones() * mean;
         cones / cones.y

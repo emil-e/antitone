@@ -479,8 +479,15 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             adjustment.photo.contrast = 1.6;
             adjustment.strength = 1.;
             for _ in 0..16 {
-                layers.add("Unsupported".into(), adjustment)?;
+                layers.add("Exposure".into(), adjustment)?;
             }
+            adjustment.mask = AdjustmentLayerCoverage::Radial {
+                center: crate::geometry::SourcePoint([0., 0.]),
+                radii: [f64::MIN_POSITIVE, 1.],
+                angle: 0.,
+                feather: 0.5,
+            };
+            layers.add("Unrepresentable mask".into(), adjustment)?;
             Ok(())
         });
         assert!(result.is_err());
@@ -502,7 +509,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
 }
 
 #[test]
-fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view() {
+fn deep_stack_reorder_and_reenable_preserve_selection_allocator_and_viewport() {
     pollster::block_on(async {
         for reorder in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
@@ -577,14 +584,36 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 },
                 &UiContext::render_only(),
             );
-            assert!(
-                editor.status.contains("f32 intermediate working range"),
-                "reorder={reorder}: {}",
-                editor.status
-            );
-            assert_eq!(editor.document.state.project, before);
+            assert_ne!(editor.document.state.project, before);
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
-            assert_eq!(
+            let source = editor
+                .document
+                .state
+                .project
+                .source(editor.document.visit.current_source.unwrap())
+                .unwrap();
+            let updated = source.adjustment_layers.as_ref().unwrap();
+            let original = before
+                .source(source.id)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap();
+            assert_eq!(updated.next_id, original.next_id);
+            if reorder {
+                assert_eq!(updated.layers[0].id, subject);
+            } else {
+                assert!(
+                    updated
+                        .layers
+                        .iter()
+                        .find(|layer| layer.id == subject)
+                        .unwrap()
+                        .adjustment
+                        .enabled
+                );
+            }
+            assert_ne!(
                 editor.document.visit.canvas.original.continuation(),
                 revision
             );
@@ -596,7 +625,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                     editor.photo_settings(),
                 )
                 .unwrap();
-            assert_eq!(accepted.clone(), current.clone());
+            assert_ne!(accepted, current);
         }
     });
 }

@@ -246,7 +246,7 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         assert_eq!(reads.load(Ordering::Relaxed), 0);
         assert!(complete.identity().is_some());
         let gate = crate::gpu::submission::SubmissionGate::default();
-        let request = |root: Arc<e::ImageNode>| {
+        let request = |root: e::Value| {
             let grid = root.domain().grid;
             context
                 .request(

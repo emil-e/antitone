@@ -1,23 +1,21 @@
 use super::*;
+mod rapid;
 use crate::dust_repair::SearchOutcome;
 
-fn request(e: &mut Editor) -> Request {
-    let source = e.document.visit.current_source.unwrap();
-    Request {
-        request: e.request_id(),
-        loaded: e.id,
-        source,
-        signature: e.dust_signature().unwrap(),
-        repair: e.effective_dust_repair(source, RepairId(1)).unwrap(),
-        input: e.input(),
-        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    }
+fn capture(e: &Editor) -> crate::image_recipe::ImageRecipe {
+    e.positive_recipe(
+        e.input(),
+        e.document.project_snapshot().roll,
+        e.photo_settings(),
+    )
+    .unwrap()
 }
 
-fn chosen_response(request: &Request, active: SourceRegion, offset: [i32; 2]) -> Response {
-    let mut chosen = request.clone();
-    chosen.repair.offset = offset;
-    response(&chosen, active)
+fn paint(app: &mut TestApplication<'_, Editor>) {
+    let ctx = egui::Context::default();
+    app.enter(|e, cx| {
+        frame(e, &ctx, vec![], cx);
+    });
 }
 
 fn layout(e: &mut Editor) -> crate::viewport::CanvasLayout {
@@ -42,70 +40,16 @@ fn held_drag_completion_is_preview_only_and_release_records_the_accepted_edit() 
     let geometry = layout(&mut e);
     e.begin_dust_donor_drag(geometry, screen_source_point(geometry, [81., 51.]));
     e.drag_dust_donor(geometry, screen_source_point(geometry, [91., 56.]));
-    let request = request(&mut e);
-    assert_eq!(request.repair.offset, [40, 5]);
-    e.document.visit.dust.start(&request);
-    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    e.receive_dust(request.request, Ok(Some(response(&request, active))));
+    let captured = capture(&e);
+    assert_eq!(captured.repairs[0].offset, [40, 5]);
     assert_eq!(e.dust_repairs(source), Some(&original));
-    assert!(
-        e.document
-            .dust
-            .preview_cached
-            .contains_key(&(source, RepairId(1)))
-    );
     e.end_dust_donor_drag();
     assert_eq!(e.dust_repairs(source).unwrap().repairs()[0].offset, [40, 5]);
     assert_eq!(
         e.history_label(history::Direction::Undo),
         Some("Dust donor")
     );
-    assert!(e.document.dust.cached.contains_key(&(source, RepairId(1))));
-}
-
-#[test]
-fn obsolete_success_cannot_modify_new_support_or_offset_or_steal_a_new_request() {
-    let mut e = editor();
-    let first = request(&mut e);
-    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    let stale = chosen_response(&first, active, [60, 0]);
-    e.document.visit.dust.start(&first);
-    e.dust_repairs_mut(first.source)
-        .set_support(
-            first.repair.id,
-            SupportMask::new([60, 60], [3, 3], vec![true; 9]).unwrap(),
-        )
-        .unwrap();
-    e.dust_repairs_mut(first.source)
-        .set_offset(first.repair.id, [20, 0])
-        .unwrap();
-    let expected = e.dust_repairs(first.source).unwrap().clone();
-    let second = request(&mut e);
-    e.document.visit.dust.start(&second);
-    e.receive_dust(first.request, Ok(Some(stale)));
-    assert_eq!(e.dust_repairs(first.source), Some(&expected));
-    assert_eq!(
-        e.document.visit.dust.pending_request(),
-        Some(second.request)
-    );
-    assert!(e.document.dust.cached.is_empty());
-}
-
-#[test]
-fn ordinary_evaluation_cannot_propose_a_different_offset() {
-    let mut e = editor();
-    let request = request(&mut e);
-    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    e.document.visit.dust.start(&request);
-    e.receive_dust(
-        request.request,
-        Ok(Some(chosen_response(&request, active, [60, 0]))),
-    );
-    assert_eq!(
-        e.dust_repairs(request.source).unwrap().repairs()[0],
-        request.repair
-    );
-    assert!(e.document.dust.cached.is_empty());
+    assert_eq!(captured.repairs[0].offset, [40, 5]);
 }
 
 use super::super::search_testing::Gate;
@@ -173,8 +117,8 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             let region = &e.dust_donor_regions()[0];
             assert_eq!(region.donor.x as i32 - region.target.x as i32, 20);
             assert!(
-                e.document.dust.cached.is_empty(),
-                "publication must not wait for healing"
+                e.document.visit.working_view.completed_capture().is_none(),
+                "publication must not wait for a rendered frame"
             );
             assert_eq!(e.history_label(history::Direction::Undo), Some("Dust mask"));
         });
@@ -183,27 +127,39 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
 
 #[test]
 fn failed_heal_keeps_the_completed_search_donor_draggable() {
-    with_search(editor(), |app, gate| {
-        let stroke = app.enter(|e, cx| queue(e, [80, 80], cx));
+    with_search(coherent_editor(), |app, gate| {
+        let origin = app.read(|e| {
+            let a = e.document.visit.canvas.ready.as_ref().unwrap().area;
+            [a.x, a.y]
+        });
+        let stroke = app.enter(|e, cx| queue(e, origin, cx));
         gate.next(app)
             .complete(Ok(SearchOutcome::Candidate([30, 0])));
         settled(app);
+        paint(app);
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.failed_capture().is_some()
+        });
         app.update(|e| {
-            let stored = e
-                .dust_repairs(stroke.source)
-                .unwrap()
-                .repairs()
-                .last()
-                .unwrap()
-                .clone();
-            let mut evaluation = request(e);
-            evaluation.repair = stored.clone();
-            e.document.visit.dust.start(&evaluation);
-            e.receive_dust(evaluation.request, Err("authored healing failure".into()));
+            assert_eq!(e.dust_render_state(), "Repair unavailable");
+            assert!(
+                e.document
+                    .visit
+                    .working_view
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("two-pixel exterior")
+            );
             let geometry = layout(e);
-            assert!(e.dust_donor_at(geometry, screen_source_point(geometry, [111., 81.])));
-            e.begin_dust_donor_drag(geometry, screen_source_point(geometry, [111., 81.]));
-            e.drag_dust_donor(geometry, screen_source_point(geometry, [121., 86.]));
+            let start =
+                screen_source_point(geometry, [origin[0] as f64 + 31., origin[1] as f64 + 1.]);
+            assert!(e.dust_donor_at(geometry, start));
+            e.begin_dust_donor_drag(geometry, start);
+            e.drag_dust_donor(
+                geometry,
+                screen_source_point(geometry, [origin[0] as f64 + 41., origin[1] as f64 + 6.]),
+            );
             e.end_dust_donor_drag();
             assert_eq!(
                 e.dust_repairs(stroke.source)
@@ -214,11 +170,10 @@ fn failed_heal_keeps_the_completed_search_donor_draggable() {
                     .offset,
                 [40, 5]
             );
-            assert!(
-                !e.document
-                    .dust
-                    .failed
-                    .contains_key(&(stroke.source, stored.id))
+            assert_eq!(
+                e.dust_render_state(),
+                "Repairs pending",
+                "an obsolete failure does not describe the new donor"
             );
         });
     });
@@ -421,10 +376,6 @@ fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
                 .unwrap()
                 .development
                 .active_area = [12, 7, 96, 96];
-            // Settle the existing repair so unrelated healing does not replace rejection feedback.
-            let evaluation = request(e);
-            e.document.visit.dust.start(&evaluation);
-            e.receive_dust(evaluation.request, Ok(Some(response(&evaluation, active))));
             let before = e.history_snapshot();
             e.begin_dust_mask(None);
             e.document.dust_mask_draft_mut().unwrap().pixels = (active.y..active.y + active.height)
@@ -598,31 +549,23 @@ fn ending_dust_discards_unfinished_strokes_without_changing_accepted_repairs() {
 }
 
 #[test]
-fn accepted_healing_and_gpu_patches_survive_ending_dust_or_replacing_it_with_crop() {
+fn accepted_graph_work_survives_ending_dust_or_replacing_it_with_crop() {
     for replace in [false, true] {
         let mut e = coherent_editor();
         let source = e.document.visit.current_source.unwrap();
-        let repair = e
-            .dust_repairs_mut(source)
+        e.dust_repairs_mut(source)
             .insert(
                 SupportMask::new([50, 50], [3, 3], vec![true; 9]).unwrap(),
                 RepairOrigin::Manual,
                 [30, 0],
             )
             .unwrap();
-        let services = e.source_services.as_ref().unwrap();
-        e.document.visit.working_view =
-            WorkingView::new(services.device.clone(), services.queue.clone());
         let before = e.history_snapshot();
         let history = e.history_label(history::Direction::Undo);
         e.begin_dust_cleanup();
-        assert!(e.current_tool().unwrap().is::<DustTool>());
         let hold = crate::background::testing::pause();
         with_application(e, |app| {
-            let request = app.enter(|e, cx| {
-                e.schedule_dust(e.dust_signature().unwrap(), cx);
-                captured_request(e)
-            });
+            paint(app);
             app.pump();
             app.update(|e| {
                 if replace {
@@ -632,34 +575,35 @@ fn accepted_healing_and_gpu_patches_survive_ending_dust_or_replacing_it_with_cro
                 }
                 assert!(!e.dusting());
                 assert_eq!(e.cropping(), replace);
-                assert_eq!(
-                    e.document.visit.dust.pending_request(),
-                    Some(request.request)
-                );
-                assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+                assert!(e.document.visit.working_view.completed_capture().is_none());
                 assert_eq!(e.document.state.project, before);
             });
             drop(hold);
             app.run_until(Duration::from_secs(15), |e| {
-                e.document.dust.has_evaluation(source, repair)
+                e.document.visit.working_view.completed_capture().is_some()
             });
             app.update(|e| {
-                let evaluated = e.document.dust.cached[&(source, repair)].evaluated.clone();
-                let patches = e.dust_gpu_snapshot(None).unwrap();
-                assert_eq!(patches.0.len(), 1);
-                assert!(Arc::ptr_eq(&patches.0[0].evaluated, &evaluated));
+                assert_eq!(e.dust_render_state(), "Repairs");
+                let completed = e
+                    .document
+                    .visit
+                    .working_view
+                    .completed_capture()
+                    .unwrap()
+                    .recipe()
+                    .unwrap()
+                    .clone();
+                assert_eq!(completed.repairs, capture(e).repairs);
                 e.end_tool();
-                let normal = e.dust_gpu_snapshot(None).unwrap();
-                assert_eq!(normal.0.len(), 1);
-                assert!(Arc::ptr_eq(&patches.0[0], &normal.0[0]));
                 assert_eq!(e.document.state.project, before);
                 assert_eq!(e.history_label(history::Direction::Undo), history);
+                assert_eq!(e.dust_render_state(), "Repairs");
             });
         });
     }
 }
 
-fn coherent_editor() -> Editor {
+pub(super) fn coherent_editor() -> Editor {
     let mut e = super::super::super::tests::authored_fixture(&["patches.dng"]);
     e.set_dmin(Some(DVec3::splat(0.8)));
     e.set_dmax(Some(DVec3::splat(0.02)));
@@ -668,45 +612,94 @@ fn coherent_editor() -> Editor {
 }
 
 #[test]
-fn real_evaluation_workflow_continues_after_a_failed_repair_without_another_paint() {
+fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
+    use crate::dust_repair::BaseImage;
     let mut e = coherent_editor();
-    let source = e.document.visit.current_source.unwrap();
-    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    e.dust_repairs_mut(source)
-        .insert(
-            SupportMask::new([active.x, active.y], [3, 3], vec![true; 9]).unwrap(),
-            RepairOrigin::Manual,
-            [30, 0],
-        )
+    let id = e.document.visit.current_source.unwrap();
+    let scan = e.source_context().unwrap().scan().unwrap();
+    let a = scan.area;
+    for origin in [[a.x, a.y], [80, 80]] {
+        e.dust_repairs_mut(id)
+            .insert(
+                SupportMask::new(origin, [3, 3], vec![true; 9]).unwrap(),
+                RepairOrigin::Manual,
+                [30, 0],
+            )
+            .unwrap();
+    }
+    let recipe = capture(&e);
+    let services = e.source_services.as_ref().unwrap();
+    let renderer = services
+        .renderers
+        .get(&services.device, &services.queue)
         .unwrap();
-    let good = e
-        .dust_repairs_mut(source)
-        .insert(
-            SupportMask::new([80, 80], [3, 3], vec![true; 9]).unwrap(),
-            RepairOrigin::Manual,
-            [30, 0],
+    let base = crate::gpu::repair_source::Source::from_recipe(
+        &services.device,
+        &renderer,
+        (&services.queue, services.renderers.submissions()),
+        &scan,
+        &recipe,
+    )
+    .unwrap();
+    let root =
+        crate::gpu::repairs::definition::compose(base.image().clone(), &recipe.repairs).unwrap();
+    let mut reader = crate::gpu::repair_source::Source::from_image(
+        &renderer,
+        (&services.queue, services.renderers.submissions()),
+        root,
+    )
+    .unwrap();
+    let error = reader
+        .read(
+            SourceRegion {
+                x: a.x,
+                y: a.y,
+                width: 3,
+                height: 3,
+            },
+            None,
+            &|| false,
         )
+        .unwrap_err();
+    assert!(error.to_string().contains("two-pixel exterior"), "{error}");
+    let values = reader
+        .read(
+            SourceRegion {
+                x: 80,
+                y: 80,
+                width: 3,
+                height: 3,
+            },
+            None,
+            &|| false,
+        )
+        .unwrap()
         .unwrap();
-    with_application(e, |app| {
-        app.enter(|e, cx| e.schedule_dust(e.dust_signature().unwrap(), cx));
-        app.run_until(Duration::from_secs(10), |e| {
-            e.document.dust.has_evaluation(source, good)
-        });
-        app.read(|e| {
-            assert!(e.document.dust.failed.contains_key(&(source, RepairId(1))));
-            assert!(e.document.visit.dust.pending.is_none());
-        });
-    });
+    let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+    let expected = crate::repair_source::evaluate(&input, &recipe.repairs[1])
+        .unwrap()
+        .pixels()
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), expected.len());
+    for (actual, (_, expected)) in values.iter().zip(expected) {
+        for c in 0..3 {
+            assert!((actual[c] - expected[c]).abs() < 2e-5 * expected[c].abs().max(1.));
+        }
+    }
 }
 
 #[test]
-fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_view_is_active() {
+fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_reference() {
     let mut e = coherent_editor();
     let source = e.document.visit.current_source.unwrap();
     let record = e.document.project.source(source).unwrap();
-    let area = record.development.active_area;
     let field = Arc::new(
-        crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1.2); 4]).unwrap(),
+        crate::flat_field::FlatField::from_nodes(
+            record.development.active_area,
+            [2, 2],
+            vec![DVec3::splat(1.2); 4],
+        )
+        .unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(record.path.clone(), field);
     e.document.project.set_flat_field(Some(settings)).unwrap();
@@ -717,85 +710,58 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
     )
     .unwrap()
     .into();
-    let photo = e.source_context().unwrap();
-    assert!(photo.correction.is_some());
-    let signature = e.dust_signature().unwrap();
-    let mut reference_editor = super::super::super::tests::authored_fixture(&["bare-light.dng"]);
-    let reference = reference_editor.document.visit.canvas.ready.take().unwrap();
-    let reference_scan =
-        Scan::with_reference(reference.developed.clone(), reference.reference.clone());
-    let repairs = [[50, 50], [100, 80]].map(|origin| {
-        let id = e
-            .dust_repairs_mut(source)
+    for origin in [[50, 50], [100, 80]] {
+        e.dust_repairs_mut(source)
             .insert(
                 SupportMask::new(origin, [3, 3], vec![true; 9]).unwrap(),
                 RepairOrigin::Manual,
                 [30, 0],
             )
             .unwrap();
-        let repair = e
-            .dust_repairs(source)
-            .unwrap()
-            .repairs()
-            .iter()
-            .find(|r| r.id == id)
-            .unwrap()
-            .clone();
-        let request = Request {
-            request: 1,
-            loaded: e.id,
-            source,
-            signature,
-            repair,
-            input: e.input(),
-            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        };
-        let expected = evaluate(&photo.scan().unwrap(), &request)
-            .unwrap()
-            .evaluated;
-        let wrong_source = evaluate(&reference_scan, &request).unwrap().evaluated;
-        let uncorrected = Scan::with_reference(photo.source.clone(), photo.reference.clone());
-        let wrong_correction = evaluate(&uncorrected, &request).unwrap().evaluated;
-        let difference = |other: &EvaluatedRepair| {
-            expected
+    }
+    let recipe = capture(&e);
+    let photo = e.source_context().unwrap();
+    let scan = photo.scan().unwrap();
+    let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+    let expected = recipe
+        .repairs
+        .iter()
+        .map(|repair| {
+            crate::repair_source::evaluate(&input, repair)
+                .unwrap()
                 .pixels()
-                .zip(other.pixels())
-                .flat_map(|((_, a), (_, b))| {
-                    (0..3).map(move |channel| (a[channel] - b[channel]).abs())
-                })
-                .fold(0_f32, f32::max)
-        };
-        assert!(
-            difference(&wrong_source) > 2e-4,
-            "the fixture must distinguish the reference source"
-        );
-        assert!(
-            difference(&wrong_correction) > 2e-4,
-            "the fixture must distinguish omitted correction"
-        );
-        (id, expected)
-    });
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut other = super::super::super::tests::authored_fixture(&["bare-light.dng"]);
+    let reference = other.document.visit.canvas.ready.take().unwrap();
+    let reference_scan =
+        Scan::with_reference(reference.developed.clone(), reference.reference.clone());
+    assert!(crate::scan::ImageSource::from_recipe(&reference_scan, &recipe.neutral).is_err());
+    let wrong_source =
+        crate::scan::ImageSource::new(&reference_scan, recipe.neutral.input).unwrap();
+    let uncorrected = Scan::with_reference(photo.source.clone(), photo.reference.clone());
+    let wrong_correction =
+        crate::scan::ImageSource::new(&uncorrected, recipe.neutral.input).unwrap();
+    for (repair, expected) in recipe.repairs.iter().zip(&expected) {
+        for control in [&wrong_source, &wrong_correction] {
+            let wrong = crate::repair_source::evaluate(control, repair).unwrap();
+            assert!(
+                expected
+                    .iter()
+                    .zip(wrong.pixels())
+                    .any(|((_, a), (_, b))| (0..3).any(|c| (a[c] - b[c]).abs() > 2e-4)),
+                "the fixture must distinguish wrong source and omitted correction"
+            );
+        }
+    }
+    let services = e.source_services.as_ref().unwrap().clone();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
-        app.enter(|e, cx| e.schedule_dust(signature, cx));
+        paint(app);
         app.pump();
-        app.read(|e| assert!(e.document.visit.dust.pending.is_some()));
-        // Only install prepared reference UI; both repair evaluations use the real continuation.
-        app.update(|e| {
-            e.finish_dust_cleanup();
-            super::super::super::tests::paused_reference_fixture(e, reference, None);
-        });
-        let (working_revision, reference_revision) = app.read(|e| {
-            assert!(
-                e.document
-                    .flat_edit()
-                    .unwrap()
-                    .view
-                    .source()
-                    .unwrap()
-                    .correction
-                    .is_none()
-            );
+        app.update(|e| super::super::super::tests::paused_reference_fixture(e, reference, None));
+        let revisions = app.read(|e| {
             (
                 e.document.visit.canvas.original.continuation(),
                 e.document
@@ -808,11 +774,19 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            repairs
-                .iter()
-                .all(|(id, _)| e.document.dust.has_evaluation(source, *id))
+            e.document.visit.working_view.completed_capture().is_some()
         });
         app.read(|e| {
+            let completed = e
+                .document
+                .visit
+                .working_view
+                .completed_capture()
+                .unwrap()
+                .recipe()
+                .unwrap();
+            assert_eq!(**completed, recipe);
+            assert_eq!(e.document.visit.canvas.original.continuation(), revisions.0);
             assert_eq!(
                 e.document
                     .flat_edit()
@@ -820,30 +794,30 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
                     .view
                     .test_original()
                     .continuation(),
-                reference_revision
+                revisions.1
             );
-            assert_ne!(
-                e.document.visit.canvas.original.continuation(),
-                working_revision
+            assert!(
+                e.document
+                    .flat_edit()
+                    .unwrap()
+                    .view
+                    .source()
+                    .unwrap()
+                    .correction
+                    .is_none()
             );
         });
-        app.update(Editor::finish_flat_edit);
-        app.read(|e| {
-            assert!(e.document.visit.dust.pending.is_none());
-            for (id, expected) in repairs {
-                let cached = e.document.dust.cached.get(&(source, id)).unwrap();
-                let actual = cached.evaluated.pixels().collect::<Vec<_>>();
-                let reference = expected.pixels().collect::<Vec<_>>();
-                assert_eq!(actual.len(), reference.len());
-                for ((point, actual), (expected_point, reference)) in actual.iter().zip(&reference)
-                {
-                    assert_eq!(point, expected_point);
-                    for channel in 0..3 {
-                        assert!((actual[channel] - reference[channel]).abs() < 2e-6);
-                    }
+        // Query ordinary healing images outside the UI borrow, while reference presentation is active.
+        for (repair, expected) in recipe.repairs.iter().zip(&expected) {
+            let actual = render_testing::pixels(&scan, &recipe, repair, &services);
+            assert_eq!(actual.len(), expected.len());
+            for ((point, a), (p, b)) in actual.iter().zip(expected) {
+                assert_eq!(point, p);
+                for c in 0..3 {
+                    assert!((a[c] - b[c]).abs() < 2e-5 * b[c].abs().max(1.));
                 }
             }
-        });
+        }
     });
 }
 
@@ -947,7 +921,7 @@ fn navigation_discards_the_unfinished_stroke_and_returning_can_start_a_new_one()
 }
 
 #[test]
-fn real_search_publishes_a_donor_before_a_failed_heal_without_another_paint() {
+fn real_search_authors_a_donor_before_render_demand_reports_a_failed_heal() {
     let e = coherent_editor();
     with_application(e, |app| {
         let stroke = app.enter(|e, cx| {
@@ -968,12 +942,11 @@ fn real_search_publishes_a_donor_before_a_failed_heal_without_another_paint() {
             );
             assert!(!e.dust_donor_regions().is_empty());
         });
+        paint(app);
         app.run_until(Duration::from_secs(10), |e| {
-            e.document
-                .dust
-                .failed
-                .contains_key(&(stroke.source, RepairId(1)))
+            e.document.visit.working_view.failed_capture().is_some()
         });
+        app.read(|e| assert_eq!(e.dust_render_state(), "Repair unavailable"));
         app.read(|e| assert!(!e.dust_donor_regions().is_empty()));
     });
 }

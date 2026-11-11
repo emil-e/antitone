@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
@@ -38,97 +37,28 @@ pub(super) fn validate_source_with_matrix(
         &snapshot,
         matrix,
         source.development.active_area.into(),
-        DVec3::ZERO,
     )
     .map(|_| ())
 }
 
 impl Editor {
-    pub(super) fn positive_parameters(
-        &self,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-    ) -> Result<ProcessingParameters, Error> {
-        let input = input.into();
-        let matrix = if let Some(id) = self.document.visit.current_source {
-            let development = self
-                .document
-                .development_for(self.document.project.source(id)?, input);
-            glam::DMat3::from_cols_array_2d(&development.resolved()?.camera_to_ap1)
-        } else {
-            glam::DMat3::from_cols_array_2d(
-                &self
-                    .document
-                    .scan_basis()
-                    .ok_or(Error::UnusableSample("no native-camera basis identity"))?
-                    .camera
-                    .camera_to_ap1,
-            )
-        };
-        self.positive_parameters_for_matrix(input, roll, matrix)
-    }
-
-    pub(super) fn positive_parameters_for_matrix(
-        &self,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        camera_to_ap1: glam::DMat3,
-    ) -> Result<ProcessingParameters, Error> {
-        let input = input.into();
-        ProcessingParameters::interpret(input, roll, camera_to_ap1)
-    }
-
+    #[cfg(test)]
     pub(super) fn neutral_source_signature(
         &self,
         input: &InputSettings,
     ) -> Result<crate::gpu::interpretation::InputTransform, Error> {
-        let ready = self
-            .document
+        self.document
             .visit
             .canvas
             .ready
             .as_ref()
             .ok_or(Error::InvalidParameter("positive source unavailable"))?;
-        let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
-        scan.set_flat_field(
-            self.document
-                .project
-                .active_flat_field()
-                .map(|correction| correction.map.clone()),
-        );
-        crate::gpu::interpretation::InputTransform::for_scan(&scan, *input)
-    }
-
-    pub(super) fn validate_repaired_source(
-        &self,
-        input: &InputSettings,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        bound: DVec3,
-    ) -> Result<(), Error> {
-        if bound == DVec3::ZERO {
-            return Ok(());
-        }
-        let (Some(device), Some(ready)) = (
-            self.document.visit.working_view.device(),
-            &self.document.visit.canvas.ready,
-        ) else {
-            return Ok(());
-        };
-        let input = *input;
-        crate::gpu::photograph::admission::prepare(
-            &device.limits(),
-            input,
-            roll,
-            snapshot,
-            input.positive_matrix(
-                ready.developed.camera_to_ap1(),
-                ready.reference.as_ref().map(|reference| reference.ev()),
-            )?,
-            ready.area,
-            bound,
-        )
-        .map(|_| ())
+        let recipe = self.positive_recipe(
+            *input,
+            self.document.project_snapshot().roll,
+            self.photo_settings(),
+        )?;
+        crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
     }
 
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
@@ -138,19 +68,21 @@ impl Editor {
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
-        let input = self.input();
-        validate_source_with_matrix(
-            self.document.visit.working_view.device(),
-            input,
-            self.document.project_snapshot().roll,
+        let recipe = self.capture_recipe(
             source,
-            self.document.positive_matrix(source, input)?,
+            self.input(),
+            self.document.project_snapshot().roll,
+            source.grade_snapshot()?,
         )?;
-        if self.document.visit.current_source == Some(source.id) {
-            self.dust_validate_snapshot(
-                input,
-                self.document.project_snapshot().roll,
-                &source.grade_snapshot()?,
+        if recipe.neutral.input.ready() {
+            recipe.validate(
+                &self
+                    .document
+                    .visit
+                    .working_view
+                    .device()
+                    .map(wgpu::Device::limits)
+                    .unwrap_or_default(),
             )?;
         }
         Ok(())
@@ -163,22 +95,49 @@ impl Editor {
         source: &Source,
         photo: AdjustmentLayerSettings,
     ) -> Result<crate::image_recipe::ImageRecipe, Error> {
-        let input = input.into();
-        let mut candidate = source.clone();
-        self.overlay_adjustment_layer_settings(&mut candidate, photo);
-        self.document.project.capture_image(&candidate, |recipe| {
-            recipe.neutral.input = input;
-            recipe.neutral.source_development = self.document.development_for(&candidate, input);
-            recipe.roll = roll;
-            recipe.neutral.reference = self.document.exposure_value(source);
-            recipe.grain = self.document.project_snapshot().output.grain;
-            recipe.halation = self.document.project_snapshot().output.halation;
-            if let Some(repairs) = self.dust_recipe_repairs(&candidate) {
-                recipe.repairs = repairs
-                    .into_iter()
-                    .filter(|repair| repair.enabled)
-                    .collect();
-            }
+        let grade = self.adjustment_layer_snapshot(source, photo)?;
+        self.capture_recipe(source, input.into(), roll, grade)
+    }
+
+    fn capture_recipe(
+        &self,
+        source: &Source,
+        input: InputSettings,
+        roll: RollSettings,
+        grade: AdjustmentLayerSnapshot,
+    ) -> Result<crate::image_recipe::ImageRecipe, Error> {
+        let project = self.document.project_snapshot();
+        source
+            .repairs
+            .validate(source.development.active_area.into())?;
+        let repairs = self
+            .dust_recipe_repairs(source)
+            .unwrap_or_else(|| source.repairs.repairs().to_vec())
+            .into_iter()
+            .filter(|repair| repair.enabled)
+            .collect();
+        Ok(crate::image_recipe::ImageRecipe {
+            neutral: crate::image_recipe::NeutralRecipe {
+                source: source.id,
+                source_development: self.document.development_for(source, input),
+                input,
+                reference: self.document.exposure_value(source),
+                correction: project
+                    .active_flat_field()
+                    .map(|correction| correction.map.clone()),
+            },
+            roll,
+            grade,
+            composition: Composition::with_crop(
+                source.development.active_area.into(),
+                project.orientation,
+                source.orientation,
+                source.crop,
+            )?,
+            grain: project.output.grain,
+            halation: project.output.halation,
+            luts: project.output.luts(),
+            repairs,
         })
     }
 
@@ -212,7 +171,8 @@ impl Editor {
             .visit
             .current_source
             .ok_or(Error::UnusableSample("no photographic source selected"))?;
-        self.positive_recipe_for_source(input, roll, self.document.state.project.source(id)?, photo)
+        let project = self.document.project_snapshot();
+        self.positive_recipe_for_source(input, roll, project.source(id)?, photo)
     }
 
     #[cfg(test)]
@@ -242,19 +202,19 @@ impl Editor {
     ) -> Result<(), Error> {
         let input = input.into();
         photo.validate()?;
-        self.positive_parameters(input, roll)?;
-        self.dust_validate_processing(input, roll, photo)?;
         for source in &self.document.state.project.sources {
-            let mut candidate = source.clone();
-            self.overlay_adjustment_layer_settings(&mut candidate, photo);
-            let source_input = input;
-            validate_source_with_matrix(
-                self.document.visit.working_view.device(),
-                source_input,
-                roll,
-                &candidate,
-                self.document.positive_matrix(&candidate, source_input)?,
-            )?;
+            let recipe = self.positive_recipe_for_source(input, roll, source, photo)?;
+            if input.ready() {
+                recipe.validate(
+                    &self
+                        .document
+                        .visit
+                        .working_view
+                        .device()
+                        .map(wgpu::Device::limits)
+                        .unwrap_or_default(),
+                )?;
+            }
         }
         Ok(())
     }

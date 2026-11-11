@@ -24,7 +24,7 @@ const VIEW_SCRATCH_BYTES: u64 = 1280 << 20;
 pub struct ProcessedView {
     pub source: Arc<AcquiredViewRaster>,
     pub plan: crate::acquisition::Plan,
-    pub definition: Arc<crate::gpu::evaluation::ImageNode>,
+    pub definition: crate::gpu::evaluation::Value,
     pub stages: Option<crate::gpu::pixel_pipeline::Prepared>,
     pub pixels: crate::gpu::evaluation::BufferImage,
     pub submitted: Mutex<bool>,
@@ -43,12 +43,21 @@ impl ProcessedView {
 
     fn supplies(
         &self,
-        definition: &Arc<crate::gpu::evaluation::ImageNode>,
+        definition: &crate::gpu::evaluation::Value,
         source: &AcquiredViewRaster,
     ) -> bool {
-        match (self.definition.identity(), definition.identity()) {
+        let Ok(region) = definition.domain().finite() else {
+            return false;
+        };
+        let Ok(output) = definition.output(region) else {
+            return false;
+        };
+        let Ok(previous) = self.definition.output(region) else {
+            return false;
+        };
+        match (previous.identity(), output.identity()) {
             (Some(a), Some(b)) => a == b,
-            _ => self.source.pixels == source.pixels && self.definition.same_definition(definition),
+            _ => self.source.pixels == source.pixels && previous.same_value(&output),
         }
     }
 
@@ -67,15 +76,9 @@ impl ProcessedView {
     pub fn definition(
         limits: &wgpu::Limits,
         spec: &SourceRequest,
-        neutral: Arc<crate::gpu::evaluation::ImageNode>,
+        neutral: crate::gpu::evaluation::Value,
         input: &AuthoredPhotograph,
-    ) -> Result<
-        (
-            Arc<crate::gpu::evaluation::ImageNode>,
-            crate::acquisition::Plan,
-        ),
-        Error,
-    > {
+    ) -> Result<(crate::gpu::evaluation::Value, crate::acquisition::Plan), Error> {
         let presentation = spec.frame();
         if spec.is_inspection() {
             let parameters = input.parameters();
@@ -104,18 +107,13 @@ impl ProcessedView {
         let program = input.source_transform().ok_or_else(|| {
             Error::Gpu("positive view requires captured source interpretation".into())
         })?;
-        if crate::gpu::photograph::PhotographGraph::input_transform(&neutral)
+        if crate::gpu::photograph::PhotographGraph::input_transform(&neutral)?
             .is_some_and(|captured| captured != *program)
         {
             return Err(Error::Gpu("physical-view source is stale".into()));
         }
-        if input.repairs != spec.repairs {
-            return Err(Error::Gpu(
-                "physical-view repairs differ from reconstructed originals".into(),
-            ));
-        }
         input.grade().unwrap().require_extent(spec.area)?;
-        input.validate_repairs(limits, input.repairs.bound())?;
+        input.validate_controls(limits)?;
         let stages = input.pixel_pipeline();
         let plan = spec.processing_plan(&stages)?;
         let grading = input
@@ -134,7 +132,7 @@ impl ProcessedView {
 
     pub fn request(
         context: &crate::gpu::evaluation::Context,
-        root: Arc<crate::gpu::evaluation::ImageNode>,
+        root: crate::gpu::evaluation::Value,
     ) -> Result<crate::gpu::evaluation::Evaluation, Error> {
         let domain = root.domain();
         let bounds = domain.finite()?;
@@ -153,7 +151,7 @@ impl ProcessedView {
 
     pub fn produced(
         source: Arc<AcquiredViewRaster>,
-        definition: Arc<crate::gpu::evaluation::ImageNode>,
+        definition: crate::gpu::evaluation::Value,
         plan: crate::acquisition::Plan,
         value: crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout>,
     ) -> Result<Arc<Self>, Error> {
@@ -192,14 +190,14 @@ impl ProcessedView {
     pub fn prepare_calculation(
         device: &wgpu::Device,
         source: Arc<AcquiredViewRaster>,
-        root: Arc<crate::gpu::evaluation::ImageNode>,
+        root: crate::gpu::evaluation::Value,
         plan: crate::acquisition::Plan,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         if let Some(previous) = previous.filter(|previous| previous.supplies(&root, &source)) {
             return Ok(previous.clone());
         }
-        if let Some(identity) = root.identity()
+        if let Some(identity) = root.output(root.domain().finite()?)?.identity()
             && let Some(value) =
                 source
                     .renderer
@@ -220,7 +218,7 @@ impl ProcessedView {
     pub(super) fn record(
         device: &wgpu::Device,
         source: Arc<AcquiredViewRaster>,
-        root: Arc<crate::gpu::evaluation::ImageNode>,
+        root: crate::gpu::evaluation::Value,
         plan: crate::acquisition::Plan,
     ) -> Result<Self, Error> {
         let mut raster =

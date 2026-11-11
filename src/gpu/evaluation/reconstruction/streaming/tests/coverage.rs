@@ -25,7 +25,7 @@ fn verify(frame: FrameRaster, exterior: bool) {
     let op = (node.operation.as_ref() as &dyn std::any::Any)
         .downcast_ref::<Reconstruction>()
         .unwrap();
-    let demand = op.input(output.finite().unwrap()).unwrap().unwrap();
+    let demand = op.reads(output.finite().unwrap()).unwrap()[0].region;
     let mut units = Vec::new();
     for y in (demand.y..demand.bottom()).step_by(5) {
         for x in (demand.x..demand.right()).step_by(7) {

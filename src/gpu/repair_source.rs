@@ -1,10 +1,9 @@
-//! Shared photographic image inputs for CPU donor search and healing.
+//! Original, unrepaired neutral image queries for Dust donor search.
 
 use crate::{
     Error,
-    dust_repair::{Ap1, BaseImage, EvaluatedRepair, Execution},
+    dust_repair::{Ap1, BaseImage},
     geometry::SourceRegion,
-    processing::InputSettings,
     renderer::GpuRenderer,
     scan::Scan,
 };
@@ -21,70 +20,54 @@ pub(crate) struct Source<'a> {
     context: &'a evaluation::Context,
     queue: &'a wgpu::Queue,
     submissions: &'a SubmissionGate,
-    image: Arc<evaluation::ImageNode>,
+    image: evaluation::Value,
     budget: evaluation::Budget,
 }
 
 impl<'a> Source<'a> {
-    pub(crate) fn new(
+    pub(crate) fn from_recipe(
         device: &wgpu::Device,
         renderer: &'a GpuRenderer,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
         scan: &Scan,
-        input: InputSettings,
+        recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
-        let program = crate::gpu::interpretation::InputTransform::for_scan(scan, input)?;
-        let field = scan
-            .flat_field()
-            .cloned()
+        recipe.neutral.require_scan(scan)?;
+        let field = recipe
+            .neutral
+            .correction
+            .clone()
             .map(|field| GpuFlatField::new(device, field).map(Arc::new))
             .transpose()?;
-        let readout = crate::gpu::photograph::PhotographGraph::neutral_readout(
+        let graph = crate::gpu::photograph::RecipeGraph::originals(
             evaluation::camera_source(scan)?,
             field,
-            program,
+            recipe,
         )?;
+        Self::from_image(renderer, gpu, graph.interpreted()?.unrepaired)
+    }
 
+    pub(crate) fn from_image(
+        renderer: &'a GpuRenderer,
+        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        image: evaluation::Value,
+    ) -> Result<Self, Error> {
         Ok(Self {
             context: renderer.evaluation(),
             queue: gpu.0,
             submissions: gpu.1,
-            image: readout.decoded(),
+            image,
             budget: evaluation::Budget {
                 tile: [512, 128],
                 scratch_bytes: 32 << 20,
             },
         })
     }
-}
 
-pub(crate) fn resolve_plan(
-    device: &wgpu::Device,
-    renderer: &GpuRenderer,
-    gpu: (&wgpu::Queue, &SubmissionGate),
-    scan: &Scan,
-    recipe: &crate::image_recipe::ImageRecipe,
-    plan: &crate::acquisition::Plan,
-    execution: &mut Execution<'_>,
-) -> Result<Option<Vec<Arc<EvaluatedRepair>>>, Error> {
-    // A valid folded original endpoint must not acquire a neutral-image requirement when
-    // no contributing repair requests that image. Capture it only at the first such request.
-    let mut source = None;
-    crate::repair_source::resolve_plan_using(scan, recipe, plan, execution, |repair, execution| {
-        if (execution.cancelled)() {
-            return Ok(None);
-        }
-        if source.is_none() {
-            source = Some(Source::new(
-                device,
-                renderer,
-                gpu,
-                scan,
-                recipe.neutral.input,
-            )?);
-        }
-        crate::dust_repair::evaluate_image(repair, scan.area, source.as_mut().unwrap(), execution)
-    })
+    #[cfg(test)]
+    pub(crate) fn image(&self) -> &evaluation::Value {
+        &self.image
+    }
 }
 
 impl BaseImage for Source<'_> {

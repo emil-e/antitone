@@ -1,6 +1,6 @@
 use super::*;
 
-fn exact_values(repair: &crate::dust_repair::EvaluatedRepair) -> Vec<([u32; 2], [u32; 3])> {
+fn exact_values(repair: &crate::editor::dust::render_testing::Image) -> Vec<([u32; 2], [u32; 3])> {
     repair
         .pixels()
         .map(|(point, value)| (point, value.map(f32::to_bits)))
@@ -146,7 +146,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         ready(&mut h, 1);
         wait_for(&mut h, |e| e.document.visit.working_view.idle());
         // Recreate the source-ready / detailed-acquisition-pending boundary,
-        // keeping current evaluated repairs. Hold physical admission so the
+        // keeping accepted repair instructions. Hold physical admission so the
         // placeholder must paint rather than winning a worker timing race.
         let admission = crate::background::testing::pause();
         let timing = h.update(|e| {
@@ -177,11 +177,13 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                 .as_ref()
                 .expect("usable placeholder")
                 .2;
-            assert!(
-                preview.spec.repairs.0.is_empty(),
-                "reduced proxy cannot acquire sparse repairs"
+            assert_eq!(preview.capture.recipe().unwrap().repairs.len(), 1);
+            assert!(e.document.visit.working_view.completed_capture().is_none());
+            assert_eq!(
+                e.dust_render_state(),
+                "Repairs pending",
+                "a proxy retaining complete intent has not completed the requested healing"
             );
-            assert_eq!(e.dust_evaluations(e.dust_signature().unwrap()).len(), 1);
         });
         h.render().unwrap();
         assert!(timing.pending_was_painted());
@@ -193,7 +195,13 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                 .working_view
                 .displayed
                 .as_ref()
-                .is_some_and(|view| view.spec.repairs.0.len() == 1)
+                .is_some_and(|view| {
+                    view.capture
+                        .recipe()
+                        .is_some_and(|recipe| recipe.repairs.len() == 1)
+                        && view.spec.plan.sampling()
+                            == crate::acquisition::Sampling::NeutralFootprints
+                })
         });
         h.step();
         h.render().unwrap();
@@ -207,9 +215,10 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                     .displayed
                     .as_ref()
                     .unwrap()
-                    .spec
+                    .capture
+                    .recipe()
+                    .unwrap()
                     .repairs
-                    .0
                     .len(),
                 1
             );
@@ -253,16 +262,34 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
         h.step();
         assert_navigation_preview(&h);
         wait_for(&mut h, |editor| {
-            editor.document.dust.has_failed_evaluation(source, repair)
+            editor
+                .document
+                .visit
+                .working_view
+                .failed_capture()
+                .is_some()
         });
         for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
             h.set_size(size);
             h.step();
             assert_navigation_preview(&h);
+            wait_for(&mut h, |editor| {
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .failed_capture()
+                    .is_some()
+            });
             h.read(|editor| {
                 assert!(
-                    editor.document.dust.has_failed_evaluation(source, repair),
-                    "keeping the navigation card must not clear the viewer's failed evaluation"
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .failed_capture()
+                        .is_some(),
+                    "the current failed view remains unavailable while navigation stays usable"
                 );
             });
             save_capture(
@@ -395,8 +422,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             )
         });
 
-        let signature = h.read(|editor| editor.dust_signature().unwrap());
-        let evaluated = h.read(|editor| editor.dust_evaluations(signature));
+        let evaluated = h.read(|editor| editor.dust_images());
         let expected = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| {
             assert!(
@@ -420,12 +446,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.read(|editor| assert!(!editor.files.pending()));
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         save_existing_project(&mut h);
-        h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &evaluated[0],
-                &editor.dust_evaluations(signature)[0]
-            ))
-        });
+        h.read(|editor| assert!(evaluated[0].same_definition(&editor.dust_images()[0])));
 
         native_file_action(&mut h, crate::platform::menu::Action::New);
         wait_for(&mut h, |e| !e.interaction_blocked());
@@ -442,10 +463,10 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .ready_count(&e.document, e.document.target())
                 == 1
         });
-        let restored = h.read(|editor| editor.dust_evaluations(signature));
+        let restored = h.read(|editor| editor.dust_images());
         for (before, after) in evaluated.iter().zip(&restored) {
-            assert!(!Arc::ptr_eq(before, after));
-            assert_eq!(before.donors, after.donors);
+            assert_eq!(before.offset, after.offset);
+            assert_eq!(before.support(), after.support());
             assert_eq!(exact_values(before), exact_values(after));
         }
 
@@ -514,58 +535,17 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
         let scan = Scan::open(&raw_path, expected.acquisition_wb()).unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
-            let request = h.read(|editor| crate::editor::dust::Request {
-                request: 1,
-                loaded: editor.id,
-                source,
-                signature,
-                repair: repair.clone(),
-                input: editor
-                    .document
-                    .project
-                    .image_recipe(source)
-                    .unwrap()
-                    .neutral
-                    .input,
-                cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            });
-            let cpu = crate::editor::dust::evaluate(&scan, &request).unwrap();
+            let recipe = expected.image_recipe(source).unwrap();
+            let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+            let cpu = crate::repair_source::evaluate(&input, repair).unwrap();
             let gpu = restored
                 .iter()
                 .find(|result| result.id == repair.id)
                 .unwrap();
-            assert_eq!(cpu.evaluated.donors.len(), gpu.donors.len());
+            assert_eq!(gpu.offset, repair.offset);
+            assert_eq!(gpu.support(), &repair.support);
 
-            for (reference, actual) in cpu.evaluated.donors.iter().zip(&gpu.donors) {
-                assert_eq!(actual.target, reference.target);
-                assert_eq!(actual.source, reference.source);
-                assert_eq!(
-                    actual.paired_context_pixels,
-                    reference.paired_context_pixels
-                );
-                assert!(
-                    (actual.context_mse - reference.context_mse).abs()
-                        < 2e-6 * reference.context_mse.abs().max(1.),
-                    "repair {:?} donor {:?}->{:?}: context MSE actual={} reference={}",
-                    repair.id,
-                    actual.source,
-                    actual.target,
-                    actual.context_mse,
-                    reference.context_mse
-                );
-                assert!(
-                    (actual.matching_score - reference.matching_score).abs()
-                        < 2e-6 * reference.matching_score.abs().max(1.),
-                    "repair {:?} donor {:?}->{:?}: matching score actual={} reference={}",
-                    repair.id,
-                    actual.source,
-                    actual.target,
-                    actual.matching_score,
-                    reference.matching_score
-                );
-            }
-
-            let reference: Vec<_> = cpu.evaluated.pixels().collect();
+            let reference: Vec<_> = cpu.pixels().collect();
             let actual: Vec<_> = gpu.pixels().collect();
             assert_eq!(actual.len(), reference.len());
 
@@ -614,12 +594,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         drop(hold);
         wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
-        h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &restored[0],
-                &editor.dust_evaluations(signature)[0]
-            ))
-        });
+        h.read(|editor| assert!(restored[0].same_definition(&editor.dust_images()[0])));
         h.read(|editor| {
             assert!(Arc::ptr_eq(
                 &view,
@@ -661,10 +636,9 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         open_project(&mut h, path);
         wait_opened_photo(&mut h);
         ready(&mut h, 2);
-        for (before, after) in
-            h.read(|editor| evaluated.iter().zip(editor.dust_evaluations(signature)))
-        {
-            assert_eq!(before.donors, after.donors);
+        for (before, after) in h.read(|editor| evaluated.iter().zip(editor.dust_images())) {
+            assert_eq!(before.offset, after.offset);
+            assert_eq!(before.support(), after.support());
             assert_eq!(exact_values(before), exact_values(&after));
         }
     });

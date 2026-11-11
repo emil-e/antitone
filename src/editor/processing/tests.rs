@@ -365,14 +365,17 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         other.id = SourceId(editor.document.state.project.next_source_id);
         other.path = "offscreen.ARW".into();
         let mut layers = AdjustmentLayers::default();
-        for exposure in [-16., 16.] {
-            for _ in 0..7 {
-                layers.add("Stage".into(), local(exposure)).unwrap();
-            }
-        }
-        for record in &mut layers.layers {
-            record.adjustment.strength = 1.;
-        }
+        let mut adjustment = local(1.);
+        adjustment.strength = 1.;
+        adjustment.mask = AdjustmentLayerCoverage::Radial {
+            center: SourcePoint([121., 74.]),
+            radii: [f64::MIN_POSITIVE, 1.],
+            angle: 0.,
+            feather: 0.5,
+        };
+        layers
+            .add("Unrepresentable mask".into(), adjustment)
+            .unwrap();
         other.adjustment_layers = Some(layers.clone());
         let mut disabled = other.clone();
         for record in &mut disabled.adjustment_layers.as_mut().unwrap().layers {
@@ -483,11 +486,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             crate::gpu::photograph::request::PhotographRequest::Recipe(_)
         ));
         let (captured, view) = (
-            request
-                .demand
-                .capture
-                .processing(&device.limits(), &request.demand.repairs)
-                .unwrap(),
+            request.demand.capture.processing(&device.limits()).unwrap(),
             request.demand.view.unwrap(),
         );
         assert_eq!(captured.clone(), accepted.clone());
@@ -550,7 +549,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
 
 #[test]
 fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
-    use crate::gpu::evaluation::ImageNode;
+    use crate::gpu::evaluation::Value;
     use crate::gpu::photograph::request::PhotographRequest;
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use crate::image_recipe::ImageRecipe;
@@ -586,11 +585,11 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             images[0].recipe_calculation(&recipe, None).unwrap(),
             images[1].recipe_calculation(&recipe, None).unwrap(),
         ];
-        let tracked: Vec<Weak<ImageNode>> = roots.iter().map(Arc::downgrade).collect();
+        let tracked: Vec<_> = roots.iter().map(Value::downgrade).collect();
         let live_calculations = || {
             tracked
                 .iter()
-                .filter(|root| root.strong_count() != 0)
+                .filter(|root| root.upgrade().is_some())
                 .count()
         };
         let bytes = crate::gpu::grading::Grading::captured_bytes(&roots[0]);
@@ -659,7 +658,6 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                 OriginalPurpose::Reference,
                 original_view::Demand {
                     capture: PhotographRequest::Recipe(Arc::new(recipe)),
-                    repairs: Default::default(),
                     target,
                     view: Some(ViewRequest {
                         area: frame.bounds().unwrap(),
@@ -836,7 +834,7 @@ fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_
             .image(editor.document.target())
             .unwrap();
         let calculation = image.recipe_calculation(&recipe, None).unwrap();
-        let arguments = Arc::downgrade(&calculation);
+        let arguments = calculation.downgrade();
         let captured = editor.document.capture();
         let id = editor.document.visit.current_source;
         editor.document = editor.document.replacement(captured);

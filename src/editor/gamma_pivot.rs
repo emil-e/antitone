@@ -186,9 +186,7 @@ impl Editor {
                     services,
                     negative(starting.input)?,
                     negative(candidate)?,
-                    glam::DMat3::from_cols_array_2d(
-                        &captured.recipe.source_development.resolved()?.camera_to_ap1,
-                    ),
+                    captured.recipe.processing_transform()?.1,
                     starting.roll.wb,
                     &|| cancelled.is_cancelled(),
                 );

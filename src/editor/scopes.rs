@@ -261,7 +261,7 @@ impl Editor {
             .ok_or("No device")?;
         let input = view
             .capture
-            .processing(&device.limits(), &view.spec.repairs)
+            .processing(&device.limits())
             .map_err(|_| "View processing unavailable")?;
         Ok((view.image.clone(), input, frame))
     }

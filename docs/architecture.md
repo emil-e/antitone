@@ -83,7 +83,7 @@ A [background wait](../src/background.rs) owns a cancellation signal for its job
 
 Frozen native source leases remain valid through their last consumer; interpretation is captured per consumer rather than mutated globally. One device/queue serves GPU consumers. The shared [submission gate](../src/gpu/submission.rs) excludes submission during surface reconfiguration; encoding, uploads and completion waits stay outside it. Workers submit and await completion off the UI thread; resident rendering records into its caller's encoder. Jobs and recorded commands retain resources through their actual use, independently of optional cache ownership. Cache budgets limit optional retention; bounded work units and concurrency control active work separately. [Output](colour-and-output.md) and [native development](native-development.md) own the detailed contracts.
 
-Production rendering, photographic measurements, Analyze and repair inputs use shared [photographic components](processing.md#input-and-grading-have-separate-contracts). Recipe-backed rendering supplies captured intent to graph assembly; some repair and measurement adapters still derive interpretation from scans and settings. Consumers own publication of query results.
+Rendering, photographic measurements, repair inputs and validation lower captured intent through shared [photographic components](processing.md#input-and-grading-have-separate-contracts). Preparation supplies missing source facts; execution consumers select endpoints and own publication. Analyze and interactive fitting author proposed interpretation or grading from source evidence through those same mathematical operations.
 
 ### Pixel stages and spatial support
 

@@ -11,6 +11,72 @@ use glam::DVec3;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+#[test]
+fn retained_grading_arguments_follow_branches_and_count_each_shared_definition_once() {
+    let region = CellRegion::new([0, 0], [8, 4]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let base = borrowed_input(domain);
+    let make = || {
+        Grading::new(
+            &wgpu::Limits::default(),
+            RollSettings {
+                exposure: 0.5,
+                ..Default::default()
+            },
+            AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+                exposure: 0.75,
+                ..Default::default()
+            })])
+            .unwrap(),
+            [0, 0, 8, 4].into(),
+        )
+        .unwrap()
+        .compose(base.clone())
+        .unwrap()
+    };
+    let graded = make();
+    let bytes = Grading::captured_bytes(&graded);
+    assert!(
+        bytes > 0,
+        "the fixture must actually retain grading arguments"
+    );
+    let halo = halation(
+        graded.clone(),
+        crate::halation::HalationParameters {
+            sigma: 0.25,
+            strength: 0.54,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        Grading::captured_bytes(&halo),
+        bytes,
+        "both halation branches reach the same grading definitions"
+    );
+
+    let independent = make();
+    assert!(graded.same_definition(&independent));
+    assert!(!graded.same_capture(&independent));
+    let combined = value::Value::new(
+        graded.domain(), region,
+        vec![graded.request(region).unwrap(), independent.request(region).unwrap()],
+        value::Operation::new(
+            "retained argument ownership witness", (),
+            "fn pixel(cell:vec2i,position:vec2f,a:vec4f,b:vec4f)->vec4f{return vec4f((a.rgb+b.rgb)*0.5,a.w);}",
+            "pixel", value::Access::Pointwise,
+        ),
+    ).unwrap();
+    assert_eq!(
+        Grading::captured_bytes(&combined),
+        2 * bytes,
+        "equivalent but separately captured arguments still have separate owners"
+    );
+}
+
 fn buffer(device: &wgpu::Device, values: &[[f32; 4]]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("captured neutral test samples"),
@@ -25,7 +91,7 @@ fn record(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &crate::renderer::GpuRenderer,
-    root: Arc<ImageNode>,
+    root: Value,
     region: CellRegion,
     input: &wgpu::Buffer,
 ) -> (Vec<[f32; 4]>, usize) {
@@ -69,6 +135,230 @@ fn record(
 }
 
 #[test]
+fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let pixels = [
+        [1e35, 1e35, 1e35, 7.],
+        [-1e35, -1e35, -1e35, 7.],
+        [f32::MAX, -f32::MAX, f32::MAX, 7.],
+        [1e37, -4.038491e36, 0., 7.],
+        [-0.25, 0.5, 4., 7.],
+    ];
+    let area = SourceRegion::from([0, 0, pixels.len() as u32, 1]);
+    let domain = Domain {
+        bounds: Some(area.try_into().unwrap()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let input = buffer(&device, &pixels);
+    for contrast in [0.4, 1., 1.6] {
+        for colour in [0., 0.5, 1.] {
+            let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
+                exposure: 16.,
+                contrast,
+                contrast_colour_mix: colour,
+                saturation: 2.,
+                ..Default::default()
+            });
+            let grading = Grading::new(
+                &device.limits(),
+                RollSettings {
+                    exposure: 16.,
+                    ..Default::default()
+                },
+                AdjustmentLayerSnapshot::new(vec![layer]).unwrap(),
+                area,
+            )
+            .unwrap();
+            let root = grading.compose(borrowed_input(domain)).unwrap();
+            let (actual, _) = record(
+                &device,
+                &queue,
+                &renderer,
+                root,
+                domain.finite().unwrap(),
+                &input,
+            );
+            assert_eq!(actual.len(), pixels.len());
+            for pixel in &actual {
+                assert!(
+                    pixel[..3].iter().all(|value| value.is_finite()),
+                    "contrast={contrast} colour={colour}: {pixel:?}"
+                );
+                assert_eq!(
+                    pixel[3], 7.,
+                    "arithmetic saturation preserves input metadata"
+                );
+            }
+            assert!(
+                actual[0][..3].iter().all(|value| *value > 1.),
+                "extreme highlights must not turn black or be clipped to display white: contrast={contrast} colour={colour} actual={:?}",
+                actual[0]
+            );
+            assert!(
+                actual[1][..3].iter().all(|value| *value < 0.),
+                "large signed working values must remain signed: contrast={contrast} colour={colour} actual={:?}",
+                actual[1]
+            );
+        }
+    }
+
+    let pixels = [[-0.25, 0.5, 4000., 7.], [-1e20, 1e20, 0., 7.]];
+    let area = SourceRegion::from([0, 0, 2, 1]);
+    let domain = Domain {
+        bounds: Some(area.try_into().unwrap()),
+        ..domain
+    };
+    let input = buffer(&device, &pixels);
+    let grading = Grading::new(
+        &device.limits(),
+        RollSettings {
+            exposure: 1.,
+            ..Default::default()
+        },
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 1.,
+            ..Default::default()
+        })])
+        .unwrap(),
+        area,
+    )
+    .unwrap();
+    let root = grading.compose(borrowed_input(domain)).unwrap();
+    let (actual, _) = record(
+        &device,
+        &queue,
+        &renderer,
+        root,
+        domain.finite().unwrap(),
+        &input,
+    );
+    for (actual, original) in actual.iter().zip(pixels) {
+        for channel in 0..3 {
+            let expected = original[channel] * 4.;
+            assert!(
+                (actual[channel] - expected).abs() <= 2e-6 * expected.abs().max(1.),
+                "two +1 EV grades must multiply ordinary signed/HDR samples by four"
+            );
+        }
+        assert_eq!(actual[3], original[3]);
+    }
+}
+
+#[test]
+fn extreme_grading_stays_finite_through_actual_grain_generation_and_application() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let region = CellRegion::new([0, 0], [64, 64]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let grading = Grading::new(
+        &device.limits(),
+        RollSettings {
+            exposure: 16.,
+            ..Default::default()
+        },
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 16.,
+            ..Default::default()
+        })])
+        .unwrap(),
+        region.source().unwrap(),
+    )
+    .unwrap();
+    let base = grading.compose(borrowed_input(domain)).unwrap();
+    let model = crate::grain::GrainParameters {
+        grain_size: 3.,
+        amplitude: 0.2,
+        colour: 1.,
+    };
+    let root = crate::gpu::evaluation::grain(base, model, 17).unwrap();
+    let mut outputs = Vec::new();
+    for value in [0.18, 1e35] {
+        let input = buffer(&device, &vec![[value, value, value, 7.]; 64 * 64]);
+        let (actual, _) = record(&device, &queue, &renderer, root.clone(), region, &input);
+        assert!(
+            actual
+                .iter()
+                .all(|pixel| pixel[..3].iter().all(|value| value.is_finite())),
+            "grade and grain must compose without producing nonfinite pixels"
+        );
+        assert!(actual.iter().all(|pixel| pixel[3] == 7.));
+        outputs.push(actual);
+    }
+    let ordinary = &outputs[0];
+    let low = ordinary
+        .iter()
+        .map(|pixel| pixel[0])
+        .fold(f32::INFINITY, f32::min);
+    let high = ordinary
+        .iter()
+        .map(|pixel| pixel[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        high > low * 1.01,
+        "the constant plate must acquire actual grain variation"
+    );
+    assert!(
+        outputs[1]
+            .iter()
+            .all(|pixel| pixel[..3].iter().all(|value| *value > 1.)),
+        "saturated highlights must stay positive HDR rather than becoming black"
+    );
+}
+
+#[test]
+fn overflowing_matrix_products_retry_without_turning_signed_channels_into_nan() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let pixels = [[f32::MAX, f32::MAX, 1., 7.], [1., 1., 1., 7.]];
+    let domain = Domain {
+        bounds: Some([0, 0, 2, 1].into()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let function = Function::new(
+        format!(
+            "{}\n{}",
+            crate::gpu::photograph::shader::functions(),
+            r#"
+fn matrix_retry_probe(pixel: vec4f, position: vec2f) -> vec4f {
+    let columns = array<vec4f, 3>(
+        vec4f(3.0, 3.0, -3.0, 0.0),
+        vec4f(-3.0, 3.0, -3.0, 0.0),
+        vec4f(0.0));
+    let rgb = matrix_product(columns, array<f32, 3>(pixel.r, pixel.g, pixel.b));
+    return vec4f(rgb[0], rgb[1], rgb[2], pixel.w);
+}
+"#
+        ),
+        "matrix_retry_probe",
+    );
+    let root = pointwise(borrowed_input(domain), Meaning::Neutral, function);
+    let (actual, _) = record(
+        &device,
+        &queue,
+        &renderer,
+        root,
+        domain.finite().unwrap(),
+        &buffer(&device, &pixels),
+    );
+    assert_eq!(
+        actual[0][0], 0.,
+        "equal opposite matrix terms cancel before magnitude restoration"
+    );
+    assert!(actual[0][1].is_finite() && actual[0][1] > 1., "{actual:?}");
+    assert!(actual[0][2].is_finite() && actual[0][2] < -1., "{actual:?}");
+    assert_eq!(actual[0][3], 7.);
+    assert_eq!(
+        actual[1],
+        [0., 6., -6., 7.],
+        "ordinary matrix arithmetic is unchanged"
+    );
+}
+
+#[test]
 fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
     let area = SourceRegion::from([11, 17, 8, 6]);
     let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
@@ -92,9 +382,11 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
     let grade = input.grade().unwrap().compose(source.clone()).unwrap();
     let weights = Grading::weight_image(source, layer).unwrap();
     for node in [grade, weights] {
-        let function = node.operation().pointwise().unwrap();
+        let value = node.request(node.domain().finite().unwrap()).unwrap();
+        let bindings = value.described_bindings().unwrap();
+        assert!(!bindings.is_empty());
         assert!(
-            function.bindings.iter().all(|(_, binding)| matches!(
+            bindings.iter().all(|(_, binding)| matches!(
                 binding,
                 FunctionBinding::Uniform(_) | FunctionBinding::Storage(_)
             )),
@@ -186,10 +478,13 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let root = borrowed_input(domain);
     let roll_image = grading.roll(root.clone()).unwrap();
     let full_image = grading.compose(root).unwrap();
-    let roll_function = roll_image.operation().pointwise().unwrap();
+    let roll_value = roll_image
+        .request(roll_image.domain().finite().unwrap())
+        .unwrap();
+    let bindings = roll_value.described_bindings().unwrap();
+    assert!(!bindings.is_empty());
     assert!(
-        roll_function
-            .bindings
+        bindings
             .iter()
             .all(|(_, binding)| matches!(binding, FunctionBinding::Uniform(_))),
         "Roll constants stay captured data until GPU planning"
@@ -298,7 +593,6 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
             borrowed_input(domain),
             Meaning::Graded,
             Function {
-                linked: Default::default(),
                 code: code.clone(),
                 symbol: "times",
                 bindings: vec![(0, Shared::Buffer(first.clone()).into())],
@@ -308,7 +602,6 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
             root,
             Meaning::Graded,
             Function {
-                linked: Default::default(),
                 code: module,
                 symbol,
                 bindings: vec![(0, Shared::Buffer(resource.clone()).into())],

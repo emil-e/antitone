@@ -19,7 +19,8 @@ pub struct AuthoredPhotograph {
     processing: Processing,
     luts: crate::looks::LutChain,
     pixel_pipeline: crate::pixel_pipeline::PixelPipeline,
-    pub(crate) repairs: super::repairs::Snapshot,
+    pub(crate) repairs: Vec<crate::dust_repair::Repair>,
+    pub(crate) replacements: Vec<super::repairs::fixtures::Replacement>,
     pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
 }
 
@@ -75,6 +76,7 @@ impl AuthoredPhotograph {
             luts: Default::default(),
             pixel_pipeline: Default::default(),
             repairs: Default::default(),
+            replacements: Vec::new(),
             field: None,
         }
     }
@@ -117,17 +119,6 @@ impl AuthoredPhotograph {
         }))
     }
 
-    pub fn validate(
-        device: &wgpu::Device,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        layers: &AdjustmentLayerSnapshot,
-        matrix: DMat3,
-        area: SourceRegion,
-    ) -> Result<(), Error> {
-        Self::validate_limits(&device.limits(), input, roll, layers, matrix, area)
-    }
-
     pub fn validate_limits(
         limits: &wgpu::Limits,
         input: impl Into<InputSettings>,
@@ -136,44 +127,11 @@ impl AuthoredPhotograph {
         matrix: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        super::photograph::admission::prepare(
-            limits,
-            input.into(),
-            roll,
-            layers,
-            matrix,
-            area,
-            DVec3::ZERO,
-        )
-        .map(|_| ())
+        super::photograph::admission::prepare(limits, input.into(), roll, layers, matrix, area)
+            .map(|_| ())
     }
 
-    pub(crate) fn validate_repaired(
-        device: &wgpu::Device,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        layers: &AdjustmentLayerSnapshot,
-        matrix: DMat3,
-        area: SourceRegion,
-        bound: DVec3,
-    ) -> Result<(), Error> {
-        super::photograph::admission::prepare(
-            &device.limits(),
-            input.into(),
-            roll,
-            layers,
-            matrix,
-            area,
-            bound,
-        )
-        .map(|_| ())
-    }
-
-    pub(crate) fn validate_repairs(
-        &self,
-        limits: &wgpu::Limits,
-        bound: DVec3,
-    ) -> Result<(), Error> {
+    pub(crate) fn validate_controls(&self, limits: &wgpu::Limits) -> Result<(), Error> {
         if let Processing::Photograph {
             source,
             grading,
@@ -187,7 +145,6 @@ impl AuthoredPhotograph {
                 grading.snapshot(),
                 source.matrix,
                 *area,
-                bound,
             )?;
         }
         Ok(())
@@ -232,7 +189,7 @@ impl AuthoredPhotograph {
                 .as_ref()
                 .map(|reference| reference.ev()),
         )?;
-        Ok(Self::new(
+        let mut authored = Self::new(
             limits,
             input,
             recipe.roll,
@@ -241,7 +198,9 @@ impl AuthoredPhotograph {
             recipe.neutral.source_development.active_area().into(),
         )?
         .with_luts(recipe.luts.clone())
-        .with_pixel_pipeline(crate::image_recipe::quality::sampling_stages(recipe)?))
+        .with_pixel_pipeline(crate::image_recipe::quality::sampling_stages(recipe)?);
+        authored.repairs = recipe.repairs.clone();
+        Ok(authored)
     }
 
     pub fn with_flat_field(mut self, field: Option<Arc<super::flat::GpuFlatField>>) -> Self {
@@ -355,6 +314,7 @@ impl AuthoredPhotograph {
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
         if self.repairs != other.repairs
+            || !super::repairs::fixtures::same(&self.replacements, &other.replacements)
             || self.field.as_ref().map(|field| field.field())
                 != other.field.as_ref().map(|field| field.field())
         {

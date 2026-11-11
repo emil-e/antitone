@@ -58,9 +58,19 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
             },
         );
         job.reference.set(reference.clone()).unwrap();
-        let proxy = crate::scan::CameraProxy::new(camera.clone(), Some(reference.clone()));
+        let (proxy, recipe) = crate::photo_preparation::proxy_image(
+            job.key.recipe.as_ref().unwrap().as_ref().unwrap(),
+            &job.reference,
+            &camera,
+            Ok(None),
+        );
         let product = worker
-            .positive(&job, Some(&proxy), &mut ThumbnailMetrics::default())
+            .positive(
+                &job,
+                &recipe,
+                Some(&proxy),
+                &mut ThumbnailMetrics::default(),
+            )
             .unwrap()
             .unwrap();
         let (native, view) = product.positive.as_ref().unwrap();
@@ -69,8 +79,9 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
             panic!("photographic thumbnail must retain its resolved recipe")
         };
         assert_eq!(captured.neutral.reference.as_ref(), Some(&reference));
-        let program =
-            crate::gpu::photograph::PhotographGraph::input_transform(&native.definition).unwrap();
+        let program = crate::gpu::photograph::PhotographGraph::input_transform(&native.definition)
+            .unwrap()
+            .expect("thumbnail retains one source interpretation");
         assert_eq!(program.matrix(), scan.camera_to_ap1 * ev.exp2());
     }
     loader.close_and_wait().unwrap();

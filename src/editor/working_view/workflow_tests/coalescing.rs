@@ -1,4 +1,5 @@
 use super::*;
+mod layout;
 use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
@@ -75,7 +76,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                 .frame
                 .as_ref()
                 .is_some_and(|frame| frame.request.capture == baseline.capture)
-                && e.document.visit.working.task.is_none()
+                && e.document.visit.working_view.task.is_none()
         });
         app.read(|e| {
             assert!(

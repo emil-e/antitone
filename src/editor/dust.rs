@@ -3,12 +3,11 @@ use super::*;
 use crate::dust_repair::{
     AUTOMATIC_PADDING, CONTEXT_PADDING, MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS,
 };
-use crate::processing::InputSettings;
 use crate::{
     cancellation::Cancellation,
     dust_repair::{
-        EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SearchOutcome, SupportMask,
-        donor_target, mask_within_budget, validate_offset as validate_dust_offset,
+        Repair, RepairId, RepairOrigin, RepairSet, SearchOutcome, SupportMask, donor_target,
+        mask_within_budget, validate_offset as validate_dust_offset,
     },
     geometry::SourceRegion,
 };
@@ -16,7 +15,6 @@ use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{BTreeSet, HashMap},
     rc::{Rc, Weak},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 #[cfg(test)]
@@ -27,70 +25,22 @@ mod search_tests;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
+pub(super) mod render_testing;
+#[cfg(test)]
 mod testing;
 
 fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
 }
 
+#[cfg(test)]
 pub(super) type Signature = crate::gpu::interpretation::InputTransform;
 
-#[derive(Clone)]
-pub(super) struct Request {
-    pub request: u64,
-    pub loaded: u64,
-    pub source: SourceId,
-    pub signature: Signature,
-    pub repair: Repair,
-    pub input: InputSettings,
-    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
-}
-
-pub(super) struct Response {
-    pub request: u64,
-    pub loaded: u64,
-    pub source: SourceId,
-    pub signature: Signature,
-    pub repair: Repair,
-    pub evaluated: Arc<EvaluatedRepair>,
-}
-
-impl Response {
-    fn new(request: &Request, evaluated: EvaluatedRepair) -> Self {
-        Self {
-            request: request.request,
-            loaded: request.loaded,
-            source: request.source,
-            signature: request.signature,
-            repair: request.repair.clone(),
-            evaluated: Arc::new(evaluated),
-        }
-    }
-}
-
-fn repair_bound(repair: &EvaluatedRepair) -> DVec3 {
-    repair.pixels().fold(DVec3::ZERO, |bound, (_, value)| {
-        bound.max(DVec3::from_array(value.map(f64::from)).abs())
-    })
-}
-
-struct Cached {
-    loaded: u64,
-    signature: Signature,
-    repair: Repair,
-    evaluated: Arc<EvaluatedRepair>,
-    bound: DVec3,
-}
-
-struct Failed {
-    loaded: u64,
-    signature: Signature,
-    repair: Repair,
-}
-
-struct Pending {
-    evaluation: Request,
-    task: Option<async_executor::Task<()>>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RepairFeedback {
+    Pending,
+    Ready,
+    Failed,
 }
 
 pub(super) struct DonorRegion {
@@ -193,14 +143,11 @@ pub(super) struct DustTool {
     reveal_controls: bool,
 }
 
-/// Photo-owned rendering and preferences, independent of the hosted interaction.
+/// Photo-owned preferences and access to the current provisional instructions.
 pub(super) struct PhotoState {
     pub brush_size: u32,
     brush_source: Option<SourceId>,
-    pending: Option<Pending>,
     preview: Weak<Interaction>,
-    pub render_error: Option<String>,
-    gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
 }
 
 impl Default for PhotoState {
@@ -208,10 +155,7 @@ impl Default for PhotoState {
         Self {
             brush_size: 12,
             brush_source: None,
-            pending: None,
             preview: Weak::new(),
-            render_error: None,
-            gpu: HashMap::new(),
         }
     }
 }
@@ -219,276 +163,20 @@ impl Default for PhotoState {
 #[derive(Default)]
 pub(super) struct State {
     selected: HashMap<SourceId, RepairId>,
-    cached: HashMap<(SourceId, RepairId), Cached>,
-    preview_cached: HashMap<(SourceId, RepairId), Cached>,
-    failed: HashMap<(SourceId, RepairId), Failed>,
     #[cfg(test)]
     search_worker: Option<search_testing::Search>,
 }
 
-impl Drop for Pending {
-    fn drop(&mut self) {
-        self.evaluation
-            .cancelled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl PhotoState {
-    fn reset_repairs(&mut self) {
-        self.pending = None;
-        self.gpu.clear();
-        self.render_error = None;
-    }
-
-    fn removed(&mut self, source: SourceId, repair: RepairId) {
-        if let Some(pending) = &self.pending
-            && pending.evaluation.source == source
-            && pending.evaluation.repair.id == repair
-        {
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        self.gpu.remove(&repair);
-    }
-
-    pub(super) fn attach_task(&mut self, request: u64, task: async_executor::Task<()>) {
-        if let Some(pending) = self
-            .pending
-            .as_mut()
-            .filter(|p| p.evaluation.request == request)
-        {
-            pending.task = Some(task);
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn pending_request(&self) -> Option<u64> {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.evaluation.request)
-    }
-
-    fn start(&mut self, request: &Request) {
-        if let Some(pending) = &self.pending {
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        self.pending = Some(Pending {
-            evaluation: request.clone(),
-            task: None,
-        });
-    }
-
-    fn accept(
-        &mut self,
-        response: Response,
-        expected: Option<&Repair>,
-        accepted: bool,
-        retained: &mut State,
-    ) -> bool {
-        let Some(pending) = self
-            .pending
-            .take_if(|p| p.evaluation.request == response.request)
-        else {
-            return false;
-        };
-        if pending
-            .evaluation
-            .cancelled
-            .load(std::sync::atomic::Ordering::Relaxed)
-            || pending.evaluation.request != response.request
-            || pending.evaluation.loaded != response.loaded
-            || pending.evaluation.source != response.source
-            || pending.evaluation.signature != response.signature
-            || pending.evaluation.repair != response.repair
-            || expected != Some(&pending.evaluation.repair)
-        {
-            return false;
-        }
-        retained
-            .failed
-            .remove(&(response.source, response.repair.id));
-        let cache = if accepted {
-            &mut retained.cached
-        } else {
-            &mut retained.preview_cached
-        };
-        cache.insert(
-            (response.source, response.repair.id),
-            Cached {
-                loaded: response.loaded,
-                signature: response.signature,
-                repair: response.repair,
-                bound: repair_bound(&response.evaluated),
-                evaluated: response.evaluated,
-            },
-        );
-        true
-    }
-
-    fn fail(&mut self, request: u64, retained: &mut State) -> bool {
-        let Some(pending) = self
-            .pending
-            .take_if(|pending| pending.evaluation.request == request)
-        else {
-            return false;
-        };
-        if pending
-            .evaluation
-            .cancelled
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            return false;
-        }
-        retained.failed.insert(
-            (pending.evaluation.source, pending.evaluation.repair.id),
-            Failed {
-                loaded: pending.evaluation.loaded,
-                signature: pending.evaluation.signature,
-                repair: pending.evaluation.repair.clone(),
-            },
-        );
-        true
-    }
-}
-
 impl State {
-    #[cfg(test)]
-    pub(super) fn has_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
-        self.cached.contains_key(&(source, repair))
-    }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn has_failed_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
-        self.failed.contains_key(&(source, repair))
-    }
-
-    fn repair_changed(&mut self, source: SourceId, repair: RepairId, accepted: &RepairSet) {
-        self.failed.remove(&(source, repair));
-        if let Some(preview) = self.preview_cached.remove(&(source, repair))
-            && accepted.repairs().contains(&preview.repair)
-        {
-            self.cached.insert((source, repair), preview);
-        }
-    }
-
     fn removed(&mut self, source: SourceId, repair: RepairId) {
         if self.selected.get(&source) == Some(&repair) {
             self.selected.remove(&source);
         }
-        self.cached.remove(&(source, repair));
-        self.preview_cached.remove(&(source, repair));
-        self.failed.remove(&(source, repair));
     }
 
     fn clear_repairs(&mut self, source: SourceId) {
         self.selected.remove(&source);
-        self.cached.retain(|(candidate, _), _| *candidate != source);
-        self.preview_cached
-            .retain(|(candidate, _), _| *candidate != source);
-        self.failed.retain(|(candidate, _), _| *candidate != source);
     }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub fn evaluations(
-        &self,
-        source: SourceId,
-        loaded: u64,
-        signature: Signature,
-        repairs: &[Repair],
-    ) -> Vec<Arc<EvaluatedRepair>> {
-        repairs
-            .iter()
-            .filter(|repair| repair.enabled)
-            .filter_map(|repair| {
-                self.preview_cached
-                    .get(&(source, repair.id))
-                    .filter(|cached| cached.repair == *repair)
-                    .or_else(|| {
-                        self.cached
-                            .get(&(source, repair.id))
-                            .filter(|cached| cached.repair == *repair)
-                    })
-            })
-            .filter(|cached| cached.loaded == loaded && cached.signature == signature)
-            .map(|cached| cached.evaluated.clone())
-            .collect()
-    }
-
-    fn next_stale(
-        &self,
-        source: SourceId,
-        loaded: u64,
-        signature: Signature,
-        repairs: &[Repair],
-    ) -> Option<Repair> {
-        let repair = repairs
-            .iter()
-            .filter(|repair| repair.enabled)
-            .find(|repair| {
-                let current = |record_loaded, record_signature, record: &Repair| {
-                    record_loaded == loaded && record_signature == signature && record == *repair
-                };
-                let cached = self
-                    .preview_cached
-                    .get(&(source, repair.id))
-                    .filter(|cached| current(cached.loaded, cached.signature, &cached.repair))
-                    .or_else(|| {
-                        self.cached.get(&(source, repair.id)).filter(|cached| {
-                            current(cached.loaded, cached.signature, &cached.repair)
-                        })
-                    });
-                cached.is_none()
-                    && !self.failed.get(&(source, repair.id)).is_some_and(|failed| {
-                        current(failed.loaded, failed.signature, &failed.repair)
-                    })
-            })?
-            .clone();
-        Some(repair)
-    }
-}
-
-#[cfg(test)]
-pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error> {
-    let source = crate::scan::ImageSource::new(scan, request.input)?;
-    let evaluated = crate::repair_source::evaluate(&source, &request.repair)?;
-    Ok(Response::new(request, evaluated))
-}
-
-pub(super) fn evaluate_with(
-    scan: &Scan,
-    request: &Request,
-    services: &source::Services,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<Option<Response>, Error> {
-    if cancelled() {
-        return Ok(None);
-    }
-
-    let renderer = services.renderers.get(&services.device, &services.queue)?;
-    let mut source = crate::gpu::repair_source::Source::new(
-        &services.device,
-        &renderer,
-        (&services.queue, services.renderers.submissions()),
-        scan,
-        request.input,
-    )?;
-    let Some(evaluated) = crate::dust_repair::evaluate_image(
-        &request.repair,
-        scan.area,
-        &mut source,
-        &mut crate::dust_repair::Execution { cancelled },
-    )?
-    else {
-        return Ok(None);
-    };
-
-    Ok(Some(Response::new(request, evaluated)))
 }
 
 fn brush_dab(
@@ -812,78 +500,58 @@ impl Editor {
             .repairs
     }
 
+    fn dust_repair_feedback(
+        &self,
+        capture: &crate::image_recipe::ImageRecipe,
+        repair: &Repair,
+    ) -> RepairFeedback {
+        let working = &self.document.visit.working_view;
+        if working
+            .failed_capture()
+            .and_then(|capture| capture.recipe())
+            .is_some_and(|failed| **failed == *capture)
+        {
+            return RepairFeedback::Failed;
+        }
+        if working
+            .completed_capture()
+            .and_then(|capture| capture.recipe())
+            .is_some_and(|completed| {
+                completed.neutral == capture.neutral && completed.repairs.contains(repair)
+            })
+        {
+            return RepairFeedback::Ready;
+        }
+        RepairFeedback::Pending
+    }
+
     pub(super) fn dust_render_state(&self) -> &'static str {
         if self.document.source {
             return "Repairs hidden";
         }
-        if self.document.visit.dust.render_error.is_some() {
-            return "Repair unavailable";
-        }
-
         let Some(source) = self.document.visit.current_source else {
             return "Repairs pending";
         };
-        let Some(signature) = self.dust_signature() else {
+        let Ok(capture) = self.positive_recipe(
+            self.input(),
+            self.document.project_snapshot().roll,
+            self.photo_settings(),
+        ) else {
             return "Repairs pending";
         };
-
-        let repairs = self.effective_dust_repairs(source);
         let mut pending = self.dust_pending_supports(source).next().is_some();
-        for repair in repairs.iter().filter(|repair| repair.enabled) {
-            if self
-                .document
-                .dust
-                .failed
-                .get(&(source, repair.id))
-                .is_some_and(|failed| {
-                    failed.loaded == self.id
-                        && failed.signature == signature
-                        && failed.repair == *repair
-                })
-            {
-                return "Repair unavailable";
-            }
-
-            let matches = |cached: &&Cached| {
-                cached.loaded == self.id
-                    && cached.signature == signature
-                    && cached.repair == *repair
-            };
-            if self
-                .document
-                .dust
-                .cached
-                .get(&(source, repair.id))
-                .filter(matches)
-                .is_none()
-                && self
-                    .document
-                    .dust
-                    .preview_cached
-                    .get(&(source, repair.id))
-                    .filter(matches)
-                    .is_none()
-            {
-                pending = true;
+        for repair in capture.repairs.iter().filter(|repair| repair.enabled) {
+            match self.dust_repair_feedback(&capture, repair) {
+                RepairFeedback::Failed => return "Repair unavailable",
+                RepairFeedback::Pending => pending = true,
+                RepairFeedback::Ready => {}
             }
         }
-
         if pending {
             "Repairs pending"
         } else {
             "Repairs"
         }
-    }
-
-    fn dust_repair_changed(&mut self, source: SourceId, id: RepairId) {
-        let accepted = &self
-            .document
-            .state
-            .project
-            .source(source)
-            .expect("accepted source")
-            .repairs;
-        self.document.dust.repair_changed(source, id, accepted);
     }
 
     pub(super) fn reset_dust_repairs(&mut self, source: SourceId) {
@@ -901,14 +569,13 @@ impl Editor {
             return;
         }
         self.document.dust.clear_repairs(source);
-        if self.document.visit.current_source == Some(source) {
-            if let Some(session) = self.dust_session() {
-                *session.searches.borrow_mut() = Default::default();
-                let mut edit = session.edit.borrow_mut();
-                edit.mask_draft = None;
-                edit.donor_draft = None;
-            }
-            self.document.visit.dust.reset_repairs();
+        if self.document.visit.current_source == Some(source)
+            && let Some(session) = self.dust_session()
+        {
+            *session.searches.borrow_mut() = Default::default();
+            let mut edit = session.edit.borrow_mut();
+            edit.mask_draft = None;
+            edit.donor_draft = None;
         }
     }
 
@@ -1003,295 +670,9 @@ impl Editor {
             .find(|repair| repair.id == id)
     }
 
+    #[cfg(test)]
     pub(super) fn dust_signature(&self) -> Option<Signature> {
         self.neutral_source_signature(&self.input()).ok()
-    }
-
-    pub(super) fn dust_validate_processing(
-        &self,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        photo: AdjustmentLayerSettings,
-    ) -> Result<(), Error> {
-        let input = input.into();
-        self.dust_validate_snapshot(input, roll, &self.dust_grade_snapshot(photo)?)
-    }
-
-    pub(super) fn dust_validate_snapshot(
-        &self,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-    ) -> Result<(), Error> {
-        let input = input.into();
-        if self.document.visit.dust.gpu.is_empty() {
-            return Ok(());
-        }
-        let Some(source) = self.document.visit.current_source else {
-            return Ok(());
-        };
-        let signature = self.neutral_source_signature(&input)?;
-        let mut bound = DVec3::ZERO;
-        for repair in self
-            .effective_dust_repairs(source)
-            .iter()
-            .filter(|r| r.enabled)
-        {
-            let matches = |c: &&Cached| {
-                c.loaded == self.id && c.signature == signature && c.repair == *repair
-            };
-            if let Some(cached) = self
-                .document
-                .dust
-                .preview_cached
-                .get(&(source, repair.id))
-                .filter(matches)
-                .or_else(|| {
-                    self.document
-                        .dust
-                        .cached
-                        .get(&(source, repair.id))
-                        .filter(matches)
-                })
-                && self
-                    .document
-                    .visit
-                    .dust
-                    .gpu
-                    .get(&repair.id)
-                    .is_some_and(|p| Arc::ptr_eq(&p.evaluated, &cached.evaluated))
-            {
-                bound = bound.max(cached.bound);
-            }
-        }
-        self.validate_repaired_source(&input, roll, snapshot, bound)
-    }
-
-    fn dust_grade_snapshot(
-        &self,
-        photo: AdjustmentLayerSettings,
-    ) -> Result<AdjustmentLayerSnapshot, Error> {
-        match self.document.visit.current_source {
-            Some(id) => {
-                self.adjustment_layer_snapshot(self.document.state.project.source(id)?, photo)
-            }
-            None => AdjustmentLayerSnapshot::new(Vec::new()),
-        }
-    }
-
-    pub(super) fn dust_gpu_snapshot(
-        &mut self,
-        grade: Option<&AdjustmentLayerSnapshot>,
-    ) -> Result<crate::gpu::repairs::Snapshot, Error> {
-        let Some(signature) = self.dust_signature() else {
-            return Ok(Default::default());
-        };
-        let Some(source) = self.document.visit.current_source else {
-            return Ok(Default::default());
-        };
-        let Some(device) = self.document.visit.working_view.device().cloned() else {
-            return Ok(Default::default());
-        };
-        self.document.visit.dust.render_error = None;
-        let input = self.input();
-        let snapshot = match grade {
-            Some(grade) => grade.clone(),
-            None => self.dust_grade_snapshot(self.photo_settings())?,
-        };
-        let repairs = self.effective_dust_repairs(source);
-        let candidates = repairs
-            .iter()
-            .filter(|r| r.enabled)
-            .filter_map(|repair| {
-                let current = |c: &&Cached| {
-                    c.loaded == self.id && c.signature == signature && c.repair == *repair
-                };
-                self.document
-                    .dust
-                    .preview_cached
-                    .get(&(source, repair.id))
-                    .filter(current)
-                    .or_else(|| {
-                        self.document
-                            .dust
-                            .cached
-                            .get(&(source, repair.id))
-                            .filter(current)
-                    })
-                    .map(|c| (repair.id, c))
-            })
-            .collect::<Vec<_>>();
-        let bound = candidates
-            .iter()
-            .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
-        let all_valid = self
-            .validate_repaired_source(&input, self.document.project.roll, &snapshot, bound)
-            .is_ok();
-        let mut admitted_bound = DVec3::ZERO;
-        let mut patches = Vec::new();
-        for (id, cached) in candidates {
-            let bound = admitted_bound.max(cached.bound);
-            if !all_valid
-                && let Err(error) = self.validate_repaired_source(
-                    &input,
-                    self.document.project.roll,
-                    &snapshot,
-                    bound,
-                )
-            {
-                self.document.visit.dust.render_error = Some(error.to_string());
-                continue;
-            }
-            let patch = match self
-                .document
-                .visit
-                .dust
-                .gpu
-                .get(&id)
-                .filter(|p| Arc::ptr_eq(&p.evaluated, &cached.evaluated))
-            {
-                Some(patch) => patch.clone(),
-                None => {
-                    let patch = crate::gpu::repairs::Patch::new(&device, cached.evaluated.clone())?;
-                    self.document.visit.dust.gpu.insert(id, patch.clone());
-                    patch
-                }
-            };
-            admitted_bound = bound;
-            patches.push(patch);
-        }
-        self.document
-            .visit
-            .dust
-            .gpu
-            .retain(|_, patch| patches.iter().any(|p| Arc::ptr_eq(p, patch)));
-        Ok(crate::gpu::repairs::Snapshot(patches))
-    }
-
-    pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
-        if self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id {
-            return;
-        }
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        let repairs = self.effective_dust_repairs(source);
-        if let Some(pending) = &self.document.visit.dust.pending
-            && (pending.evaluation.source != source
-                || pending.evaluation.loaded != self.id
-                || pending.evaluation.signature != signature
-                || !repairs.contains(&pending.evaluation.repair))
-        {
-            // Retain admission until its reply; obsolete work is not a failed heal.
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if self.document.visit.dust.pending.is_some() {
-            return;
-        }
-        let Some(repair) = self
-            .document
-            .dust
-            .next_stale(source, self.id, signature, &repairs)
-        else {
-            return;
-        };
-        let Some(input) = self.source_context() else {
-            return;
-        };
-        let request = Request {
-            request: self.request_id(),
-            loaded: self.id,
-            source,
-            signature,
-            repair,
-            input: self.input(),
-            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        };
-        self.document.visit.dust.start(&request);
-        self.status = "Evaluating full-resolution dust repair…".into();
-        let id = request.request;
-        let epoch = self.source_epoch.clone();
-        let services = self.source_services.clone();
-        let Some(task) = cx.spawn(move |cx| async move {
-            let result = evaluate_async(request, input, epoch, services).await;
-            cx.update(|editor| {
-                editor.receive_dust(id, result);
-                if let Some(signature) = editor.dust_signature() {
-                    editor.schedule_dust(signature, &cx);
-                }
-            });
-        }) else {
-            self.receive_dust(id, Err("Application stopped".into()));
-            return;
-        };
-        self.document.visit.dust.attach_task(id, task);
-    }
-
-    pub(super) fn receive_dust(&mut self, request: u64, result: Result<Option<Response>, String>) {
-        match result {
-            Ok(Some(response)) => {
-                let current = response.loaded == self.id
-                    && self.source_epoch.load(std::sync::atomic::Ordering::Relaxed)
-                        == response.loaded
-                    && Some(response.source) == self.document.visit.current_source
-                    && Some(response.signature) == self.dust_signature();
-                if !current {
-                    self.document
-                        .visit
-                        .dust
-                        .pending
-                        .take_if(|p| p.evaluation.request == request);
-                    return;
-                }
-                let expected = self.effective_dust_repair(response.source, response.repair.id);
-                let accepted = expected.as_ref().is_some_and(|repair| {
-                    self.dust_repairs(response.source)
-                        .is_some_and(|set| set.repairs().contains(repair))
-                });
-                if self.document.visit.dust.accept(
-                    response,
-                    expected.as_ref(),
-                    accepted,
-                    &mut self.document.dust,
-                ) {
-                    self.status = "Dust repair ready".into();
-                    self.invalidate_settled();
-                }
-            }
-            Ok(None) => {
-                self.document
-                    .visit
-                    .dust
-                    .pending
-                    .take_if(|p| p.evaluation.request == request);
-            }
-            Err(error) => {
-                if self
-                    .document
-                    .visit
-                    .dust
-                    .fail(request, &mut self.document.dust)
-                {
-                    self.status = format!("Dust repair failed: {error}");
-                }
-            }
-        }
-    }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn dust_evaluations(&self, signature: Signature) -> Vec<Arc<EvaluatedRepair>> {
-        self.document
-            .visit
-            .current_source
-            .map_or_else(Vec::new, |source| {
-                let repairs = self.effective_dust_repairs(source);
-                self.document
-                    .dust
-                    .evaluations(source, self.id, signature, &repairs)
-            })
     }
 }
 
@@ -1360,10 +741,6 @@ impl tool::Tool for DustTool {
                             .step_by(1.),
                     );
                 });
-                if let Some(error) = &editor.document.visit.dust.render_error {
-                    ui.small("A repair is outside the current grade's GPU range.")
-                        .on_hover_text(error);
-                }
                 ui.checkbox(
                     &mut self.interaction.edit.borrow_mut().show_masks,
                     "Show repair outlines",
@@ -1931,7 +1308,6 @@ impl DustTool {
                 .searches
                 .borrow_mut()
                 .cancel_target(source, id);
-            editor.document.visit.dust.removed(source, id);
             editor.status = "Dust repair deleted".into();
             editor.invalidate_settled();
         }
@@ -2157,7 +1533,6 @@ impl DustTool {
                     editor.status = error.to_string();
                     return;
                 }
-                editor.dust_repair_changed(source, draft.repair);
                 editor.status = "Dust source updated".into();
             }
             Err(error) => {
@@ -2199,42 +1574,29 @@ impl DustTool {
     ) {
         let set = editor.dust_repairs(source);
         let selected = editor.selected_dust_repair();
-        let signature = editor.dust_signature();
+        let capture = editor
+            .positive_recipe(
+                editor.input(),
+                editor.document.project_snapshot().roll,
+                editor.photo_settings(),
+            )
+            .ok();
         let mask_target = self.mask().and_then(|draft| draft.target);
         for repair in set.into_iter().flat_map(RepairSet::repairs) {
             if mask_target == Some(repair.id) || editor.dust_target_pending(source, repair.id) {
                 continue;
             }
-            let pending = editor
-                .document
-                .visit
-                .dust
-                .pending
-                .as_ref()
-                .is_some_and(|pending| {
-                    pending.evaluation.loaded == editor.id
-                        && pending.evaluation.source == source
-                        && Some(pending.evaluation.signature) == signature
-                        && pending.evaluation.repair == *repair
-                });
-            let failed = editor
-                .document
-                .dust
-                .failed
-                .get(&(source, repair.id))
-                .is_some_and(|failed| {
-                    failed.loaded == editor.id
-                        && Some(failed.signature) == signature
-                        && failed.repair == *repair
-                });
+            let feedback = capture.as_ref().map_or(RepairFeedback::Pending, |capture| {
+                editor.dust_repair_feedback(capture, repair)
+            });
             let active = selected == Some(repair.id);
             let color = if mask_target.is_some() {
                 egui::Color32::from_white_alpha(45)
             } else if !repair.enabled {
                 egui::Color32::from_white_alpha(65)
-            } else if failed {
+            } else if feedback == RepairFeedback::Failed {
                 ui.visuals().error_fg_color.linear_multiply(0.7)
-            } else if pending {
+            } else if feedback == RepairFeedback::Pending {
                 egui::Color32::from_rgb(235, 180, 80).linear_multiply(0.7)
             } else if active {
                 egui::Color32::from_rgb(100, 220, 240)
@@ -2381,13 +1743,14 @@ pub(super) struct PendingStroke {
     pub source: SourceId,
     pub support: SupportMask,
     target: Option<RepairId>,
+    released: std::time::Instant,
     select: Cell<bool>,
 }
 
 struct SearchInput {
     pub support: SupportMask,
     pub previous_offset: Option<[i32; 2]>,
-    pub input: InputSettings,
+    pub recipe: crate::image_recipe::ImageRecipe,
     pub context: source::Context,
     pub services: Option<source::Services>,
     #[cfg(test)]
@@ -2477,9 +1840,6 @@ async fn apply_stroke(
         if let Err(error) = &result {
             editor.status = format!("Dust stroke not accepted: {error}");
         }
-        if let Some(signature) = editor.dust_signature() {
-            editor.schedule_dust(signature, &cx);
-        }
         result
     })
     .unwrap_or(Ok(None))
@@ -2532,11 +1892,13 @@ impl DustTool {
         cx: &UiContext<'_, Editor>,
     ) {
         let stroke = Rc::new(PendingStroke {
+            released: std::time::Instant::now(),
             source,
             target: previous.as_ref().map(|repair| repair.id),
             support: support.clone(),
             select: Cell::new(true),
         });
+        log::info!(pixels = support.selected_points().count(), width = support.size()[0], height = support.size()[1]; "dust_stroke_released");
         let source_context = match editor.capture_source_context() {
             Ok(input) => input,
             Err(error) => {
@@ -2544,7 +1906,17 @@ impl DustTool {
                 return;
             }
         };
-        let captured_input = editor.input();
+        let recipe = match editor.positive_recipe(
+            editor.input(),
+            editor.document.project_snapshot().roll,
+            editor.photo_settings(),
+        ) {
+            Ok(recipe) => recipe,
+            Err(error) => {
+                editor.status = error.to_string();
+                return;
+            }
+        };
         let services = editor.source_services.clone();
         #[cfg(test)]
         let worker = editor.document.dust.search_worker.clone();
@@ -2571,10 +1943,11 @@ impl DustTool {
                     return Err(error);
                 }
             };
+            log::info!(seconds = stroke.released.elapsed().as_secs_f64(); "dust_source_context_ready");
             let input = SearchInput {
                 support,
                 previous_offset: previous.as_ref().map(|repair| repair.offset),
-                input: captured_input,
+                recipe,
                 context,
                 services,
                 #[cfg(test)]
@@ -2625,7 +1998,7 @@ impl Editor {
         if select {
             self.document.dust.selected.insert(source, repair);
         }
-        self.dust_repair_changed(source, repair);
+        log::info!(repair = repair.0, repairs = self.dust_repairs(source).unwrap().repairs().len(), seconds = stroke.released.elapsed().as_secs_f64(); "dust_donor_accepted");
         self.status = "Donor selected; evaluating repair…".into();
         self.invalidate_settled();
         Ok(repair)
@@ -2657,17 +2030,18 @@ fn search_pixels(
         return Ok(SearchOutcome::Cancelled);
     }
     let scan = input.context.scan()?;
+    let (scan, recipe) = crate::photo_preparation::native_image(&scan, &input.recipe)?;
     let services = input
         .services
         .as_ref()
         .ok_or_else(|| crate::Error::Gpu("repair image-query services unavailable".into()))?;
     let renderer = services.renderers.get(&services.device, &services.queue)?;
-    let mut source = crate::gpu::repair_source::Source::new(
+    let mut source = crate::gpu::repair_source::Source::from_recipe(
         &services.device,
         &renderer,
         (&services.queue, services.renderers.submissions()),
         &scan,
-        input.input,
+        &recipe,
     )?;
 
     crate::dust_repair::search_image(
@@ -2681,35 +2055,6 @@ fn search_pixels(
             cancelled: &stopped,
         },
     )
-}
-
-async fn evaluate_async(
-    request: Request,
-    input: source::Context,
-    source_epoch: Arc<AtomicU64>,
-    services: Option<source::Services>,
-) -> Result<Option<Response>, String> {
-    crate::background::run(move |retired| {
-        let cancelled = || {
-            if retired.is_cancelled() || source_epoch.load(Ordering::Relaxed) != request.loaded {
-                request.cancelled.store(true, Ordering::Relaxed);
-            }
-            request.cancelled.load(Ordering::Relaxed)
-        };
-        if cancelled() {
-            return Ok(None);
-        }
-        let result = input.scan().and_then(|scan| {
-            let services = services.as_ref().ok_or_else(|| {
-                crate::Error::Gpu("repair image-query services unavailable".into())
-            })?;
-            evaluate_with(&scan, &request, services, &cancelled)
-        });
-        if cancelled() { Ok(None) } else { result }
-    })
-    .await
-    .map_err(|_| "Dust evaluation worker panicked".to_owned())?
-    .map_err(|error: crate::Error| error.to_string())
 }
 
 #[cfg(test)]
@@ -2820,60 +2165,6 @@ mod tests {
             .unwrap();
         assert!(!editor.dust_repairs(first_source).unwrap().repairs()[0].enabled);
         assert!(editor.dust_repairs(second_source).unwrap().repairs()[0].enabled);
-    }
-
-    #[test]
-    fn unchanged_failure_is_not_retried_or_allowed_to_block_later_repairs() {
-        let mut state = State::default();
-        let source = SourceId(1);
-        let signature = |gain| {
-            crate::gpu::interpretation::InputTransform::new(
-                InputSettings::Digital,
-                glam::DMat3::IDENTITY * gain,
-            )
-            .unwrap()
-        };
-        let mut committed = RepairSet::default();
-        for origin in [[20, 20], [30, 30]] {
-            committed
-                .insert(
-                    SupportMask::new(origin, [2, 2], vec![true; 4]).unwrap(),
-                    RepairOrigin::Manual,
-                    [4, 0],
-                )
-                .unwrap();
-        }
-        let first = committed.repairs()[0].clone();
-        let mut interaction = PhotoState::default();
-        interaction.start(&Request {
-            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            request: 4,
-            loaded: 8,
-            source,
-            signature: signature(3.),
-            repair: first,
-            input: Calibration {
-                dmin: DVec3::splat(0.5),
-                dmax: DVec3::splat(0.01),
-            }
-            .into(),
-        });
-        assert!(interaction.fail(4, &mut state));
-        let repairs = committed.repairs().to_vec();
-        assert_eq!(
-            state
-                .next_stale(source, 8, signature(3.), &repairs)
-                .unwrap()
-                .id,
-            RepairId(2)
-        );
-        assert_eq!(
-            state
-                .next_stale(source, 8, signature(4.), &repairs)
-                .unwrap()
-                .id,
-            RepairId(1)
-        );
     }
 
     #[test]

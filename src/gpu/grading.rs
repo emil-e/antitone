@@ -15,7 +15,7 @@ use crate::{
     processing::RollSettings,
 };
 use bytemuck::Zeroable;
-use glam::{DMat3, DVec2, DVec3, Vec4};
+use glam::{DVec2, DVec3, Vec4};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -93,9 +93,9 @@ impl Grading {
     /// identity-valued layer omitted from the active grade traversal.
     #[cfg(feature = "editor")]
     pub(crate) fn weight_image(
-        input: std::sync::Arc<super::evaluation::ImageNode>,
+        input: super::evaluation::Value,
         mut layer: AdjustmentLayer,
-    ) -> Result<std::sync::Arc<super::evaluation::ImageNode>, Error> {
+    ) -> Result<super::evaluation::Value, Error> {
         use super::evaluation::{Function, Meaning, pointwise};
 
         layer.validate()?;
@@ -116,23 +116,6 @@ impl Grading {
             Function::new(code, "evaluation_layer_weight")
                 .with_storage(6, bytemuck::bytes_of(&parameters)),
         ))
-    }
-
-    pub(crate) fn admit_layers(
-        layers: &AdjustmentLayerSnapshot,
-        mut bound: f64,
-    ) -> Result<(), Error> {
-        for layer in layers
-            .layers()
-            .iter()
-            .copied()
-            .filter(|layer| layer.is_active())
-        {
-            let (peak, output) = stage_bounds(layer, bound)?;
-            supported(peak)?;
-            bound = output;
-        }
-        Ok(())
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
@@ -217,49 +200,11 @@ fn prepare_layers(
 pub(super) fn supported(bound: f64) -> Result<(), Error> {
     if !bound.is_finite() || bound > f32::MAX as f64 / 4. {
         Err(Error::Gpu(
-            "adjustment layers can exceed the f32 intermediate working range".into(),
+            "adjustment mask coordinates exceed the f32 range".into(),
         ))
     } else {
         Ok(())
     }
-}
-
-fn absolute_product(matrix: DMat3, bound: DVec3) -> DVec3 {
-    matrix.x_axis.abs() * bound.x + matrix.y_axis.abs() * bound.y + matrix.z_axis.abs() * bound.z
-}
-
-pub(super) fn stage_bounds(adjustment: AdjustmentLayer, input: f64) -> Result<(f64, f64), Error> {
-    let gain = (adjustment.photo.exposure * adjustment.strength)
-        .max(0.)
-        .exp2();
-    let mut bound = input * gain;
-    let mut peak = input.max(bound);
-    if adjustment.photo.wb != Balance::default() {
-        let cones = ap1_to_cones();
-        let cone_input = absolute_product(cones, DVec3::splat(bound));
-        let offsets = adjustment.photo.wb.offsets()? * adjustment.strength;
-        let gains = offsets.max(DVec3::ZERO).exp();
-        let cone_output = cone_input * gains;
-        let inverse = cones.inverse();
-        // M(w) = inverse*C + inverse*diag(expm1(w*offsets))*C.
-        // Bound the change from the signed baseline, not |inverse|*|C|:
-        // the latter discards the cancellation even for arbitrarily small WB.
-        let baseline = absolute_product(inverse * cones, DVec3::ONE);
-        let movement = absolute_product(
-            inverse,
-            absolute_product(cones, DVec3::ONE) * offsets.map(|v| v.exp_m1().abs()),
-        );
-        let formation = absolute_product(inverse, absolute_product(cones, DVec3::ONE));
-        let gain = (baseline + movement + 8. * f64::EPSILON * formation).max_element();
-        bound *= gain;
-        peak = peak
-            .max(cone_input.max_element())
-            .max(cone_output.max_element())
-            .max(bound);
-    }
-    let (creative_peak, output) =
-        Grade::new(adjustment.photo)?.weighted_bounds(bound, adjustment.strength);
-    Ok((peak.max(creative_peak), output))
 }
 
 impl AdjustmentLayerParameters {
@@ -346,131 +291,4 @@ fn context_parameters(count: u32, area: [u32; 4]) -> Result<AdjustmentLayerConte
         area,
         count: [count, 0, 0, 0],
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::adjustment_layers::AdjustmentLayerSettings;
-    use crate::{
-        adjustment_layers::{AdjustmentLayerStack, weighted_settings},
-        geometry::SourcePoint,
-        processing::InvertedPixel,
-    };
-
-    #[test]
-    fn weighted_bounds_cover_interior_derivative_extrema_and_signed_intermediates() {
-        for pivot in [0.01, 0.03, 0.18, 1.] {
-            for contrast in [0.4, 0.65, 1.6] {
-                for saturation in [0., 1., 2.] {
-                    for input in [0.00001, 0.0078125, 0.1, 1., 100.] {
-                        let photo = AdjustmentLayerSettings {
-                            contrast,
-                            pivot,
-                            saturation,
-                            ..AdjustmentLayerSettings::default()
-                        };
-                        let grade = Grade::new(photo).unwrap();
-                        let (_, bound) = grade.weighted_bounds(input, 1.);
-                        for i in 0..=200 {
-                            let weighted =
-                                Grade::new(weighted_settings(photo, i as f64 / 200.).unwrap())
-                                    .unwrap();
-                            // Opposed channels include large chroma at near-zero AP1 Y.
-                            for rgb in [
-                                DVec3::splat(input),
-                                DVec3::splat(-input),
-                                DVec3::new(input, -0.4038491080227416 * input, 0.),
-                                DVec3::new(-input, input, input),
-                            ] {
-                                let output = weighted.apply(rgb).unwrap().abs().max_element();
-                                assert!(
-                                    output <= bound * (1. + 1e-12),
-                                    "{photo:?} input={input} weight={i}: {output} > {bound}"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn small_wb_bounds_preserve_the_signed_baseline_over_continuous_weights() {
-        for warmth in [-1., -0.005, 0., 0.005, 1.] {
-            for tint in [-1., -0.003, 0., 0.003, 1.] {
-                let adjustment = AdjustmentLayer {
-                    mask: AdjustmentLayerCoverage::Linear {
-                        start: SourcePoint([0., 0.]),
-                        end: SourcePoint([1., 0.]),
-                    },
-                    photo: AdjustmentLayerSettings {
-                        wb: Balance { warmth, tint },
-                        ..Default::default()
-                    },
-                    enabled: true,
-                    invert: false,
-                    strength: 0.6,
-                };
-                let (_, output) = stage_bounds(adjustment, 100.).unwrap();
-                for i in 0..=200 {
-                    let weighted =
-                        weighted_settings(adjustment.photo, 0.6 * i as f64 / 200.).unwrap();
-                    let matrix = crate::color::wb_matrix(weighted.wb).unwrap();
-                    let norm = absolute_product(matrix, DVec3::ONE).max_element();
-                    assert!(100. * norm <= output);
-                }
-                if warmth.abs() <= 0.005 && tint.abs() <= 0.003 {
-                    assert!(
-                        output < 102.,
-                        "near-identity WB must not inherit cone-basis condition numbers"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn stage_bounds_cover_continuous_exposure_wb_and_creative_controls() {
-        let adjustment = AdjustmentLayer {
-            mask: AdjustmentLayerCoverage::Linear {
-                start: SourcePoint([0., 0.]),
-                end: SourcePoint([1., 0.]),
-            },
-            photo: crate::adjustment_layers::AdjustmentLayerSettings {
-                exposure: 2.,
-                wb: Balance {
-                    warmth: -1.,
-                    tint: 1.,
-                },
-                contrast: 0.4,
-                saturation: 2.,
-                ..Default::default()
-            },
-            enabled: true,
-            invert: false,
-            strength: 0.73,
-        };
-        let (_, bound) = stage_bounds(adjustment, 100.).unwrap();
-        let grade = AdjustmentLayerStack::new(vec![adjustment]).unwrap();
-        for i in 0..=200 {
-            for rgb in [
-                DVec3::splat(100.),
-                DVec3::splat(-100.),
-                DVec3::new(100., -100., 100.),
-            ] {
-                let actual = grade
-                    .apply(
-                        InvertedPixel {
-                            rgb,
-                            floored: [false; 3],
-                        },
-                        SourcePoint([i as f64 / 200., 0.]),
-                    )
-                    .unwrap();
-                assert!(actual.rgb.abs().max_element() <= bound);
-            }
-        }
-    }
 }

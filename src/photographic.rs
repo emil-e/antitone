@@ -132,66 +132,6 @@ impl Grade {
         }
     }
 
-    #[cfg(feature = "gpu")]
-    pub(crate) fn weighted_bounds(&self, input: f64, strength: f64) -> (f64, f64) {
-        let mut peak = input;
-        let mut output = input;
-        if self.photo.contrast != 1. {
-            let end = 1. + strength * (self.photo.contrast - 1.);
-            let low = end.min(1.);
-            let high = end.max(1.);
-            let curve = |amount| Self {
-                photo: AdjustmentLayerSettings {
-                    contrast: amount,
-                    ..self.photo
-                },
-                qp: self.qp,
-                q0: self.qp + amount * (OFFSET - self.qp),
-                black: decode(self.qp + amount * (OFFSET - self.qp)),
-            };
-            let mut gain = high;
-            let mut black: f64 = 0.;
-            for amount in [low, high] {
-                let grade = curve(amount);
-                black = black.max(grade.black.abs());
-                output = output
-                    .max(grade.tone(-input).abs())
-                    .max(grade.tone(input).abs());
-            }
-            // For each amount, derivative extrema in x are at the toe or B.
-            // In the exponential decode branch, derivative versus amount is
-            // proportional to a*exp(k*a): include its interior stationary point.
-            for x in [input.min(TOE), input] {
-                let k = LOG_SCALE * (encode(x) - self.qp);
-                let stationary = if k < 0. { -1. / k } else { high };
-                for amount in [low, high, stationary.clamp(low, high)] {
-                    let grade = curve(amount);
-                    let q = grade.qp + amount * (encode(x) - grade.qp);
-                    let e = if x <= TOE {
-                        SLOPE
-                    } else {
-                        1. / (LOG_SCALE * x)
-                    };
-                    let d = if q <= CUT {
-                        1. / SLOPE
-                    } else {
-                        LOG_SCALE * decode(q)
-                    };
-                    gain = gain.max(amount * e * d);
-                }
-            }
-            output = output.max(black + gain * input);
-            peak = peak.max(SLOPE * input * high).max(output);
-        }
-        if self.photo.saturation != 1. {
-            let saturation = (1. + strength * (self.photo.saturation - 1.)).max(1.);
-            peak = peak.max((1. + 2. * saturation) * output);
-            let gain = (2. * saturation - 1.).max(1.);
-            output *= gain;
-        }
-        (peak, output)
-    }
-
     pub fn apply(&self, rgb: DVec3) -> Result<DVec3, Error> {
         finite(rgb)?;
         let rgb = if self.photo.contrast == 1. {

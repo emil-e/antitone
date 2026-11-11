@@ -14,6 +14,7 @@ use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewKernels;
 use crate::gpu::view::ViewSource;
 use crate::gpu::view::request::SourceRequest;
+use crate::gpu_export::authored::Request;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -552,6 +553,20 @@ fn write_reference(
         grade,
         scan.camera_to_ap1,
     )?;
+    let neutral = crate::processing::InputPipeline::new(input, scan.camera_to_ap1)?;
+    let repairs = repairs
+        .iter()
+        .filter(|repair| repair.enabled)
+        .map(|repair| {
+            crate::dust_repair::evaluate(repair, scan.area, |p| {
+                Ok(neutral
+                    .apply(scan.pixel(p[0], p[1])?)?
+                    .rgb
+                    .as_vec3()
+                    .to_array())
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
     let mut samples = 0_u64;
     check()?;
     let pixel = |x, y| {

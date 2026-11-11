@@ -17,6 +17,8 @@ pub enum Meaning {
     /// A scalar mixing weight repeated in RGB, with input metadata retained in w.
     Weight,
     Display,
+    /// Packed calculation arguments, not photographic samples on an original grid.
+    Arguments,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,135 +150,154 @@ pub trait Source: Send + Sync {
     }
 }
 
-/// Declares upstream demand and GPU lowering for a captured image operation.
+/// One logical input region, identified by its position in the node's upstream calculations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Read {
+    pub input: usize,
+    pub region: Rect,
+}
+
+impl Read {
+    pub fn new(input: usize, region: Rect) -> Self {
+        Self { input, region }
+    }
+}
+
+/// Declares logical upstream reads and work for a captured image operation.
 pub trait Operation: std::any::Any + Send + Sync {
-    fn input(&self, output: Rect) -> Result<Option<Rect>, Error>;
+    /// Lower a captured mathematical definition to unit-local compiler expressions.
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        _inputs: &[crate::gpu::evaluation::value::Value],
+        _domain: Domain,
+        _output: Rect,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        Ok(None)
+    }
+
+    fn access(&self) -> value::Access {
+        value::Access::Pointwise
+    }
+
+    fn reads(&self, _output: Rect) -> Result<Vec<Read>, Error> {
+        Err(Error::InvalidParameter(
+            "GPU primitive does not declare its inputs",
+        ))
+    }
+
+    fn work_units(&self, output: Rect, _budget: Budget) -> Result<WorkUnits, Error> {
+        output.validate()?;
+        // Ordinary GPU operations accept any admitted rectangle, including a consumer's halo.
+        // Stages with intrinsic or streamed units override this decomposition.
+        Ok(Box::new(std::iter::once(output)))
+    }
 
     fn source(&self) -> Option<Arc<dyn Source>> {
         None
     }
 
-    /// Captured calculation identity. Unnamed operations still execute but do not name reusable values.
-    fn identity(&self) -> Option<RetainedKey> {
+    /// Mathematical arguments, independent of execution and physical storage.
+    fn key(&self) -> Option<RetainedKey> {
         None
     }
 
-    fn pointwise(&self) -> Option<Function> {
-        None
-    }
-
-    fn in_place(&self) -> bool {
-        false
-    }
-
-    fn sample_producer(&self) -> Option<&dyn SampleProducer> {
-        None
-    }
-
-    fn sample_consumer(&self) -> Option<&dyn SampleConsumer> {
-        None
-    }
-
-    fn lower(
+    /// Describe content over the requested cells without expanding executable calculations.
+    /// Disjoint requests may omit cells inside the enclosing output rectangle.
+    fn describe(
         &self,
-        _fragment: &mut Fragment,
-        _input: Option<PlannedImage>,
-        _output: PlannedImage,
-    ) -> Result<(), Error> {
-        Err(Error::InvalidParameter(
-            "operation requires a declared executable calculation",
-        ))
+        output: Output,
+        _inputs: &[crate::gpu::evaluation::value::Value],
+        _requested: &[Rect],
+    ) -> Result<Output, Error> {
+        Ok(output)
     }
 }
 
-/// An addressable result: its domain, upstream image and captured producing operation.
-/// Nodes describe composition, not mandatory buffers or dispatches.
-pub struct ImageNode {
+/// A requested mathematical result, without executable instructions or pixel ownership.
+#[derive(Clone)]
+pub struct Output {
+    pub domain: Domain,
+    pub region: Rect,
+    pub(super) content: Arc<Content>,
+}
+impl Output {
+    pub fn identity(&self) -> Option<&RetainedKey> {
+        self.content.identity.as_ref()
+    }
+
+    pub fn same_value(&self, other: &Self) -> bool {
+        self.content.same(&other.content)
+    }
+
+    pub(crate) fn content(&self) -> Arc<Content> {
+        self.content.clone()
+    }
+
+    pub(crate) fn calculated(
+        domain: Domain,
+        region: Rect,
+        key: Option<RetainedKey>,
+        inputs: impl IntoIterator<Item = Arc<Content>>,
+    ) -> Self {
+        Self {
+            domain,
+            region,
+            content: Content::new(domain, key, None, inputs),
+        }
+    }
+}
+impl std::fmt::Debug for Output {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Output")
+            .field("domain", &self.domain)
+            .field("region", &self.region)
+            .field("identity", &self.identity())
+            .finish()
+    }
+}
+impl PartialEq for Output {
+    fn eq(&self, other: &Self) -> bool {
+        self.region == other.region && self.same_value(other)
+    }
+}
+
+/// Mathematical content has no producer callback or physical allocation.
+pub(crate) struct Content {
     pub(super) domain: Domain,
-    pub(super) input: Option<Arc<ImageNode>>,
-    pub(super) operation: Arc<dyn Operation>,
-    identity: Option<RetainedKey>,
+    pub(super) key: Option<RetainedKey>,
+    capture: Option<value::Capture>,
+    inputs: Vec<Arc<Content>>,
+    pub(super) identity: Option<RetainedKey>,
 }
-
-#[derive(Debug, PartialEq)]
-struct ImageIdentity {
-    domain: Domain,
-    upstream: Option<RetainedKey>,
-    operation: RetainedKey,
-}
-
-impl ImageNode {
-    pub fn new(
+impl Content {
+    pub(super) fn new(
         domain: Domain,
-        input: Option<Arc<ImageNode>>,
-        operation: impl Operation + 'static,
+        key: Option<RetainedKey>,
+        capture: Option<value::Capture>,
+        inputs: impl IntoIterator<Item = Arc<Content>>,
     ) -> Arc<Self> {
-        Self::captured(domain, input, Arc::new(operation))
-    }
-
-    pub(crate) fn captured(
-        domain: Domain,
-        input: Option<Arc<ImageNode>>,
-        operation: Arc<dyn Operation>,
-    ) -> Arc<Self> {
-        let identity = operation.identity().and_then(|operation| {
-            let upstream = match &input {
-                Some(input) => Some(input.identity.clone()?),
-                None => None,
-            };
+        let inputs: Vec<_> = inputs.into_iter().collect();
+        let identity = key.clone().and_then(|operation| {
             Some(RetainedKey::new(ImageIdentity {
                 domain,
-                upstream,
                 operation,
+                upstream: inputs
+                    .iter()
+                    .map(|input| input.identity.clone())
+                    .collect::<Option<Vec<_>>>()?,
             }))
         });
+        let capture = key.is_none().then_some(capture).flatten();
         Arc::new(Self {
             domain,
-            input,
-            operation,
+            key,
+            capture,
+            inputs,
             identity,
         })
     }
-
-    pub fn domain(&self) -> Domain {
-        self.domain
-    }
-
-    pub(crate) fn input(&self) -> Option<&Arc<ImageNode>> {
-        self.input.as_ref()
-    }
-
-    pub(crate) fn operation(&self) -> &Arc<dyn Operation> {
-        &self.operation
-    }
-
-    pub fn source(&self) -> Option<Arc<dyn Source>> {
-        self.operation.source()
-    }
-
-    pub fn identity(&self) -> Option<&RetainedKey> {
-        self.identity.as_ref()
-    }
-
-    /// Propagate requested cells to an ancestor through the authored operation contracts.
-    pub fn region_for(
-        self: &Arc<Self>,
-        ancestor: &Arc<Self>,
-        region: CellRegion,
-    ) -> Result<Option<CellRegion>, Error> {
-        let region = region.validate()?;
-        if self.same_definition(ancestor) {
-            return Ok(Some(region));
-        }
-        match (&self.input, self.operation.input(region)?) {
-            (Some(input), Some(region)) => input.region_for(ancestor, region),
-            _ => Ok(None),
-        }
-    }
-
-    /// Compare definitions without assigning identities to unnamed inputs.
-    /// Callers comparing recorded work must also match its supplied values.
-    pub fn same_definition(&self, other: &Self) -> bool {
+    pub(super) fn same(&self, other: &Self) -> bool {
         if std::ptr::eq(self, other) {
             return true;
         }
@@ -284,17 +305,42 @@ impl ImageNode {
             return a == b;
         }
         self.domain == other.domain
-            && self
-                .operation
-                .identity()
-                .zip(other.operation.identity())
-                .is_some_and(|(a, b)| a == b)
-            && match (&self.input, &other.input) {
-                (Some(a), Some(b)) => a.same_definition(b),
-                (None, None) => true,
+            && match (&self.key, &other.key) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => self
+                    .capture
+                    .as_ref()
+                    .zip(other.capture.as_ref())
+                    .is_some_and(|(a, b)| a.same(b)),
                 _ => false,
             }
+            && self.inputs.len() == other.inputs.len()
+            && self
+                .inputs
+                .iter()
+                .zip(&other.inputs)
+                .all(|(a, b)| a.same(b))
     }
+}
+impl Drop for Content {
+    fn drop(&mut self) {
+        // Children still own their keys while this parent releases its upstream key references.
+        drop(self.identity.take());
+        let mut pending = std::mem::take(&mut self.inputs);
+        while let Some(input) = pending.pop() {
+            if let Some(mut input) = Arc::into_inner(input) {
+                drop(input.identity.take());
+                pending.append(&mut input.inputs);
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct ImageIdentity {
+    domain: Domain,
+    upstream: Vec<RetainedKey>,
+    operation: RetainedKey,
 }
 
 /// Pointwise ABI: fn(vec4f, vec2f) -> vec4f, preserving metadata in w.
@@ -305,19 +351,6 @@ pub struct Function {
     pub code: Arc<str>,
     pub symbol: &'static str,
     pub bindings: Vec<(u32, FunctionBinding)>,
-    // One linked-code variant shared by clones; captured bindings remain per calculation.
-    pub(crate) linked: Arc<std::sync::Mutex<Option<Arc<FunctionLink>>>>,
-}
-
-pub(crate) struct FunctionLink {
-    pub source: Arc<str>,
-    pub symbols: Vec<&'static str>,
-    pub prefix: String,
-    pub first_slot: u32,
-    pub next_slot: u32,
-    pub declared: Vec<u32>,
-    pub captures: Vec<(u32, u32)>,
-    pub code: Arc<str>,
 }
 
 impl Function {
@@ -326,7 +359,6 @@ impl Function {
             code: code.into(),
             symbol,
             bindings: vec![],
-            linked: Default::default(),
         }
     }
 
@@ -352,13 +384,6 @@ impl Function {
         self.bindings
             .push((slot, FunctionBinding::Storage(bytes.into())));
         self
-    }
-
-    pub(crate) fn lower_bindings(&self, fragment: &mut Fragment) -> Vec<(u32, Binding)> {
-        self.bindings
-            .iter()
-            .map(|(slot, value)| (*slot, value.lower(fragment)))
-            .collect()
     }
 }
 
@@ -394,7 +419,7 @@ pub enum Shared {
     StorageTexture(wgpu::TextureView),
     Sampler(wgpu::Sampler),
     Image {
-        image: Arc<GpuImage>,
+        image: Arc<ImageValue>,
         view: Option<wgpu::TextureView>,
     },
 }
@@ -403,7 +428,7 @@ pub enum Shared {
 pub struct Resource(pub usize);
 
 /// A demanded region and symbolic resource within a plan, rather than an image expression.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct PlannedImage {
     pub resource: Resource,
     pub domain: Domain,
@@ -428,13 +453,14 @@ pub enum Storage {
         writable: bool,
     },
     /// A caller-owned read-only image; its physical owner survives recorded consumers.
-    ResidentBuffer(Arc<GpuImage>),
+    ResidentBuffer(Arc<ImageValue>),
     Buffer(u64),
     Uniform(Arc<[u8]>),
     Data(Arc<[u8]>),
-    Retained {
+    Image {
         key: RetainedKey,
-        bytes: u64,
+        layout: ImageLayout,
+        pixels: Option<Arc<ImageValue>>,
     },
     Texture([u32; 2]),
     /// Caller-owned RGBA32Float attachment; lifetime follows recorded commands.
@@ -442,10 +468,38 @@ pub enum Storage {
 }
 
 impl Storage {
+    pub(crate) fn read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::Input {
+                writable: false,
+                ..
+            } | Self::ResidentBuffer(_)
+                | Self::Image {
+                    pixels: Some(_),
+                    ..
+                }
+        )
+    }
+    pub(crate) fn starts_initialized(&self) -> bool {
+        matches!(
+            self,
+            Self::Uniform(_)
+                | Self::Data(_)
+                | Self::Input { .. }
+                | Self::ResidentBuffer(_)
+                | Self::Image {
+                    pixels: Some(_),
+                    ..
+                }
+        )
+    }
+
     pub fn bytes(&self) -> u64 {
         match self {
             Self::Input { .. } | Self::ResidentBuffer(_) | Self::RenderTarget(_) => 0,
-            Self::Buffer(bytes) | Self::Retained { bytes, .. } => *bytes,
+            Self::Buffer(bytes) => *bytes,
+            Self::Image { layout, .. } => layout.bytes(),
             Self::Uniform(bytes) | Self::Data(bytes) => bytes.len() as u64,
             Self::Texture(size) => u64::from(size[0]) * u64::from(size[1]) * 16,
         }
@@ -468,9 +522,8 @@ impl Storage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Binding {
-    Input { slot: usize, bytes: u64 },
     Read(Resource),
     Write(Resource),
     Uniform(Resource),
@@ -482,20 +535,36 @@ impl Binding {
     pub fn local(&self) -> Option<Resource> {
         match self {
             Self::Read(r) | Self::Write(r) | Self::Uniform(r) | Self::Texture(r) => Some(*r),
-            Self::Shared(_) | Self::Input { .. } => None,
+            Self::Shared(_) => None,
         }
     }
 }
 
 #[derive(Clone)]
+pub enum RenderProgram {
+    Captured {
+        pipeline: wgpu::RenderPipeline,
+        layout: wgpu::BindGroupLayout,
+    },
+    Shader(Arc<str>),
+}
+
+#[derive(Clone)]
 pub enum Work {
     Produce {
-        image: Arc<ImageNode>,
+        image: value::Value,
         output: PlannedImage,
     },
     Upload {
         source: Arc<dyn Source>,
         output: PlannedImage,
+    },
+    Copy {
+        source: Resource,
+        target: Resource,
+        source_offset: u64,
+        target_offset: u64,
+        bytes: u64,
     },
     Compute {
         code: Arc<str>,
@@ -505,8 +574,7 @@ pub enum Work {
         initialize: Option<Resource>,
     },
     Render {
-        pipeline: wgpu::RenderPipeline,
-        layout: wgpu::BindGroupLayout,
+        program: RenderProgram,
         bindings: Vec<(u32, Binding)>,
         target: Resource,
     },
@@ -533,6 +601,7 @@ impl Work {
     pub fn resources(&self) -> Vec<Resource> {
         match self {
             Self::Upload { output, .. } | Self::Produce { output, .. } => vec![output.resource],
+            Self::Copy { source, target, .. } => vec![*source, *target],
             Self::Compute { bindings, .. } => {
                 bindings.iter().filter_map(|(_, b)| b.local()).collect()
             }
@@ -549,12 +618,35 @@ impl Work {
 
 #[derive(Clone, Default)]
 pub struct Fragment {
+    programs: Option<Arc<Programs>>,
     pub resources: Vec<Storage>,
     pub work: Vec<Work>,
 }
 
 impl Fragment {
+    pub(super) fn with_programs(programs: Option<Arc<Programs>>) -> Self {
+        Self {
+            programs,
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn library(&self, code: &str) -> Result<Arc<sampling::Library>, Error> {
+        match &self.programs {
+            Some(programs) => programs.libraries.get(code),
+            None => sampling::Library::parse(code).map(Arc::new),
+        }
+    }
+
     pub fn resource(&mut self, storage: Storage) -> Resource {
+        if let Storage::Uniform(bytes) = &storage
+            && let Some(index) = self
+                .resources
+                .iter()
+                .position(|existing| matches!(existing,Storage::Uniform(other) if other==bytes))
+        {
+            return Resource(index);
+        }
         let resource = Resource(self.resources.len());
         self.resources.push(storage);
         resource
@@ -574,10 +666,6 @@ impl Fragment {
         Binding::Uniform(self.resource(Storage::Uniform(bytemuck::bytes_of(value).into())))
     }
 
-    pub fn retained(&mut self, key: RetainedKey, bytes: u64) -> Resource {
-        self.resource(Storage::Retained { key, bytes })
-    }
-
     pub fn initialize(&mut self, resource: Resource) {
         let Some(Work::Compute { initialize, .. }) = self.work.last_mut() else {
             panic!("an initializer must be compute work");
@@ -594,6 +682,21 @@ impl Fragment {
         bindings: Vec<(u32, Binding)>,
         cells: u32,
     ) {
-        self.work.push(Work::linear(code, entry, bindings, cells));
+        let initialize = bindings.iter().find_map(|(_, binding)| match binding {
+            Binding::Write(resource)
+                if matches!(self.resources[resource.0], Storage::Image { .. }) =>
+            {
+                Some(*resource)
+            }
+            _ => None,
+        });
+        let mut work = Work::linear(code, entry, bindings, cells);
+        if let Work::Compute {
+            initialize: target, ..
+        } = &mut work
+        {
+            *target = initialize;
+        }
+        self.work.push(work);
     }
 }

@@ -14,7 +14,6 @@ fn display_does_not_hide_invalid_working_pixels_in_either_physical_policy() {
                 source,
                 Meaning::Neutral,
                 Function {
-                    linked: Default::default(),
                     code: format!(
                         r#"
 fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{

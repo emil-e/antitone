@@ -320,14 +320,9 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 )
                 .unwrap();
                 let image = reference
-                    .presentation(
-                        borrowed_input(domain),
-                        &renderer,
-                        &output,
-                        domain.finite().unwrap(),
-                    )
+                    .compose(borrowed_input(domain), &renderer)
                     .unwrap();
-                let plan = Plan::new(
+                let plan = Job::new(
                     image,
                     domain.finite().unwrap(),
                     Budget {
@@ -335,6 +330,8 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                         scratch_bytes: 1 << 20,
                     },
                 )
+                .unwrap()
+                .texture_plan(&output)
                 .unwrap();
                 let fragment = &plan.tiles[0].fragment;
                 assert!(
@@ -522,17 +519,31 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
     #[derive(Debug, PartialEq)]
     struct Nonfinite;
     impl Operation for Nonfinite {
-        fn identity(&self) -> Option<RetainedKey> {
+        fn key(&self) -> Option<RetainedKey> {
             Some(RetainedKey::new(Self))
         }
-        fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-            Ok(Some(region))
+        fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+            Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
         }
-        fn pointwise(&self) -> Option<Function> {
-            Some(Function::new(
+        fn calculation(
+            self: std::sync::Arc<Self>,
+            inputs: &[crate::gpu::evaluation::value::Value],
+            domain: Domain,
+            output: CellRegion,
+            _budget: crate::gpu::evaluation::Budget,
+        ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+            let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+            let function = Function::new(
                 "fn nonfinite(p: vec4f, xy: vec2f) -> vec4f { return vec4f(bitcast<f32>(0x7fc00000u), p.gba); }",
                 "nonfinite",
-            ))
+            );
+            value::Calculation::new(
+                domain,
+                output,
+                vec![inputs[0].request(output)?],
+                value::Operation::shader_function(self.key(), function),
+            )
+            .map(Some)
         }
     }
     let base = source(Arc::new(Pixel(domain)));
@@ -558,7 +569,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         };
         let look = asset();
         let input = if fails {
-            ImageNode::new(domain, Some(base.clone()), Nonfinite)
+            Value::from_operation(domain, Some(base.clone()), Nonfinite)
         } else {
             base.clone()
         };
@@ -659,23 +670,19 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         )
         .unwrap();
         let output = texture(&device, [1, 1], wgpu::TextureFormat::Rgba32Float);
-        let readout = reference
-            .presentation(input.clone(), &renderer, &output, domain.finite().unwrap())
-            .unwrap();
+        let readout = reference.compose(input.clone(), &renderer).unwrap();
         assert!(
-            readout.identity().is_none(),
-            "a bound attachment must still be written when mathematical inputs are reused"
+            readout.same_definition(&displayed),
+            "a physical attachment is separate from the reusable displayed calculation"
         );
         let plan = Job::new(readout, domain.finite().unwrap(), budget)
             .unwrap()
             .with_materializations(scope.clone())
             .with_supplied(vec![argument.clone()].into())
-            .plans()
-            .next()
-            .unwrap()
+            .texture_plan(&output)
             .unwrap();
         assert!(plan.tiles.iter().flat_map(|tile| &tile.fragment.resources).any(|resource| {
-            matches!(resource, Storage::ResidentBuffer(image) if image.as_buffer() == cached.as_buffer())
+            matches!(resource, Storage::ResidentBuffer(image) | Storage::Image { pixels:Some(image), .. } if image.as_buffer() == cached.as_buffer())
         }), "control: readout must actually consume the stored look value");
         let binding = renderer
             .render_binding(
@@ -705,7 +712,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
 
 #[test]
 fn display_attachment_admission_checks_format_extent_and_complete_grid() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, _queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -722,37 +729,24 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         tile: [3, 2],
         scratch_bytes: 1 << 20,
     };
+    let image = reference
+        .compose(borrowed_input(domain), &renderer)
+        .unwrap();
     let wrong_size = texture(&device, [2, 2], wgpu::TextureFormat::Rgba32Float);
     assert!(
-        reference
-            .presentation(
-                borrowed_input(domain),
-                &renderer,
-                &wrong_size,
-                domain.finite().unwrap()
-            )
+        Job::new(image.clone(), domain.finite().unwrap(), budget)
+            .unwrap()
+            .texture_plan(&wrong_size)
             .is_err()
     );
     let wrong_format = texture(&device, [3, 2], wgpu::TextureFormat::Rgba16Float);
-    let image = reference
-        .presentation(
-            borrowed_input(domain),
-            &renderer,
-            &wrong_format,
-            domain.finite().unwrap(),
-        )
-        .unwrap();
-    let plan = Plan::new(image, domain.finite().unwrap(), budget).unwrap();
-    assert!(Executor::admit(&device.limits(), &plan).is_err());
+    assert!(
+        Job::new(image.clone(), domain.finite().unwrap(), budget)
+            .unwrap()
+            .texture_plan(&wrong_format)
+            .is_err()
+    );
     let output = texture(&device, [3, 2], wgpu::TextureFormat::Rgba32Float);
-    let image = reference
-        .presentation(
-            borrowed_input(domain),
-            &renderer,
-            &output,
-            domain.finite().unwrap(),
-        )
-        .unwrap();
     let evaluation = renderer
         .evaluation
         .request(
@@ -764,26 +758,13 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
             budget,
         )
         .unwrap();
-    let error = renderer
-        .evaluation
-        .evaluate(
-            &queue,
-            &Default::default(),
-            &evaluation,
-            || false,
-            |_, _, _| panic!("a texture cannot be delivered as a buffer"),
-        )
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        Error::InvalidParameter("buffer sink requires raster storage").to_string()
-    );
     let recorded = renderer
         .evaluation
-        .record(
+        .record_to_texture(
             evaluation,
             renderer.evaluation.test_materializations(true),
             Vec::new(),
+            &output,
         )
         .unwrap();
     let pixels = buffer(&device, &[[0.; 4]; 6]);
@@ -795,9 +776,14 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         error.to_string(),
         Error::InvalidParameter("buffer sink requires raster storage").to_string()
     );
-    assert!(Plan::new(image.clone(), [0, 0, 2, 1].into(), budget).is_err());
     assert!(
-        Plan::new(
+        Job::new(image.clone(), [0, 0, 2, 1].into(), budget)
+            .unwrap()
+            .texture_plan(&output)
+            .is_err()
+    );
+    assert!(
+        Job::new(
             image,
             domain.finite().unwrap(),
             Budget {
@@ -805,6 +791,8 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
                 ..budget
             }
         )
+        .unwrap()
+        .texture_plan(&output)
         .is_err()
     );
     let scene = Reference::capture(
@@ -816,10 +804,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
     .unwrap();
     assert!(scene.lut_resources().is_empty());
     let input = borrowed_input(domain);
-    assert!(Arc::ptr_eq(
-        &input,
-        &scene.compose(input.clone(), &renderer).unwrap()
-    ));
+    assert!(input.same_capture(&scene.compose(input.clone(), &renderer).unwrap()));
 }
 
 #[cfg(feature = "ocio-reference")]

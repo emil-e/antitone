@@ -259,18 +259,35 @@ fn very_dense_calibration_keeps_its_anchor_and_zero_light_finite_on_gpu() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let source =
-            ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY, None).unwrap();
+        let anchor_code = (floor as f32) * 65535.;
+        assert_eq!(
+            anchor_code / 65535.,
+            floor as f32,
+            "the authored camera code must reach the packed Dmax, not a nearby tail sample"
+        );
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &[[0.; 4], [anchor_code, anchor_code, anchor_code, 0.]],
+            DMat3::IDENTITY,
+            None,
+        )
+        .unwrap();
         let grade = AuthoredPhotograph::new(
             &device.limits(),
             interpretation,
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             DMat3::IDENTITY,
-            [0, 0, 1, 1].into(),
+            [0, 0, 2, 1].into(),
         )
         .unwrap();
-        let actual = read(&device, &queue, &kernel, &source, &grade, 1)[0];
+        let samples = read(&device, &queue, &kernel, &source, &grade, 2);
+        assert_eq!(
+            samples[1],
+            [1., 1., 1., 0.],
+            "the dense packed white anchor must be exact and unflagged"
+        );
+        let actual = samples[0];
         assert_eq!(actual[3] as u32, 7);
         for value in &actual[..3] {
             let expected = Inversion::new(interpretation)

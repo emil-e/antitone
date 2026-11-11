@@ -74,7 +74,7 @@ pub(crate) fn refine_definition(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
-    original: Arc<crate::gpu::evaluation::ImageNode>,
+    original: crate::gpu::evaluation::Value,
     (target, view): (OutputTarget, ViewRequest),
     check_look: bool,
     cancelled: impl Fn() -> bool,

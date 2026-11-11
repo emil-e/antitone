@@ -17,7 +17,7 @@ impl Kernel {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ACEScct creative look, tetrahedral"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../lut3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(super::shader().into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("shared look execution"),

@@ -62,24 +62,26 @@ fn layers() -> AdjustmentLayers {
 
 fn unsupported_locals() -> AdjustmentLayers {
     let mut layers = AdjustmentLayers::default();
-    let base = self::layers().layers[0].adjustment;
-    for exposure in [-16., 16.] {
-        for _ in 0..7 {
-            layers
-                .add(
-                    "Recovery".into(),
-                    AdjustmentLayer {
-                        photo: AdjustmentLayerSettings {
-                            exposure,
-                            ..Default::default()
-                        },
-                        strength: 1.,
-                        ..base
-                    },
-                )
-                .unwrap();
-        }
-    }
+    layers
+        .add(
+            "Unrepresentable mask".into(),
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Radial {
+                    center: SourcePoint([0., 0.]),
+                    radii: [f64::MIN_POSITIVE, 1.],
+                    angle: 0.,
+                    feather: 0.5,
+                },
+                photo: AdjustmentLayerSettings {
+                    exposure: 1.,
+                    ..Default::default()
+                },
+                enabled: true,
+                invert: false,
+                strength: 1.,
+            },
+        )
+        .unwrap();
     layers
 }
 
@@ -330,7 +332,9 @@ fn unsupported_offscreen_grade_blocks_export_before_retiring_accepted_state_or_d
             &crate::application::UiContext::render_only(),
         );
         assert!(
-            editor.status.contains("f32 intermediate working range"),
+            editor
+                .status
+                .contains("mask coordinates exceed the f32 range"),
             "{}",
             editor.status
         );
@@ -357,6 +361,32 @@ fn unsupported_offscreen_grade_blocks_export_before_retiring_accepted_state_or_d
             editor.document.visit.canvas.original.continuation(),
             revision
         );
+        assert_eq!(editor.document.state.project, before);
+        assert!(
+            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("existing.tif");
+        std::fs::write(&destination, b"keep destination").unwrap();
+        editor.export(
+            destination.clone(),
+            crate::editor::OutputFormat::Tiff(crate::rendering::OutputTarget::Srgb),
+            crate::export::Overwrite::Refuse,
+            &crate::application::UiContext::render_only(),
+        );
+        assert!(
+            editor
+                .status
+                .contains("mask coordinates exceed the f32 range"),
+            "{}",
+            editor.status
+        );
+        assert!(!editor.interaction_blocked());
+        assert!(editor.document.export.operation.is_none());
+        assert!(
+            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
         assert_eq!(editor.document.state.project, before);
         let current = editor
             .positive_processing(

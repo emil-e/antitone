@@ -26,7 +26,6 @@ use wgpu::util::DeviceExt;
 pub mod acquisition;
 mod composite;
 pub mod processing;
-mod repair_reconstruction;
 pub mod request;
 mod storage;
 
@@ -65,6 +64,9 @@ impl std::ops::Deref for ViewSource {
 }
 
 impl ViewSource {
+    pub fn acquired(&self) -> Arc<crate::gpu::view::acquisition::AcquiredViewRaster> {
+        self.data.clone()
+    }
     /// Primitive fixtures declare already-neutral samples as their actual input boundary.
     #[cfg(test)]
     fn from_neutral_samples(
@@ -91,7 +93,6 @@ impl ViewSource {
                 spec: spec.clone(),
                 renderer,
                 pixels: pixels.into(),
-                basis: definition.clone(),
                 definition,
             }),
             kernels,
@@ -109,7 +110,6 @@ impl ViewSource {
     ) -> Option<Arc<Self>> {
         use crate::gpu::evaluation as e;
         if !cache.belongs_to(&renderer.evaluation)
-            || !wanted.repairs.0.is_empty()
             || wanted.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
         {
             return None;
@@ -117,7 +117,6 @@ impl ViewSource {
         let roots = crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(
             scan,
             field,
-            &wanted.processing_fixture(),
             std::slice::from_ref(wanted),
         )
         .ok()?;
@@ -130,7 +129,6 @@ impl ViewSource {
             spec: wanted.clone(),
             renderer,
             pixels: found.try_into().ok()?,
-            basis: root.clone(),
             definition: root.clone(),
         });
         Some(Self::from_acquired(kernels, data))
@@ -387,7 +385,7 @@ impl RenderedView {
     #[cfg(test)]
     pub fn processing(&self) -> AuthoredPhotograph {
         self.capture
-            .processing(self.image.device_limits(), &self.spec.repairs)
+            .processing(self.image.device_limits())
             .expect("rendered capture was admitted")
     }
 
@@ -413,9 +411,6 @@ impl RenderedView {
                     )
                     + graded.pixels.size()
                     + graded.stages.as_ref().map_or(0, |stages| stages.byte_len())
-                    + graded.source.spec.repairs.byte_len()
-                    + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
-                        * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
                     + crate::gpu::grading::Grading::captured_bytes(&graded.definition)
             })
     }
@@ -644,7 +639,12 @@ impl RenderedView {
         self.graded
             .as_ref()
             .zip(other.graded.as_ref())
-            .is_some_and(|(a, b)| Arc::ptr_eq(&a.source, &b.source))
+            .is_some_and(|(a, b)| {
+                // Recreated metadata wrappers can retain the same calculated raster.
+                *a.source.pixels == *b.source.pixels
+                    && a.source.spec.same_acquisition(&b.source.spec)
+                    && a.source.definition.same_definition(&b.source.definition)
+            })
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -696,10 +696,19 @@ impl RenderedView {
         // Submitted bindings own their native versions until completion. The callback owns no
         // renderer/queue or GPU-resource lease: it may run under the shared submission gate.
         let complete = self.complete.clone();
+        let started = std::time::Instant::now();
+        let repairs = self
+            .capture
+            .recipe()
+            .map_or(0, |recipe| recipe.repairs.len());
+        if repairs > 0 {
+            log::info!(repairs = repairs; "working_colour_submitted");
+        }
         let context = context.clone();
         let repaint = context.clone();
         submissions.submit_with_completion(queue, [encoder.finish()], move || {
             complete.store(true, Ordering::Release);
+            if repairs > 0 { log::info!(repairs = repairs, seconds = started.elapsed().as_secs_f64(); "working_colour_complete"); }
             context.request_repaint();
         });
         self.image

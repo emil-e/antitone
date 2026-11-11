@@ -253,11 +253,13 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     .backend_version,
                 "previous decoder release"
             );
-            assert!(
-                crate::repair_source::resolve(&scan, &recipe)
-                    .unwrap()
-                    .is_empty()
-            );
+            let (prepared_scan, prepared_recipe) =
+                crate::photo_preparation::native_image(&scan, &recipe).unwrap();
+            prepared_recipe
+                .neutral
+                .require_scan(&prepared_scan)
+                .unwrap();
+            assert!(prepared_recipe.repairs.is_empty());
             let composition = recipe.composition;
             let output = directory.path().join(format!("legacy-{sdk}-{digital}.tif"));
             crate::gpu_export::job::write(

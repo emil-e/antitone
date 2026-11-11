@@ -35,7 +35,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.render().unwrap();
         let image = h.read(|editor| {
             assert!(!editor.document.source);
-            let support = crate::pixel_pipeline::PixelPipeline::film(
+            let effects = crate::pixel_pipeline::PixelPipeline::film(
                 editor.document.project.output.grain,
                 editor
                     .source_composition(
@@ -49,11 +49,11 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                     .size,
                 0,
             )
-            .unwrap()
-            .support([1., 1.])
             .unwrap();
             assert_eq!(
-                support != crate::processing_support::Support::NONE,
+                effects.stages.iter().any(|stage| stage
+                    .get::<crate::image_mtf::ImageMtfParameters>()
+                    .is_some()),
                 film_enabled
             );
             assert_eq!(editor.document.project.roll.exposure, 0.);
@@ -346,7 +346,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
 }
 
 #[test]
-fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_positive() {
+fn cold_open_preserves_metadata_and_valid_extreme_normalized_layers_render() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
         project::{AdjustmentLayers, Save},
@@ -355,7 +355,7 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
     let other = crate::exposure_fixture::neutral_dng(0.);
     let other_name = "supported.dng";
     let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("unsupported.dng");
+    let first = directory.path().join("extreme.dng");
     let second = directory.path().join(other_name);
     std::fs::copy(file.path(), &first).unwrap();
     std::fs::copy(other.path(), &second).unwrap();
@@ -385,7 +385,7 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
         document.project.roll,
         document.project.source(id).unwrap(),
     )
-    .expect("zero-start range is supported");
+    .expect("the authored controls are valid before source preparation");
     document.save(&path, Save::New).unwrap();
     assert!(
         crate::project::Project::load(&path)
@@ -395,13 +395,11 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
     );
     let accepted =
         Document::open(&path).expect("metadata Open defers this unresolved numerical domain");
-    editor_harness(|mut h, _| {
+    editor_harness(|mut h, capture| {
         open_project(&mut h, path.clone());
         wait_opened_photo(&mut h);
-        h.step();
-        assert!(h.output().shapes.iter().any(|shape| matches!(
-            &shape.shape, egui::Shape::Text(text) if text.galley.job.text.starts_with("Positive preview unavailable:")
-        )), "the production view must report rejected rendering before nonpublication is checked");
+        super::workflow::wait_settled(&mut h);
+        h.render().unwrap();
         h.read(|editor| {
             assert_eq!(editor.document.state.project, accepted.project);
             assert_eq!(editor.document.visit.current_source, Some(id));
@@ -410,17 +408,47 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
                 "{}",
                 editor.status
             );
-            assert!(
-                editor
-                    .validate_document_candidate(&editor.document)
-                    .is_err(),
-                "resolved normalization must expose the unsupported numerical domain"
-            );
-            assert!(
-                editor.canvas_frame.displayed.is_none(),
-                "an unsafe positive must not be published"
+            editor
+                .validate_document_candidate(&editor.document)
+                .unwrap();
+            let displayed = editor.canvas_frame.displayed.as_ref().unwrap();
+            assert!(!displayed.view.spec.is_inspection());
+            let recipe = editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.project_snapshot().roll,
+                    editor.photo_settings(),
+                )
+                .unwrap();
+            assert_eq!(
+                displayed.view.capture.recipe().map(AsRef::as_ref),
+                Some(&recipe)
             );
         });
+        // These finite gains are not a reason to reject the whole image from a
+        // conservative range bound. The positive must really paint, not stay a proxy.
+        let center = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .unwrap()
+                .0
+                .image
+                .center()
+        });
+        {
+            let painted = capture.borrow();
+            let pixel = painted.pixels
+                [center.y.floor() as usize * painted.size[0] as usize + center.x.floor() as usize];
+            assert!(
+                pixel[..3]
+                    .iter()
+                    .all(|value| value.is_finite() && *value > 0.9),
+                "extreme positive: {pixel:?}"
+            );
+        }
         h.get_by_label(other_name).scroll_to_me();
         h.try_run_realtime().unwrap();
         h.get_by_label(other_name).click();
@@ -430,13 +458,13 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
             assert_eq!(
                 editor.document.visit.current_source,
                 Some(other_id),
-                "one unsupported positive must not veto navigation to another photo"
+                "a valid extreme positive must not veto navigation to another photo"
             );
             assert_eq!(editor.document.state.project, accepted.project);
             assert!(!editor.document.dirty());
         });
         super::workflow::wait_settled(&mut h);
-        h.get_by_label("unsupported.dng").click();
+        h.get_by_label("extreme.dng").click();
         h.step();
         wait_opened_photo(&mut h);
         h.update(|editor| editor.document.project.roll.exposure = 0.);
@@ -455,7 +483,7 @@ fn cold_open_accepts_metadata_but_unsafe_normalized_layers_cannot_produce_a_posi
                     .view
                     .spec
                     .is_inspection(),
-                "the same resolved source can display a supported positive"
+                "the same resolved source can display the edited positive"
             );
         });
     });

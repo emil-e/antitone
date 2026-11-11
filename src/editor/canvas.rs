@@ -443,11 +443,7 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         image: ImageMode,
-        cx: &UiContext<'_, Self>,
-    ) -> Option<(
-        crate::gpu::photograph::request::PhotographRequest,
-        crate::gpu::repairs::Snapshot,
-    )> {
+    ) -> Option<crate::gpu::photograph::request::PhotographRequest> {
         use crate::gpu::photograph::request::PhotographRequest;
         let inspection = image.inspection(self.canvas_inspection());
         let bypass_look = image.is_sample();
@@ -485,7 +481,7 @@ impl Editor {
                     .device()
                     .map(|device| device.limits())
                     .unwrap_or_default();
-                capture.validate(&limits, &Default::default())?;
+                capture.validate(&limits)?;
                 Ok(capture)
             });
             match captured {
@@ -496,17 +492,7 @@ impl Editor {
                 }
             }
         };
-        let mut repairs = Default::default();
-        if let Some(recipe) = capture.recipe() {
-            if let Some(signature) = self.dust_signature() {
-                self.schedule_dust(signature, cx);
-            }
-            match self.dust_gpu_snapshot(Some(&recipe.grade)) {
-                Ok(snapshot) => repairs = snapshot,
-                Err(error) => self.status = format!("Dust view unavailable: {error}"),
-            }
-        }
-        Some((capture, repairs))
+        Some(capture)
     }
 
     fn canvas_image(
@@ -550,9 +536,9 @@ impl Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             })
         };
-        let (capture, repairs) = self.canvas_calculation(ui, image, cx)?;
+        let capture = self.canvas_calculation(ui, image)?;
         let target = self.document.target();
-        if (working || !repairs.0.is_empty())
+        if (working || capture.has_repairs())
             && self
                 .document
                 .visit
@@ -572,7 +558,6 @@ impl Editor {
             purpose,
             self.source_context().map(|source| original_view::Demand {
                 capture: capture.clone(),
-                repairs: repairs.clone(),
                 target: self.document.target(),
                 view,
                 composition,
@@ -585,14 +570,18 @@ impl Editor {
             self.document.thumbnails.reserve_view(0);
             true
         };
-        let rendered =
-            match self.working_view(physical_frame, (&capture, &repairs), image, ui.ctx(), cx) {
-                Ok(view) => view,
-                Err(error) => {
-                    self.document.visit.working_view.error = Some(error.to_string());
-                    self.document.visit.working_view.hold(target, compare)
+        let rendered = match self.working_view(physical_frame, &capture, image, ui.ctx(), cx) {
+            Ok(view) => view,
+            Err(error) => {
+                let error = error.to_string();
+                let working = &mut self.document.visit.working_view;
+                if working.error.as_deref() != Some(error.as_str()) {
+                    working.log_failure("presentation", "current", None, &error);
                 }
-            };
+                working.error = Some(error);
+                self.document.visit.working_view.hold(target, compare)
+            }
+        };
         if purpose.is_some()
             && !self.interaction_blocked()
             && reference_allowed
@@ -618,7 +607,7 @@ impl Editor {
                 || (rendered.spec.frame().composition == physical_frame.composition
                     && rendered.spec.frame().min == physical_frame.min
                     && rendered.spec.frame().max == physical_frame.max
-                    && rendered.spec.repairs == repairs)
+                    && rendered.capture == capture)
         });
         let tool = if purpose == Some(OriginalPurpose::Tool) {
             match self.original_rendered(OriginalPurpose::Tool) {
@@ -652,7 +641,7 @@ impl Editor {
         } else if let Some(paint) = self.preview_paint(
             &proxy,
             geometry,
-            (&capture, &repairs),
+            &capture,
             pending,
             source_outside_frame,
             ui.ctx(),
@@ -660,7 +649,7 @@ impl Editor {
             paint
         } else {
             ui.label(
-                if !repairs.0.is_empty() && self.document.visit.working_view.error.is_none() {
+                if capture.has_repairs() && self.document.visit.working_view.error.is_none() {
                     "Updating repairs…"
                 } else {
                     "Preview unavailable"
@@ -686,24 +675,16 @@ impl Editor {
         &mut self,
         proxy: &crate::viewer::GpuProxy,
         geometry: CanvasLayout,
-        (capture, repairs): (
-            &crate::gpu::photograph::request::PhotographRequest,
-            &crate::gpu::repairs::Snapshot,
-        ),
+        capture: &crate::gpu::photograph::request::PhotographRequest,
         placeholder: bool,
         source_outside_frame: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
         // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
         // those views; a cached selected preview may stand in until the working view arrives.
-        if !repairs.0.is_empty() && !placeholder {
+        if capture.has_repairs() && !placeholder {
             return None;
         }
-        let repairs = if placeholder {
-            Default::default()
-        } else {
-            repairs.clone()
-        };
         let device = self.document.visit.working_view.device()?;
         let queue = self.document.visit.working_view.queue()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
@@ -749,7 +730,7 @@ impl Editor {
                 context.clone(),
             ));
         }
-        let spec = capture.source_request(frame, repairs).ok()?;
+        let spec = capture.source_request(frame).ok()?;
         let (source, processed) = proxy
             .preview(
                 queue,
@@ -956,7 +937,6 @@ impl SourceView {
             OriginalPurpose::Tool,
             original_view::Demand {
                 capture: capture.clone(),
-                repairs: Default::default(),
                 target: editor.document.target(),
                 view: Some(view),
                 composition,

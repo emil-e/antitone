@@ -31,9 +31,9 @@ fn validate_demand(area: crate::raw::Rect, demand: Demand) -> Result<(), Error> 
 }
 
 pub(crate) fn definition(
-    root: Arc<evaluation::ImageNode>,
+    root: evaluation::Value,
     demand: Demand,
-) -> Result<Arc<evaluation::ImageNode>, Error> {
+) -> Result<evaluation::Value, Error> {
     let area = root.domain().finite()?.source()?;
     if !root
         .domain()
@@ -76,7 +76,7 @@ pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
     (queue, gate): (&wgpu::Queue, &SubmissionGate),
-    root: Arc<evaluation::ImageNode>,
+    root: evaluation::Value,
     check_look: bool,
     output: &wgpu::Texture,
     cancelled: impl Fn() -> bool,
@@ -164,11 +164,16 @@ pub(crate) fn execute(
                 budget,
             )?;
             let worker = evaluation::Production {
-                context: &renderer.evaluation,
-                queue,
-                gate,
-                scope: &scope,
-                budget,
+                worker: evaluation::Worker {
+                    context: &renderer.evaluation,
+                    queue,
+                    gate,
+                    scope: &scope,
+                    budget,
+                    working: &evaluation::HostWorkingSet::default(),
+                    cancelled: &cancelled,
+                    progress: &|| {},
+                },
                 layout: evaluation::ImageLayout {
                     domain,
                     region: cells,
@@ -176,8 +181,6 @@ pub(crate) fn execute(
                     backing: evaluation::ImageBacking::Buffer,
                 },
                 pixels: &pixels,
-                cancelled: &cancelled,
-                progress: &|| {},
             };
             match worker.produce(&request) {
                 Ok(_) => {}

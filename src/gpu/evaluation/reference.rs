@@ -3,7 +3,7 @@
 use super::*;
 use crate::rendering::{OutputReference, OutputTarget};
 
-pub(crate) struct Reference {
+pub struct Reference {
     target: Option<OutputTarget>,
     id: Option<crate::looks::LookId>,
     luts: Vec<Arc<crate::gpu::lut3d::Lut>>,
@@ -11,7 +11,7 @@ pub(crate) struct Reference {
 
 impl Reference {
     #[cfg(all(test, target_os = "macos", feature = "raw"))]
-    pub(crate) fn image_lut_bytes(image: &Arc<ImageNode>) -> u64 {
+    pub(crate) fn image_lut_bytes(image: &Value) -> u64 {
         let mut bytes = 0;
         let mut image = Some(image);
         while let Some(node) = image {
@@ -20,20 +20,37 @@ impl Reference {
             {
                 bytes += lut.look.byte_len();
             }
-            image = node.input();
+            image = node.unary_input();
         }
         bytes
     }
 
-    pub fn prewarm(context: &Context) -> Result<(), Error> {
-        context.prewarm(&[LutOperation::work(
-            Resource(0),
-            Resource(1),
-            Binding::Read(Resource(2)),
-            Binding::Uniform(Resource(3)),
-            Resource(4),
-            1,
-        )])
+    pub fn prewarm(
+        context: &Context,
+        renderer: &crate::renderer::GpuRenderer,
+    ) -> Result<(), Error> {
+        crate::gpu::lut3d::prewarm(context)?;
+        let domain = Domain {
+            bounds: Some(CellRegion::new([0, 0], [1, 1])),
+            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: Meaning::Graded,
+        };
+        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+            for looked in [false, true] {
+                let input = borrowed_input(domain);
+                let input = if looked {
+                    value::pointwise(
+                        input,
+                        Meaning::Graded,
+                        crate::gpu::lut3d::prewarm_calculation(false),
+                    )?
+                } else {
+                    input
+                };
+                context.prewarm_texture(display(input, renderer, target)?)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn capture(
@@ -68,31 +85,18 @@ impl Reference {
 
     pub fn compose(
         &self,
-        image: Arc<ImageNode>,
+        image: Value,
         renderer: &crate::renderer::GpuRenderer,
-    ) -> Result<Arc<ImageNode>, Error> {
+    ) -> Result<Value, Error> {
         let Some(target) = self.target else {
             return Ok(image);
         };
         display(self.looked(image), renderer, target)
     }
 
-    pub fn presentation(
-        &self,
-        image: Arc<ImageNode>,
-        renderer: &crate::renderer::GpuRenderer,
-        texture: &wgpu::Texture,
-        region: CellRegion,
-    ) -> Result<Arc<ImageNode>, Error> {
-        let target = self.target.ok_or(Error::InvalidParameter(
-            "presentation requires a display reference",
-        ))?;
-        operators::display_texture(self.looked(image), renderer, target, texture, region)
-    }
-
-    pub fn looked(&self, mut image: Arc<ImageNode>) -> Arc<ImageNode> {
+    pub fn looked(&self, mut image: Value) -> Value {
         for lut in &self.luts {
-            image = ImageNode::new(
+            image = Value::from_operation(
                 image.domain,
                 Some(image.clone()),
                 LutOperation { look: lut.clone() },
@@ -106,64 +110,33 @@ struct LutOperation {
     look: Arc<crate::gpu::lut3d::Lut>,
 }
 
-impl LutOperation {
-    fn work(
-        input: Resource,
-        output: Resource,
-        lut: Binding,
-        parameters: Binding,
-        status: Resource,
-        count: u32,
-    ) -> Work {
-        Work::linear(
-            include_str!("../lut3d.wgsl"),
-            "main",
-            vec![
-                (0, Binding::Read(input)),
-                (1, Binding::Write(output)),
-                (2, lut),
-                (3, parameters),
-                (4, Binding::Write(status)),
-            ],
-            count,
-        )
-    }
-}
-
 impl Operation for LutOperation {
-    fn identity(&self) -> Option<RetainedKey> {
-        #[derive(Debug, PartialEq)]
-        struct Content(crate::looks::LookId);
-        Some(RetainedKey::new(Content(self.look.id())))
+    fn key(&self) -> Option<RetainedKey> {
+        {
+            #[derive(Debug, PartialEq)]
+            struct Content(crate::looks::LookId);
+            Some(RetainedKey::new(Content(self.look.id())))
+        }
     }
 
-    fn input(&self, r: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(r))
+    fn reads(&self, r: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, r)])
     }
 
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let input = input.unwrap();
-        let parameters = f.uniform(&self.look.parameters(
-            output.cells(),
-            output.cells().div_ceil(64) * 64,
-            input.domain.grid.coverage != 0,
-        ));
-        let status = f.resource(Storage::Data(
-            bytemuck::cast_slice(&[0u32, u32::MAX]).into(),
-        ));
-        f.work.push(Self::work(
-            input.resource,
-            output.resource,
-            Binding::Shared(Shared::Buffer(self.look.buffer.clone())),
-            parameters,
-            status,
-            output.cells(),
-        ));
-        Ok(())
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            self.look.calculation(domain.grid.coverage != 0),
+        )
+        .map(Some)
     }
 }

@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    geometry::{Composition, FramePoint},
-    pixel_pipeline::PixelStage,
-};
+use crate::geometry::{Composition, FramePoint, SourcePoint};
 
 fn plan() -> Plan {
     let composition = Composition::new(
@@ -11,20 +8,15 @@ fn plan() -> Plan {
         Default::default(),
     )
     .unwrap();
-    let frame = FrameRaster::new(
+    let frame = FrameRaster {
         composition,
-        FramePoint([0., 0.]),
-        FramePoint([4., 4.]),
-        [4, 4],
-    )
-    .unwrap();
+        min: FramePoint([-4., -4.]),
+        max: FramePoint([8., 8.]),
+        output: [12, 12],
+    };
     Plan::new(Request {
         output: frame,
-        stages: &PixelPipeline {
-            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 1.,
-            })],
-        },
+        stages: &PixelPipeline::default(),
         sampling: Sampling::NeutralFootprints,
     })
     .unwrap()
@@ -40,6 +32,7 @@ fn damage_windows_preserve_the_acquired_grid_and_do_not_repeat_duplicate_support
         .unwrap();
     assert_eq!(windows.len(), 1);
     let region = padded.window_frame(([1, 2], [3, 4])).unwrap();
+    assert_eq!(region.source_point([0.5, 1.5]), SourcePoint([97.5, 79.5]));
     assert_eq!(
         region.source_point([0.5, 1.5]),
         frame.source_point([1.5, 3.5])

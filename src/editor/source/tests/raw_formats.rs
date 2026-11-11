@@ -316,11 +316,11 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 ),
             ] {
                 let output = output_root.join(format!("{index}-{mode}.{extension}"));
-                crate::gpu_export::write(
+                crate::gpu_export::authored::write(
                     &renderer,
                     &device,
                     (&queue, &gate),
-                    crate::gpu_export::Request {
+                    crate::gpu_export::authored::Request {
                         scan: &reopened_scan,
                         field: None,
                         input: settings,

@@ -80,7 +80,7 @@ impl Source for Float {
         Ok(values)
     }
 }
-fn request(context: &Context, image: Arc<ImageNode>, region: Rect) -> Evaluation {
+fn request(context: &Context, image: Value, region: Rect) -> Evaluation {
     context
         .request(
             image.clone(),
@@ -166,7 +166,7 @@ fn roundtrip(
     context: &Context,
     queue: &wgpu::Queue,
     scope: &Materializations,
-    bound: Arc<ImageNode>,
+    bound: Value,
 ) -> Image<ImageLayout> {
     let original = bound.domain;
     let output = Domain {
@@ -561,7 +561,7 @@ fn stored_domain_and_representation_are_validated_before_source_acquisition() {
             original.identity().unwrap().clone(),
             Arc::new(layout),
             layout.bytes(),
-            move || async move { Ok(GpuImage::new(buffer)) },
+            move || async move { Ok(ImageValue::new(buffer)) },
         ))
         .unwrap();
         assert!(
@@ -586,25 +586,37 @@ fn stored_domain_and_representation_are_validated_before_source_acquisition() {
 struct Gain(f32);
 
 impl Operation for Gain {
-    fn identity(&self) -> Option<RetainedKey> {
+    fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(self.clone()))
     }
-    fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(region))
+    fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
     }
-    fn pointwise(&self) -> Option<Function> {
-        Some(
-            Function::new(
-                r#"
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let function = Function::new(
+            r#"
 @group(0) @binding(0) var<uniform> gain: vec4f;
 fn scale(pixel: vec4f, position: vec2f) -> vec4f {
     return vec4f(pixel.rgb * gain.x, pixel.w);
 }
 "#,
-                "scale",
-            )
-            .with_uniform(0, &[self.0, 0., 0., 0.]),
+            "scale",
         )
+        .with_uniform(0, &[self.0, 0., 0., 0.]);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            value::Operation::shader_function(self.key(), function),
+        )
+        .map(Some)
     }
 }
 
@@ -615,7 +627,7 @@ fn a_cached_intermediate_stops_fusion_and_recording_owns_its_shared_image() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
     let original = source(Arc::new(data.clone()));
-    let first = ImageNode::new(
+    let first = Value::from_operation(
         Domain {
             meaning: Meaning::Neutral,
             ..original.domain
@@ -638,7 +650,7 @@ fn a_cached_intermediate_stops_fusion_and_recording_owns_its_shared_image() {
     .unwrap();
     let weak = Arc::downgrade(&image.image);
     let reads = data.reads.load(Ordering::Relaxed);
-    let second = ImageNode::new(first.domain, Some(first.clone()), Gain(-0.5));
+    let second = Value::from_operation(first.domain, Some(first.clone()), Gain(-0.5));
     let recorded = context
         .record(
             request(&context, second, first.domain.finite().unwrap()),
