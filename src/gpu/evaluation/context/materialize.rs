@@ -2,7 +2,7 @@
 use super::*;
 use wgpu::util::DeviceExt;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "editor"))]
 mod tests;
 
 enum Upload {
@@ -71,6 +71,11 @@ impl Context {
         admission: Option<Arc<cache::Lease>>,
     ) -> Result<ImageFuture<ImageLayout>, Error> {
         let (format, backing) = storage;
+        if backing == ImageBacking::Host {
+            return Err(Error::InvalidParameter(
+                "host values are produced by declared CPU units",
+            ));
+        }
         if !scope.belongs_to(self) {
             return Err(Error::InvalidParameter(
                 "materializations belong to a different evaluation context",
@@ -78,9 +83,13 @@ impl Context {
         }
         let evaluation = evaluation.with_materializations(scope.clone());
         let image = evaluation.job.image();
-        let key = image.identity().cloned().ok_or(Error::InvalidParameter(
-            "materialization requires captured image content",
-        ))?;
+        let key = image
+            .output(evaluation.job.region())?
+            .identity()
+            .cloned()
+            .ok_or(Error::InvalidParameter(
+                "materialization requires captured image content",
+            ))?;
         let layout = ImageLayout {
             domain: image.domain,
             region: evaluation.job.region(),
@@ -114,15 +123,23 @@ impl Context {
                 "image has no lossless native camera-code representation",
             ));
         }
-        if let Some(image) = scope.find::<ImageLayout>(&key, |stored| stored.supplies(layout)) {
+        if let Some(image) = scope.find_for::<ImageLayout>(
+            &key,
+            |stored| stored.supplies(layout),
+            evaluation.request_policy(),
+        ) {
             return Ok(image);
         }
         let context = self.clone();
         let products = scope.clone();
         let queue = queue.clone();
         let gate = gate.clone();
-        Ok(
-            scope.obtain(key, Arc::new(layout), bytes, move || async move {
+        Ok(scope.obtain_for(
+            key,
+            Arc::new(layout),
+            bytes,
+            evaluation.request_policy(),
+            move || async move {
                 let progress = Arc::new(futures_util::task::AtomicWaker::new());
                 let wake = progress.clone();
                 let mut job = Box::pin(crate::background::run(move |stop| {
@@ -131,12 +148,13 @@ impl Context {
                     }
                     let image = if let Some(source) = source {
                         match backing {
+                            ImageBacking::Host => unreachable!(),
                             ImageBacking::Buffer => {
                                 let upload = read_source(source.as_ref(), layout.region, format)?;
                                 if stop.is_cancelled() {
                                     return Err(Error::Cancelled);
                                 }
-                                GpuImage::new(context.device.create_buffer_init(
+                                ImageValue::new(context.device.create_buffer_init(
                                     &wgpu::util::BufferInitDescriptor {
                                         label: Some("materialized source image"),
                                         contents: upload.bytes(),
@@ -239,31 +257,22 @@ impl Context {
                                     )?;
                                 }
                                 transferred?;
-                                GpuImage::texture(texture)
+                                ImageValue::texture(texture)
                             }
                         }
                     } else {
-                        let pixels = context.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("materialized image"),
-                            size: bytes,
-                            usage: wgpu::BufferUsages::STORAGE
-                                | wgpu::BufferUsages::COPY_SRC
-                                | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                        let worker = Production {
+                        let working = HostWorkingSet::default();
+                        let worker = Worker {
                             context: &context,
                             queue: &queue,
                             gate: &gate,
                             scope: &products,
                             budget: evaluation.job.budget(),
-                            layout,
-                            pixels: &pixels,
+                            working: &working,
                             cancelled: &|| stop.is_cancelled(),
                             progress: &|| wake.wake(),
                         };
-                        worker.produce(&evaluation)?;
-                        GpuImage::new(pixels)
+                        worker.materialize_image(&evaluation, layout, &mut WorkCounts::default())?
                     };
                     if let Some(admission) = admission {
                         image.admit(admission);
@@ -279,7 +288,7 @@ impl Context {
                 })
                 .await
                 .map_err(|_| Error::Gpu("image materialization worker panicked".into()))?
-            }),
-        )
+            },
+        ))
     }
 }

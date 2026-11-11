@@ -4,6 +4,7 @@ use super::{evaluation, raster::Raster};
 use crate::Error;
 #[cfg(test)]
 use crate::pixel_pipeline::PixelPipeline;
+#[cfg(all(test, feature = "editor"))]
 use std::sync::Arc;
 
 pub(crate) struct Prepared {
@@ -54,7 +55,7 @@ impl Prepared {
     pub fn from_composition(
         device: &wgpu::Device,
         raster: Raster,
-        root: Arc<evaluation::ImageNode>,
+        root: evaluation::Value,
         context: evaluation::Context,
     ) -> Result<Self, Error> {
         let mut raster = raster;
@@ -87,7 +88,7 @@ impl Prepared {
     pub(crate) fn record_composition(
         device: &wgpu::Device,
         raster: Raster,
-        root: Arc<evaluation::ImageNode>,
+        root: evaluation::Value,
         region: evaluation::CellRegion,
         context: evaluation::Context,
         scratch_bytes: u64,
@@ -128,7 +129,9 @@ impl Prepared {
 
     #[cfg(all(test, feature = "editor"))]
     pub fn field(&self) -> Option<&Arc<evaluation::RetainedBuffer>> {
-        self.execution.as_ref()?.cached::<super::grain::FieldKey>()
+        self.execution
+            .as_ref()?
+            .cached_image(evaluation::Meaning::Arguments)
     }
 
     pub fn encode_from(

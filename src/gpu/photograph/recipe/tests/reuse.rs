@@ -6,7 +6,7 @@ pub(super) fn materialize(
     renderer: &crate::renderer::GpuRenderer,
     queue: &wgpu::Queue,
     scope: &Materializations,
-    image: Arc<ImageNode>,
+    image: Value,
     bounds: CellRegion,
 ) -> Image<ImageLayout> {
     let context = renderer.evaluation();
@@ -46,7 +46,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let plain_recipe = Arc::new(project.image_recipe(id).unwrap());
     let codes = evaluation::source(Arc::new(CameraCodes));
-    let plain = RecipeGraph::originals(codes.clone(), None, &plain_recipe, &Default::default())
+    let plain = RecipeGraph::originals(codes.clone(), None, &plain_recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
@@ -62,7 +62,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     let looked_recipe = Arc::new(project.image_recipe(id).unwrap());
     let request = PhotographRequest::Recipe(looked_recipe.clone());
     assert!(PhotographRequest::Recipe(plain_recipe.clone()) != request);
-    let looked = RecipeGraph::originals(codes.clone(), None, &looked_recipe, &Default::default())
+    let looked = RecipeGraph::originals(codes.clone(), None, &looked_recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
@@ -96,7 +96,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     // Control: upstream changes must not inherit the downstream-only reuse above.
     project.roll.exposure = 1.;
     let changed_recipe = project.image_recipe(id).unwrap();
-    let changed = RecipeGraph::originals(codes, None, &changed_recipe, &Default::default())
+    let changed = RecipeGraph::originals(codes, None, &changed_recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
@@ -117,7 +117,7 @@ fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calcula
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let before_recipe = project.image_recipe(id).unwrap();
     let codes = evaluation::source(Arc::new(CameraCodes));
-    let before = RecipeGraph::originals(codes.clone(), None, &before_recipe, &Default::default())
+    let before = RecipeGraph::originals(codes.clone(), None, &before_recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();
@@ -128,7 +128,7 @@ fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calcula
     project.output.grain.amount = 0.1;
     let after_recipe = project.image_recipe(id).unwrap();
     assert_ne!(before_recipe, after_recipe);
-    let after = RecipeGraph::originals(codes, None, &after_recipe, &Default::default())
+    let after = RecipeGraph::originals(codes, None, &after_recipe)
         .unwrap()
         .photograph(&device.limits())
         .unwrap();

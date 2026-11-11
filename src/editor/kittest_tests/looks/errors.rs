@@ -56,24 +56,31 @@ fn reject_displayed(
     id: crate::looks::LookId,
 ) {
     paint_until(h, |editor| {
-        editor
-            .canvas_frame
-            .displayed
-            .as_ref()
-            .is_some_and(|painted| painted.view.look_id() == Some(id) && !painted.view.in_flight())
+        editor.document.visit.working_view.idle()
+            && editor
+                .canvas_frame
+                .displayed
+                .as_ref()
+                .is_some_and(|painted| {
+                    painted.view.look_id() == Some(id) && !painted.view.in_flight()
+                })
     });
-    h.read(|editor| {
-        editor
-            .canvas_frame
-            .displayed
-            .as_ref()
-            .unwrap()
-            .view
-            .image
-            .set_look_check(Some(check.clone()))
+    let rejected = h.read(|editor| {
+        let image = &editor.canvas_frame.displayed.as_ref().unwrap().view.image;
+        image.set_look_check(Some(check.clone()));
+        Arc::downgrade(image)
     });
     h.step();
-    h.read(|editor| assert!(editor.look_rendering_error().is_some()));
+    h.read(|editor| {
+        assert!(
+            std::sync::Weak::ptr_eq(
+                &rejected,
+                &Arc::downgrade(&editor.canvas_frame.displayed.as_ref().unwrap().view.image)
+            ),
+            "the fixture must inspect the image it rejected, not a later successful publication"
+        );
+        assert!(editor.look_rendering_error().is_some());
+    });
     assert!(h.query_by_label("Look rendering failed").is_some());
 }
 

@@ -270,7 +270,7 @@ fn roll_neutral_recovers_the_same_balance_across_dark_middle_and_light_patches()
 
 #[cfg(feature = "gpu")]
 #[test]
-fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
+fn gpu_constants_do_not_require_a_range_proof_for_above_base_continuation() {
     let cal = Calibration {
         dmin: DVec3::splat(0.001),
         dmax: DVec3::splat(0.001 * (1. - 1.1e-6)),
@@ -287,13 +287,7 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
         RollSettings::default(),
         DMat3::from_diagonal(DVec3::splat(3e32)),
     );
-    assert!(
-        result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("response domain")
-    );
+    result.unwrap();
 }
 
 #[test]

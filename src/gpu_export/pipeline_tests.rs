@@ -1,30 +1,25 @@
 use super::*;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu_export::authored::{Request, write};
 use crate::{
-    gpu::evaluation::{self, ImageNode},
+    gpu::evaluation::{self, Value},
     pixel_pipeline::{EffectDefinition, PixelPipeline, PixelStage, test_effects::NeighbourEffect},
-    processing_support::Support,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Square;
 
 impl EffectDefinition for Square {
-    fn support(&self, _: [f64; 2]) -> Support {
-        Support::NONE
-    }
-
     fn view_pitch(&self) -> Option<f64> {
         Some(64.)
     }
 
-    fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, input: Value) -> Result<Value, Error> {
         let meaning = input.domain().meaning;
         Ok(evaluation::pointwise(
             input,
             meaning,
             evaluation::Function {
-                linked: Default::default(),
                 code: "fn square(pixel: vec4f, position: vec2f) -> vec4f { return vec4f(pixel.rgb * pixel.rgb, pixel.w); }".into(),
                 symbol: "square",
                 bindings: vec![],

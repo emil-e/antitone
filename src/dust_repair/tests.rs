@@ -103,6 +103,32 @@ fn active(size: [u32; 2]) -> SourceRegion {
 }
 
 #[test]
+fn healing_extreme_signed_context_remains_finite_without_range_preflight() {
+    let repair = Repair {
+        id: RepairId(1),
+        enabled: true,
+        origin: RepairOrigin::Manual,
+        offset: [21, 0],
+        support: SupportMask::new([60, 60], [5, 5], vec![true; 25]).unwrap(),
+    };
+    let evaluated = evaluate(&repair, active([128, 128]), |point| {
+        let value = if point[0] < 64 { 8e37 } else { -8e37 };
+        Ok([value, -value, value])
+    })
+    .unwrap();
+    assert!(
+        evaluated
+            .pixels()
+            .all(|(_, rgb)| rgb.iter().all(|value| value.is_finite()))
+    );
+    assert!(
+        evaluated
+            .pixels()
+            .any(|(_, rgb)| rgb.iter().any(|value| value.abs() > 1.))
+    );
+}
+
+#[test]
 fn repair_set_keeps_stable_independent_repairs() {
     let mut set = RepairSet::default();
     let a = SupportMask::new([10, 10], [3, 3], vec![true; 9]).unwrap();

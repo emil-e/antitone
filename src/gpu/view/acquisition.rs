@@ -14,8 +14,6 @@ use crate::{
 };
 use std::sync::Arc;
 
-mod repairs;
-
 use super::storage::float_buffer;
 use crate::gpu::view::processing::ProcessedView;
 use crate::gpu::view::request::SourceRequest;
@@ -24,8 +22,7 @@ pub struct AcquiredViewRaster {
     pub spec: SourceRequest,
     pub renderer: Arc<crate::renderer::GpuRenderer>,
     pub pixels: crate::gpu::evaluation::BufferImage,
-    pub definition: Arc<crate::gpu::evaluation::ImageNode>,
-    pub basis: Arc<crate::gpu::evaluation::ImageNode>,
+    pub definition: crate::gpu::evaluation::Value,
 }
 
 impl AcquiredViewRaster {
@@ -101,7 +98,6 @@ impl AcquiredViewRaster {
         let source = Arc::new(Self {
             pixels,
             spec,
-            basis: definition.clone(),
             definition,
             renderer,
         });
@@ -188,8 +184,8 @@ impl AcquiredViewRaster {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
-        definition: Arc<crate::gpu::evaluation::ImageNode>,
-        root: Arc<crate::gpu::evaluation::ImageNode>,
+        definition: crate::gpu::evaluation::Value,
+        root: crate::gpu::evaluation::Value,
         plan: crate::acquisition::Plan,
         previous: Option<&Arc<ProcessedView>>,
     ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
@@ -233,7 +229,7 @@ impl AcquiredViewRaster {
         device: &wgpu::Device,
         renderer: Arc<crate::renderer::GpuRenderer>,
         spec: SourceRequest,
-        root: Arc<crate::gpu::evaluation::ImageNode>,
+        root: crate::gpu::evaluation::Value,
     ) -> Result<(Arc<Self>, crate::gpu::pixel_pipeline::Prepared), Error> {
         let raster = crate::gpu::raster::Raster::frame(spec.input_frame()?);
         let prepared = crate::gpu::pixel_pipeline::Prepared::record_composition(
@@ -254,7 +250,6 @@ impl AcquiredViewRaster {
             Arc::new(Self {
                 spec,
                 renderer,
-                basis: root.clone(),
                 definition: root,
                 pixels,
             }),
@@ -300,7 +295,6 @@ impl AcquiredViewRaster {
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
             || specs.iter().any(|s| {
                 !s.same_source(spec)
-                    || s.repairs != spec.repairs
                     || s.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
             })
         {
@@ -308,7 +302,7 @@ impl AcquiredViewRaster {
                 "physical-view source authority differs from originals".into(),
             ));
         }
-        let roots = Self::source_graphs(scan, field, &spec.processing_fixture(), &specs)?;
+        let roots = Self::source_graphs(scan, field, &specs)?;
         let requests = roots
             .iter()
             .cloned()
@@ -389,7 +383,6 @@ impl AcquiredViewRaster {
                 .map(|((spec, image), definition)| {
                     Ok(Arc::new(Self {
                         spec,
-                        basis: definition.clone(),
                         definition,
                         pixels: image.try_into()?,
                         renderer: renderer.clone(),
@@ -403,24 +396,34 @@ impl AcquiredViewRaster {
     pub fn source_graphs(
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
-        input: &crate::gpu::test_inputs::AuthoredPhotograph,
         specs: &[SourceRequest],
-    ) -> Result<Vec<Arc<crate::gpu::evaluation::ImageNode>>, Error> {
+    ) -> Result<Vec<crate::gpu::evaluation::Value>, Error> {
         use crate::gpu::evaluation as e;
-        let spec = specs
-            .first()
-            .ok_or(Error::InvalidParameter("empty physical-view acquisition"))?;
-        crate::gpu::photograph::NeutralInput {
-            interpretation: input.source_transform().map_or(
-                crate::gpu::interpretation::SourceInterpretation::Inspection(scan.camera_to_ap1),
-                |program| crate::gpu::interpretation::SourceInterpretation::Photograph(*program),
-            ),
-            field,
-            repairs: spec.repairs.clone(),
+        if specs.is_empty() {
+            return Err(Error::InvalidParameter("empty physical-view acquisition"));
         }
-        .original_views(
-            e::camera_source(scan)?,
-            specs.iter().map(|spec| spec.plan.output()),
-        )
+        let source = e::camera_source(scan)?;
+        specs
+            .iter()
+            .map(|spec| {
+                let input = spec.processing_fixture();
+                crate::gpu::photograph::NeutralInput {
+                    interpretation: input.source_transform().map_or(
+                        crate::gpu::interpretation::SourceInterpretation::Inspection(
+                            scan.camera_to_ap1,
+                        ),
+                        |program| {
+                            crate::gpu::interpretation::SourceInterpretation::Photograph(*program)
+                        },
+                    ),
+                    field: field.clone(),
+                    repairs: input.repairs.clone(),
+                    replacements: input.replacements.clone(),
+                }
+                .original_views(source.clone(), [spec.plan.output()])?
+                .pop()
+                .ok_or(Error::InvalidParameter("missing requested fixture prefix"))
+            })
+            .collect()
     }
 }

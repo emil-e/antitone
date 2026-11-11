@@ -1,5 +1,8 @@
 use super::*;
-use crate::{geometry::QuarterTurns, processing::InputPipeline};
+use crate::{
+    geometry::QuarterTurns,
+    processing::{InputPipeline, InputSettings},
+};
 
 mod persistence;
 
@@ -137,31 +140,6 @@ fn viewer_recipes_freeze_effective_dust_drafts_without_changing_accepted_or_othe
     assert_eq!(capture(&e), accepted);
 }
 
-fn captured_request(e: &Editor) -> Request {
-    e.document
-        .visit
-        .dust
-        .pending
-        .as_ref()
-        .expect("pending evaluation")
-        .evaluation
-        .clone()
-}
-
-fn response(request: &Request, active: SourceRegion) -> Response {
-    let evaluated = Arc::new(
-        crate::dust_repair::evaluate(&request.repair, active, |_| Ok([0.1, 0.2, 2.])).unwrap(),
-    );
-    Response {
-        request: request.request,
-        loaded: request.loaded,
-        source: request.source,
-        signature: request.signature,
-        repair: request.repair.clone(),
-        evaluated,
-    }
-}
-
 fn gpu_editor() -> Editor {
     let mut e = editor();
     let instance = crate::gpu::instance();
@@ -169,41 +147,6 @@ fn gpu_editor() -> Editor {
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     e.document.visit.working_view = WorkingView::new(device, queue);
     e
-}
-
-fn high_response(e: &mut Editor) -> Response {
-    let request = Request {
-        request: e.request_id(),
-        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        loaded: e.id,
-        source: e.document.visit.current_source.unwrap(),
-        signature: e
-            .neutral_source_signature(&e.input())
-            .expect("valid repaired-source fixture"),
-        repair: e
-            .dust_repairs(e.document.visit.current_source.unwrap())
-            .unwrap()
-            .repairs()[0]
-            .clone(),
-        input: e.calibration().unwrap().into(),
-    };
-    let evaluated = Arc::new(
-        crate::dust_repair::evaluate(
-            &request.repair,
-            e.document.visit.canvas.ready.as_ref().unwrap().area,
-            |_| Ok([1e35; 3]),
-        )
-        .unwrap(),
-    );
-    e.document.visit.dust.start(&request);
-    Response {
-        request: request.request,
-        loaded: request.loaded,
-        source: request.source,
-        signature: request.signature,
-        repair: request.repair,
-        evaluated,
-    }
 }
 
 #[test]
@@ -426,23 +369,6 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
     let mut e = editor();
     e.begin_dust_cleanup();
     let source = e.document.visit.current_source.unwrap();
-    let request = Request {
-        request: 1,
-        loaded: e.id,
-        source,
-        signature: e.dust_signature().unwrap(),
-        repair: e.dust_repairs(source).unwrap().repairs()[0].clone(),
-        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        input: e.calibration().unwrap().into(),
-    };
-    e.document.visit.dust.start(&request);
-    e.receive_dust(
-        1,
-        Ok(Some(response(
-            &request,
-            e.document.visit.canvas.ready.as_ref().unwrap().area,
-        ))),
-    );
     let composition = Composition::new(
         e.document.visit.canvas.ready.as_ref().unwrap().area,
         Default::default(),
@@ -594,115 +520,41 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
 }
 
 #[test]
-fn film_settings_do_not_change_neutral_repair_admission_or_trigger_rehealing() {
+fn film_and_grade_candidates_preserve_authored_repairs_without_preparing_pixels() {
     let e = gpu_editor();
     crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
-            let response = high_response(e);
-            let evaluated = response.evaluated.clone();
-            e.receive_dust(response.request, Ok(Some(response)));
-            let previous = e.dust_gpu_snapshot(None).unwrap();
-            assert_eq!(previous.0.len(), 1);
-            let mut edit = e.edit_project("Rendering settings").unwrap();
-            let mut values = edit.values();
-            values.output.grain = GrainPreset::ThirtyFiveMm.settings();
-            edit.replace(values);
-            e.commit_project(edit).unwrap();
-            assert!(e.document.project.output.grain.enabled);
-            let current = e.dust_gpu_snapshot(None).unwrap();
-            assert_eq!(current.0.len(), 1);
-            assert!(Arc::ptr_eq(&current.0[0].evaluated, &evaluated));
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            assert!(e.document.visit.dust.pending_request().is_none());
-        });
-    });
-}
-
-#[test]
-fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_rehealing() {
-    let e = gpu_editor();
-    crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
-            e.photo_settings_mut().exposure = 16.;
-            let response = high_response(e);
-            let evaluated = response.evaluated.clone();
-            e.receive_dust(response.request, Ok(Some(response)));
-            assert!(e.document.dust.failed.is_empty());
-            assert!(e.dust_gpu_snapshot(None).unwrap().0.is_empty());
-            assert!(e.document.visit.dust.render_error.is_some());
-            e.photo_settings_mut().exposure = 0.;
-            e.dust_validate_processing(
-                e.calibration().unwrap(),
-                e.document.project.roll,
-                e.photo_settings(),
-            )
-            .unwrap();
-            let snapshot = e.dust_gpu_snapshot(None).unwrap();
-            assert_eq!(snapshot.0.len(), 1);
-            assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
-            assert!(e.document.visit.dust.render_error.is_none());
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            assert!(e.document.visit.dust.pending_request().is_none());
-        });
-    });
-}
-
-#[test]
-fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_the_document() {
-    let e = gpu_editor();
-    crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
+        app.enter(|e, _cx| {
+            let source = e.document.visit.current_source.unwrap();
+            let repairs = e.dust_repairs(source).unwrap().clone();
             let before = e.document.state.project.clone();
-            let response = high_response(e);
-            let evaluated = response.evaluated.clone();
-            e.receive_dust(response.request, Ok(Some(response)));
-            let candidate = AdjustmentLayerSnapshot::new(
-                std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
-                    AdjustmentLayerSettings {
-                        exposure: 16.,
-                        ..e.photo_settings()
-                    },
-                ))
-                .chain(Vec::new())
-                .collect(),
-            )
-            .unwrap();
-            assert!(e.dust_gpu_snapshot(Some(&candidate)).unwrap().0.is_empty());
-            assert!(e.document.visit.dust.render_error.is_some());
-            let accepted = AdjustmentLayerSnapshot::new(
-                std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
-                    e.photo_settings(),
-                ))
-                .chain(Vec::new())
-                .collect(),
-            )
-            .unwrap();
-            let snapshot = e.dust_gpu_snapshot(Some(&accepted)).unwrap();
-            assert_eq!(snapshot.0.len(), 1);
-            assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
-            let mut source_candidate = e
-                .document
-                .project
-                .source(e.document.visit.current_source.unwrap())
-                .unwrap()
-                .clone();
-            source_candidate.adjustment_layers.as_mut().unwrap().layers[0]
+            let mut candidate = before.source(source).unwrap().clone();
+            candidate.adjustment_layers.as_mut().unwrap().layers[0]
                 .adjustment
                 .photo
                 .exposure = 16.;
-            assert!(e.validate_source_candidate(&source_candidate).is_err());
+            e.validate_source_candidate(&candidate).unwrap();
             assert_eq!(e.document.state.project, before);
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            assert!(
-                e.document.visit.dust.pending_request().is_none(),
-                "grade changes do not re-evaluate ungraded repairs"
+            let mut edit = e.edit_project("Rendering settings").unwrap();
+            edit.update(|project| project.output.grain = GrainPreset::ThirtyFiveMm.settings());
+            e.commit_project(edit).unwrap();
+            assert!(e.document.project.output.grain.enabled);
+            assert_eq!(e.dust_repairs(source).unwrap(), &repairs);
+            assert_eq!(
+                e.positive_recipe(
+                    e.input(),
+                    e.document.project_snapshot().roll,
+                    e.photo_settings()
+                )
+                .unwrap()
+                .repairs,
+                repairs.repairs()
             );
         });
     });
 }
 
 #[test]
-fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_regular_and_low_gamma() {
+fn photo_widget_accepts_exposure_edits_without_discarding_authored_repairs() {
     for gamma in [
         crate::processing::DEFAULT_GAMMA,
         crate::processing::MIN_GAMMA,
@@ -711,9 +563,8 @@ fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_regular_and
         crate::application::test_support::with_application(e, |app| {
             app.enter(|e, cx| {
                 e.set_gamma(gamma);
-                let response = high_response(e);
-                e.receive_dust(response.request, Ok(Some(response)));
-                assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
+                let source = e.document.visit.current_source.unwrap();
+                let repair = e.dust_repairs(source).unwrap().repairs()[0].clone();
                 for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
                     e.preferences.sections.insert(section.into(), false);
                 }
@@ -721,67 +572,52 @@ fn photo_widget_accepts_safe_and_rejects_unsafe_repaired_values_with_regular_and
                 for _ in 0..4 {
                     frame(e, &ctx, vec![], cx);
                 }
-                for (text, accepted) in [("0.25", true), ("16", false)] {
-                    let before = e.document.project.clone();
-                    let shown = format!("{:.2}", e.photo_settings().exposure);
-                    let labels = frame(e, &ctx, vec![], cx);
-                    let heading = labels.iter().find(|(s, _)| s == "Exposure").unwrap().1;
-                    let point = labels
-                        .iter()
-                        .filter(|(s, r)| {
-                            *s == shown && r.top() >= heading.top() && r.left() >= heading.left()
-                        })
-                        .min_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
-                        .unwrap()
-                        .1
-                        .center();
-                    for pressed in [true, false] {
-                        frame(
-                            e,
-                            &ctx,
-                            vec![
-                                egui::Event::PointerMoved(point),
-                                egui::Event::PointerButton {
-                                    pos: point,
-                                    button: egui::PointerButton::Primary,
-                                    pressed,
-                                    modifiers: egui::Modifiers::NONE,
-                                },
-                            ],
-                            cx,
-                        );
-                    }
-                    assert!(ctx.text_edit_focused());
+                let labels = frame(e, &ctx, vec![], cx);
+                let heading = labels.iter().find(|(s, _)| s == "Exposure").unwrap().1;
+                let point = labels
+                    .iter()
+                    .filter(|(s, r)| {
+                        s == "0.00" && r.top() >= heading.top() && r.left() >= heading.left()
+                    })
+                    .min_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
+                    .unwrap()
+                    .1
+                    .center();
+                for pressed in [true, false] {
                     frame(
                         e,
                         &ctx,
                         vec![
-                            egui::Event::Text(text.into()),
-                            egui::Event::Key {
-                                key: egui::Key::Enter,
-                                physical_key: None,
-                                pressed: true,
-                                repeat: false,
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
                                 modifiers: egui::Modifiers::NONE,
                             },
                         ],
                         cx,
                     );
-                    assert_eq!(
-                        e.photo_settings().exposure,
-                        0.25,
-                        "gamma={gamma}, input={text}: {}",
-                        e.status
-                    );
-                    assert!(!e.editing());
-                    if accepted {
-                        assert_ne!(e.document.project, before);
-                    } else {
-                        assert_eq!(e.document.project, before);
-                        assert!(e.status.contains("rejected:"), "{}", e.status);
-                    }
-                    assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
                 }
+                assert!(ctx.text_edit_focused());
+                frame(
+                    e,
+                    &ctx,
+                    vec![
+                        egui::Event::Text("16".into()),
+                        egui::Event::Key {
+                            key: egui::Key::Enter,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    cx,
+                );
+                assert_eq!(e.photo_settings().exposure, 16.);
+                assert!(!e.status.contains("rejected:"), "{}", e.status);
+                assert_eq!(e.dust_repairs(source).unwrap().repairs(), &[repair]);
             });
         });
     }
@@ -804,7 +640,7 @@ fn disconnected_supports_share_the_stored_translation_before_evaluation_and_afte
         .set_offset(RepairId(1), [64, 0])
         .unwrap();
     e.begin_dust_cleanup();
-    assert!(e.document.dust.cached.is_empty());
+    assert_eq!(e.dust_render_state(), "Repairs pending");
     let regions = e.dust_donor_regions();
     let presented = regions
         .iter()
@@ -880,24 +716,44 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         .unwrap(),
         offset: [-45, 25],
     };
-    let request = Request {
-        request: 1,
-        loaded: 1,
-        source: SourceId(1),
-        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        signature: crate::gpu::interpretation::InputTransform::for_scan(&scan, calibration.into())
-            .unwrap(),
-        repair,
+    let mut project = crate::project::Project {
         input: calibration.into(),
+        ..Default::default()
     };
-    let result = evaluate(&scan, &request).unwrap();
-    let other = evaluate(&scan, &request).unwrap();
+    let source = crate::source::source_metadata(
+        &scan.source().file.path,
+        &scan.source().metadata(),
+        scan.source().white_balance(),
+    )
+    .unwrap();
+    let id = project.add_source(source).unwrap();
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.correction = scan.flat_field().cloned();
+    let application = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let services = application.source_services.as_ref().unwrap();
+    let result = render_testing::pixels(&scan, &recipe, &repair, services);
+    let mut graded = recipe.clone();
+    graded.roll.exposure = 3.;
+    let mut layers = graded.grade.layers().to_vec();
+    layers[0].photo.exposure = 2.;
+    graded.grade = AdjustmentLayerSnapshot::new(layers).unwrap();
     assert_eq!(
-        result.evaluated.pixels().collect::<Vec<_>>(),
-        other.evaluated.pixels().collect::<Vec<_>>()
+        result,
+        render_testing::pixels(&scan, &graded, &repair, services)
     );
-    let pipeline = InputPipeline::new(request.input, scan.camera_to_ap1).unwrap();
-    let expected = crate::dust_repair::evaluate(&request.repair, scan.area, |p| {
+    let mut interpreted = recipe.clone();
+    if let InputSettings::Negative { gamma, .. } = &mut interpreted.neutral.input {
+        *gamma = 1.2;
+    }
+    let changed = render_testing::pixels(&scan, &interpreted, &repair, services);
+    assert!(
+        result
+            .iter()
+            .zip(changed.iter())
+            .any(|((_, a), (_, b))| (0..3).any(|c| (a[c] - b[c]).abs() > 1e-4))
+    );
+    let pipeline = InputPipeline::new(calibration, scan.camera_to_ap1).unwrap();
+    let expected = crate::dust_repair::evaluate(&repair, scan.area, |p| {
         Ok(pipeline
             .apply(scan.pixel(p[0], p[1])?)?
             .rgb
@@ -905,12 +761,19 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
             .to_array())
     })
     .unwrap();
-    assert_eq!(
-        result.evaluated.pixels().collect::<Vec<_>>(),
-        expected.pixels().collect::<Vec<_>>()
-    );
-    let original = request
-        .repair
+    let expected = expected.pixels().collect::<Vec<_>>();
+    assert_eq!(result.len(), expected.len());
+    for ((point, actual), (reference_point, reference)) in result.iter().zip(expected) {
+        assert_eq!(*point, reference_point);
+        for channel in 0..3 {
+            assert!(
+                (actual[channel] - reference[channel]).abs()
+                    < 2e-5 * reference[channel].abs().max(1.),
+                "{point:?}: {actual:?} != {reference:?}"
+            );
+        }
+    }
+    let original = repair
         .support
         .selected_points()
         .map(|p| {
@@ -959,132 +822,10 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
 }
 
 #[test]
-fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
-    for upstream in [false, true] {
-        let e = editor();
-        crate::application::test_support::with_application(e, |app| {
-            app.enter(|e, cx| {
-                let signature = e.dust_signature().unwrap();
-                e.schedule_dust(signature, cx);
-                let first = captured_request(e);
-                if upstream {
-                    e.set_gamma(0.8);
-                } else {
-                    let source = e.document.visit.current_source.unwrap();
-                    e.dust_repairs_mut(source)
-                        .set_offset(RepairId(1), [31, 0])
-                        .unwrap();
-                }
-                let next_signature = e.dust_signature().unwrap();
-                e.schedule_dust(next_signature, cx);
-                assert!(first.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-                assert_eq!(
-                    e.document
-                        .visit
-                        .dust
-                        .pending
-                        .as_ref()
-                        .unwrap()
-                        .evaluation
-                        .request,
-                    first.request
-                );
-                // A genuine backend error arriving after retirement is not an unchanged failure.
-                e.receive_dust(first.request, Err("obsolete failure".into()));
-                assert!(
-                    e.document.visit.dust.pending.is_none() && e.document.dust.failed.is_empty()
-                );
-                e.schedule_dust(next_signature, cx);
-                let second = captured_request(e);
-                assert!(!second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-                e.reset_dust_repairs(e.document.visit.current_source.unwrap());
-                assert!(second.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-            });
-        });
-    }
-}
-
-#[test]
-fn viewport_and_downstream_grades_preserve_healing_but_visit_retirement_cancels_it() {
-    let e = editor();
-    crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            let request = captured_request(e);
-            e.document.visit.canvas.viewport.zoom = Some(2.);
-            e.photo_settings_mut().exposure = 1.;
-            e.document.project.roll.exposure = 2.;
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-            assert_eq!(
-                e.document
-                    .visit
-                    .dust
-                    .pending
-                    .as_ref()
-                    .unwrap()
-                    .evaluation
-                    .request,
-                request.request
-            );
-            e.replace_photo_scope(e.id + 1);
-            assert!(request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
-        });
-    });
-}
-
-#[test]
-fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admission() {
-    let e = editor();
-    crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
-            let signature = e.dust_signature().unwrap();
-            let source = e.document.visit.current_source.unwrap();
-            e.schedule_dust(signature, cx);
-            let first = captured_request(e);
-            e.receive_dust(first.request, Ok(None));
-            assert!(e.document.dust.failed.is_empty());
-            e.schedule_dust(signature, cx);
-            let second = captured_request(e);
-            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-            e.receive_dust(first.request, Ok(Some(response(&first, active))));
-            assert_eq!(
-                e.document
-                    .visit
-                    .dust
-                    .pending
-                    .as_ref()
-                    .unwrap()
-                    .evaluation
-                    .request,
-                second.request
-            );
-            assert!(e.document.dust.cached.is_empty());
-            e.set_gamma(0.8);
-            e.receive_dust(second.request, Ok(Some(response(&second, active))));
-            assert!(e.document.visit.dust.pending.is_none());
-            assert!(e.document.dust.cached.is_empty());
-            assert!(e.document.dust.failed.is_empty());
-            let signature = e.dust_signature().unwrap();
-            e.schedule_dust(signature, cx);
-            let third = captured_request(e);
-            e.receive_dust(third.request, Ok(Some(response(&third, active))));
-            assert!(e.document.dust.cached.contains_key(&(source, RepairId(1))));
-            assert!(e.document.visit.dust.pending.is_none());
-        });
-    });
-}
-
-#[test]
-fn input_keeps_repair_instructions_and_new_retires_them_and_late_work() {
+fn input_keeps_repair_instructions_and_new_retires_them() {
     for switch_first in [false, true] {
         crate::application::test_support::with_application(editor(), |app| {
-            let (source, active, request) = app.enter(|e, cx| {
-                let source = e.document.visit.current_source.unwrap();
-                let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-                e.schedule_dust(e.dust_signature().unwrap(), cx);
-                (source, active, captured_request(e))
-            });
+            let source = app.read(|e| e.document.visit.current_source.unwrap());
             if switch_first {
                 app.enter(|e, cx| {
                     e.request_input(crate::processing::InputSettings::Digital, cx);
@@ -1106,9 +847,7 @@ fn input_keeps_repair_instructions_and_new_retires_them_and_late_work() {
             app.update(|e| {
                 e.new_project();
                 assert!(e.dust_repairs(source).is_none());
-                e.receive_dust(request.request, Ok(Some(response(&request, active))));
-                assert!(e.dust_repairs(source).is_none());
-                assert!(e.document.dust.cached.is_empty());
+                assert!(e.document.visit.working_view.completed_capture().is_none());
             });
         });
     }

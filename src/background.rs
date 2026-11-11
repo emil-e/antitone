@@ -10,7 +10,7 @@ where
 {
     let cancelled = Cancellation::default();
     let _retire = cancelled.cancel_on_drop();
-    #[cfg(test)]
+    #[cfg(all(test, feature = "editor"))]
     if let Some(pause) = testing::current() {
         pause.wait().await;
     }
@@ -21,6 +21,7 @@ where
 }
 
 /// Run a captured calculation, acknowledging explicit cancellation after worker cleanup.
+#[cfg(feature = "editor")]
 pub(crate) async fn compute<T: Send + 'static>(
     cancelled: &Cancellation,
     job: impl FnOnce() -> Result<T, crate::Error> + Send + 'static,
@@ -41,7 +42,7 @@ pub(crate) async fn compute<T: Send + 'static>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "editor"))]
 pub(crate) mod testing {
     use std::{
         cell::RefCell,
@@ -102,7 +103,7 @@ pub(crate) mod testing {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "editor"))]
 mod tests {
     use super::*;
     use std::{sync::mpsc, time::Duration};

@@ -132,9 +132,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_before_consumer
                 "search is still a proposal"
             );
         });
-        app.run_until(Duration::from_secs(30), |e| {
-            !e.dust_search_pending() && e.document.visit.dust.pending_request().is_none()
-        });
+        app.run_until(Duration::from_secs(30), |e| !e.dust_search_pending());
         app.close_execution();
     }
     let mut editor = owner.into_inner().unwrap();

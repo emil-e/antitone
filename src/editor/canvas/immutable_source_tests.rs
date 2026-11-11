@@ -19,9 +19,8 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
         let context = egui::Context::default();
         let capture =
             PhotographRequest::Inspection(InspectionView::new(glam::DMat3::IDENTITY, 0.).unwrap());
-        let repairs = Default::default();
         editor
-            .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, false, &context)
             .unwrap();
         let original = editor
             .active_canvas()
@@ -34,7 +33,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
         let original_pixels =
             crate::viewer::readback::image_pixels(&device, &queue, &original.image);
         editor
-            .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, false, &context)
             .unwrap();
         assert!(
             Arc::ptr_eq(
@@ -67,7 +66,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .unwrap()
             .into();
         editor
-            .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, false, &context)
             .unwrap();
         let corrected = editor
             .active_canvas()
@@ -94,7 +93,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             "the prior rendered value remains valid for its held consumer"
         );
         editor
-            .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, false, &context)
             .unwrap();
         assert!(Arc::ptr_eq(
             &corrected,
@@ -104,7 +103,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
         editor.document.state.project.set_flat_field(None).unwrap();
         editor.document.correction = None.into();
         editor
-            .preview_paint(&proxy, layout, (&capture, &repairs), false, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, false, &context)
             .unwrap();
         let cleared = editor
             .active_canvas()

@@ -55,13 +55,7 @@ fn gamma_edits_reuse_active_camera_storage_and_pressure_retires_it_without_losin
             "gamma must not re-upload unchanged camera samples"
         );
         drop((before, after));
-        app.read(|e| {
-            e.document
-                .visit
-                .working_view
-                .mailbox
-                .pressure(memory::Pressure::Warning)
-        });
+        app.update(|e| e.document.visit.camera.pressure(memory::Pressure::Warning));
         common.set_retention_enabled(false);
         assert_eq!(renderer.evaluation().active_input_bytes(), 0);
         app.read(|e| {
@@ -79,13 +73,7 @@ fn gamma_edits_reuse_active_camera_storage_and_pressure_retires_it_without_losin
             0,
             "pressure uses bounded source production"
         );
-        app.read(|e| {
-            e.document
-                .visit
-                .working_view
-                .mailbox
-                .pressure(memory::Pressure::Normal)
-        });
+        app.update(|e| e.document.visit.camera.pressure(memory::Pressure::Normal));
         common.set_retention_enabled(true);
         app.enter(|e, cx| request_working(e, spec(0.03), input.clone(), cx));
         app.run_until(Duration::from_secs(15), |e| {
@@ -94,6 +82,56 @@ fn gamma_edits_reuse_active_camera_storage_and_pressure_retires_it_without_losin
         assert_eq!(renderer.evaluation().active_input_bytes(), bytes);
         app.update(|e| e.replace_photo_scope(8));
         assert_eq!(renderer.evaluation().active_input_bytes(), 0);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn inspection_and_positive_views_share_photo_owned_camera_pixels_but_not_view_results() {
+    use crate::gpu::evaluation::{ImageBacking, ImageLayout, camera_source};
+    let (editor, pixels, inspection, scheduler) = fixture();
+    let positive = positive_spec(inspection.frame(), &pixels, 0.25);
+    let source = camera_source(&pixels.scan().unwrap()).unwrap();
+    let services = editor.source_services.as_ref().unwrap();
+    let renderer = services
+        .renderers
+        .get(&services.device, &services.queue)
+        .unwrap();
+    let values = renderer.evaluation().materializations();
+    values.set_retention_enabled(false);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| request_working(editor, inspection.clone(), pixels.clone(), cx));
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        let ready = app.read(|editor| editor.document.visit.camera.ready().unwrap());
+        let image = values
+            .find_ready::<ImageLayout>(source.identity().unwrap(), |layout| {
+                layout.backing == ImageBacking::Texture
+            })
+            .unwrap();
+        for spec in [positive, inspection] {
+            app.enter(|editor, cx| request_working(editor, spec.clone(), pixels.clone(), cx));
+            app.run_until(Duration::from_secs(15), |editor| {
+                editor.document.visit.working_view.support_ready()
+            });
+            app.read(|editor| {
+                assert!(ready.same_preparation(&editor.document.visit.camera.ready().unwrap()));
+                let frame = editor.document.visit.working_view.frame.as_ref().unwrap();
+                assert_eq!(frame.request.capture.is_inspection(), spec.is_inspection());
+                assert_eq!(
+                    frame.source.definition.domain().meaning
+                        == crate::gpu::evaluation::Meaning::Inspection,
+                    spec.is_inspection()
+                );
+            });
+            let next = values
+                .find_ready::<ImageLayout>(source.identity().unwrap(), |layout| {
+                    layout.backing == ImageBacking::Texture
+                })
+                .unwrap();
+            assert!(Arc::ptr_eq(&image.image, &next.image));
+        }
     });
     scheduler.close_and_wait().unwrap();
 }

@@ -24,15 +24,5 @@ fn apply(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) grou
     if index >= arrayLength(&positives) {
         return;
     }
-    var result = positives[index];
-    if raster_covered(parameters.raster, result) && parameters.values.y > 0.0 {
-        let field = grain_pixels[index].rgb;
-        let grain = mix(vec3f(field.y), field, 2.0 * parameters.values.z);
-        let amount = parameters.values.y;
-        result = vec4f(
-                result.rgb * exp(amount * grain - 0.5 * amount * amount * parameters.variance.xyz),
-                result.w,
-            );
-    }
-    positives[index] = result;
+    positives[index] = apply_grain(positives[index], grain_pixels[index].rgb, parameters);
 }

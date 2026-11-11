@@ -51,7 +51,7 @@ impl Drop for CancelOnDrop {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "editor"))]
 mod tests {
     use super::*;
     use futures_lite::future::{block_on, poll_once};

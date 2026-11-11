@@ -1,19 +1,15 @@
 //! Worker-side original-grid inputs and weighted statistics for interactive measurements.
 
 use crate::Error;
-use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::coverage::Coverage;
 use crate::gpu::evaluation;
 use crate::gpu::evaluation::Budget;
 use crate::gpu::evaluation::Grid;
-use crate::gpu::evaluation::ImageNode;
 use crate::gpu::evaluation::Region;
+use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::grading::Grading;
 use crate::gpu::photograph::PhotographGraph;
-use crate::processing::InputSettings;
 use crate::processing::NegativeInput;
-use crate::processing::RollSettings;
 use crate::renderer::GpuRenderer;
 use crate::scan::Scan;
 use glam::DVec3;
@@ -28,7 +24,7 @@ pub(in crate::editor) struct Samples<'a> {
     services: &'a crate::editor::source::Services,
     scan: &'a Scan,
     renderer: Arc<GpuRenderer>,
-    pub(in crate::editor) source: Arc<ImageNode>,
+    pub(in crate::editor) source: Value,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
 }
@@ -66,7 +62,7 @@ impl<'a> Samples<'a> {
 
     pub(in crate::editor) fn read(
         &self,
-        image: Arc<ImageNode>,
+        image: Value,
         cancelled: &dyn Fn() -> bool,
         mut consume: impl FnMut([u32; 2], [f32; 4], f64) -> Result<(), Error>,
     ) -> Result<(), Error> {
@@ -107,7 +103,7 @@ impl<'a> Samples<'a> {
         Ok(())
     }
 
-    pub(in crate::editor) fn camera_light(&self) -> Result<Arc<ImageNode>, Error> {
+    pub(in crate::editor) fn camera_light(&self) -> Result<Value, Error> {
         PhotographGraph::camera_light(self.source.clone(), self.field.clone())
     }
 
@@ -134,34 +130,26 @@ impl<'a> Samples<'a> {
     pub(in crate::editor) fn camera_response(
         &self,
         negative: NegativeInput,
-    ) -> Result<crate::gpu::photograph::camera_response::CameraReadout, Error> {
-        crate::gpu::photograph::camera_response::CameraReadout::normalized(
-            self.camera_light()?,
-            negative,
-        )
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
+        crate::gpu::photograph::camera_response::normalized(self.camera_light()?, negative)
     }
 
     pub(in crate::editor) fn photograph(
         &self,
-        input: InputSettings,
-        roll: RollSettings,
-        layers: AdjustmentLayerSnapshot,
+        recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<PhotographGraph, Error> {
-        let program = crate::gpu::interpretation::InputTransform::for_scan(self.scan, input)?;
-        PhotographGraph::original(
-            &self.services.device.limits(),
+        recipe.neutral.require_scan(self.scan)?;
+        crate::gpu::photograph::RecipeGraph::originals(
             self.source.clone(),
             self.field.clone(),
-            program,
-            Grading::new(&self.services.device.limits(), roll, layers, self.scan.area)?,
-            Default::default(),
-            &Default::default(),
-        )
+            recipe,
+        )?
+        .measurement(&self.services.device.limits())
     }
 
     pub(in crate::editor) fn mean(
         &self,
-        image: Arc<ImageNode>,
+        image: Value,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<DVec3, Error> {
         let mut sum = DVec3::ZERO;

@@ -36,7 +36,13 @@ fn range_stack(document: &mut Document, id: crate::project::SourceId) {
             )
             .unwrap();
     }
-    document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
+    let source = document.project.source_mut(id).unwrap();
+    source.adjustment_layers = Some(layers);
+    // Isolate packed conversion admission from the bounded shader's exposure arithmetic.
+    source.development.camera_to_ap1 =
+        glam::DMat3::from_diagonal(glam::DVec3::splat(1e38)).to_cols_array_2d();
+    assert!((1e38_f64 as f32).is_finite());
+    assert!(!((1e38_f64 * 3_f64.exp2()) as f32).is_finite());
 }
 
 #[test]

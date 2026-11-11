@@ -92,7 +92,10 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
 
 #[test]
 fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_later_queries() {
-    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&["patches.dng"]),
+        InputSettings::Digital,
+    );
     let services = editor.source_services.as_ref().unwrap();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let coverage = Coverage::rectangle(SourceRegion {
@@ -101,16 +104,22 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
         width: area.width / 3,
         height: area.height / 3,
     });
-    let input = |enabled, invert, strength| LayerInput {
-        input: InputSettings::Digital,
-        roll: RollSettings::default(),
-        upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-        layer: AdjustmentLayer {
+    let input = |enabled, invert, strength| {
+        let mut recipe = editor
+            .positive_recipe(
+                InputSettings::Digital,
+                RollSettings::default(),
+                AdjustmentLayerSettings::default(),
+            )
+            .unwrap();
+        recipe.grade = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer {
             enabled,
             invert,
             strength,
             ..AdjustmentLayer::global(AdjustmentLayerSettings::default())
-        },
+        }])
+        .unwrap();
+        LayerInput { recipe, index: 0 }
     };
     let mut scan = measurement::capture_scan(&editor).unwrap();
     for (enabled, invert, strength) in [(false, false, 1.), (true, false, 0.), (true, true, 1.)] {
@@ -166,7 +175,10 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
         [260, 1000, 600],
         glam::DMat3::IDENTITY.to_cols_array(),
     );
-    let editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
+    let editor = crate::editor::tests::accepted_input(
+        crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]),
+        InputSettings::Digital,
+    );
     let services = editor.source_services.as_ref().unwrap();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let coverage = Coverage::rectangle(SourceRegion {
@@ -208,27 +220,20 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
                 None,
             )
             .unwrap();
-        let roll_balance = roll(
-            services,
-            &mut scan,
-            coverage,
-            RollInput {
-                input: InputSettings::Digital,
-                roll: RollSettings::default(),
-            },
-            &|| false,
-        )
-        .unwrap();
+        let mut recipe = editor
+            .positive_recipe(
+                InputSettings::Digital,
+                RollSettings::default(),
+                AdjustmentLayerSettings::default(),
+            )
+            .unwrap();
+        recipe.neutral.reference = scan.reference_exposure.clone();
+        let roll_balance = roll(services, &mut scan, coverage, recipe.clone(), &|| false).unwrap();
         let layer_balance = layer(
             services,
             &mut scan,
             coverage,
-            LayerInput {
-                input: InputSettings::Digital,
-                roll: RollSettings::default(),
-                upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                layer: AdjustmentLayer::global(AdjustmentLayerSettings::default()),
-            },
+            LayerInput { recipe, index: 0 },
             &|| false,
         )
         .unwrap();

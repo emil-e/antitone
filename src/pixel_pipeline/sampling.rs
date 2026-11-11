@@ -135,8 +135,33 @@ impl ViewSampling {
         })
     }
 
+    #[cfg(feature = "editor")]
+    pub fn with_native_grid(mut self, grid: Option<FrameRaster>) -> Result<Self, Error> {
+        if let Some(grid) = grid {
+            if grid.composition != self.presentation.composition
+                || grid.min != self.presentation.min
+                || grid.max != self.presentation.max
+            {
+                return Err(Error::InvalidParameter(
+                    "view grids describe different footprints",
+                ));
+            }
+            if (0..2).any(|axis| grid.output[axis] < self.plan.output().output[axis]) {
+                return Err(Error::InvalidParameter(
+                    "acquired view grid is too coarse for processing",
+                ));
+            }
+            self.plan = Plan::new(Request {
+                output: grid,
+                stages: self.plan.pipeline(),
+                sampling: self.plan.sampling(),
+            })?;
+        }
+        Ok(self)
+    }
+
     pub fn limited(&self) -> bool {
-        self.plan.output().output != self.ideal
+        (0..2).any(|axis| self.plan.output().output[axis] < self.ideal[axis])
     }
 }
 
@@ -145,7 +170,7 @@ fn cells(plan: &Plan) -> Result<u64, Error> {
     Ok(u64::from(size[0]) * u64::from(size[1]))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "gpu"))]
 mod tests {
     use super::*;
     use crate::{
@@ -217,6 +242,48 @@ mod tests {
         assert_eq!(proxy.plan.output(), frame);
         let small = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
         assert!(small.plan.output().output[0] > 512);
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    fn supplied_native_grids_preserve_the_footprint_and_satisfy_processing_quality() {
+        let frame = frame(600, [20, 10]);
+        let pipeline = PixelPipeline {
+            stages: vec![PixelStage::new(ImageMtfParameters { sigma: 24. })],
+        };
+        let sampled = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
+        let required = sampled.plan.output();
+        let unchanged = sampled.clone().with_native_grid(None).unwrap();
+        assert_eq!(unchanged.plan.output(), required);
+        assert_eq!(unchanged.plan.input(), sampled.plan.input());
+        let finer_grid = FrameRaster {
+            output: required.output.map(|n| n * 2),
+            ..required
+        };
+        let finer = sampled.clone().with_native_grid(Some(finer_grid)).unwrap();
+        assert_eq!(finer.presentation, frame);
+        assert_eq!(finer.plan.output(), finer_grid);
+        assert_eq!(finer.plan.pipeline(), &pipeline);
+        assert_eq!(finer.plan.sampling(), Sampling::NeutralFootprints);
+        assert!(
+            !finer.limited(),
+            "a finer acquired grid is not under-resolved"
+        );
+        let mut moved = finer_grid;
+        moved.min.0[0] += 1.;
+        moved.max.0[0] += 1.;
+        assert_eq!(
+            sampled.clone().with_native_grid(Some(moved)).unwrap_err(),
+            Error::InvalidParameter("view grids describe different footprints")
+        );
+        let coarse = FrameRaster {
+            output: [required.output[0] - 1, finer_grid.output[1]],
+            ..required
+        };
+        assert_eq!(
+            sampled.with_native_grid(Some(coarse)).unwrap_err(),
+            Error::InvalidParameter("acquired view grid is too coarse for processing")
+        );
     }
 
     #[test]

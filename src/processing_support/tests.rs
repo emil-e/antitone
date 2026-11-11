@@ -1,29 +1,21 @@
 use super::*;
-use crate::{
-    crop::Crop,
-    geometry::Composition,
-    grain::GrainParameters,
-    pixel_pipeline::{PixelPipeline, PixelStage},
-};
+use crate::{crop::Crop, geometry::Composition, grain::GrainParameters};
 
 #[test]
-fn ordered_support_adds_neighbourhoods_and_point_stages_add_none() {
-    let stages = PixelPipeline {
-        stages: vec![
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 1.5 }),
-            PixelStage::new(crate::pixel_pipeline::Grain {
-                parameters: GrainParameters {
-                    grain_size: 2.,
-                    amplitude: 0.055,
-                    colour: 0.5,
-                },
-                seed: 17,
-            }),
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2.25 }),
-        ],
+fn kernel_neighbourhoods_use_the_declared_pitch_while_grain_needs_no_neighbours() {
+    let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1.5 };
+    assert_eq!(mtf.support([1.; 2]), Support([6; 2]));
+    assert_eq!(mtf.support([1.5, 3.]), Support([4, 2]));
+    let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2.25 };
+    assert_eq!(mtf.support([1.; 2]), Support([9; 2]));
+    assert_eq!(mtf.support([1.5, 3.]), Support([6, 3]));
+    let grain = GrainParameters {
+        grain_size: 2.,
+        amplitude: 0.055,
+        colour: 0.5,
     };
-    assert_eq!(stages.support([1., 1.]).unwrap(), Support([15, 15]));
-    assert_eq!(stages.support([1.5, 3.]).unwrap(), Support([10, 5]));
+    assert_eq!(grain.support([1.; 2]), Support::NONE);
+    assert_eq!(grain.support([1.5, 3.]), Support::NONE);
 }
 
 #[test]

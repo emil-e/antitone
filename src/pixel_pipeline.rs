@@ -1,6 +1,6 @@
 //! Ordered effect definitions. Recipe assembly selects effects; evaluation executes their nodes.
 
-use crate::{Error, grain::GrainSettings, processing_support::Support};
+use crate::{Error, grain::GrainSettings};
 use std::{any::Any, fmt, sync::Arc};
 
 // A cost/accuracy choice for view acquisition, not a native kernel parameter. Integral
@@ -13,17 +13,15 @@ pub(crate) mod authoring_examples;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod test_effects;
 
-#[cfg(any(test, feature = "editor"))]
+#[cfg(all(feature = "gpu", any(test, feature = "editor")))]
 pub(crate) mod sampling;
 
 #[cfg(test)]
 mod tests;
 
 /// Captured logical effect settings, independent of a particular input or consumer.
-/// Composition applies the definition to an image node by constructing operation/result nodes.
+/// Composition applies the definition by capturing its mathematics and input Values.
 pub trait EffectDefinition: Any + fmt::Debug + Send + Sync {
-    fn support(&self, pitch: [f64; 2]) -> Support;
-
     /// Preferred maximum source units per cell for approximate spatial processing.
     /// Acquisition may bound refinement; this does not change native effect mathematics.
     fn view_pitch(&self) -> Option<f64> {
@@ -38,8 +36,8 @@ pub trait EffectDefinition: Any + fmt::Debug + Send + Sync {
     #[cfg(feature = "gpu")]
     fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error>;
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error>;
 }
 
 /// Value identity keeps separately assembled equal recipes compatible without effect-specific keys.
@@ -63,16 +61,12 @@ impl PixelStage {
         (self.value.as_ref() as &dyn Any).downcast_ref()
     }
 
-    pub fn support(&self, pitch: [f64; 2]) -> Support {
-        self.value.support(pitch)
-    }
-
-    #[cfg(any(test, feature = "editor"))]
+    #[cfg(all(feature = "gpu", any(test, feature = "editor")))]
     pub(crate) fn view_pitch(&self) -> Option<f64> {
         self.value.view_pitch()
     }
 
-    #[cfg(all(test, feature = "editor"))]
+    #[cfg(all(feature = "gpu", feature = "project"))]
     pub(crate) fn integrates_footprint(&self) -> bool {
         self.value.integrates_footprint()
     }
@@ -80,9 +74,19 @@ impl PixelStage {
     #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
-        self.value.compose(input)
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
+        let domain = input.domain();
+        let result = self.value.compose(input)?;
+        if domain.bounds != result.domain().bounds
+            || !domain.same_grid(result.domain())
+            || domain.meaning != result.domain().meaning
+        {
+            return Err(Error::InvalidParameter(
+                "effect changes its declared grid or sample meaning",
+            ));
+        }
+        Ok(result)
     }
 }
 
@@ -110,15 +114,11 @@ impl EffectDefinition for Grain {
         true
     }
 
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        self.parameters.support(pitch)
-    }
-
     #[cfg(feature = "gpu")]
     fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         crate::gpu::evaluation::grain(input, self.parameters, self.seed)
     }
 }
@@ -128,15 +128,11 @@ impl EffectDefinition for crate::image_mtf::ImageMtfParameters {
         Some(self.sigma / GAUSSIAN_VIEW_CELLS)
     }
 
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        Self::support(*self, pitch)
-    }
-
     #[cfg(feature = "gpu")]
     fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         crate::gpu::evaluation::gaussian(input, self.sigma)
     }
 }
@@ -176,18 +172,7 @@ impl PixelPipeline {
         Ok(Self { stages })
     }
 
-    pub fn support(&self, pitch: [f64; 2]) -> Result<Support, Error> {
-        if pitch.into_iter().any(|p| !p.is_finite() || p <= 0.) {
-            return Err(Error::InvalidParameter("invalid processing raster pitch"));
-        }
-        self.stages
-            .iter()
-            .try_fold(Support::NONE, |support, stage| {
-                support.then(stage.support(pitch))
-            })
-    }
-
-    #[cfg(all(test, feature = "editor"))]
+    #[cfg(all(feature = "gpu", feature = "project"))]
     pub(crate) fn footprint_suffix(&self) -> usize {
         self.stages
             .iter()
@@ -202,19 +187,10 @@ impl PixelPipeline {
     #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         &self,
-        mut input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        mut input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         for stage in &self.stages {
-            let domain = input.domain();
             input = stage.compose(input)?;
-            if domain.bounds != input.domain().bounds
-                || !domain.same_grid(input.domain())
-                || domain.meaning != input.domain().meaning
-            {
-                return Err(Error::InvalidParameter(
-                    "effect changes its declared grid or sample meaning",
-                ));
-            }
         }
         Ok(input)
     }

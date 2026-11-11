@@ -6,6 +6,8 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+#[path = "support/output.rs"]
+mod authored_export;
 use antitone as api;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
@@ -17,12 +19,13 @@ use antitone::{
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
     gpu::{flat::GpuFlatField, submission::SubmissionGate},
-    gpu_export::{self, Format, Request},
+    gpu_export::Format,
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
 };
+use authored_export::Request;
 use glam::DVec3;
 use std::{
     path::{Path, PathBuf},
@@ -176,7 +179,7 @@ fn photographic_tiff_pairs() {
                     let gpu_path = output.join(format!("{label}-f32.tif"));
                     let reference_path = output.join(format!("{label}-scalar.tif"));
                     let start = Instant::now();
-                    gpu_export::write(
+                    authored_export::write(
                         &renderer,
                         &device,
                         (&queue, &SubmissionGate::default()),

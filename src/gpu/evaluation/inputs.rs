@@ -9,7 +9,7 @@ pub(crate) struct ActiveInput {
     images: Vec<Image<ImageLayout>>,
 }
 impl ActiveInput {
-    pub(crate) fn matches(&self, source: &ImageNode) -> bool {
+    pub(crate) fn matches(&self, source: &Value) -> bool {
         self.images
             .first()
             .is_some_and(|image| Some(&image.identity) == source.identity())
@@ -78,7 +78,7 @@ impl Context {
         queue: &wgpu::Queue,
         gate: &crate::gpu::submission::SubmissionGate,
         scope: &Materializations,
-        source: Arc<ImageNode>,
+        source: Value,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<ActiveInput>, Error> {
         if cancelled() {

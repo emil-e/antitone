@@ -414,7 +414,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             std::thread::sleep(Duration::from_millis(1));
         }
         harness.read(|editor| {
-            assert!(editor.document.visit.working.task.is_some());
+            assert!(editor.document.visit.working_view.task.is_some());
             assert!(!editor.document.visit.working_view.support_ready());
         });
 
@@ -770,7 +770,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     "idle does not replace source detail"
                 )
             });
-            harness.read(|editor| assert!(editor.document.visit.working.task.is_some()));
+            harness.read(|editor| assert!(editor.document.visit.working_view.task.is_some()));
         }
         drop(hold);
         wait_for(&mut harness, |e| {

@@ -91,7 +91,13 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
-            editor.input(),
+            editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.project_snapshot().roll,
+                    editor.photo_settings(),
+                )
+                .map_err(|error| error.to_string())?,
         ))
     });
     let (image, services, input) = match captured {

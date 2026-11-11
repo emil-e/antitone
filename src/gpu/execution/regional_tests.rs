@@ -44,7 +44,6 @@ fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_orig
         evaluation::source(Arc::new(Pixels(domain))),
         evaluation::Meaning::Display,
         evaluation::Function {
-            linked: Default::default(),
             code: "fn coordinates(p: vec4f, xy: vec2f) -> vec4f { return vec4f(xy, 0.5, p.w); }"
                 .into(),
             symbol: "coordinates",

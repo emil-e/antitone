@@ -51,7 +51,7 @@ fn malformed_proposals_fail_at_the_fitting_boundary_without_modifying_captured_s
     let (fit, _directory, loader) = sampled();
     let before = fit.request.document.project.clone();
     assert!(fit.propose(proposal(&fit), || false).unwrap().is_some());
-    for case in 0..4 {
+    for case in 0..5 {
         let mut proposal = proposal(&fit);
         match case {
             0 => {
@@ -70,6 +70,9 @@ fn malformed_proposals_fail_at_the_fitting_boundary_without_modifying_captured_s
             3 => {
                 proposal.frames.pop();
             }
+            4 => {
+                proposal.photos.last_mut().unwrap().contrast = f64::NAN;
+            }
             _ => unreachable!(),
         }
         assert!(
@@ -83,12 +86,14 @@ fn malformed_proposals_fail_at_the_fitting_boundary_without_modifying_captured_s
 }
 
 #[test]
-fn proposed_domain_checks_use_the_captured_matrix_and_include_the_last_photo() {
+fn proposed_domain_checks_use_the_captured_matrix_instead_of_the_registered_conversion() {
     let (mut fit, _directory, loader) = sampled();
-    // Each value is representable; the matrix and the combined exposure can overflow together.
-    fit.matrix = glam::DMat3::IDENTITY * 1e25;
     let before = fit.request.document.project.clone();
     assert!(fit.propose(proposal(&fit), || false).unwrap().is_some());
+    // The acquired f64 transform is independent, but cannot be represented by GPU constants.
+    fit.matrix = glam::DMat3::IDENTITY * 1e39;
+    assert!(fit.matrix.is_finite());
+    assert!(!(1e39_f64 as f32).is_finite());
     let mut proposed = proposal(&fit);
     proposed.roll.exposure = 16.;
     proposed.photos.last_mut().unwrap().exposure = 16.;

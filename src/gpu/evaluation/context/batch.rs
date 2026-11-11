@@ -20,9 +20,13 @@ impl Context {
         for evaluation in evaluations {
             let evaluation = evaluation.with_materializations(scope.clone());
             let image = evaluation.job.image();
-            let key = image.identity().cloned().ok_or(Error::InvalidParameter(
-                "materialization requires captured image content",
-            ))?;
+            let key = image
+                .output(evaluation.job.region())?
+                .identity()
+                .cloned()
+                .ok_or(Error::InvalidParameter(
+                    "materialization requires captured image content",
+                ))?;
             let layout = ImageLayout {
                 domain: image.domain,
                 region: evaluation.job.region(),
@@ -36,12 +40,17 @@ impl Context {
                     "image materialization exceeds GPU storage limits",
                 ));
             }
-            requests.push((key, Arc::new(layout), layout.bytes()));
+            requests.push((
+                key,
+                Arc::new(layout),
+                layout.bytes(),
+                evaluation.request_policy(),
+            ));
             jobs.push((evaluation, layout));
         }
         let (context, queue, gate, scope_owned) =
             (self.clone(), queue.clone(), gate.clone(), scope.clone());
-        Ok(scope.obtain_many(requests, move |missing| async move {
+        Ok(scope.obtain_many_for(requests, move |missing| async move {
             let progress = Arc::new(futures_util::task::AtomicWaker::new());
             let wake = progress.clone();
             let mut job = Box::pin(crate::background::run(move |stop| {
@@ -49,76 +58,65 @@ impl Context {
                     return Err(Error::Cancelled);
                 }
                 let selected: Vec<_> = missing.into_iter().map(|i| &jobs[i]).collect();
-                let pixels: Vec<_> = selected
-                    .iter()
-                    .map(|(_, layout)| {
-                        context.device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("materialized image"),
-                            size: layout.bytes(),
-                            usage: wgpu::BufferUsages::STORAGE
-                                | wgpu::BufferUsages::COPY_SRC
-                                | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        })
-                    })
-                    .collect();
+                let working = HostWorkingSet::default();
                 let cancelled = || stop.is_cancelled();
                 let notify = || wake.wake();
-                if cancelled() {
-                    return Err(Error::Cancelled);
-                }
-                let outputs: Vec<_> = selected
-                    .iter()
-                    .zip(&pixels)
-                    .map(|((evaluation, layout), pixels)| {
-                        (
-                            evaluation.job.image(),
-                            Production {
-                                context: &context,
-                                queue: &queue,
-                                gate: &gate,
-                                scope: &scope_owned,
-                                budget: evaluation.job.budget(),
-                                layout: *layout,
-                                pixels,
-                                cancelled: &cancelled,
-                                progress: &notify,
-                            },
-                        )
-                    })
-                    .collect();
-                let stored = outputs.iter().try_fold(false, |stored, (image, worker)| {
-                    Ok::<_, Error>(
-                        stored
-                            || super::super::materialized::Stored::find(
-                                Some(&scope_owned),
-                                &[],
-                                image,
-                                worker.layout.region,
-                            )?
-                            .is_some(),
-                    )
-                })?;
-                let handled = if !stored
-                    && let Some((image, _)) = outputs.first()
-                    && let Some(producer) = image
-                        .operation
-                        .sample_consumer()
-                        .and_then(|consumer| consumer.production())
-                {
-                    producer.produce_many(&outputs)?
-                } else {
-                    None
-                };
-                if handled.is_none() {
-                    for ((_, worker), (evaluation, _)) in outputs.iter().zip(&selected) {
-                        worker.produce(evaluation)?;
+                if let Some((evaluation, _)) = selected.first() {
+                    let worker = Worker {
+                        context: &context,
+                        queue: &queue,
+                        gate: &gate,
+                        scope: &scope_owned,
+                        working: &working,
+                        budget: evaluation.job.budget(),
+                        cancelled: &cancelled,
+                        progress: &notify,
+                    };
+                    if let Some(images) = worker.materialize_units_many(&selected)? {
+                        return Ok(images);
                     }
                 }
+                let mut images = Vec::with_capacity(selected.len());
+                for (evaluation, layout) in selected {
+                    if cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let worker = Worker {
+                        context: &context,
+                        queue: &queue,
+                        gate: &gate,
+                        scope: &scope_owned,
+                        working: &working,
+                        budget: evaluation.job.budget(),
+                        cancelled: &cancelled,
+                        progress: &notify,
+                    };
+                    let image = worker.materialize_image(
+                        evaluation,
+                        *layout,
+                        &mut WorkCounts::default(),
+                    )?;
+                    // Completed roots can supply later dependencies even while this related batch is running.
+                    scope_owned.publish(
+                        &Image {
+                            identity: evaluation
+                                .job
+                                .image()
+                                .output(layout.region)?
+                                .identity()
+                                .cloned()
+                                .unwrap(),
+                            descriptor: Arc::new(*layout),
+                            image: image.clone(),
+                        },
+                        evaluation.retain,
+                    );
+                    images.push(image);
+                }
                 if cancelled() {
                     return Err(Error::Cancelled);
                 }
-                Ok(pixels.into_iter().map(GpuImage::new).collect())
+                Ok(images)
             }));
             futures_util::future::poll_fn(|cx| {
                 progress.register(cx.waker());

@@ -1127,7 +1127,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
 }
 
 #[test]
-fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_dispatch() {
+fn extreme_stacks_render_while_unrepresentable_masks_and_mismatched_camera_basis_reject() {
     let (device, _queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
     let active = adjustment(
@@ -1142,17 +1142,32 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         },
     );
     let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
-    assert!(
-        AuthoredPhotograph::new(
-            &device.limits(),
-            calibration(),
-            RollSettings::default(),
-            stack,
-            matrix(),
-            area
-        )
-        .is_err()
+    let deep_grade = AuthoredPhotograph::new(
+        &device.limits(),
+        calibration(),
+        RollSettings::default(),
+        stack,
+        matrix(),
+        area,
+    )
+    .unwrap();
+    let (deep_source, deep_pixels) = source(&device, area, [8, 8], matrix());
+    let actual = read(
+        &device,
+        &_queue,
+        &kernel,
+        &deep_source,
+        deep_pixels.len(),
+        &deep_grade,
+        None,
     );
+    assert!(actual.iter().flatten().all(|value| value.is_finite()));
+    assert!(
+        actual
+            .iter()
+            .any(|pixel| pixel[..3].iter().any(|value| *value > 1.))
+    );
+
     let tiny = adjustment(
         AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),

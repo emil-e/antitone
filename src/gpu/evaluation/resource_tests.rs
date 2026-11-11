@@ -1,4 +1,3 @@
-use super::CellRegion as Rect;
 use super::*;
 
 #[test]
@@ -14,7 +13,6 @@ fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
         resident::raster_input(domain),
         Meaning::Graded,
         Function {
-            linked: Default::default(),
             code: r#"
 fn mark(p: vec4f, position: vec2f) -> vec4f {
     return vec4f(position, 0.25, p.w);
@@ -101,73 +99,6 @@ fn mark(p: vec4f, position: vec2f) -> vec4f {
     }
 }
 
-struct Resident {
-    writable: bool,
-}
-
-impl Operation for Resident {
-    fn input(&self, _: Rect) -> Result<Option<Rect>, Error> {
-        Ok(None)
-    }
-
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        _: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        f.resources[output.resource.0] = Storage::Input {
-            slot: 0,
-            bytes: u64::from(output.cells()) * 16,
-            writable: self.writable,
-        };
-        Ok(())
-    }
-}
-
-struct InPlace;
-
-impl Operation for InPlace {
-    fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(r))
-    }
-
-    fn in_place(&self) -> bool {
-        true
-    }
-
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        assert_eq!(
-            input.unwrap().resource,
-            output.resource,
-            "an in-place implementation receives one storage identity"
-        );
-        f.compute(
-            r#"
-@group(0) @binding(0)
-var<storage, read_write> p: array<vec4f>;
-
-@compute @workgroup_size(64)
-fn mutate(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = id.x + id.y * groups.x * 64u;
-    if index < arrayLength(&p) {
-        p[index] = p[index] * 2.0;
-    }
-}
-"#,
-            "mutate",
-            vec![(0, Binding::Write(output.resource))],
-            output.cells(),
-        );
-        Ok(())
-    }
-}
-
 #[test]
 fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
     let domain = Domain {
@@ -175,43 +106,38 @@ fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
+    let region = domain.finite().unwrap();
+    let bytes = u64::from(region.width) * u64::from(region.height) * 16;
     for writable in [false, true] {
-        let source = ImageNode::new(domain, None, Resident { writable });
-        let root = ImageNode::new(domain, Some(source), InPlace);
-        let plan = Plan::new(
-            root,
-            domain.finite().unwrap(),
-            Budget {
-                tile: [16, 16],
-                scratch_bytes: 1 << 20,
-            },
-        )
-        .unwrap();
-        let tile = &plan.tiles[0];
-        if writable {
-            assert!(matches!(
-                tile.fragment.resources[tile.result.resource.0],
-                Storage::Input { writable: true, .. }
-            ));
-            assert_eq!(
-                plan.peak_scratch_bytes, 0,
-                "caller-owned mutable storage needs no duplicate image"
-            );
-        } else {
-            assert!(matches!(
-                tile.fragment.resources[tile.result.resource.0],
-                Storage::Buffer(_)
-            ));
-            let borrowed = tile
-                .fragment
-                .resources
-                .iter()
-                .position(|r| matches!(r, Storage::Input { .. }))
-                .unwrap();
-            assert_ne!(
-                tile.assignment[borrowed], tile.assignment[tile.result.resource.0],
-                "read-only source storage cannot become writable scratch"
-            );
+        let mut fragment = Fragment::default();
+        let borrowed = fragment.resource(Storage::Input {
+            slot: 0,
+            bytes,
+            writable,
+        });
+        let temporary = fragment.image(domain, region);
+        let output = fragment.image(domain, region);
+        for (source, target) in [
+            (borrowed, temporary.resource),
+            (temporary.resource, output.resource),
+        ] {
+            fragment.work.push(Work::Copy {
+                source,
+                target,
+                source_offset: 0,
+                target_offset: 0,
+                bytes,
+            });
         }
+        let tile = plan::schedule(fragment, output).unwrap();
+        assert_eq!(
+            tile.assignment[borrowed.0] == tile.assignment[tile.result.resource.0],
+            writable,
+            "a retired borrowed allocation is writable scratch only with explicit permission"
+        );
+        assert_ne!(
+            tile.assignment[temporary.resource.0], tile.assignment[tile.result.resource.0],
+            "the input of the last copy is still live during that copy"
+        );
     }
 }

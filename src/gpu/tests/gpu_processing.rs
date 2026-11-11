@@ -398,7 +398,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
 }
 
 #[test]
-fn layer_range_preflight_covers_creative_stages() {
+fn valid_creative_controls_do_not_require_a_conservative_range_proof() {
     let cal = Calibration {
         dmin: DVec3::splat(0.5),
         dmax: DVec3::splat(0.01),
@@ -426,7 +426,7 @@ fn layer_range_preflight_covers_creative_stages() {
         )
         .is_ok()
     );
-    let overflowing =
+    let extreme_grade =
         AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
             contrast: 1.5,
             ..Default::default()
@@ -437,16 +437,16 @@ fn layer_range_preflight_covers_creative_stages() {
             &limits,
             extreme,
             RollSettings::default(),
-            &overflowing,
-            DMat3::from_diagonal(DVec3::splat(1e20)),
+            &extreme_grade,
+            DMat3::IDENTITY,
             area
         )
-        .is_err()
+        .is_ok()
     );
 }
 
 #[test]
-fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
+fn extreme_finite_response_and_grade_controls_remain_packable_for_gpu_execution() {
     let cal = Calibration {
         dmin: DVec3::ONE,
         dmax: DVec3::splat(0.01),
@@ -481,7 +481,7 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
                 height: 1
             }
         ))
-        .is_err()
+        .is_ok()
     );
     assert_eq!(std::mem::size_of::<ProcessingParameters>() % 16, 0);
 }

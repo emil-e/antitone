@@ -1,5 +1,7 @@
 use crate::gpu::evaluation::read_buffer;
 
+mod asymmetric;
+
 #[cfg(feature = "ocio-reference")]
 mod authoring;
 

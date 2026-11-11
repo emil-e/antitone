@@ -20,91 +20,76 @@ impl Source for Pixels {
 
 #[derive(Debug, PartialEq)]
 struct FieldKey {
-    region: SourceRegion,
-    grid: Grid,
     seed: u32,
 }
 
-struct Field {
-    seed: u32,
+fn field(domain: Domain, seed: u32) -> Value {
+    let bounds = domain.finite().unwrap();
+    let code = r#"
+struct Parameters { seed:vec4u }
+fn pixel(cell:vec2i,position:vec2f,p:Parameters)->vec4f {
+    let x=u32(cell.x);
+    let y=u32(cell.y);
+    let v=1.0+f32((x+3u*y+p.seed.x)%5u)*0.0625;
+    return vec4f(v);
+}
+"#;
+    let operation = value::Operation::new(
+        "context field",
+        FieldKey { seed },
+        code,
+        "pixel",
+        value::Access::Neighborhood,
+    )
+    .with_uniform("Parameters", &[seed, 0u32, 0, 0]);
+    value::Value::new(
+        Domain {
+            meaning: Meaning::Arguments,
+            ..domain
+        },
+        bounds,
+        vec![],
+        operation,
+    )
+    .unwrap()
 }
 
-impl Operation for Field {
-    fn input(&self, r: SourceRegion) -> Result<Option<SourceRegion>, Error> {
-        Ok(Some(r))
+struct ApplyField;
+impl Operation for ApplyField {
+    fn reads(&self, region: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(vec![Read::new(0, region), Read::new(1, region)])
     }
-
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let input = input.unwrap();
-        let field = f.resource(Storage::Retained {
-            key: RetainedKey::new(FieldKey {
-                region: output.region,
-                grid: output.domain.grid,
-                seed: self.seed,
-            }),
-            bytes: u64::from(output.cells()) * 16,
-        });
-        let r = output.region;
-        let geometry = f.uniform(&[r.x as u32, r.y as u32, r.width, self.seed]);
-        f.compute(
-            r#"
-@group(0) @binding(0)
-var<storage, read_write> field: array<vec4f>;
-
-@group(0) @binding(1)
-var<uniform> g: vec4u;
-
-@compute @workgroup_size(64)
-fn initialize(@builtin(global_invocation_id) id: vec3u) {
-    if id.x >= arrayLength(&field) {
-        return;
-    }
-    let x = g.x + id.x % g.z;
-    let y = g.y + id.x / g.z;
-    let v = 1.0 + f32((x + 3u * y + g.w) % 5u) * 0.0625;
-    field[id.x] = vec4f(v);
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _: Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let code = r#"
+fn pixel(cell:vec2i,position:vec2f,input:vec4f)->vec4f {
+    return vec4f(input.rgb*input_1(cell).x,input.w);
 }
-"#,
-            "initialize",
-            vec![(0, Binding::Write(field)), (1, geometry)],
-            output.cells(),
-        );
-        if let Work::Compute { initialize, .. } = f.work.last_mut().unwrap() {
-            *initialize = Some(field);
-        }
-        f.compute(
-            r#"
-@group(0) @binding(0)
-var<storage, read> p: array<vec4f>;
-
-@group(0) @binding(1)
-var<storage, read> field: array<vec4f>;
-
-@group(0) @binding(2)
-var<storage, read_write> out: array<vec4f>;
-
-@compute @workgroup_size(64)
-fn apply(@builtin(global_invocation_id) id: vec3u) {
-    if id.x < arrayLength(&out) {
-        out[id.x] = vec4f(p[id.x].rgb * field[id.x].x, p[id.x].w);
+"#;
+        let operation = value::Operation::new(
+            "context field application",
+            (),
+            code,
+            "pixel",
+            value::Access::Pointwise,
+        )
+        .with_input_access(vec![value::Access::Pointwise, value::Access::Neighborhood]);
+        let inputs = vec![inputs[0].request(output)?, inputs[1].request(output)?];
+        value::Calculation::new(domain, output, inputs, operation).map(Some)
     }
 }
-"#,
-            "apply",
-            vec![
-                (0, Binding::Read(input.resource)),
-                (1, Binding::Read(field)),
-                (2, Binding::Write(output.resource)),
-            ],
-            output.cells(),
-        );
-        Ok(())
-    }
+fn apply_field(input: Value, seed: u32) -> Value {
+    Value::from_operation(
+        input.domain(),
+        [input.clone(), field(input.domain(), seed)],
+        ApplyField,
+    )
 }
 
 fn domain() -> Domain {
@@ -115,16 +100,12 @@ fn domain() -> Domain {
     }
 }
 
-fn root(reads: Arc<AtomicUsize>) -> Arc<ImageNode> {
+fn root(reads: Arc<AtomicUsize>) -> Value {
     let d = domain();
-    ImageNode::new(
-        d,
-        Some(operators::source(Arc::new(Pixels { domain: d, reads }))),
-        Field { seed: 7 },
-    )
+    apply_field(operators::source(Arc::new(Pixels { domain: d, reads })), 7)
 }
 
-fn request(context: &Context, image: Arc<ImageNode>, bounds: SourceRegion) -> Evaluation {
+fn request(context: &Context, image: Value, bounds: SourceRegion) -> Evaluation {
     context
         .request(
             image.clone(),
@@ -231,8 +212,32 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
         );
         let evaluation = request(&context, root(Arc::new(AtomicUsize::new(0))), region);
         let plan = evaluation.plans().next().unwrap().unwrap();
+        let materialized = pollster::block_on(
+            context
+                .materialize(
+                    &queue,
+                    &Default::default(),
+                    &context.materializations(),
+                    request(&context, field(domain(), 7), region),
+                    ImageFormat::Rgba32Float,
+                    ImageBacking::Buffer,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let field_pixels = execute::read(&device, &queue, materialized.as_buffer().unwrap());
+        let field_expected = (region.y..region.bottom())
+            .flat_map(|y| {
+                (region.x..region.right())
+                    .map(move |x| [1. + ((x + 3 * y + 7) % 5) as f32 * 0.0625; 4])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            field_pixels, field_expected,
+            "the independently materialized field must actually be initialized"
+        );
         let mut executor = context.executor();
-        for iteration in 0..2 {
+        for _ in 0..2 {
             let result = executor
                 .run(&device, &queue, &Default::default(), &plan, || false)
                 .unwrap()
@@ -242,8 +247,8 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
                 expected(region)
             );
             assert_eq!(
-                result.counts.initializations,
-                usize::from(iteration == 0 || limit < field_bytes)
+                result.counts.initializations, 0,
+                "the explicitly held field must be reused independently of optional retention"
             );
             assert!(
                 executor.pool_bytes() > 0,
@@ -254,7 +259,22 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
                 if limit >= field_bytes { field_bytes } else { 0 }
             );
         }
-        drop(executor);
+        drop((executor, materialized));
+        let mut fresh = context.executor();
+        let result = fresh
+            .run(&device, &queue, &Default::default(), &plan, || false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            result.counts.initializations,
+            usize::from(limit < field_bytes),
+            "only optional retention should preserve the value after its live owner retires"
+        );
+        assert_eq!(
+            execute::read(&device, &queue, &result.pixels),
+            expected(region)
+        );
+        drop(fresh);
         context.materializations().clear();
         assert_eq!(
             context.retained_bytes(),
@@ -291,7 +311,7 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
             },
         );
         let scope = context.test_materializations(true);
-        let image = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
+        let image = apply_field(resident::borrowed_input(d), 7);
         let first = context
             .record(
                 request(&context, image.clone(), d.finite().unwrap()),
@@ -299,8 +319,11 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
                 Vec::new(),
             )
             .unwrap();
-        let reserved = first.cached::<FieldKey>().cloned();
-        assert_eq!(reserved.is_some(), limit > 0);
+        let reserved = first.cached_image(Meaning::Arguments).cloned();
+        assert!(
+            reserved.is_some(),
+            "recording owns its field even without optional retention"
+        );
         if let Some(field) = &reserved {
             assert!(
                 !field.ready(),
@@ -325,7 +348,7 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
             )
             .unwrap();
         if let Some(field) = &reserved {
-            let reused = next.cached::<FieldKey>().unwrap();
+            let reused = next.cached_image(Meaning::Arguments).unwrap();
             assert_eq!(
                 field.pixels, reused.pixels,
                 "sharing is by image value, not a previous-program parameter"
@@ -342,7 +365,7 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
             expected(d.finite().unwrap())
         );
         let foreign = Context::new(&device, CachePolicy { generated_bytes: 0 });
-        let foreign_image = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
+        let foreign_image = apply_field(resident::borrowed_input(d), 7);
         assert!(
             foreign
                 .record(
@@ -376,16 +399,27 @@ fn abandoning_an_unsubmitted_generated_value_releases_its_reservation() {
         },
     );
     let scope = context.test_materializations(true);
-    let d = domain();
-    let root = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
-    let work = context
-        .record(
-            request(&context, root, d.finite().unwrap()),
-            scope.clone(),
-            Vec::new(),
+    let domain = Domain {
+        meaning: Meaning::Arguments,
+        ..domain()
+    };
+    let layout = ImageLayout {
+        domain,
+        region: domain.finite().unwrap(),
+        format: ImageFormat::Rgba32Float,
+        backing: ImageBacking::Buffer,
+    };
+    let work = scope
+        .generated_image(
+            &device,
+            &RetainedKey::new("abandoned typed field"),
+            layout,
+            true,
+            true,
         )
         .unwrap();
-    assert!(context.retained_bytes() > 0);
+    assert!(!work.ready());
+    assert_eq!(context.retained_bytes(), layout.bytes());
     drop(work);
     assert_eq!(context.retained_bytes(), 0);
     assert!(scope.is_empty());

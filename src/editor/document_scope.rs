@@ -217,11 +217,12 @@ impl DocumentScope {
         id: SourceId,
     ) -> Result<crate::image_recipe::ImageRecipe, crate::Error> {
         let source = self.state.project.source(id)?;
-        self.state.project.capture_image(source, |recipe| {
-            recipe.neutral.source_development =
-                self.development_for(source, self.state.project.input);
-            recipe.neutral.reference = self.exposure_value(source);
-        })
+        let mut recipe = self
+            .state
+            .project
+            .image_recipe_with_reference(source, self.exposure_value(source))?;
+        recipe.neutral.source_development = self.development_for(source, self.state.project.input);
+        Ok(recipe)
     }
 
     pub fn accept_save(&mut self, saved: Document) {
@@ -258,24 +259,6 @@ impl DocumentScope {
             .exposure_origin(source.id)
             .and_then(|origin| self.initialization.exposures.get(source.id, &origin))
             .or_else(|| self.state.reference_exposure(source).cloned())
-    }
-
-    pub(super) fn positive_matrix(
-        &self,
-        source: &crate::project::Source,
-        input: crate::processing::InputSettings,
-    ) -> Result<glam::DMat3, crate::Error> {
-        input.positive_matrix(
-            glam::DMat3::from_cols_array_2d(
-                &self
-                    .development_for(source, input)
-                    .resolved()?
-                    .camera_to_ap1,
-            ),
-            self.exposure_value(source)
-                .as_ref()
-                .map(|reference| reference.ev()),
-        )
     }
 
     pub fn source_preview(&self, source: &crate::project::Source) -> crate::raw::SourcePreview {

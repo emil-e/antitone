@@ -6,6 +6,7 @@ var<uniform> camera_matrix: CameraMatrix;
 
 struct Parameters {
     dmin: vec4f,
+    dmax: vec4f,
     gamma_mode: vec4f,
     anchor: vec4f,
     post: array<vec4f, 3>,

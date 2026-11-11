@@ -54,21 +54,14 @@ fn positive_ready(editor: &Editor) -> bool {
             .displayed
             .as_ref()
             .is_some_and(|view| {
-                let mut expected = editor
-                    .positive_processing(
-                        editor.document.project.input,
-                        editor.document.project.roll,
+                let expected = editor
+                    .positive_recipe(
+                        editor.input(),
+                        editor.document.project_snapshot().roll,
                         editor.photo_settings(),
                     )
                     .unwrap();
-                expected.repairs = crate::gpu::repairs::Snapshot::logical(
-                    editor
-                        .dust_signature()
-                        .map(|signature| editor.dust_evaluations(signature))
-                        .unwrap_or_default(),
-                )
-                .unwrap();
-                view.processing() == expected.clone()
+                view.capture.recipe().map(Arc::as_ref) == Some(&expected)
                     && view.target == editor.document.target()
                     && !view.in_flight()
                     && matches!(view.image.look_result(), Some(Ok(())))
@@ -641,7 +634,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         };
         let ready = |editor: &Editor| {
             positive_ready(editor)
-                && editor.document.dust.has_evaluation(source, repair)
+                && editor.dust_images().iter().any(|image| image.id == repair)
                 && editor
                     .document
                     .thumbnails
@@ -657,9 +650,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         };
         paint_until(&mut harness, ready);
         let before = pixels(&harness, &capture);
-        let neutral_signature = harness.read(|editor| editor.dust_signature().unwrap());
-        let evaluated =
-            harness.read(|editor| editor.dust_evaluations(neutral_signature)[0].clone());
+        let evaluated = harness.read(|editor| editor.dust_images()[0].clone());
         let graded = harness.read(|editor| {
             editor
                 .document
@@ -692,12 +683,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         std::fs::write(&file, cube).unwrap();
         harness.enter(|editor, cx| editor.select_look(look::Source::Imported(file), cx));
         paint_until(&mut harness, ready);
-        harness.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &evaluated,
-                &editor.dust_evaluations(neutral_signature)[0]
-            ))
-        });
+        harness.read(|editor| assert!(evaluated.same_definition(&editor.dust_images()[0])));
         harness.read(|editor| {
             assert!(
                 graded.same_grade_as(

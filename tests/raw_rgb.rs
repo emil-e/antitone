@@ -5,6 +5,9 @@ use std::fs;
 
 #[path = "support/fixture_path.rs"]
 mod fixture_path;
+#[cfg(all(feature = "gpu", feature = "export", feature = "project"))]
+#[path = "support/output.rs"]
+mod output;
 #[path = "support/sony_ycc_fixture.rs"]
 mod sony_ycc;
 
@@ -115,10 +118,10 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
         export::{ExrPrecision, Overwrite},
         geometry::Composition,
         gpu::submission::SubmissionGate,
-        gpu_export::{self, Format, Request},
         processing::InputSettings,
         renderer::GpuRenderer,
     };
+    use output::{self as gpu_export, Format, Request};
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();

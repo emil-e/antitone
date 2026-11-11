@@ -1,6 +1,6 @@
 //! Compatibility of acquired samples, independent of photographic stage parameters.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "gpu"))]
 mod tests;
 
 use super::*;
@@ -46,14 +46,17 @@ impl Plan {
                 have.contains_region(need)
             }
             (
-                ProcessingRaster::Frame(_),
-                ProcessingRaster::Frame(_),
+                ProcessingRaster::Frame(have_frame),
+                ProcessingRaster::Frame(need_frame),
                 ValidOutput::Extraction { offset: have, .. },
                 ValidOutput::Extraction { offset: need, .. },
             ) => {
-                // Symmetric same-grid margins define integral offsets in a shared output grid.
-                // Comparing expanded floating pitches would turn harmless roundoff into misses.
-                (0..2).all(|i| have[i] >= need[i])
+                // Compare integral cell windows, not reconstructed floating-point pitches.
+                (0..2).all(|i| {
+                    have[i] >= need[i]
+                        && i64::from(have_frame.output[i]) - i64::from(have[i])
+                            >= i64::from(need_frame.output[i]) - i64::from(need[i])
+                })
             }
             _ => false,
         }

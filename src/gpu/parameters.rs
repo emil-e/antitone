@@ -1,4 +1,4 @@
-//! Packed shader constants and numerical admission for photographic processing.
+//! Validated shader constants for photographic processing.
 
 use crate::{
     Error,
@@ -14,6 +14,7 @@ use glam::{DMat3, DVec3, Vec4};
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessingParameters {
     pub(crate) dmin: Vec4,
+    pub(crate) dmax: Vec4,
     pub(crate) gamma_mode: Vec4,
     pub(crate) anchor: Vec4,
     pub(crate) post: [Vec4; 3],
@@ -64,6 +65,7 @@ impl ProcessingParameters {
     pub fn source() -> Self {
         Self {
             dmin: Vec4::ZERO,
+            dmax: Vec4::ZERO,
             gamma_mode: Vec4::ZERO,
             anchor: Vec4::ZERO,
             post: matrix_columns(DMat3::IDENTITY),
@@ -109,23 +111,7 @@ impl ProcessingParameters {
         roll: RollSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
-        Self::positive_with_bound(negative, roll, camera_to_ap1).map(|(parameters, _)| parameters)
-    }
-
-    pub(crate) fn positive_with_bound(
-        negative: impl Into<NegativeInput>,
-        roll: RollSettings,
-        camera_to_ap1: DMat3,
-    ) -> Result<(Self, f64), Error> {
-        Self::positive_with_neutral_bound(negative.into(), roll, camera_to_ap1, DVec3::ZERO)
-    }
-
-    fn positive_with_neutral_bound(
-        negative: NegativeInput,
-        roll: RollSettings,
-        camera_to_ap1: DMat3,
-        additional_neutral: DVec3,
-    ) -> Result<(Self, f64), Error> {
+        let negative = negative.into();
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let response = negative.parameters()?;
@@ -133,38 +119,20 @@ impl ProcessingParameters {
         let matrix = wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
         let reference = packed_constants(negative.calibration.dmin, 0.)?;
+        let dmax = packed_constants(negative.calibration.dmax, 0.)?;
+        if (0..3).any(|channel| reference[channel] <= dmax[channel]) {
+            return Err(Error::Gpu("film anchors coincide after f32 packing".into()));
+        }
         let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
         let anchor = packed_constants(response.anchor_logs, gain.ln())?;
         let mut tail = [Vec4::ZERO; 3];
         for (output, &[density, value, slope]) in tail.iter_mut().zip(&response.tail) {
             *output = packed_constants(DVec3::new(density, value * gain, slope * gain), 0.)?;
         }
-        let zero_light_bound = response.zero_light_bound()?;
-        // Above-base continuation is bounded by |expm1(a)| <= 1 for a <= 0.
-        let negative_bound = response.anchor_logs.map(|a| (-a / toe).exp());
-        let largest = zero_light_bound.max(negative_bound) * gain;
-        let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
-            + camera_to_ap1.y_axis.abs() * largest.y
-            + camera_to_ap1.z_axis.abs() * largest.z)
-            .max(additional_neutral * gain);
-        let bound = matrix.x_axis.abs() * working_bound.x
-            + matrix.y_axis.abs() * working_bound.y
-            + matrix.z_axis.abs() * working_bound.z;
-        if !largest.is_finite()
-            || largest.max_element() > f32::MAX as f64 / 4.0
-            || !working_bound.is_finite()
-            || working_bound.max_element() > f32::MAX as f64 / 4.0
-            || !bound.is_finite()
-            || bound.max_element() > f32::MAX as f64 / 4.0
-        {
-            return Err(Error::Gpu(
-                "settings can exceed the f32 working range in response domain or photographic processing"
-                    .into(),
-            ));
-        }
         let post = CameraMatrix::new(matrix)?;
         let result = Self {
             dmin: reference,
+            dmax,
             gamma_mode: gamma,
             shape: Vec4::new(toe as f32, shoulder as f32, 0., 0.),
             tail,
@@ -185,73 +153,20 @@ impl ProcessingParameters {
                 "processing parameters cannot be represented in f32".into(),
             ));
         }
-        Ok((result, bound.max_element()))
+        Ok(result)
     }
 
     /// Digital interpretation is identity; Roll exposure rides in the post-conversion matrix.
     pub fn digital(roll: RollSettings, camera_to_ap1: DMat3) -> Result<Self, Error> {
-        Self::digital_with_neutral_bound(roll, camera_to_ap1, DVec3::ZERO).map(|(p, _)| p)
-    }
-
-    /// Like `digital`, but also returns the f32 working bound for adjustment-layer preflight.
-    pub fn digital_with_neutral_bound(
-        roll: RollSettings,
-        camera_to_ap1: DMat3,
-        additional_neutral: DVec3,
-    ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let gain = exposure_multiplier(roll.exposure)?;
-        let matrix = wb_matrix(roll.wb)? * gain;
-        let post = CameraMatrix::new(matrix)?;
-        // With no inversion continuation, the camera-positive bound is the source magnitude.
-        let largest = DVec3::splat(crate::processing::MAX_SOURCE_GAIN);
-        let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
-            + camera_to_ap1.y_axis.abs() * largest.y
-            + camera_to_ap1.z_axis.abs() * largest.z)
-            .max(additional_neutral);
-        let bound = matrix.x_axis.abs() * working_bound.x
-            + matrix.y_axis.abs() * working_bound.y
-            + matrix.z_axis.abs() * working_bound.z;
-        if !working_bound.is_finite()
-            || working_bound.max_element() > f32::MAX as f64 / 4.0
-            || !bound.is_finite()
-            || bound.max_element() > f32::MAX as f64 / 4.0
-        {
-            return Err(Error::Gpu(
-                "settings can exceed the f32 working range in digital processing".into(),
-            ));
-        }
-        Ok((
-            Self {
-                post: post.columns,
-                stage: STAGE_DIGITAL,
-                ..Self::zeroed()
-            },
-            bound.max_element(),
-        ))
-    }
-
-    /// Like `interpret`, but returns the f32 working bound (adjustment-layer preflight).
-    pub fn interpret_with_neutral_bound(
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        camera_to_ap1: DMat3,
-        additional_neutral: DVec3,
-    ) -> Result<(Self, f64), Error> {
-        let input = input.into();
-        match input {
-            InputSettings::Digital => {
-                Self::digital_with_neutral_bound(roll, camera_to_ap1, additional_neutral)
-            }
-            InputSettings::Negative { .. } => {
-                let negative = input.negative_input().ok_or(Error::InvalidCalibration {
-                    channel: 0,
-                    reason: "measure Dmin and Dmax",
-                })?;
-                Self::positive_with_neutral_bound(negative, roll, camera_to_ap1, additional_neutral)
-            }
-        }
+        let post = CameraMatrix::new(wb_matrix(roll.wb)? * gain)?;
+        Ok(Self {
+            post: post.columns,
+            stage: STAGE_DIGITAL,
+            ..Self::zeroed()
+        })
     }
 
     /// Build packed parameters, interpreting source samples through `stage`.
@@ -313,11 +228,7 @@ impl CameraMatrix {
 
     pub(crate) fn new(matrix: DMat3) -> Result<Self, Error> {
         let columns = matrix_columns(matrix);
-        let bound = matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs();
-        if !bound.is_finite()
-            || bound.max_element() > f32::MAX as f64 / 16.
-            || columns.iter().any(|v| !v.is_finite())
-        {
+        if columns.iter().any(|v| !v.is_finite()) {
             return Err(Error::Gpu(
                 "camera matrix cannot be represented for GPU conversion".into(),
             ));

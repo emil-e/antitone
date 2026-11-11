@@ -185,7 +185,7 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
 }
 
 #[test]
-fn low_gamma_with_shoulder_is_usable_and_numeric_edits_update_the_document() {
+fn interpretation_numeric_edits_accept_extreme_valid_processing_and_reject_invalid_controls() {
     tools::calibrated_harness(|mut harness| {
         harness.update(|editor| {
             let crate::processing::InputSettings::Negative { response, .. } =
@@ -206,15 +206,16 @@ fn low_gamma_with_shoulder_is_usable_and_numeric_edits_update_the_document() {
                 .unwrap();
         });
         stage(&mut harness, "Roll");
+        let before = harness.read(|editor| editor.document.project.clone());
         enter_numeric(&mut harness, "Gamma", "0.1");
         harness.read(|editor| {
-            assert!(
-                !editor.status.starts_with("Edit rejected:"),
-                "{}",
-                editor.status
-            );
-            assert_eq!(editor.document.project.input.gamma(), 0.1);
+            assert_eq!(editor.input().gamma(), 0.1);
+            assert_ne!(editor.document.state.project, before);
+            assert_eq!(editor.document.state.project.input, editor.input());
         });
+        let accepted = harness.read(|editor| editor.document.state.project.clone());
+        enter_numeric(&mut harness, "Gamma", "0");
+        harness.read(|editor| assert_eq!(editor.document.state.project, accepted));
         enter_numeric(&mut harness, "Gamma", "0.7");
         harness.read(|editor| {
             assert_eq!(editor.document.project.input.gamma(), 0.7);

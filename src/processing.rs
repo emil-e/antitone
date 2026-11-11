@@ -427,7 +427,7 @@ pub fn exposure_multiplier(stops: f64) -> Result<f64, Error> {
     Ok(stops.exp2())
 }
 
-/// Validated coefficients and conservative bounds used to prepare the GPU response.
+/// Validated coefficients used to prepare the GPU response.
 #[derive(Debug, Clone)]
 pub(crate) struct NegativeParameters {
     base: DVec3,
@@ -496,19 +496,6 @@ impl NegativeInput {
             shape: (toe, shoulder),
             tail,
         })
-    }
-}
-
-impl NegativeParameters {
-    #[cfg(feature = "gpu")]
-    pub(crate) fn zero_light_bound(&self) -> Result<DVec3, Error> {
-        let bound = DVec3::from_array(std::array::from_fn(|channel| {
-            self.tail[channel][1] + self.tail[channel][2]
-        }));
-        if !bound.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
-        Ok(bound)
     }
 }
 

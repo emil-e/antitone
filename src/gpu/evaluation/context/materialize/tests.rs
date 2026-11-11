@@ -56,7 +56,7 @@ fn fixture() -> Pixels {
         reads: Arc::new(AtomicUsize::new(0)),
     }
 }
-fn evaluation(context: &Context, image: Arc<ImageNode>, region: CellRegion) -> Evaluation {
+fn evaluation(context: &Context, image: Value, region: CellRegion) -> Evaluation {
     context
         .request(
             image.clone(),

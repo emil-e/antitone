@@ -110,7 +110,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
 }
 
 #[test]
-fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
+fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_reading_pixels() {
     let first = preview_fixture::neutral_dng(0.3);
     let second = preview_fixture::neutral_dng(2.25);
     let mut editor = Editor::state();
@@ -189,26 +189,32 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
             ),
         )
         .unwrap();
-    // The declared stack reaches about 2^124 without the baseline; the supported f32
-    // bound is 2^126. Adding the measured 2.25 EV alone makes it unsafe.
     crate::editor::processing::validate_source(
         Some(&device),
         InputSettings::Digital,
         editor.document.project.roll,
         &offscreen,
     )
-    .expect("the zero-start control must fit; only the known baseline makes this stack unsafe");
+    .unwrap();
     let normalized = editor
-        .document
-        .positive_matrix(&offscreen, InputSettings::Digital)
-        .unwrap();
+        .positive_recipe_for_source(
+            InputSettings::Digital,
+            editor.document.project_snapshot().roll,
+            &offscreen,
+            editor.photo_settings(),
+        )
+        .unwrap()
+        .neutral
+        .processing_transform()
+        .unwrap()
+        .1;
     let native = glam::DMat3::from_cols_array_2d(&offscreen.development.camera_to_ap1);
     assert!(((normalized.x_axis.length() / native.x_axis.length()).log2() - 2.25).abs() < 0.03);
     let before = editor.document.state.project.clone();
-    assert!(editor.validate_source_candidate(&offscreen).is_err());
+    editor.validate_source_candidate(&offscreen).unwrap();
     let mut candidate = editor.document.clone();
     candidate.project.source_mut(id).unwrap().adjustment_layers = offscreen.adjustment_layers;
-    assert!(editor.validate_document_candidate(&candidate).is_err());
+    editor.validate_document_candidate(&candidate).unwrap();
     assert_eq!(editor.document.state.project, before);
     assert!(editor.document.visit.canvas.ready.is_none());
 }
@@ -250,7 +256,12 @@ fn save_and_open_preserve_restored_normalization_without_admitting_rendering() {
                 )
                 .unwrap();
         }
-        document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
+        let source = document.project.source_mut(id).unwrap();
+        source.adjustment_layers = Some(layers);
+        source.development.camera_to_ap1 =
+            glam::DMat3::from_diagonal(glam::DVec3::splat(1e38)).to_cols_array_2d();
+        assert!((1e38_f64 as f32).is_finite());
+        assert!(!((1e38_f64 * 3_f64.exp2()) as f32).is_finite());
         let record = document.project.source(id).unwrap();
         let zero_start = crate::editor::processing::validate_source(
             None,
@@ -258,14 +269,7 @@ fn save_and_open_preserve_restored_normalization_without_admitting_rendering() {
             document.project.roll,
             record,
         );
-        if reference_ev < 0. {
-            assert!(
-                zero_start.is_err(),
-                "attenuation is essential for this stack"
-            );
-        } else {
-            zero_start.unwrap();
-        }
+        zero_start.unwrap();
         let path = directory.path().join(format!("{name}.antitone"));
         document.capture().save(&path, Save::New).unwrap();
         if reference_ev < 0. {

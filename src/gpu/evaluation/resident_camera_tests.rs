@@ -20,53 +20,54 @@ use crate::processing::RollPipeline;
 use crate::processing::RollSettings;
 use glam::DVec3;
 
-fn recorded(
-    device: &wgpu::Device,
+fn evaluated(
     queue: &wgpu::Queue,
     renderer: &crate::renderer::GpuRenderer,
-    root: Arc<ImageNode>,
-    source: &ProcessingSource,
+    root: Value,
     policy: Policy,
 ) -> (Vec<[f32; 4]>, usize) {
-    let plan = Plan::with_policy(
-        root.clone(),
-        root.domain.finite().unwrap(),
-        Budget {
-            tile: [
-                root.domain.finite().unwrap().width,
-                root.domain.finite().unwrap().height,
-            ],
-            scratch_bytes: 4 << 20,
-        },
-        policy,
-    )
-    .unwrap();
-    let computes = plan.tiles[0]
+    let bounds = root.domain.finite().unwrap();
+    let budget = Budget {
+        tile: [bounds.width, bounds.height],
+        scratch_bytes: 4 << 20,
+    };
+    let plan = Plan::with_policy(root.clone(), bounds, budget, policy).unwrap();
+    let top_level_computes = plan.tiles[0]
         .fragment
         .work
         .iter()
-        .filter(|w| matches!(w, Work::Compute { .. }))
+        .filter(|work| matches!(work, Work::Compute { .. }))
         .count();
-    let prepared = renderer
+    let scope = renderer.evaluation.test_materializations(false);
+    let request = renderer
         .evaluation
-        .executor()
-        .prepare(device, plan)
+        .request(
+            root.clone(),
+            Region {
+                bounds,
+                grid: root.domain().grid,
+            },
+            budget,
+        )
         .unwrap();
-    let output = crate::gpu::raster::buffer(
-        device,
-        [
-            root.domain.finite().unwrap().width,
-            root.domain.finite().unwrap().height,
-        ],
-        "resident photographic boundary",
-    )
-    .unwrap();
-    let mut encoder = device.create_command_encoder(&Default::default());
-    prepared
-        .encode_into(device, &mut encoder, &source.input, &output)
+    let request = request.with_policy(policy).with_materializations(scope);
+    let mut pixels = Vec::new();
+    renderer
+        .evaluation
+        .read(
+            queue,
+            &crate::gpu::submission::SubmissionGate::default(),
+            &request,
+            || false,
+            |region, values| {
+                assert_eq!(region, bounds);
+                pixels.extend_from_slice(values);
+                Ok(())
+            },
+        )
+        .unwrap()
         .unwrap();
-    queue.submit([encoder.finish()]);
-    (execute::read(device, queue, &output), computes)
+    (pixels, top_level_computes)
 }
 
 #[test]
@@ -205,8 +206,9 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 let mut input = AuthoredPhotograph::from(pipeline.clone())
                     .with_flat_field(Some(gpu_field.clone()));
                 if let Some(repaired) = &repaired {
-                    input.repairs =
-                        crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
+                    input.replacements =
+                        crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(repaired))
+                            .unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
                 let photo = PhotographGraph::from_resident_with_stages(
@@ -308,8 +310,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 {
                     let mut counts = Vec::new();
                     for policy in [Policy::Materialized, Policy::Composed] {
-                        let (actual, count) =
-                            recorded(&device, &queue, &renderer, root.clone(), &source, policy);
+                        let (actual, count) = evaluated(&queue, &renderer, root.clone(), policy);
                         for (actual, expected) in actual.iter().zip(&expected) {
                             assert_eq!(actual[3] as f64, expected[3]);
                             for c in 0..3 {
@@ -338,7 +339,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
 
 #[test]
 #[cfg(target_os = "macos")]
-#[ignore = "isolated evaluator-fixture allocator comparison; excludes GpuImage preparation"]
+#[ignore = "isolated evaluator-fixture allocator comparison; excludes ImageValue preparation"]
 fn resident_camera_execution_resources() {
     use std::sync::atomic::{AtomicU64, Ordering};
     crate::cache_observation::with_monitor(|monitor, device, queue| {

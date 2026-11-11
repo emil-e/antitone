@@ -1,97 +1,30 @@
-//! Resident GPU input is a source component, not another execution loop.
+//! Captured external arguments; the value compiler owns their physical access.
 
-use super::CellRegion as Rect;
 use super::*;
 
 #[cfg(test)]
-pub(crate) fn raster_input(domain: Domain) -> Arc<ImageNode> {
-    ImageNode::new(
-        domain,
-        None,
-        Resident {
-            domain,
-            writable: true,
-        },
-    )
+pub(crate) fn raster_input(domain: Domain) -> Value {
+    Value::from_operation(domain, None, Resident(value::Operation::argument(true)))
 }
 
-pub(crate) fn borrowed_input(domain: Domain) -> Arc<ImageNode> {
-    ImageNode::new(
-        domain,
-        None,
-        Resident {
-            domain,
-            writable: false,
-        },
-    )
+pub(crate) fn borrowed_input(domain: Domain) -> Value {
+    Value::from_operation(domain, None, Resident(value::Operation::argument(false)))
 }
 
-struct Resident {
-    domain: Domain,
-    writable: bool,
-}
+pub(super) struct Resident(pub(super) value::Operation);
 
 impl Operation for Resident {
-    fn input(&self, _: Rect) -> Result<Option<Rect>, Error> {
-        Ok(None)
+    fn reads(&self, _: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(Vec::new())
     }
 
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        _: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let bounds = self.domain.finite()?;
-        if output.region == bounds {
-            f.resources[output.resource.0] = Storage::Input {
-                slot: 0,
-                bytes: u64::from(output.cells()) * 16,
-                writable: self.writable,
-            };
-            return Ok(());
-        }
-        let source = f.uniform(&bounds.packed());
-        let rectangle = f.uniform(&output.region.packed());
-        let pixels = f.resource(Storage::Input {
-            slot: 0,
-            bytes: u64::from(bounds.width) * u64::from(bounds.height) * 16,
-            writable: self.writable,
-        });
-        f.compute(
-            r#"
-@group(0) @binding(0)
-var<storage, read> resident_pixels: array<vec4f>;
-
-@group(0) @binding(1)
-var<storage, read_write> resident_result: array<vec4f>;
-
-@group(0) @binding(2)
-var<uniform> resident_source: vec4u;
-
-@group(0) @binding(3)
-var<uniform> resident_region: vec4u;
-
-@compute @workgroup_size(64)
-fn resident_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = id.x + id.y * groups.x * 64u;
-    if index >= resident_region.z * resident_region.w {
-        return;
-    }
-    let p = resident_region.xy + vec2u(index % resident_region.z, index / resident_region.z)
-        - resident_source.xy;
-    resident_result[index] = resident_pixels[p.y * resident_source.z + p.x];
-}
-"#,
-            "resident_main",
-            vec![
-                (0, Binding::Read(pixels)),
-                (1, Binding::Write(output.resource)),
-                (2, source),
-                (3, rectangle),
-            ],
-            output.cells(),
-        );
-        Ok(())
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        _: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        value::Calculation::new(domain, output, Vec::new(), self.0.clone()).map(Some)
     }
 }

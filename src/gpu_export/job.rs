@@ -2,7 +2,7 @@
 use super::*;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::submission::SubmissionGate;
-use crate::{dust_repair::Execution, image_recipe::ImageRecipe};
+use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
 
 pub(crate) struct Job<'a> {
     pub scan: &'a Scan,
@@ -30,40 +30,12 @@ pub(crate) fn write(
     };
     check()?;
 
-    let reference = job
-        .recipe
-        .neutral
-        .reference
-        .clone()
-        .or_else(|| job.scan.reference_exposure.clone())
-        .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from);
-    let prepared = crate::photo_preparation::native(
-        None,
-        &reference,
-        job.recipe.neutral.input,
-        job.scan.source(),
-    )?;
-    let mut scan = prepared.scan();
-    scan.set_flat_field(job.scan.flat_field().cloned());
-    job.recipe.neutral.require_scan(&scan)?;
-    let plan = crate::image_recipe::quality::original_plan(job.recipe)?;
-    let repairs = timed!(
-        SourcePrepare,
-        crate::gpu::repair_source::resolve_plan(
-            device, renderer, gpu, &scan, job.recipe, &plan, execution
-        )
-    )?
-    .ok_or(Error::Cancelled)?;
-    check()?;
-    // Preparation may resolve an unrecorded positive exposure baseline; freeze it with this job.
-    let mut recipe = job.recipe.clone();
-    recipe.neutral.reference = scan.reference_exposure.clone();
+    let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
     let photograph = crate::gpu::photograph::PhotographGraph::from_recipe(
         &device.limits(),
         crate::gpu::evaluation::camera_source(&scan)?,
         job.field,
         &recipe,
-        &crate::gpu::repairs::Snapshot::logical(repairs)?,
     )?;
     let output = match job.format {
         Format::Tiff(target) => crate::rendering::OutputReference::DisplayReferred(target),

@@ -1,5 +1,23 @@
+fn generated_layout() -> ImageLayout {
+    let region = CellRegion::new([0, 0], [4, 1]);
+    ImageLayout {
+        domain: Domain {
+            bounds: Some(region),
+            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: Meaning::Arguments,
+        },
+        region,
+        format: ImageFormat::Rgba32Float,
+        backing: ImageBacking::Buffer,
+    }
+}
+
 use super::*;
 use wgpu::util::DeviceExt;
+
+mod phase_inputs;
+mod recorded_values;
+mod retention;
 
 fn buffer(device: &wgpu::Device, value: f32) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -14,7 +32,7 @@ fn produce(scope: &Materializations, key: u32, pixels: wgpu::Buffer) -> Image<u3
         RetainedKey::new(key),
         Arc::new(4u32),
         pixels.size(),
-        move || async move { Ok(GpuImage::new(pixels)) },
+        move || async move { Ok(ImageValue::new(pixels)) },
     ))
     .unwrap()
 }
@@ -52,17 +70,31 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
     #[derive(Debug, PartialEq)]
     struct Twice;
     impl Operation for Twice {
-        fn identity(&self) -> Option<RetainedKey> {
+        fn key(&self) -> Option<RetainedKey> {
             Some(RetainedKey::new(Self))
         }
-        fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-            Ok(Some(region))
+        fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+            Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
         }
-        fn pointwise(&self) -> Option<Function> {
-            Some(Function::new(
+        fn calculation(
+            self: std::sync::Arc<Self>,
+            inputs: &[crate::gpu::evaluation::value::Value],
+            domain: Domain,
+            output: CellRegion,
+            _budget: crate::gpu::evaluation::Budget,
+        ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+            let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+            let function = Function::new(
                 "fn twice(p: vec4f, xy: vec2f) -> vec4f { return vec4f(p.rgb * 2., p.w); }",
                 "twice",
-            ))
+            );
+            value::Calculation::new(
+                domain,
+                output,
+                vec![inputs[0].request(output)?],
+                value::Operation::shader_function(self.key(), function),
+            )
+            .map(Some)
         }
     }
     let (device, queue, _) = crate::gpu::test_support::render_context();
@@ -88,7 +120,7 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
         usage: wgpu::BufferUsages::STORAGE,
     });
     let argument = SuppliedImage::from_buffer(source.clone(), region, input.into()).unwrap();
-    let root = ImageNode::new(domain, Some(source), Twice);
+    let root = Value::from_operation(domain, Some(source), Twice);
     let request = || {
         context
             .request(
@@ -323,7 +355,13 @@ fn image_and_generated_value_lookups_update_the_common_recency_order() {
         for key in [1u32, 2] {
             if generated {
                 let value = values
-                    .generated(&device, &RetainedKey::new(key), 64, true, true)
+                    .generated_image(
+                        &device,
+                        &RetainedKey::new(key),
+                        generated_layout(),
+                        true,
+                        true,
+                    )
                     .unwrap();
                 value.submitted();
             } else {
@@ -333,7 +371,9 @@ fn image_and_generated_value_lookups_update_the_common_recency_order() {
         assert_eq!(context.retained_bytes(), 128);
         let first = RetainedKey::new(1u32);
         if generated {
-            let hit = values.generated(&device, &first, 64, true, false).unwrap();
+            let hit = values
+                .generated_image(&device, &first, generated_layout(), true, false)
+                .unwrap();
             assert!(hit.ready());
         } else {
             assert_eq!(values.ready::<u32>(&first).len(), 1);
@@ -341,8 +381,8 @@ fn image_and_generated_value_lookups_update_the_common_recency_order() {
         drop(produce(&values, 3, buffer(&device, 3.)));
         let second = RetainedKey::new(2u32);
         if generated {
-            assert!(values.find::<GeneratedLayout>(&second, |_| true).is_none());
-            assert!(values.find::<GeneratedLayout>(&first, |_| true).is_some());
+            assert!(values.find::<ImageLayout>(&second, |_| true).is_none());
+            assert!(values.find::<ImageLayout>(&first, |_| true).is_some());
         } else {
             assert!(values.find::<u32>(&second, |_| true).is_none());
             assert!(values.find::<u32>(&first, |_| true).is_some());
@@ -352,7 +392,71 @@ fn image_and_generated_value_lookups_update_the_common_recency_order() {
 }
 
 #[test]
-fn retention_changes_preserve_joined_generated_values_without_restoring_optional_ownership() {
+fn equal_byte_counts_do_not_merge_recordings_with_different_image_layouts() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.materializations();
+    let first_layout = generated_layout();
+    let region = CellRegion::new([0, 0], [2, 2]);
+    let second_layout = ImageLayout {
+        domain: Domain {
+            bounds: Some(region),
+            ..first_layout.domain
+        },
+        region,
+        ..first_layout
+    };
+    assert_eq!(first_layout.bytes(), second_layout.bytes());
+    let key = RetainedKey::new("same-byte typed recording witness");
+    let first = scope
+        .generated_image(&device, &key, first_layout, false, true)
+        .unwrap();
+    let second = scope
+        .generated_image(&device, &key, second_layout, false, true)
+        .unwrap();
+    let repeated = scope
+        .generated_image(&device, &key, first_layout, false, true)
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &repeated));
+    assert_ne!(
+        first.pixels, second.pixels,
+        "independent live layouts cannot share writable storage"
+    );
+    assert!(!first.ready() && !second.ready());
+    queue.write_buffer(
+        &first.pixels,
+        0,
+        bytemuck::cast_slice(&[[1f32, -0.5, 2., 3.]; 4]),
+    );
+    queue.write_buffer(
+        &second.pixels,
+        0,
+        bytemuck::cast_slice(&[[4f32, -1., 8., 6.]; 4]),
+    );
+    queue.submit([]);
+    first.submitted();
+    second.submitted();
+    for (layout, expected) in [
+        (first_layout, [1., -0.5, 2., 3.]),
+        (second_layout, [4., -1., 8., 6.]),
+    ] {
+        let image = pollster::block_on(
+            scope
+                .find::<ImageLayout>(&key, |found| *found == layout)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            execute::read(&device, &queue, image.as_buffer().unwrap()),
+            [expected; 4]
+        );
+    }
+    drop((first, second, repeated));
+    assert!(scope.is_empty());
+}
+
+#[test]
+fn retention_changes_preserve_joined_recordings_without_restoring_optional_ownership() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     for pressure in [false, true] {
         let context = Context::new(
@@ -363,8 +467,17 @@ fn retention_changes_preserve_joined_generated_values_without_restoring_optional
         );
         let values = context.materializations();
         let key = RetainedKey::new("submitted generated samples");
-        let generated = values.generated(&device, &key, 64, true, true).unwrap();
-        let joined = values.find::<GeneratedLayout>(&key, |_| true).unwrap();
+        let generated = values
+            .generated_image(&device, &key, generated_layout(), true, true)
+            .unwrap();
+        let joined = values
+            .generated_image(&device, &key, generated_layout(), true, true)
+            .unwrap();
+        assert!(Arc::ptr_eq(&generated, &joined));
+        assert!(
+            values.find::<ImageLayout>(&key, |_| true).is_none(),
+            "an unsubmitted recording must not become a worker await"
+        );
         assert_eq!(context.retained_bytes(), 64);
         if pressure {
             values.set_retention_enabled(false);
@@ -379,14 +492,16 @@ fn retention_changes_preserve_joined_generated_values_without_restoring_optional
         );
         queue.submit([]);
         generated.submitted();
-        let image = pollster::block_on(joined).unwrap();
+        let image =
+            pollster::block_on(values.find::<ImageLayout>(&key, |_| true).unwrap()).unwrap();
+        assert_eq!(image.as_buffer().unwrap(), &joined.pixels);
         let weak = Arc::downgrade(&image.image);
         assert_eq!(
             execute::read(&device, &queue, image.as_buffer().unwrap()),
             [[2., -0.25, 3., 9.]; 4]
         );
         assert_eq!(context.retained_bytes(), 0);
-        drop((image, generated));
+        drop((image, generated, joined));
         assert!(weak.upgrade().is_none());
         assert!(values.is_empty());
         if pressure {
@@ -484,7 +599,7 @@ fn batch_reservation_joins_existing_production_and_coalesces_duplicate_outputs()
         64,
         move || async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(GpuImage::new(pixels))
+            Ok(ImageValue::new(pixels))
         },
     );
     let other = buffer(&device, 2.);
@@ -495,7 +610,7 @@ fn batch_reservation_joins_existing_production_and_coalesces_duplicate_outputs()
             .collect(),
         move |missing| async move {
             assert_eq!(missing, vec![1]);
-            Ok(vec![GpuImage::new(other)])
+            Ok(vec![ImageValue::new(other)])
         },
     );
     drop(existing);
@@ -527,7 +642,7 @@ fn shared_awaitable_runs_one_production_and_survives_a_departing_consumer() {
         pixels.size(),
         move || async move {
             calls.fetch_add(1, Ordering::SeqCst);
-            Ok(GpuImage::new(pixels))
+            Ok(ImageValue::new(pixels))
         },
     );
     let second = scope.obtain(RetainedKey::new(9u32), Arc::new(4u32), 64, || async {
@@ -576,7 +691,7 @@ fn failed_awaitables_can_retry_and_zero_retention_does_not_prevent_production() 
         RetainedKey::new(1u32),
         Arc::new(4u32),
         64,
-        move || async move { Ok(GpuImage::new(pixels)) },
+        move || async move { Ok(ImageValue::new(pixels)) },
     );
     assert!(pollster::block_on(retried).is_ok());
     let disabled = Context::new(&device, CachePolicy { generated_bytes: 0 });
@@ -586,7 +701,7 @@ fn failed_awaitables_can_retry_and_zero_retention_does_not_prevent_production() 
         RetainedKey::new(2u32),
         Arc::new(4u32),
         64,
-        move || async move { Ok(GpuImage::new(pixels)) },
+        move || async move { Ok(ImageValue::new(pixels)) },
     ))
     .unwrap();
     assert_eq!(disabled.retained_bytes(), 0);
@@ -630,7 +745,7 @@ fn in_flight_sharing_and_abandonment_do_not_depend_on_optional_retention() {
             move || async move {
                 count.fetch_add(1, Ordering::SeqCst);
                 wait.await.unwrap();
-                Ok(GpuImage::new(pixels))
+                Ok(ImageValue::new(pixels))
             },
         );
         assert!(pollster::block_on(futures_lite::future::poll_once(&mut first)).is_none());
@@ -669,7 +784,7 @@ fn original_and_reconstruction_definitions_own_their_value_identity() {
     let scan = crate::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
     let first = super::super::original::camera_source(&scan).unwrap();
     let second = super::super::original::camera_source(&scan).unwrap();
-    assert!(!Arc::ptr_eq(&first, &second));
+    assert!(!first.same_capture(&second));
     assert!(first.identity().is_some());
     assert_eq!(first.identity(), second.identity());
     let output = Domain {

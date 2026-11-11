@@ -48,15 +48,11 @@ impl crate::pixel_pipeline::EffectDefinition for HalationParameters {
         (self.strength > 0.).then_some(self.sigma / crate::pixel_pipeline::GAUSSIAN_VIEW_CELLS)
     }
 
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        Self::support(*self, pitch)
-    }
-
     #[cfg(feature = "gpu")]
     fn compose(
         &self,
-        input: std::sync::Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<std::sync::Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         crate::gpu::evaluation::halation(input, *self)
     }
 }

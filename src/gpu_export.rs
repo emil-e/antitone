@@ -4,19 +4,25 @@ use crate::export_timing::timed;
 use crate::frame_raster::FrameRaster;
 use crate::{
     Error,
-    adjustment_layers::AdjustmentLayerSnapshot,
     export::{self, ExrPrecision, ImageSize, Overwrite},
     geometry::Composition,
-    gpu::{flat::GpuFlatField, submission::SubmissionGate},
-    processing::{InputSettings, RollSettings},
+    gpu::submission::SubmissionGate,
     renderer::GpuRenderer,
     rendering::OutputTarget,
+};
+#[cfg(test)]
+use crate::{
+    adjustment_layers::AdjustmentLayerSnapshot,
+    processing::{InputSettings, RollSettings},
     scan::Scan,
 };
 use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
 mod area;
+#[cfg(test)]
+#[path = "../tests/support/output.rs"]
+pub(crate) mod authored;
 #[cfg(feature = "project")]
 pub(crate) mod job;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
@@ -42,44 +48,69 @@ pub enum Format {
     Exr(ExrPrecision),
 }
 
-/// Accepted state only. The scan leases the authoritative immutable development and correction.
-pub struct Request<'a> {
-    pub scan: &'a Scan,
-    pub field: Option<Arc<GpuFlatField>>,
-    pub input: InputSettings,
-    pub roll: RollSettings,
-    pub grade: AdjustmentLayerSnapshot,
-    pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
+/// An authored original-cell calculation in its chosen linear output representation.
+pub struct Request {
+    pub definition: crate::gpu::evaluation::Value,
     pub composition: Composition,
     pub format: Format,
-    pub luts: crate::looks::LutChain,
-    pub pipeline: crate::pixel_pipeline::PixelPipeline,
 }
 
-/// One bounded dispatch/readback outstanding; no CPU photographic rendering fallback.
-/// Renders original samples through the shared photographic composition.
+/// Render, reconstruct and encode an already captured calculation.
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
     gpu: (&wgpu::Queue, &SubmissionGate),
-    request: Request<'_>,
+    request: Request,
     path: &Path,
     overwrite: Overwrite,
 ) -> Result<(), Error> {
     write_checked(renderer, device, gpu, request, path, overwrite, || Ok(()))
 }
 
-// Diagnostics and captured workers share the same bounded stop/publication checks.
-fn write_checked(
+/// Execute with cooperative stop checks before bounded work and destination publication.
+#[allow(clippy::too_many_arguments)]
+pub fn write_checked(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
     gpu: (&wgpu::Queue, &SubmissionGate),
-    request: Request<'_>,
+    request: Request,
     path: &Path,
     overwrite: Overwrite,
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<(), Error> {
-    area::write(renderer, device, gpu, request, (path, overwrite), check).map(|_| ())
+    area::write_calculation(
+        renderer,
+        device,
+        gpu,
+        request.definition,
+        request.composition,
+        request.format,
+        (path, overwrite),
+        check,
+    )
+    .map(|_| ())
+}
+
+#[cfg(test)]
+fn authored_area(
+    renderer: &GpuRenderer,
+    device: &wgpu::Device,
+    gpu: (&wgpu::Queue, &SubmissionGate),
+    request: authored::Request<'_>,
+    destination: (&Path, Overwrite),
+    check: impl FnMut() -> Result<(), Error>,
+) -> Result<crate::gpu::execution::Stats, Error> {
+    let request = request.calculation(renderer, device)?;
+    area::write_calculation(
+        renderer,
+        device,
+        gpu,
+        request.definition,
+        request.composition,
+        request.format,
+        destination,
+        check,
+    )
 }
 
 fn default_order(composition: Composition) -> export::BlockOrder {

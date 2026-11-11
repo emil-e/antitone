@@ -1,11 +1,10 @@
 //! An independently supplied finite-neighbourhood component used by composition tests.
 
-use crate::gpu::evaluation::{self, Binding, Domain, Fragment, Operation, PlannedImage};
+use crate::gpu::evaluation::{self, Domain, Operation, value};
 use crate::{
     Error, gpu::evaluation::CellRegion as Rect, pixel_pipeline::EffectDefinition,
     processing_support::Support,
 };
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NeighbourEffect {
@@ -14,20 +13,16 @@ pub(crate) struct NeighbourEffect {
 }
 
 impl EffectDefinition for NeighbourEffect {
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        Support([(self.radius / pitch[0]).ceil() as u32, 0])
-    }
-
-    fn compose(
-        &self,
-        input: Arc<evaluation::ImageNode>,
-    ) -> Result<Arc<evaluation::ImageNode>, Error> {
-        let neighbourhood = evaluation::ImageNode::new(
+    fn compose(&self, input: evaluation::Value) -> Result<evaluation::Value, Error> {
+        let neighbourhood = evaluation::Value::from_operation(
             input.domain(),
             Some(input.clone()),
             Neighbour {
                 domain: input.domain(),
-                margin: self.support(input.domain().grid.pitch),
+                margin: Support([
+                    (self.radius / input.domain().grid.pitch[0]).ceil() as u32,
+                    0,
+                ]),
                 gain: self.gain,
             },
         );
@@ -35,7 +30,6 @@ impl EffectDefinition for NeighbourEffect {
             neighbourhood,
             input.domain().meaning,
             evaluation::Function {
-                linked: Default::default(),
                 code: r#"
 fn independent_source_bias(pixel: vec4f, position: vec2f) -> vec4f {
     return vec4f(pixel.rgb + vec3f(position.x * 0.000001 + position.y * 0.000002), pixel.w);
@@ -56,88 +50,51 @@ struct Neighbour {
 }
 
 impl Operation for Neighbour {
-    fn input(&self, output: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(output.expanded(self.margin.0, self.domain.bounds)?))
+    fn reads(&self, output: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(
+            0,
+            output.expanded(self.margin.0, self.domain.bounds)?,
+        )])
     }
 
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let input = input.unwrap();
-        let geometry = f.uniform(&[
-            [
-                input.region.x as f32,
-                input.region.y as f32,
-                input.region.width as f32,
-                input.region.height as f32,
-            ],
-            [
-                output.region.x as f32,
-                output.region.y as f32,
-                output.region.width as f32,
-                output.region.height as f32,
-            ],
-            [self.margin.0[0] as f32, self.gain, 0., 0.],
-        ]);
-        f.compute(
-            r#"
-@group(0) @binding(0)
-var<storage, read> neighbour_input: array<vec4f>;
-
-@group(0) @binding(1)
-var<storage, read_write> neighbour_output: array<vec4f>;
-
-struct NeighbourGeometry {
-    input: vec4f,
-    output: vec4f,
-    values: vec4f,
-}
-
-@group(0) @binding(2)
-var<uniform> neighbour_geometry: NeighbourGeometry;
-
-fn neighbour_at(p: vec2i) -> vec4f {
-    let local = clamp(
-            p - vec2i(neighbour_geometry.input.xy),
-            vec2i(0),
-            vec2i(neighbour_geometry.input.zw) - vec2i(1),
-        );
-    return neighbour_input[u32(local.y) * u32(neighbour_geometry.input.z) + u32(local.x)];
-}
-
-@compute @workgroup_size(64)
-fn neighbour_main(
-    @builtin(global_invocation_id) id: vec3u,
-    @builtin(num_workgroups) groups: vec3u,
-) {
-    let index = id.x + id.y * groups.x * 64u;
-    let size = vec2u(neighbour_geometry.output.zw);
-    if index >= size.x * size.y {
-        return;
-    }
-    let xy = vec2u(index % size.x, index / size.x);
-    let p = vec2i(neighbour_geometry.output.xy) + vec2i(xy);
-    let center = neighbour_at(p);
-    let radius = i32(neighbour_geometry.values.x);
-    let left = neighbour_at(p - vec2i(radius, 0));
-    let right = neighbour_at(p + vec2i(radius, 0));
-    neighbour_output[index] = vec4f(
-            (left.rgb + 2.0 * center.rgb + right.rgb) * 0.25 * neighbour_geometry.values.y,
-            center.w,
-        );
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: Rect,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let read = output.expanded(self.margin.0, self.domain.bounds)?;
+        let bounds = self.domain.bounds.unwrap_or(read);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(read)?],
+            value::Operation::new(
+                "independent neighbour fixture",
+                (self.margin, self.gain),
+                r#"
+struct Parameters { bounds:vec4i, values:vec4f }
+fn pixel(p:vec2i,at:vec2f,parameters:Parameters)->vec4f{
+    let center=input_0(p);
+    let radius=i32(parameters.values.x);
+    let left=input_0(clamp(p-vec2i(radius,0),parameters.bounds.xy,parameters.bounds.zw-vec2i(1)));
+    let right=input_0(clamp(p+vec2i(radius,0),parameters.bounds.xy,parameters.bounds.zw-vec2i(1)));
+    return vec4f((left.rgb+2.*center.rgb+right.rgb)*0.25*parameters.values.y,center.w);
 }
 "#,
-            "neighbour_main",
-            vec![
-                (0, Binding::Read(input.resource)),
-                (1, Binding::Write(output.resource)),
-                (2, geometry),
-            ],
-            output.cells(),
-        );
-        Ok(())
+                "pixel",
+                value::Access::Neighborhood,
+            )
+            .with_uniform(
+                "Parameters",
+                &[
+                    [bounds.x, bounds.y, bounds.right(), bounds.bottom()].map(|value| value as u32),
+                    [self.margin.0[0] as f32, self.gain, 0., 0.].map(f32::to_bits),
+                ],
+            ),
+        )
+        .map(Some)
     }
 }

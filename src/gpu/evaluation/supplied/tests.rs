@@ -41,7 +41,7 @@ impl Source for Pixels {
         Ok(self.values[(r.x - 7) as usize..(r.right() - 7) as usize].to_vec())
     }
 }
-fn square(input: Arc<ImageNode>) -> Arc<ImageNode> {
+fn square(input: Value) -> Value {
     pointwise(
         input,
         Meaning::Neutral,
@@ -51,7 +51,7 @@ fn square(input: Arc<ImageNode>) -> Arc<ImageNode> {
         ),
     )
 }
-fn request(context: &Context, root: Arc<ImageNode>) -> Evaluation {
+fn request(context: &Context, root: Value) -> Evaluation {
     let domain = root.domain();
     context
         .request(
@@ -90,7 +90,7 @@ fn recorded_arguments_keep_the_complete_unnamed_calculation_and_own_values_witho
         "exercise an actual unnamed definition, not a memoized key"
     );
     assert!(
-        first_square.input.is_some(),
+        !first_square.inputs.is_empty(),
         "supplying its value must not replace its upstream definition"
     );
     let input = SuppliedImage::from_buffer(
@@ -99,7 +99,9 @@ fn recorded_arguments_keep_the_complete_unnamed_calculation_and_own_values_witho
         buffer(&device, &[[1., 0.25, 1., 1.], [4., 1., 4., 2.]]).into(),
     )
     .unwrap();
-    assert!(Arc::ptr_eq(&input.definition, &first_square));
+    assert!(input.definition.same_definition(&first_square));
+    assert!(!input.definition.inputs().is_empty());
+    assert!(input.definition.source().is_none());
     let weak = Arc::downgrade(&input.image);
     let domain = first_square.domain();
     let root = reconstruct(
@@ -179,7 +181,7 @@ fn supplied_coverage_requires_the_actual_value_and_its_signed_storage_extent() {
     )
     .unwrap();
     assert!(supplied.covers(&definition, region));
-    assert!(supplied.covers(&calculation(), CellRegion::new([-2, -2], [1, 1])));
+    assert!(supplied.covers(calculation(), CellRegion::new([-2, -2], [1, 1])));
     for outside in [
         CellRegion::new([-2, -2], [2, 1]),
         CellRegion::new([-3, -3], [2, 1]),
@@ -218,7 +220,7 @@ fn stored_values_match_reauthored_operations_above_the_same_opaque_argument() {
     };
     let definition = reconstruct(argument.clone(), domain).unwrap();
     let reauthored = reconstruct(argument, domain).unwrap();
-    assert!(!Arc::ptr_eq(&definition, &reauthored));
+    assert!(!definition.same_capture(&reauthored));
     assert!(definition.identity().is_none() && reauthored.identity().is_none());
     let region = data.domain().finite().unwrap();
     let supplied =
@@ -234,33 +236,13 @@ fn stored_values_match_reauthored_operations_above_the_same_opaque_argument() {
         "equal fixture bytes do not identify an independent opaque argument"
     );
     assert!(
-        !supplied.covers(&square(reauthored), region),
+        !supplied.covers(square(reauthored), region),
         "an added anonymous calculation still needs its own value"
     );
 }
 
-struct DoubleInPlace;
-impl Operation for DoubleInPlace {
-    fn input(&self, r: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(r))
-    }
-    fn in_place(&self) -> bool {
-        true
-    }
-    fn lower(
-        &self,
-        f: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        assert_eq!(input.unwrap().resource, output.resource);
-        f.compute("@group(0) @binding(0) var<storage,read_write> pixels:array<vec4f>; @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id:vec3u) {if id.x<arrayLength(&pixels) {let p=pixels[id.x];pixels[id.x]=vec4f(p.rgb*2.0,p.a);}}","main",vec![(0,Binding::Write(output.resource))],output.cells());
-        Ok(())
-    }
-}
-
 #[test]
-fn an_in_place_consumer_copies_a_supplied_value_instead_of_overwriting_independent_consumers() {
+fn materialized_consumers_recycle_scratch_without_overwriting_a_supplied_value() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let data = Pixels::new(false);
@@ -272,10 +254,13 @@ fn an_in_place_consumer_copies_a_supplied_value_instead_of_overwriting_independe
         pixels.clone().into(),
     )
     .unwrap();
-    let root = ImageNode::new(definition.domain(), Some(definition), DoubleInPlace);
+    let double = |input| {
+        value::pointwise(input,Meaning::Neutral,value::Operation::new("double supplied pixels",(),"fn double(p:vec2i,at:vec2f,pixel:vec4f)->vec4f{return vec4f(pixel.rgb*2.0,pixel.a);}","double",value::Access::Pointwise)).unwrap()
+    };
+    let root = double(double(definition));
     let recorded = context
         .record(
-            request(&context, root),
+            request(&context, root).with_policy(Policy::Materialized),
             context.test_materializations(false),
             vec![supplied],
         )
@@ -298,7 +283,7 @@ fn an_in_place_consumer_copies_a_supplied_value_instead_of_overwriting_independe
         .unwrap();
     assert_eq!(
         execute::read(&device, &queue, &output),
-        vec![[2., 1., -2., 1.], [4., 2., -4., 2.]]
+        vec![[4., 2., -4., 1.], [8., 4., -8., 2.]]
     );
     assert_eq!(execute::read(&device, &queue, &pixels), data.values);
     assert_eq!(data.reads.load(Ordering::Relaxed), 0);
@@ -378,4 +363,67 @@ fn supplied_values_reject_another_definition_and_malformed_storage() {
         before,
         "argument validation must not acquire samples"
     );
+}
+
+#[test]
+fn produced_photographic_values_can_supply_their_captured_group_and_resolve_stage_dependencies() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.materializations();
+    let data = Pixels::new(true);
+    let input = source(Arc::new(data.clone()));
+    let make = |exposure| {
+        let grading = crate::gpu::grading::Grading::new(
+            &device.limits(),
+            crate::processing::RollSettings {
+                exposure,
+                ..Default::default()
+            },
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            data.domain().finite().unwrap().source().unwrap(),
+        )
+        .unwrap();
+        let grade = grading.compose(input.clone()).unwrap();
+        let root = window(gaussian(grade.clone(), 0.9).unwrap(), [8, 3, 1, 1].into()).unwrap();
+        (grade, root)
+    };
+    let (grade, root) = make(1.0);
+    let region = root.domain().finite().unwrap();
+    assert_eq!(
+        root.region_for(&grade, region).unwrap(),
+        Some(data.domain().finite().unwrap())
+    );
+    assert_eq!(data.reads.load(Ordering::Relaxed), 0);
+    let value = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &Default::default(),
+                &scope,
+                request(&context, root.clone()),
+                ImageFormat::Rgba32Float,
+                ImageBacking::Buffer,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let before = data.reads.load(Ordering::Relaxed);
+    assert!(before > 0);
+    let supplied =
+        SuppliedImage::from_buffer(root.clone(), region, BufferImage::Produced(value.clone()))
+            .unwrap();
+    assert!(supplied.covers(&root, region));
+    let recorded = BufferImage::recorded(&root, region, buffer(&device, &[[0.; 4]])).unwrap();
+    let BufferImage::Produced(recorded) = recorded else {
+        panic!("named photographic output must stay identified")
+    };
+    assert_eq!(recorded.identity, value.identity);
+    let (_, changed) = make(2.0);
+    assert!(matches!(
+        SuppliedImage::from_buffer(changed, region, BufferImage::Produced(value)),
+        Err(Error::InvalidParameter(
+            "supplied storage belongs to a different image value"
+        ))
+    ));
+    assert_eq!(data.reads.load(Ordering::Relaxed), before);
 }

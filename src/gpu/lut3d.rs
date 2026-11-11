@@ -16,6 +16,71 @@ pub(crate) use test_dispatch::Kernel;
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 
+fn calculation(
+    id: LookId,
+    parameters: Parameters,
+    nodes: crate::gpu::evaluation::FunctionBinding,
+) -> crate::gpu::evaluation::value::Operation {
+    use crate::gpu::evaluation::{Function, value};
+    let code = [
+        include_str!("lut3d/arguments.wgsl"),
+        include_str!("lut3d/value.wgsl"),
+        "fn pixel(cell:vec2i,position:vec2f,value:vec4f)->vec4f {return look_pixel(value);}",
+    ]
+    .join("\n");
+    let captures = Function::new(code.clone(), "pixel").with_uniform(3, &parameters);
+    let mut bindings = captures.bindings;
+    bindings.push((2, nodes));
+    value::Operation::new(
+        "ACEScct/AP1 tetrahedral look v1",
+        id,
+        code,
+        "pixel",
+        value::Access::Pointwise,
+    )
+    .with_bindings(bindings)
+}
+
+pub(crate) fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operation {
+    let parameters = Parameters {
+        minimum: [0.; 4],
+        maximum: [1.; 4],
+        reciprocal: [1.; 4],
+        dimensions: [0, 2, 0, u32::from(coverage)],
+    };
+    calculation(
+        LookId([0; 32]),
+        parameters,
+        crate::gpu::evaluation::FunctionBinding::Storage(
+            bytemuck::cast_slice(&[[0f32; 4]; 8]).into(),
+        ),
+    )
+}
+
+pub(crate) fn prewarm(context: &crate::gpu::evaluation::Context) -> Result<(), Error> {
+    use crate::gpu::evaluation::*;
+    let domain = Domain {
+        bounds: Some(CellRegion::new([0, 0], [1, 1])),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Graded,
+    };
+    context.prewarm_image(value::pointwise(
+        borrowed_input(domain),
+        Meaning::Graded,
+        prewarm_calculation(false),
+    )?)
+}
+
+#[cfg(test)]
+pub(crate) fn shader() -> String {
+    [
+        include_str!("lut3d/arguments.wgsl"),
+        include_str!("lut3d/value.wgsl"),
+        include_str!("lut3d.wgsl"),
+    ]
+    .join("\n")
+}
+
 pub(crate) struct Validation {
     pipeline: wgpu::ComputePipeline,
 }
@@ -163,6 +228,16 @@ impl Lut {
             size: look.size(),
             id: look.id(),
         }))
+    }
+
+    pub(crate) fn calculation(&self, coverage: bool) -> crate::gpu::evaluation::value::Operation {
+        calculation(
+            self.id,
+            self.parameters(0, 0, coverage),
+            crate::gpu::evaluation::FunctionBinding::Shared(
+                crate::gpu::evaluation::Shared::Buffer(self.buffer.clone()),
+            ),
+        )
     }
 
     pub(super) fn parameters(&self, count: u32, stride: u32, coverage: bool) -> Parameters {

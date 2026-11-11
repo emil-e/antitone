@@ -25,15 +25,15 @@ pub(super) struct Demand {
 }
 
 pub(super) struct Calculation {
-    pub image: Arc<crate::gpu::evaluation::ImageNode>,
-    pub native: Arc<crate::gpu::evaluation::ImageNode>,
+    pub image: crate::gpu::evaluation::Value,
+    pub native: crate::gpu::evaluation::Value,
     pub plan: crate::acquisition::Plan,
 }
 
 impl Demand {
     #[cfg(test)]
     pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
-        self.capture.processing(limits, &self.spec.repairs)
+        self.capture.processing(limits)
     }
 
     pub(super) fn same_calculation(&self, other: &Self) -> bool {
@@ -72,7 +72,6 @@ impl Demand {
                 &scan,
                 field,
                 recipe,
-                &self.spec.repairs,
                 source.spec.frame(),
                 Some(source.spec.plan.output()),
             )?;
@@ -82,7 +81,7 @@ impl Demand {
                 plan,
             });
         }
-        let spec = source.spec.clone().with_repairs(self.spec.repairs.clone());
+        let spec = source.spec.clone();
         let native = self
             .capture
             .source_graphs(&scan, field, std::slice::from_ref(&spec))?
@@ -162,8 +161,6 @@ impl Frame {
     }
 
     pub(super) fn supports(&self, wanted: &Demand) -> bool {
-        // The producing request includes resolved arguments as well as intent: unchanged
-        // recipes can acquire new repair values without changing their accepted instructions.
         if self.request.same_calculation(wanted) {
             return true;
         }
@@ -177,42 +174,9 @@ impl Frame {
 struct MailboxState {
     demand: Option<Arc<Demand>>,
     completed: Option<Arc<Frame>>,
-    camera: Option<crate::gpu::evaluation::ActiveInput>,
-    pressure: Option<memory::Pressure>,
-    pressure_watch: Option<memory::PressureWatch>,
 }
 #[derive(Default)]
 pub(super) struct Mailbox(Mutex<MailboxState>, pub event_listener::Event);
-
-impl Mailbox {
-    fn pressure(&self, pressure: memory::Pressure) {
-        let mut state = self.0.lock().unwrap();
-        if state.pressure == Some(pressure) {
-            return;
-        }
-        state.pressure = Some(pressure);
-        if pressure != memory::Pressure::Normal {
-            state.camera = None;
-        }
-        drop(state);
-        self.1.notify(usize::MAX);
-    }
-
-    fn watch(self: &Arc<Self>) {
-        let mut state = self.0.lock().unwrap();
-        state
-            .pressure
-            .get_or_insert_with(crate::sys::memory_pressure);
-        if state.pressure_watch.is_none() {
-            let weak = Arc::downgrade(self);
-            state.pressure_watch = Some(memory::PressureWatch::observe(move |pressure| {
-                if let Some(mailbox) = weak.upgrade() {
-                    mailbox.pressure(pressure);
-                }
-            }));
-        }
-    }
-}
 
 pub(super) struct Completion {
     owner: std::sync::Weak<Mailbox>,
@@ -244,6 +208,7 @@ pub(super) struct Acquisition {
 
 #[derive(Default)]
 pub(super) struct WorkingView {
+    pub(super) task: Option<async_executor::Task<()>>,
     gpu: Option<(wgpu::Device, wgpu::Queue)>,
     intent: Option<(FrameRaster, PhotographRequest, OutputTarget)>,
     revision: u64,
@@ -301,17 +266,9 @@ impl WorkingView {
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn processing(&self) -> Option<AuthoredPhotograph> {
         self.intent.as_ref().map(|intent| {
-            let repairs = self
-                .wanted
-                .as_ref()
-                .map(|demand| demand.spec.repairs.clone())
-                .unwrap_or_default();
             intent
                 .1
-                .processing(
-                    &self.device().map(|d| d.limits()).unwrap_or_default(),
-                    &repairs,
-                )
+                .processing(&self.device().map(|d| d.limits()).unwrap_or_default())
                 .expect("captured view input was admitted")
         })
     }
@@ -327,13 +284,7 @@ impl WorkingView {
                 .as_ref()
                 .is_some_and(|(frame, capture, target)| {
                     self.displayed.as_ref().is_some_and(|rendered| {
-                        let repairs = self
-                            .wanted
-                            .as_ref()
-                            .map(|s| s.spec.repairs.clone())
-                            .unwrap_or_default();
                         rendered.spec.frame() == *frame
-                            && rendered.spec.repairs == repairs
                             && rendered.matches_capture(&rendered.spec, capture, *target)
                             && rendered.target == *target
                             && !rendered.in_flight()
@@ -382,10 +333,10 @@ impl WorkingView {
     }
 
     fn retire_support(&mut self) {
+        self.task = None;
         let mut mailbox = self.mailbox.0.lock().unwrap();
         let retired = mailbox.demand.take();
         mailbox.completed = None;
-        mailbox.camera = None;
 
         self.frame = None;
         self.underlay_rendered = None;
@@ -414,7 +365,7 @@ impl WorkingView {
             &source.renderer.evaluation().materializations(),
             source.renderer.clone(),
             self.kernels.get()?.clone(),
-            &source.spec.clone().with_repairs(Default::default()),
+            &source.spec,
             &state.demand.as_ref()?.pixels.scan().ok()?,
             state
                 .demand
@@ -424,6 +375,24 @@ impl WorkingView {
                 .as_ref()
                 .map(|c| c.gpu.clone()),
         )
+    }
+
+    pub(super) fn completed_capture(&self) -> Option<&PhotographRequest> {
+        self.frame
+            .as_ref()
+            .filter(|_| self.support_ready())
+            .map(|frame| &frame.request.capture)
+    }
+
+    pub(super) fn failed_capture(&self) -> Option<&PhotographRequest> {
+        self.failed
+            .as_ref()
+            .filter(|failed| {
+                self.wanted
+                    .as_ref()
+                    .is_some_and(|wanted| failed.same_calculation(wanted))
+            })
+            .map(|demand| &demand.capture)
     }
 
     pub(super) fn support_ready(&self) -> bool {
@@ -466,11 +435,17 @@ impl WorkingView {
             .as_ref()
             .is_some_and(|old| !old.same_source(&demand))
         {
-            state.camera = None;
             state.completed = None;
             self.frame = None;
         }
         let demand = Arc::new(demand);
+        if let Some(recipe) = demand
+            .capture
+            .recipe()
+            .filter(|recipe| !recipe.repairs.is_empty())
+        {
+            log::info!(repairs = recipe.repairs.len(), width = demand.spec.frame().output[0], height = demand.spec.frame().output[1]; "working_view_requested");
+        }
         self.wanted = Some(demand.clone());
         state.demand = Some(demand);
         drop(state);
@@ -506,6 +481,9 @@ impl WorkingView {
             result,
         } = completion;
         if !self.owns(&owner) {
+            if let Err(error) = &result {
+                self.log_failure("acquisition", "retired_owner", Some(&demand), error);
+            }
             return;
         }
         if self
@@ -517,7 +495,17 @@ impl WorkingView {
             .as_ref()
             .is_none_or(|wanted| !wanted.same_calculation(&demand))
         {
+            if let Err(error) = &result {
+                self.log_failure("acquisition", "superseded_request", Some(&demand), error);
+            }
             return;
+        }
+        if let Some(recipe) = demand
+            .capture
+            .recipe()
+            .filter(|recipe| !recipe.repairs.is_empty())
+        {
+            log::info!(repairs = recipe.repairs.len(), succeeded = result.is_ok(); "working_view_acquired");
         }
         match result {
             Ok(frame) if frame.satisfies(&demand) => {
@@ -526,10 +514,17 @@ impl WorkingView {
                 self.error = None;
             }
             Ok(_) => {
+                self.log_failure(
+                    "publication",
+                    "current",
+                    Some(&demand),
+                    "acquired view does not satisfy requested source/layout",
+                );
                 self.failed = Some(demand);
                 self.error = Some("acquired view does not satisfy requested source/layout".into());
             }
             Err(error) => {
+                self.log_failure("acquisition", "current", Some(&demand), &error);
                 self.failed = Some(demand);
                 self.error = Some(error);
             }
@@ -537,8 +532,30 @@ impl WorkingView {
         self.refresh_support();
     }
 
+    pub(super) fn log_failure(
+        &self,
+        phase: &str,
+        disposition: &str,
+        request: Option<&Demand>,
+        error: &str,
+    ) {
+        log::warn!(
+            phase = phase,
+            disposition = disposition,
+            error = error,
+            request_frame:? = request.map(|demand| demand.spec.frame()),
+            wanted_frame:? = self.wanted.as_ref().map(|demand| demand.spec.frame()),
+            request_repairs:? = request.and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
+            wanted_repairs:? = self.wanted.as_ref().and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
+            inspection:? = request.map(|demand| demand.capture.is_inspection()),
+            pressure:? = crate::sys::memory_pressure();
+            "working_view_failed"
+        );
+    }
+
     pub(super) fn acquisition_failed(&mut self, error: String) {
         self.failed = self.mailbox.0.lock().unwrap().demand.clone();
+        self.log_failure("preparation", "current", self.failed.as_deref(), &error);
         self.error = Some(error);
     }
 
@@ -563,7 +580,11 @@ impl WorkingView {
                 Ok(Some(updated)) => Arc::new(updated),
                 Ok(None) => frame.clone(),
                 Err(error) => {
-                    self.error = Some(error.to_string());
+                    let error = error.to_string();
+                    if self.error.as_deref() != Some(error.as_str()) {
+                        self.log_failure("regrade", "current", Some(&wanted), &error);
+                    }
+                    self.error = Some(error);
                     frame.clone()
                 }
             }
@@ -650,7 +671,14 @@ impl WorkingView {
         }
         let capture = &frame.request.capture;
         let matches = |rendered: &RenderedView, index: usize| {
-            rendered.capture == *capture
+            let source = if index == 0 {
+                &frame.source
+            } else {
+                frame.underlay.as_ref().unwrap()
+            };
+            // Reusing calculated pixels does not refresh the rendered value's source metadata.
+            rendered.spec == source.spec
+                && rendered.capture == *capture
                 && rendered.target == target
                 && rendered.uses_processed(&frame.processed[index])
         };
@@ -764,7 +792,6 @@ impl Drop for WorkingView {
         let mut mailbox = self.mailbox.0.lock().unwrap();
         let retired = mailbox.demand.take();
         mailbox.completed = None;
-        mailbox.camera = None;
 
         drop(mailbox);
         drop(retired);
@@ -781,10 +808,20 @@ pub(super) async fn acquire_images(
     queue: &wgpu::Queue,
     submissions: &crate::gpu::submission::SubmissionGate,
 ) -> Option<Completion> {
-    mailbox.watch();
     loop {
         let demand = mailbox.0.lock().unwrap().demand.clone()?;
         let spec = &demand.spec;
+        let started = std::time::Instant::now();
+        let trace = |phase: &str| {
+            if let Some(recipe) = demand
+                .capture
+                .recipe()
+                .filter(|recipe| !recipe.repairs.is_empty())
+            {
+                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = spec.frame().output[0], height = spec.frame().output[1], active_input_bytes = renderer.evaluation().active_input_bytes(), retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
+            }
+        };
+        trace("acquisition_started");
         let cancelled = || {
             mailbox
                 .0
@@ -792,7 +829,7 @@ pub(super) async fn acquire_images(
                 .unwrap()
                 .demand
                 .as_ref()
-                .is_none_or(|latest| !demand.same_source(latest))
+                .is_none_or(|latest| !demand.same_source(latest) || latest.spec != *spec)
         };
         if cancelled() {
             return None;
@@ -805,13 +842,9 @@ pub(super) async fn acquire_images(
                 .correction
                 .as_ref()
                 .map(|field| field.gpu.clone());
-            let neutral_specs: Vec<_> = specs
-                .iter()
-                .cloned()
-                .map(|spec| spec.with_repairs(Default::default()))
-                .collect();
+            let neutral_specs = specs.clone();
             let native_request =
-                |root: Arc<crate::gpu::evaluation::ImageNode>,
+                |root: crate::gpu::evaluation::Value,
                  region: crate::gpu::evaluation::CellRegion| {
                     let grid = root.domain().grid;
                     renderer.evaluation().request(
@@ -835,7 +868,6 @@ pub(super) async fn acquire_images(
                             &scan,
                             correction.clone(),
                             recipe,
-                            &spec.repairs,
                             spec.frame(),
                             None,
                         )?;
@@ -846,14 +878,7 @@ pub(super) async fn acquire_images(
                                 photograph.processed.domain().finite()?,
                             )?
                             .ok_or(Error::InvalidParameter("preview has no neutral dependency"))?;
-                        let native = if spec.repairs.0.is_empty() {
-                            photograph.neutral
-                        } else {
-                            crate::gpu::evaluation::reconstruct(
-                                photograph.unrepaired,
-                                photograph.neutral.domain(),
-                            )?
-                        };
+                        let native = photograph.neutral;
                         Ok((
                             (photograph.processed, plan),
                             native_request(native, region)?,
@@ -884,38 +909,15 @@ pub(super) async fn acquire_images(
                     (calculations, requests)
                 }
             };
-            let cache = renderer.evaluation().materializations();
-            let source = crate::gpu::evaluation::camera_source(&scan)?;
-            let prepare = {
-                let state = mailbox.0.lock().unwrap();
-                state.pressure == Some(memory::Pressure::Normal)
-                    && state
-                        .camera
-                        .as_ref()
-                        .is_none_or(|camera| !camera.matches(&source))
-            };
-            if prepare {
-                let camera = renderer
-                    .evaluation()
-                    .prepare_input(queue, submissions, &cache, source, || {
-                        cancelled()
-                            || mailbox.0.lock().unwrap().pressure != Some(memory::Pressure::Normal)
-                    })
-                    .await?;
-                if !cancelled() {
-                    let mut state = mailbox.0.lock().unwrap();
-                    if state.pressure == Some(memory::Pressure::Normal)
-                        && state
-                            .demand
-                            .as_ref()
-                            .is_some_and(|latest| demand.same_source(latest))
-                    {
-                        state.camera = camera;
-                    }
+            trace("graph_described");
+            if demand.capture.recipe().is_some_and(|recipe| !recipe.repairs.is_empty()) {
+                for (index, request) in native_requests.iter().enumerate() {
+                    let bounds = request.region().bounds;
+                    log::info!(index = index, width = bounds.width, height = bounds.height; "working_neutral_demand");
                 }
             }
-            // Input storage survives parameter/layout demand. Start the image calculation
-            // with the latest capture after that preparation, not an already superseded one.
+            let cache = renderer.evaluation().materializations();
+            trace("input_prepared");
             if mailbox
                 .0
                 .lock()
@@ -941,32 +943,8 @@ pub(super) async fn acquire_images(
             else {
                 return Ok(None);
             };
-            let previous = mailbox.0.lock().unwrap().completed.clone();
-            let mut sources = Vec::new();
-            for (index, (wanted, neutral)) in specs.into_iter().zip(neutral).enumerate() {
-                let old = previous.as_ref().and_then(|frame| {
-                    if index == 0 {
-                        Some(frame.source.clone())
-                    } else {
-                        frame.underlay.clone()
-                    }
-                });
-                let Some(source) = ViewSource::reconstruct_images(
-                    device,
-                    queue,
-                    submissions,
-                    neutral,
-                    wanted.repairs,
-                    old,
-                    &cache,
-                    cancelled,
-                )
-                .await?
-                else {
-                    return Ok(None);
-                };
-                sources.push(source);
-            }
+            trace("neutral_ready");
+            let mut sources = neutral;
             let requests = calculations
                 .iter()
                 .map(|(root, _)| {
@@ -996,6 +974,7 @@ pub(super) async fn acquire_images(
                 Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
                 Err(error) => return Err(Error::Gpu(error.to_string())),
             };
+            trace("processed_ready");
             let processed = sources
                 .iter()
                 .zip(calculations)
@@ -1020,6 +999,7 @@ pub(super) async fn acquire_images(
         }
         .await
         .map_err(|error: Error| error.to_string());
+        trace("acquisition_finished");
         if cancelled() {
             return None;
         }
@@ -1046,8 +1026,7 @@ pub(super) async fn acquire_images(
         }
         drop(state);
         mailbox.1.notify(usize::MAX);
-        // Finish one immutable image before starting the coalesced demand. Its photo-owned
-        // presentation remains useful even when the exact-grade consumer has moved on.
+        // Same-layout captures can publish useful progress; obsolete sampling layouts retire.
     }
 }
 
@@ -1093,7 +1072,7 @@ impl Editor {
     pub(super) fn working_view(
         &mut self,
         frame: FrameRaster,
-        (capture, repairs): (&PhotographRequest, &crate::gpu::repairs::Snapshot),
+        capture: &PhotographRequest,
         image: super::canvas::ImageMode,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
@@ -1149,7 +1128,7 @@ impl Editor {
             return Ok(self.document.visit.working_view.displayed.clone());
         }
 
-        if repairs.0.is_empty()
+        if !capture.has_repairs()
             && (image.is_sample() || self.fullscreen.is_none() && self.cropping())
         {
             self.document.visit.working_view.clear();
@@ -1203,7 +1182,7 @@ impl Editor {
             return Ok(self.document.visit.working_view.displayed.clone());
         }
 
-        let spec = capture.source_request(frame, repairs.clone())?;
+        let spec = capture.source_request(frame)?;
         self.request_working(
             Demand {
                 spec,
@@ -1253,17 +1232,16 @@ impl Editor {
     }
 }
 
-#[derive(Default)]
-pub(super) struct State {
-    pub task: Option<async_executor::Task<()>>,
-}
-
 impl Acquisition {
     pub async fn prepare(
         self,
         services: source::Services,
         submissions: crate::platform::SubmissionGate,
+        camera: super::photo_scope::camera::Ready,
     ) -> Result<Option<Completion>, String> {
+        if !camera.wait().await? {
+            return Ok(None);
+        }
         let kernels = self.kernels.clone();
         let prepared = crate::background::run(move |stop| {
             if stop.is_cancelled() {
@@ -1308,7 +1286,7 @@ impl Editor {
     }
 
     pub(super) fn acquire_working(&mut self, cx: &crate::application::UiContext<'_, Self>) {
-        if self.allow_close || self.document.visit.working.task.is_some() {
+        if self.allow_close {
             return;
         }
         let Some(request) = self.document.visit.working_view.acquisition() else {
@@ -1321,11 +1299,35 @@ impl Editor {
                 .acquisition_failed("Working-source services unavailable".into());
             return;
         };
+        let pixels = self
+            .document
+            .visit
+            .working_view
+            .wanted
+            .as_ref()
+            .unwrap()
+            .pixels
+            .clone();
+        let camera = match self.document.visit.camera.prepare(
+            &pixels,
+            services.clone(),
+            self.submissions.clone(),
+            cx,
+        ) {
+            Ok(camera) => camera,
+            Err(error) => {
+                self.document.visit.working_view.acquisition_failed(error);
+                return;
+            }
+        };
+        if self.document.visit.working_view.task.is_some() {
+            return;
+        }
         let owner = Arc::downgrade(&request.mailbox);
         let submissions = self.submissions.clone();
         let mailbox = request.mailbox.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let acquisition = request.prepare(services, submissions);
+            let acquisition = request.prepare(services, submissions, camera);
             let support = async {
                 loop {
                     let changed = mailbox.1.listen();
@@ -1342,7 +1344,7 @@ impl Editor {
                 if !editor.document.visit.working_view.owns(&owner) {
                     return;
                 }
-                editor.document.visit.working.task = None;
+                editor.document.visit.working_view.task = None;
                 match result {
                     Ok(Some(completion)) => editor.document.visit.working_view.acquired(completion),
                     Ok(None) => {}
@@ -1357,6 +1359,6 @@ impl Editor {
                 .acquisition_failed("Application stopped".into());
             return;
         };
-        self.document.visit.working.task = Some(task);
+        self.document.visit.working_view.task = Some(task);
     }
 }

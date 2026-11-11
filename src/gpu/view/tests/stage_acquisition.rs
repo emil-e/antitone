@@ -5,7 +5,6 @@ use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    gpu::repairs::{Patch, Snapshot},
     grain::{GrainPreset, GrainSettings},
     processing::InputPipeline,
 };
@@ -260,7 +259,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
 }
 
 #[test]
-fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
+fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let fixture = crate::dng_fixture::Fixture {
@@ -287,7 +286,9 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
             let evaluated = Arc::new(
                 crate::dust_repair::evaluate(&repair, scan.area, |_| Ok([1.5, -0.2, 0.3])).unwrap(),
             );
-            let patches = Snapshot(vec![Patch::new(&device, evaluated.clone()).unwrap()]);
+            let patches =
+                crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(&evaluated))
+                    .unwrap();
             let composition = Composition::with_crop(
                 scan.area,
                 Default::default(),
@@ -328,7 +329,7 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 colour: 0.5,
             };
             let mut input = capture(&device, &scan, film, composition.crop().size);
-            input.repairs = patches.clone();
+            input.replacements = patches.clone();
             let spec = SourceRequest::new(
                 frame,
                 InputSettings::Digital,
@@ -354,34 +355,19 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 .unwrap()
             };
             let base = acquire(spec.clone());
-            let rebuilt = ViewSource::reconstruct_repairs(
-                &device,
-                &queue,
-                &SubmissionGate::default(),
-                base.clone(),
-                patches.clone(),
-                None,
-                || false,
-            )
-            .unwrap()
-            .unwrap();
+            let repaired = acquire(SourceRequest::for_processing(frame, &input).unwrap());
             assert_eq!(
-                rebuilt.pixels.size(),
+                repaired.pixels.size(),
                 base.pixels.size(),
-                "repair output keeps the padded input layout"
+                "repairs preserve the padded input layout"
             );
-            let direct = acquire(spec.with_repairs(patches));
-            let actual = render(&device, &queue, rebuilt, &input);
-            let expected = render(&device, &queue, direct, &input);
-            for (a, b) in actual.iter().zip(expected) {
-                for c in 0..4 {
-                    assert!(
-                        (a[c] - b[c]).abs() < 0.000003,
-                        "reconstructed padded raster channel {c}"
-                    );
-                }
-            }
-            input.repairs = Snapshot::default();
+            let input_size = base.spec.plan.input().size();
+            assert_eq!(
+                repaired.pixels.size(),
+                u64::from(input_size[0]) * u64::from(input_size[1]) * 16
+            );
+            let actual = render(&device, &queue, repaired, &input);
+            input.replacements.clear();
             let clean = render(&device, &queue, base, &input);
             assert!(
                 actual

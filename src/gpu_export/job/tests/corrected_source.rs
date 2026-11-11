@@ -52,11 +52,8 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
         size: [a.width - 16, a.height - 16],
         angle: 0.13,
     });
-    let recipe = project
-        .capture_image(project.source(id).unwrap(), |recipe| {
-            recipe.neutral.correction = scan.flat_field().cloned();
-        })
-        .unwrap();
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.correction = scan.flat_field().cloned();
     let input = recipe.neutral.input;
     let scalar =
         AdjustmentLayerPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1)

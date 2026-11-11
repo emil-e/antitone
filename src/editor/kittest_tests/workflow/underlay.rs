@@ -143,7 +143,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                 );
                 true
             });
-            harness.read(|editor| assert!(editor.document.visit.working.task.is_some()));
+            harness.read(|editor| assert!(editor.document.visit.working_view.task.is_some()));
         }
         drop(hold);
         wait_for(&mut harness, |e| {

@@ -91,7 +91,7 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
 }
 
 #[test]
-fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
+fn unchanged_edits_preserve_reopened_mask_margins_and_captured_intent() {
     let (e, directory) = saved_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
@@ -110,18 +110,18 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
             e.document.state.project = crate::project::Project::load(&path).unwrap().into();
 
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            let request = captured_request(e);
-            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-            e.receive_dust(request.request, Ok(Some(response(&request, active))));
-            let evaluation = e.document.dust.cached[&(source, RepairId(1))]
-                .evaluated
-                .clone();
+            let capture = e
+                .positive_recipe(
+                    e.input(),
+                    e.document.project_snapshot().roll,
+                    e.photo_settings(),
+                )
+                .unwrap();
             let reference_revision = e.document.visit.canvas.original.continuation();
             e.begin_dust_mask(Some(RepairId(1)));
             assert_eq!(
                 e.effective_dust_repair(source, RepairId(1)).unwrap(),
-                request.repair
+                capture.repairs[0]
             );
             e.commit_dust_mask(cx);
 
@@ -134,30 +134,40 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
                 e.dust_repairs(source).unwrap().repairs()[0].support,
                 support
             );
-            assert!(Arc::ptr_eq(
-                &evaluation,
-                &e.document.dust.cached[&(source, RepairId(1))].evaluated
-            ));
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            assert!(
-                e.document.visit.dust.pending_request().is_none(),
-                "unchanged masks must reuse compatible evaluations"
+            assert_eq!(
+                e.positive_recipe(
+                    e.input(),
+                    e.document.project_snapshot().roll,
+                    e.photo_settings()
+                )
+                .unwrap(),
+                capture
             );
         });
     });
 }
 
 #[test]
-fn evaluation_completion_during_save_preserves_instructions_and_compatible_caches() {
-    let (e, directory) = saved_editor();
+fn saves_preserve_instructions_and_pending_or_failed_common_rendering() {
+    let mut e = super::acceptance::coherent_editor();
+    let source = e.document.visit.current_source.unwrap();
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
+    e.dust_repairs_mut(source)
+        .insert(
+            SupportMask::new([active.x, active.y], [3, 3], vec![true; 9]).unwrap(),
+            RepairOrigin::Manual,
+            [30, 0],
+        )
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("pending.antitone");
     let hold = crate::background::testing::pause();
     crate::application::test_support::with_application(e, |app| {
-        let (source, captured, evaluation) = app.enter(|e, cx| {
-            let source = e.document.visit.current_source.unwrap();
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            let request = captured_request(e);
-            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
+        app.enter(|e, cx| {
+            let context = egui::Context::default();
+            frame(e, &context, vec![], cx);
+            assert!(!e.document.visit.working_view.idle());
+            assert!(e.document.visit.working_view.completed_capture().is_none());
             let captured = e.document.capture();
             drop(e.start_save(
                 crate::editor::save::Write {
@@ -168,45 +178,38 @@ fn evaluation_completion_during_save_preserves_instructions_and_compatible_cache
                 cx,
             ));
             assert!(e.interaction_blocked() && e.document.write.pending());
-            assert_eq!(
-                e.document.visit.dust.pending_request(),
-                Some(request.request)
-            );
-            e.receive_dust(request.request, Ok(Some(response(&request, active))));
-            let evaluation = e.document.dust.cached[&(source, RepairId(1))]
-                .evaluated
-                .clone();
-            assert!(e.document.write.pending());
-            (source, captured, evaluation)
-        });
-        app.pump();
-        drop(hold);
-        app.run_until(Duration::from_secs(10), |e| !e.document.write.pending());
-        app.enter(|e, cx| {
-            assert!(!e.document.dirty());
+            assert!(!e.document.visit.working_view.idle());
             assert_eq!(
                 e.document.project.source(source).unwrap().repairs,
                 captured.project.source(source).unwrap().repairs
             );
-            assert!(Arc::ptr_eq(
-                &evaluation,
-                &e.document.dust.cached[&(source, RepairId(1))].evaluated
-            ));
-            e.document.dust.cached.clear();
-            e.schedule_dust(e.dust_signature().unwrap(), cx);
-            let failed = captured_request(e);
-            e.receive_dust(failed.request, Err("evaluation failed".into()));
+        });
+        app.pump();
+        drop(hold);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.document.write.pending() && e.document.visit.working_view.failed_capture().is_some()
+        });
+        app.update(|e| {
             assert_eq!(e.dust_render_state(), "Repair unavailable");
+            assert!(
+                e.document
+                    .visit
+                    .working_view
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("two-pixel exterior")
+            );
             assert!(!e.document.dirty());
             let saved = e
                 .document
                 .save(&path, crate::project::Save::Replace)
                 .unwrap();
+            e.document.accept_save(saved);
+            assert_eq!(e.dust_render_state(), "Repair unavailable");
             let reopened = Document::open(&path).unwrap();
-            assert_eq!(reopened.project, saved.project);
-            assert!(!reopened.dirty());
-            assert_eq!(crate::project::Project::load(&path).unwrap(), saved.project);
-            assert!(saved.project.source(source).unwrap().repairs.repairs()[0].enabled);
+            assert_eq!(reopened.project, e.document.state.project);
+            assert!(reopened.project.source(source).unwrap().repairs.repairs()[0].enabled);
         });
     });
 }

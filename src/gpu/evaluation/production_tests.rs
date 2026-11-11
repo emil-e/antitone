@@ -5,7 +5,6 @@ use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::repairs::Snapshot;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
@@ -123,9 +122,6 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         support: SupportMask::new([a.x + 64, a.y + 100], [40, 40], vec![true; 1600]).unwrap(),
         offset: [48, -32],
     };
-    let neutral = crate::scan::ImageSource::new(&scan, InputSettings::from(base)).unwrap();
-    let evaluated = Arc::new(crate::repair_source::evaluate(&neutral, &repair).unwrap());
-    let snapshot = Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let pipeline = Arc::new(
         AuthoredPhotograph::new(
             &device.limits(),
@@ -152,7 +148,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    input.repairs = snapshot;
+    input.repairs = vec![repair.clone()];
     let look = Arc::new(
         crate::looks::LookAsset::new(
             "production layered look".into(),
@@ -179,7 +175,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     );
     input = input.with_luts(Some(look.clone()));
     let stages = input.pixel_pipeline();
-    let repairs = vec![evaluated];
+    let repairs = vec![repair];
     let request = || crate::gpu::execution::test_support::OriginalControls {
         scan: &scan,
         field: Some(field.clone()),
@@ -317,24 +313,27 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     }
 
     impl Operation for Observed {
-        fn input(&self, output: CellRegion) -> Result<Option<CellRegion>, Error> {
-            self.inner.input(output)
+        fn reads(&self, output: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+            self.inner.reads(output)
         }
 
-        fn lower(
-            &self,
-            fragment: &mut Fragment,
-            input: Option<PlannedImage>,
-            output: PlannedImage,
-        ) -> Result<(), Error> {
+        fn calculation(
+            self: Arc<Self>,
+            inputs: &[crate::gpu::evaluation::value::Value],
+            domain: Domain,
+            output: CellRegion,
+            budget: Budget,
+        ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.inner.lower(fragment, input, output)
+            self.inner
+                .clone()
+                .calculation(inputs, domain, output, budget)
         }
     }
     let root = source(Arc::new(Header));
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let root = ImageNode::new(
+    let root = Value::from_operation(
         root.domain,
         None,
         Observed {

@@ -64,18 +64,15 @@ fn render_with_basis(
     roll: RollSettings,
 ) -> Arc<RenderedView> {
     let settings = input.into();
-    let grade = Arc::new(
-        AuthoredPhotograph::new(
-            &device.limits(),
-            settings,
-            roll,
-            snapshot.clone(),
-            source.spec.matrix(),
-            source.spec.area,
-        )
-        .unwrap(),
-    );
-    let input = AuthoredPhotograph::from(grade);
+    let input = AuthoredPhotograph::new(
+        &device.limits(),
+        settings,
+        roll,
+        snapshot.clone(),
+        source.spec.matrix(),
+        source.spec.area,
+    )
+    .unwrap();
     let view = RenderedView::new(device, source, &input, target, None).unwrap();
     view.ensure_submitted(
         device,

@@ -5,18 +5,21 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+#[path = "support/output.rs"]
+mod authored_export;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::submission::SubmissionGate,
-    gpu_export::{self, Format, Request},
+    gpu_export::Format,
     processing::{Calibration, InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
 };
+use authored_export::Request;
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
 use tiff::decoder::{Decoder, DecodingResult};
@@ -74,6 +77,64 @@ fn source() -> (
     (scan, calibration, roll, grade, composition)
 }
 
+#[test]
+fn file_writer_executes_already_authored_linear_nodes_without_photographic_reinterpretation() {
+    use antitone::gpu::evaluation::{self, CellRegion, Domain, Grid, Meaning, Source};
+    struct Linear([f32; 4]);
+    impl Source for Linear {
+        fn domain(&self) -> Domain {
+            Domain {
+                bounds: Some(CellRegion::new([0, 0], [2, 1])),
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+                meaning: Meaning::Display,
+            }
+        }
+        fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, antitone::Error> {
+            Ok(vec![self.0; (region.width * region.height) as usize])
+        }
+    }
+    let (device, queue, renderer) = context();
+    let gate = SubmissionGate::default();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("authored.tif");
+    let request = |gain: f32| antitone::gpu_export::Request {
+        definition: evaluation::source(Arc::new(Linear([
+            0.001 * gain,
+            0.002 * gain,
+            0.003 * gain,
+            0.,
+        ]))),
+        composition: Composition::new([0, 0, 2, 1].into(), Default::default(), Default::default())
+            .unwrap(),
+        format: Format::Tiff(OutputTarget::Srgb),
+    };
+    // Below the sRGB knee, transfer is exactly 12.92*x, followed by nearest RGB16.
+    for (gain, expected) in [(1., [847, 1693, 2540]), (0.5, [423, 847, 1270])] {
+        antitone::gpu_export::write(
+            &renderer,
+            &device,
+            (&queue, &gate),
+            request(gain),
+            &path,
+            Overwrite::Confirmed,
+        )
+        .unwrap();
+        assert_eq!(tiff(&path), expected.repeat(2));
+    }
+    let published = std::fs::read(&path).unwrap();
+    let stopped = antitone::gpu_export::write_checked(
+        &renderer,
+        &device,
+        (&queue, &gate),
+        request(1.),
+        &path,
+        Overwrite::Confirmed,
+        || Err(antitone::Error::Cancelled),
+    );
+    assert!(matches!(stopped, Err(antitone::Error::Cancelled)));
+    assert_eq!(std::fs::read(path).unwrap(), published);
+}
+
 fn tiff(path: &Path) -> Vec<u16> {
     let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let DecodingResult::U16(values) = decoder.read_image().unwrap() else {
@@ -99,7 +160,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let gpu = directory.path().join(format!("gpu-{target:?}.tif"));
         let cpu = directory.path().join(format!("cpu-{target:?}.tif"));
-        gpu_export::write(
+        authored_export::write(
             &renderer,
             &device,
             (&queue, &SubmissionGate::default()),
@@ -163,7 +224,7 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let gpu = directory.path().join(format!("gpu-{precision:?}.exr"));
         let cpu = directory.path().join(format!("cpu-{precision:?}.exr"));
-        gpu_export::write(
+        authored_export::write(
             &renderer,
             &device,
             (&queue, &SubmissionGate::default()),
@@ -388,7 +449,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                 Format::Exr(ExrPrecision::Full),
             ] {
                 let path = directory.path().join("gpu-output");
-                gpu_export::write(
+                authored_export::write(
                     &renderer,
                     &device,
                     (&queue, &SubmissionGate::default()),

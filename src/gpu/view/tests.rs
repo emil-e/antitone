@@ -173,14 +173,9 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
             )
             .unwrap();
             let spec = SourceRequest::for_processing(frame, &input).unwrap();
-            crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(
-                scan,
-                field,
-                &input,
-                &[spec],
-            )
-            .unwrap()
-            .remove(0)
+            crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(scan, field, &[spec])
+                .unwrap()
+                .remove(0)
         };
         let original = native(&scan, frame, settings, None);
         assert!(original.same_definition(&native(&scan, frame, settings, None)));

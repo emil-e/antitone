@@ -45,7 +45,7 @@ impl Source for Pixels {
             .collect())
     }
 }
-fn fixture(native: bool) -> (Arc<ImageNode>, Arc<AtomicUsize>, Vec<[f32; 4]>) {
+fn fixture(native: bool) -> (Value, Arc<AtomicUsize>, Vec<[f32; 4]>) {
     let values: Vec<_> = (0..32)
         .map(|i| {
             if native {
@@ -71,7 +71,7 @@ fn fixture(native: bool) -> (Arc<ImageNode>, Arc<AtomicUsize>, Vec<[f32; 4]>) {
         values,
     )
 }
-fn requested(context: &Context, root: Arc<ImageNode>) -> Evaluation {
+fn requested(context: &Context, root: Value) -> Evaluation {
     let d = root.domain;
     context
         .request(

@@ -5,7 +5,7 @@ use crate::{
     gpu::test_inputs::AuthoredPhotograph,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
-use std::cell::Cell;
+mod cancellation;
 #[cfg(feature = "ocio-reference")]
 mod corrected_source;
 mod source_scale;
@@ -63,7 +63,7 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
 }
 
 #[test]
-fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
+fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
     let (device, queue, renderer) = super::super::tests::context();
     let file = crate::raw::fixture::bayer_dng();
     let mut scan = Scan::open(file.path(), None).unwrap();
@@ -85,24 +85,21 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         *gamma = 0.1;
     }
     project.roll.exposure = 0.5;
-    let recipe = project
-        .capture_image(project.source(id).unwrap(), |recipe| {
-            recipe.neutral.correction = scan.flat_field().cloned();
-        })
-        .unwrap();
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.correction = scan.flat_field().cloned();
     let input = recipe.neutral.input;
     let matrix = scan.positive_matrix(&input).unwrap();
     assert!(
         AuthoredPhotograph::new(
             &device.limits(),
-            InputSettings::default(),
+            input,
             RollSettings::default(),
             recipe.grade.clone(),
             matrix,
             area
         )
-        .is_err(),
-        "an uncalibrated source cannot supply a positive neutral image"
+        .is_ok(),
+        "valid photographic controls must not require a parameter-wide neutral range proof"
     );
     let actual_local = crate::scan::ImageSource::new(&scan, input)
         .unwrap()
@@ -110,13 +107,18 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         .unwrap();
     assert!(
         actual_local.as_vec3().is_finite(),
-        "the calibrated positive must provide useful local repair input"
+        "this local sample exercises ordinary HDR, not arithmetic saturation"
     );
 
     let gate = SubmissionGate::default();
-    let mut local_source =
-        crate::gpu::repair_source::Source::new(&device, &renderer, (&queue, &gate), &scan, input)
-            .unwrap();
+    let mut local_source = crate::gpu::repair_source::Source::from_recipe(
+        &device,
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+    )
+    .unwrap();
     let local = crate::dust_repair::BaseImage::read(
         &mut local_source,
         crate::geometry::SourceRegion::from([area.x + 16, area.y + 16, 1, 1]),
@@ -128,30 +130,45 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
     for channel in 0..3 {
         assert!((f64::from(local[0][channel]) / actual_local[channel] - 1.).abs() < 2e-5);
     }
+}
 
-    let stages = crate::image_recipe::quality::sampling_stages(&recipe).unwrap();
-    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
-        output: FrameRaster::full(recipe.composition).unwrap(),
-        stages: &stages,
-        sampling: crate::acquisition::Sampling::Originals {
-            reconstruction: crate::acquisition::SourceSupport([0; 2]),
-        },
-    })
+fn repair_demand(
+    scan: &Scan,
+    recipe: &crate::image_recipe::ImageRecipe,
+    device: &wgpu::Device,
+    index: usize,
+) -> Vec<crate::gpu::evaluation::CellRegion> {
+    use crate::gpu::evaluation::{self as ev, Budget, CellRegion, Domain, Grid};
+    let photo = crate::gpu::photograph::PhotographGraph::from_recipe(
+        &device.limits(),
+        ev::camera_source(scan).unwrap(),
+        None,
+        recipe,
+    )
     .unwrap();
-    let mut repair_free = recipe.clone();
-    repair_free.neutral.input = InputSettings::default();
-    let repairs = crate::gpu::repair_source::resolve_plan(
-        &device,
-        &renderer,
-        (&queue, &gate),
-        &scan,
-        &repair_free,
-        &plan,
-        &mut Execution::default(),
+    let repair =
+        crate::gpu::repairs::definition::healing_image(&photo.unrepaired, &recipe.repairs[index])
+            .unwrap();
+    let frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
+    let region = CellRegion::new([0, 0], frame.output);
+    let root = ev::reconstruct(
+        photo.processed.clone(),
+        Domain {
+            bounds: Some(region),
+            grid: Grid::from_frame(frame),
+            meaning: photo.processed.domain().meaning,
+        },
+    )
+    .unwrap();
+    root.regions_for(
+        &repair,
+        region,
+        Budget {
+            tile: [512, 128],
+            scratch_bytes: 32 << 20,
+        },
     )
     .unwrap()
-    .unwrap();
-    assert!(repairs.is_empty());
 }
 
 #[test]
@@ -201,11 +218,13 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         .is_err(),
         "an irrelevant source-edge repair would actually fail if prepared"
     );
-    assert_eq!(
-        crate::repair_source::resolve_output(&scan, &recipe)
-            .unwrap()
-            .len(),
-        1
+    assert!(
+        !repair_demand(&scan, &recipe, &device, 0).is_empty(),
+        "the common graph requires the cropped-in repair"
+    );
+    assert!(
+        repair_demand(&scan, &recipe, &device, 1).is_empty(),
+        "the common graph omits the invalid cropped-out repair"
     );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("result.tif");
@@ -238,13 +257,8 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     }
     std::fs::write(&path, b"keep existing output").unwrap();
     {
-        let calls = Cell::new(0);
-        let cancelled = || {
-            let n = calls.get();
-            calls.set(n + 1);
-            n >= 1
-        };
-        assert!(
+        let stopped = || true;
+        assert!(matches!(
             write(
                 &renderer,
                 &device,
@@ -252,36 +266,12 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
                 job(&recipe),
                 (&path, Overwrite::Confirmed),
                 &mut Execution {
-                    cancelled: &cancelled
+                    cancelled: &stopped
                 },
                 || Ok(())
-            )
-            .is_err()
-        );
-        assert!(
-            calls.get() >= 2,
-            "stop during cold repair preparation, after initial job admission"
-        );
-        let mut checks = 0;
-        assert!(
-            write(
-                &renderer,
-                &device,
-                (&queue, &gate),
-                job(&recipe),
-                (&path, Overwrite::Confirmed),
-                &mut Execution::default(),
-                || {
-                    checks += 1;
-                    if checks > 4 {
-                        Err(Error::Export("mid-job stop".into()))
-                    } else {
-                        Ok(())
-                    }
-                }
-            )
-            .is_err()
-        );
+            ),
+            Err(Error::Cancelled)
+        ));
         assert_eq!(std::fs::read(&path).unwrap(), b"keep existing output");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
@@ -335,14 +325,12 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         )
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();
-    assert_eq!(
-        crate::repair_source::resolve_output(&scan, &recipe)
-            .unwrap()
-            .len(),
-        1
+    let (device, queue, renderer) = super::super::tests::context();
+    assert!(
+        !repair_demand(&scan, &recipe, &device, 0).is_empty(),
+        "a cell at the crop edge contributes real area"
     );
     let before = project.clone();
-    let (device, queue, renderer) = super::super::tests::context();
     let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     for (name, format) in [

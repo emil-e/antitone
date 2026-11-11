@@ -1,16 +1,76 @@
 //! Worker execution capabilities, separate from the image definition and optional retention.
 use super::*;
 
-pub struct Production<'a> {
+#[cfg(all(test, feature = "editor"))]
+mod tests;
+
+#[derive(Clone, Copy)]
+pub struct Worker<'a> {
     pub context: &'a Context,
     pub queue: &'a wgpu::Queue,
     pub gate: &'a crate::gpu::submission::SubmissionGate,
     pub scope: &'a Materializations,
     pub budget: Budget,
-    pub layout: ImageLayout,
-    pub pixels: &'a wgpu::Buffer,
+    pub working: &'a HostWorkingSet,
     pub cancelled: &'a dyn Fn() -> bool,
     pub progress: &'a dyn Fn(),
+}
+
+pub struct Production<'a> {
+    pub worker: Worker<'a>,
+    pub layout: ImageLayout,
+    pub pixels: &'a wgpu::Buffer,
+}
+impl<'a> std::ops::Deref for Production<'a> {
+    type Target = Worker<'a>;
+    fn deref(&self) -> &Worker<'a> {
+        &self.worker
+    }
+}
+
+pub(super) fn admitted_plans<'a>(
+    evaluation: Evaluation,
+    region: CellRegion,
+    budget: Budget,
+    limits: wgpu::Limits,
+    (cancelled, progress): (&'a dyn Fn() -> bool, &'a dyn Fn()),
+) -> Result<impl Iterator<Item = Result<Plan, Error>> + 'a, Error> {
+    let mut regions = tiled_units(region, budget.tile)?;
+    let mut pending = Vec::new();
+    Ok(std::iter::from_fn(move || {
+        loop {
+            let region = pending.pop().or_else(|| regions.next())?;
+            progress();
+            if cancelled() {
+                return Some(Err(Error::Cancelled));
+            }
+            let candidate = (|| {
+                let mut plan = evaluation.job.probe(region)?;
+                if plan.requires_production(evaluation.job.image())? {
+                    super::super::unit::plan(evaluation.job.image(), region, budget)?
+                        .admit_for(budget, &limits)?;
+                }
+                Executor::admit(&limits, &plan)?;
+                if plan.peak_scratch_bytes > budget.scratch_bytes {
+                    return Err(Error::WorkingAllowance(
+                        "evaluation neighbourhood exceeds working storage",
+                    ));
+                }
+                plan.scratch_budget = budget.scratch_bytes;
+                Ok(plan)
+            })();
+            match candidate {
+                Ok(plan) => return Some(Ok(plan)),
+                Err(error @ Error::WorkingAllowance(_)) => {
+                    let Some([first, second]) = super::super::unit::bisect(region) else {
+                        return Some(Err(error));
+                    };
+                    pending.extend([second, first]);
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }))
 }
 
 impl Production<'_> {
@@ -24,27 +84,38 @@ impl Production<'_> {
             self.layout.region,
         )?
         .is_some();
-        if !stored
-            && let Some(producer) = node
-                .operation
-                .sample_consumer()
-                .and_then(|consumer| consumer.production())
-        {
-            producer.produce(
-                self,
-                node.input
-                    .as_ref()
-                    .ok_or(Error::InvalidParameter("sampling consumer has no input"))?,
-            )
-        } else {
-            self.evaluate(&evaluation)
+        if !stored && super::super::unit::can_inline(node, self.layout.region, self.budget)? {
+            let plan = evaluation.job.probe(self.layout.region)?;
+            let deferred = plan.requires_production(node)?
+                || plan.peak_scratch_bytes > self.budget.scratch_bytes
+                || Executor::admit(&self.context.device().limits(), &plan).is_err();
+            return if deferred {
+                self.produce_units(node)
+            } else {
+                self.deliver(&mut self.executor(), plan)
+            };
         }
+        if !stored
+            && matches!(
+                super::super::unit::lowering(node, self.layout.region, self.budget)?,
+                super::super::unit::Lowering::Deferred
+            )
+        {
+            return self.produce_units(node);
+        }
+        self.evaluate(&evaluation)
     }
 
     pub(super) fn evaluate(&self, evaluation: &Evaluation) -> Result<WorkCounts, Error> {
         let mut executor = self.executor();
         let mut stats = WorkCounts::default();
-        for plan in evaluation.plans() {
+        for plan in admitted_plans(
+            evaluation.clone(),
+            self.layout.region,
+            self.budget,
+            self.context.device().limits(),
+            (self.cancelled, self.progress),
+        )? {
             stats.include(self.deliver(&mut executor, plan?)?);
         }
         Ok(stats)
@@ -66,31 +137,6 @@ impl Production<'_> {
                 submitted: || {},
             },
         )
-    }
-
-    pub(in crate::gpu::evaluation) fn submit_work(
-        &self,
-        plan: Plan,
-        inputs: &[&wgpu::Buffer],
-    ) -> Result<WorkCounts, Error> {
-        let recorded = self.executor().prepare(self.context.device(), plan)?;
-        let mut encoder = self
-            .context
-            .device()
-            .create_command_encoder(&Default::default());
-        let mut stats = recorded.encode_work(self.context.device(), &mut encoder, inputs)?;
-        stats.include(recorded.preparation.clone());
-        self.context
-            .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
-                recorded.submitted()
-            })?
-            .ok_or(Error::Cancelled)?;
-        stats.submitted();
-        Ok(stats)
-    }
-
-    pub(in crate::gpu::evaluation) fn executor(&self) -> Executor {
-        Executor::with_scope(self.context.programs.clone(), self.scope.clone())
     }
 
     pub(in crate::gpu::evaluation) fn deliver(
@@ -148,6 +194,34 @@ impl Production<'_> {
     }
 }
 
+impl Worker<'_> {
+    pub(in crate::gpu::evaluation) fn submit_work(
+        &self,
+        plan: Plan,
+        inputs: &[&wgpu::Buffer],
+    ) -> Result<WorkCounts, Error> {
+        let recorded = self.executor().prepare(self.context.device(), plan)?;
+        let mut encoder = self
+            .context
+            .device()
+            .create_command_encoder(&Default::default());
+        let mut stats = recorded.encode_work(self.context.device(), &mut encoder, inputs)?;
+        stats.include(recorded.preparation.clone());
+        self.context
+            .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
+                recorded.submitted()
+            })?
+            .ok_or(Error::Cancelled)?;
+        stats.submitted();
+        Ok(stats)
+    }
+
+    pub(in crate::gpu::evaluation) fn executor(&self) -> Executor {
+        Executor::with_scope(self.context.programs.clone(), self.scope.clone())
+            .with_working(self.working.clone())
+    }
+}
+
 impl Context {
     pub(crate) fn run_sink<E, S>(
         &self,
@@ -162,6 +236,7 @@ impl Context {
         S: FnMut(),
     {
         let scope = executor.materializations();
+        let working = executor.working.clone();
         let result = executor.run_produced_sink(
             self.device(),
             (queue, gate),
@@ -183,12 +258,40 @@ impl Context {
                         budget,
                     )?
                     .with_materializations(scope.clone());
-                Production {
+                let worker = Worker {
                     context: self,
                     queue,
                     gate,
                     scope: &scope,
+                    working: &working,
                     budget,
+                    cancelled,
+                    progress,
+                };
+                let mut counts = WorkCounts::default();
+                if let Some((region, host)) =
+                    worker.host_image(image, output.region, &mut counts)?
+                {
+                    let values = host.as_host().expect("host image dependency");
+                    // Produced arguments precede parent encoding. The parent's submission
+                    // flushes these writes; only that parent publishes its GPU result.
+                    for row in 0..output.region.height {
+                        if cancelled() {
+                            return Err(Error::Cancelled);
+                        }
+                        let from = region.index([output.region.x, output.region.y + row as i32]);
+                        queue.write_buffer(
+                            pixels,
+                            u64::from(row) * u64::from(output.region.width) * 16,
+                            bytemuck::cast_slice(
+                                &values[from..from + output.region.width as usize],
+                            ),
+                        );
+                    }
+                    return Ok(counts);
+                }
+                Production {
+                    worker,
                     layout: ImageLayout {
                         domain: output.domain,
                         region: output.region,
@@ -196,8 +299,6 @@ impl Context {
                         backing: ImageBacking::Buffer,
                     },
                     pixels,
-                    cancelled,
-                    progress,
                 }
                 .produce(&evaluation)
             },

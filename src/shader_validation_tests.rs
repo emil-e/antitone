@@ -26,16 +26,52 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 
 #[cfg(feature = "gpu")]
 #[test]
-fn photographic_functions_and_repair_kernels_validate() {
+fn photographic_functions_and_masked_composition_validate() {
     validate(
         "photographic functions",
         &gpu::photograph::shader::functions(),
         &[],
     );
-    validate(
-        "repair kernels",
-        &gpu::repairs::shader(),
-        &["repair_original", "repair_copy", "repair_neutral"],
+    use gpu::evaluation::*;
+    let region = CellRegion::new([0, 0], [4, 4]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let base = gpu::repairs::fixtures::image(domain, vec![[1.; 4]; 16]).unwrap();
+    let replacement = gpu::repairs::fixtures::image(
+        Domain {
+            bounds: Some(CellRegion::new([1, 1], [2, 2])),
+            ..domain
+        },
+        vec![[2.; 4]; 4],
+    )
+    .unwrap();
+    let mask =
+        crate::dust_repair::SupportMask::new([1, 1], [2, 2], vec![true, false, false, false])
+            .unwrap();
+    let root = gpu::repairs::definition::compose_images(base, vec![(mask, replacement)]).unwrap();
+    let plan = Plan::with_policy(
+        root,
+        region,
+        Budget {
+            tile: [4, 4],
+            scratch_bytes: 1 << 20,
+        },
+        Policy::Composed,
+    )
+    .unwrap();
+    let mut computes = 0;
+    for work in plan.tiles.iter().flat_map(|tile| &tile.fragment.work) {
+        if let Work::Compute { code, entry, .. } = work {
+            validate("masked composition", code, &[entry]);
+            computes += 1;
+        }
+    }
+    assert!(
+        computes > 0,
+        "the fixture must validate actual compiler-generated composition code"
     );
 }
 
@@ -64,7 +100,7 @@ fn composed_working_view_validates() {
             gpu::grading::Grading::shader(),
             include_str!("gpu/grading/camera_adjustments.wgsl")
         ),
-        &["camera_adjustments"],
+        &[],
     );
     validate(
         "image response",

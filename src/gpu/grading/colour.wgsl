@@ -15,7 +15,7 @@ fn colour_exprel(x: f32) -> f32 {
     if x == 0.0 {
         return 1.0;
     }
-    return (exp(x) - 1.0) / x;
+    return (photographic_exp(x) - 1.0) / x;
 }
 
 // Black-relative CCT avoids losing small inputs to the encoding offset.
@@ -31,15 +31,19 @@ fn colour_decode(z: f32) -> f32 {
         return z / COLOUR_SLOPE;
     }
     // Include toe scaling in the exponent, avoiding discarded intermediate overflow.
-    return exp2(fma(z - COLOUR_TOE_DELTA, COLOUR_SCALE, -7.0));
+    return photographic_exp2(fma(z - COLOUR_TOE_DELTA, COLOUR_SCALE, -7.0));
 }
 
 fn colour_tone(x: f32, da: f32, pivot: f32) -> f32 {
     let shift = -da * pivot;
+    if x < -PHOTOGRAPHIC_LIMIT / COLOUR_SLOPE {
+        // The negative toe is linear; do not overflow its encoded coordinate first.
+        return photographic_finite(fma(da, x, x) + shift / COLOUR_SLOPE);
+    }
     let delta = colour_encode(x);
     let z = fma(da, delta, delta) + shift;
     if x <= COLOUR_TOE && z <= COLOUR_TOE_DELTA {
-        return fma(da, x, x) + shift / COLOUR_SLOPE;
+        return photographic_finite(fma(da, x, x) + shift / COLOUR_SLOPE);
     }
     return colour_decode(z);
 }
@@ -109,17 +113,17 @@ fn colour_apply(
         let black = colour_decode(-da * pivot);
         var gain = 0.0;
         if colour != 0.0 {
-            gain = colour_ratio(colour_luminance(rgb), da, pivot);
+            gain = photographic_finite(colour_ratio(colour_luminance(rgb), da, pivot));
         }
         for(var c = 0u; c < 3u; c++) {
             if colour == 0.0 {
                 rgb[c] = colour_tone(rgb[c], da, pivot);
             } else if colour == 1.0 {
-                rgb[c] = fma(gain, rgb[c], black);
+                rgb[c] = photographic_finite(fma(gain, rgb[c], black));
             } else {
                 rgb[c] = colour_mix(
                         colour_tone(rgb[c], da, pivot),
-                        fma(gain, rgb[c], black),
+                        photographic_finite(fma(gain, rgb[c], black)),
                         colour,
                     );
             }
@@ -137,9 +141,9 @@ fn colour_apply(
     }
     for(var c = 0u; c < 3u; c++) {
         if abs(ds) < 0.5 {
-            rgb[c] = fma(ds, rgb[c] - grey, rgb[c]);
+            rgb[c] = photographic_finite(fma(ds, rgb[c] - grey, rgb[c]));
         } else {
-            rgb[c] = fma(1.0 + ds, rgb[c] - grey, grey);
+            rgb[c] = photographic_finite(fma(1.0 + ds, rgb[c] - grey, grey));
         }
     }
     return rgb;

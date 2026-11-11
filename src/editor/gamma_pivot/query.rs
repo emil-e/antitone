@@ -6,7 +6,7 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRegion,
     gpu::{
-        evaluation::{self, Budget, CellRegion, Domain, Grid, ImageNode, Meaning, Region},
+        evaluation::{self, Budget, CellRegion, Domain, Grid, Meaning, Region, Value},
         flat::GpuFlatField,
     },
     processing::NegativeInput,
@@ -47,7 +47,7 @@ impl evaluation::Source for Pixels {
 
 /// Corrected, normalized camera light: no gamma, positive conversion or photographic WB baked in.
 pub(super) struct Evidence {
-    camera: Arc<ImageNode>,
+    camera: Value,
     weights: Vec<f64>,
 }
 
@@ -84,7 +84,7 @@ fn plan(coverage: Coverage, area: SourceRegion) -> Result<Vec<([u32; 2], f64)>, 
 
 fn read(
     services: &super::super::source::Services,
-    image: Arc<ImageNode>,
+    image: Value,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<[f32; 4]>, Error> {
     let renderer = services.renderers.get(&services.device, &services.queue)?;
@@ -173,11 +173,9 @@ impl Evidence {
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<DVec3, Error> {
-        let readout = crate::gpu::photograph::camera_response::CameraReadout::normalized(
-            self.camera.clone(),
-            negative,
-        )?;
-        let pixels = read(services, readout.image, cancelled)?;
+        let readout =
+            crate::gpu::photograph::camera_response::normalized(self.camera.clone(), negative)?;
+        let pixels = read(services, readout, cancelled)?;
         let mut sum = DVec3::ZERO;
         let mut total = 0.;
         for (pixel, weight) in pixels.iter().zip(&self.weights) {
@@ -189,7 +187,7 @@ impl Evidence {
             sum += DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) * *weight;
             total += weight;
         }
-        let mean = sum * (readout.decode_gain / total);
+        let mean = sum / total;
         if !mean.is_finite() {
             return Err(Error::NumericalOverflow);
         }

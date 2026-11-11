@@ -67,24 +67,12 @@ impl SourceInterpretation {
             Self::Inspection(matrix) => matrix,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn transform(&self) -> Option<&InputTransform> {
-        match self {
-            Self::Photograph(program) => Some(program),
-            Self::Inspection(_) => None,
-        }
-    }
 }
 
 impl InputTransform {
     #[cfg(feature = "project")]
     pub(crate) fn from_recipe(recipe: &crate::image_recipe::NeutralRecipe) -> Result<Self, Error> {
-        let input = recipe.input;
-        let matrix = input.positive_matrix(
-            DMat3::from_cols_array_2d(&recipe.source_development.resolved()?.camera_to_ap1),
-            recipe.reference.as_ref().map(|reference| reference.ev()),
-        )?;
+        let (input, matrix) = recipe.processing_transform()?;
         Self::new(input, matrix)
     }
 
@@ -108,7 +96,7 @@ impl InputTransform {
         self.matrix
     }
 
-    #[cfg(feature = "raw")]
+    #[cfg(all(test, feature = "raw"))]
     pub(crate) fn for_scan(scan: &crate::scan::Scan, input: InputSettings) -> Result<Self, Error> {
         Self::new(input, scan.positive_matrix(&input)?)
     }

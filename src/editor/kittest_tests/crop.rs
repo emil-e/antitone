@@ -324,13 +324,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                 )
                 .unwrap();
         });
-        // This fixture installs an accepted instruction; creation gestures have their own cases.
-        h.enter(|e, cx| e.schedule_dust(e.dust_signature().unwrap(), cx));
-        // Finish evaluation without another UI pass: the canvas still holds the unrepaired view.
-        h.run_until(Duration::from_secs(60), |e| {
-            e.dust_signature()
-                .is_some_and(|s| e.dust_evaluations(s).len() == 1)
-        });
+        h.step();
         h.read(|e| {
             assert!(
                 e.canvas_frame
@@ -338,9 +332,10 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                     .as_ref()
                     .unwrap()
                     .view
-                    .spec
+                    .capture
+                    .recipe()
+                    .unwrap()
                     .repairs
-                    .0
                     .is_empty()
             );
             assert!(!e.document.source && e.document.flat_edit().is_none());
@@ -389,20 +384,24 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
     });
 
     fn repaired_canvas_ready(e: &Editor) -> bool {
-        let Some(signature) = e.dust_signature() else {
-            return false;
-        };
-        let evaluations = e.dust_evaluations(signature);
-        let [evaluation] = evaluations.as_slice() else {
-            return false;
-        };
         let Some(painted) = &e.canvas_frame.displayed else {
             return false;
         };
-        let [patch] = painted.view.spec.repairs.0.as_slice() else {
+        let Ok(expected) = e.view_recipe(
+            e.input(),
+            e.document.project_snapshot().roll,
+            e.photo_settings(),
+        ) else {
             return false;
         };
-        e.document.visit.working_view.idle() && Arc::ptr_eq(&patch.evaluated, evaluation)
+        expected.repairs.len() == 1
+            && painted
+                .view
+                .capture
+                .recipe()
+                .is_some_and(|recipe| recipe.as_ref() == &expected)
+            && !painted.view.in_flight()
+            && e.document.visit.working_view.idle()
     }
 
     fn sampled_patch(
@@ -452,9 +451,9 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                 e.document.crop_edit().is_some(),
                 e.document.visit.working_view.idle(),
                 e.document.visit.working_view.updating,
-                e.dust_signature().map(|s| e.dust_evaluations(s).len()),
-                e.document.visit.working_view.displayed.as_ref().map(|v| v.spec.repairs.0.len()),
-                e.canvas_frame.displayed.as_ref().map(|p| p.view.spec.repairs.0.len()),
+                e.dust_signature().map(|_| e.dust_images().len()),
+                e.document.visit.working_view.displayed.as_ref().and_then(|v| v.capture.recipe()).map(|recipe| recipe.repairs.len()),
+                e.canvas_frame.displayed.as_ref().and_then(|p| p.view.capture.recipe()).map(|recipe| recipe.repairs.len()),
                 e.canvas_frame.displayed.as_ref().map(|p| p.view.spec.frame()),
                 e.status,
             )

@@ -1,11 +1,7 @@
 //! Supplied GPU samples for reconstruction arithmetic and output-sink tests.
 use super::*;
 
-pub(crate) fn supplied_mask(
-    image: &Arc<ImageNode>,
-    output: Rect,
-    samples: Rect,
-) -> Option<Vec<u32>> {
+pub(crate) fn supplied_mask(image: &Value, output: Rect, samples: Rect) -> Option<Vec<u32>> {
     let operation = (image.operation.as_ref() as &dyn std::any::Any)
         .downcast_ref::<Reconstruction>()
         .unwrap();
@@ -43,6 +39,7 @@ pub(crate) fn encode_supplied(
         meaning: Meaning::Graded,
     };
     let operation = Reconstruction {
+        tiled: false,
         input,
         mapping,
         packed: mapping.packed(),

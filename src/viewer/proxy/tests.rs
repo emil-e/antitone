@@ -239,8 +239,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
             DMat3::IDENTITY,
             None,
         )
-        .unwrap()
-        .with_repairs(Default::default());
+        .unwrap();
         let source = proxy
             .view_source(
                 &queue,

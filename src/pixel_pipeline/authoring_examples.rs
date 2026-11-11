@@ -3,13 +3,10 @@
 use crate::{
     Error,
     gpu::evaluation::CellRegion as Rect,
-    gpu::evaluation::{
-        self, Binding, Domain, Fragment, Function, ImageNode, Meaning, Operation, PlannedImage,
-    },
+    gpu::evaluation::{self, Domain, Function, Meaning, Operation, Value, value},
     pixel_pipeline::EffectDefinition,
     processing_support::Support,
 };
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SignedCurve {
@@ -27,11 +24,7 @@ impl SignedCurve {
 }
 
 impl EffectDefinition for SignedCurve {
-    fn support(&self, _: [f64; 2]) -> Support {
-        Support::NONE
-    }
-
-    fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter("example curve requires graded AP1"));
         }
@@ -70,23 +63,25 @@ impl TentConvolution {
 }
 
 impl EffectDefinition for TentConvolution {
-    fn support(&self, pitch: [f64; 2]) -> Support {
-        Support(pitch.map(|p| (self.spacing / p).ceil() as u32))
-    }
-
-    fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter(
                 "example convolution requires graded AP1",
             ));
         }
-        let support = self.support(input.domain().grid.pitch);
+        let support = Support(
+            input
+                .domain()
+                .grid
+                .pitch
+                .map(|p| (self.spacing / p).ceil() as u32),
+        );
         if support.0.iter().any(|r| *r > i32::MAX as u32) {
             return Err(Error::InvalidParameter(
                 "example convolution exceeds GPU coordinates",
             ));
         }
-        Ok(ImageNode::new(
+        Ok(Value::from_operation(
             input.domain(),
             Some(input.clone()),
             Tent {
@@ -103,42 +98,47 @@ struct Tent {
 }
 
 impl Operation for Tent {
-    fn input(&self, output: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(output.expanded(self.support.0, self.domain.bounds)?))
+    fn reads(&self, output: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        Ok(vec![crate::gpu::evaluation::Read::new(
+            0,
+            output.expanded(self.support.0, self.domain.bounds)?,
+        )])
     }
 
-    fn lower(
-        &self,
-        work: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let input = input.unwrap();
-        let horizontal = work.image(input.domain, input.region);
-        // Only the requested columns of the horizontal result are consumed by the vertical
-        // pass. Their full input halo is supplied even when an evaluation tile ends here.
-        for (axis, source, destination) in [(0, input, horizontal), (1, horizontal, output)] {
-            let parameters = work.uniform(&[
-                source.region.packed(),
-                destination.region.packed(),
-                [
-                    self.support.0[axis],
-                    axis as u32,
-                    self.domain.grid.coverage,
-                    0,
-                ],
-            ]);
-            work.compute(
-                include_str!("fixtures/tent_convolution.wgsl"),
-                "convolve",
-                vec![
-                    (0, Binding::Read(source.resource)),
-                    (1, Binding::Write(destination.resource)),
-                    (2, parameters),
-                ],
-                destination.cells(),
-            );
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::gpu::evaluation::value::Value],
+        domain: Domain,
+        output: Rect,
+        _budget: crate::gpu::evaluation::Budget,
+    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        let horizontal = output.expanded([0, self.support.0[1]], domain.bounds)?;
+        let read = horizontal.expanded([self.support.0[0], 0], domain.bounds)?;
+        let mut input = inputs[0].request(read)?;
+        let bounds = domain.bounds.unwrap_or(read);
+        for (axis, coverage) in [(0, horizontal), (1, output)] {
+            input = value::Calculation::new(
+                domain,
+                coverage,
+                vec![input],
+                value::Operation::new(
+                    "example tent axis",
+                    (self.support, axis, domain.grid.coverage),
+                    include_str!("fixtures/tent_convolution.wgsl"),
+                    "convolve",
+                    value::Access::Neighborhood,
+                )
+                .with_uniform(
+                    "Parameters",
+                    &[
+                        [bounds.x, bounds.y, bounds.right(), bounds.bottom()]
+                            .map(|value| value as u32),
+                        [self.support.0[axis], axis as u32, domain.grid.coverage, 0],
+                    ],
+                ),
+            )?;
         }
-        Ok(())
+        Ok(Some(input))
     }
 }

@@ -3,13 +3,15 @@
 use super::CellRegion;
 use super::*;
 
+mod gpu;
 mod production;
 mod readback;
-pub use production::Production;
+mod unit;
+pub use production::{Production, Worker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicy {
-    /// Optional GPU-image and generated-resource payload bytes across evaluation scopes.
+    /// Optional image and generated-resource payload bytes across evaluation scopes.
     /// Zero keeps only required active inputs and working storage.
     pub generated_bytes: u64,
 }
@@ -31,6 +33,7 @@ pub struct Region {
 #[cfg(feature = "editor")]
 mod batch;
 #[cfg(feature = "editor")]
+mod batch_units;
 mod materialize;
 
 #[derive(Clone)]
@@ -99,16 +102,23 @@ impl Context {
 
     pub fn request(
         &self,
-        image: Arc<ImageNode>,
+        image: impl Into<value::Value>,
         region: Region,
         budget: Budget,
     ) -> Result<Evaluation, Error> {
+        let image = image.into();
+        if image.shape() != value::Shape::Pixel {
+            return Err(Error::InvalidParameter(
+                "record values cannot be requested as photographic images",
+            ));
+        }
         if image.domain.grid != region.grid {
             return Err(Error::InvalidParameter(
                 "requested grid differs from composed image",
             ));
         }
         Ok(Evaluation {
+            retain: true,
             job: Job::new(image, region.bounds, budget)?
                 .with_limits(self.device.limits())
                 .with_policy(Policy::Composed)
@@ -131,8 +141,7 @@ impl Context {
     }
 
     /// Prepare component-generated code without acquiring pixels or allocating working images.
-    #[cfg(feature = "ui")]
-    pub(crate) fn prewarm_image(&self, image: Arc<ImageNode>) -> Result<(), Error> {
+    pub(crate) fn prewarm_image(&self, image: Value) -> Result<(), Error> {
         let domain = image.domain;
         let bounds = domain.finite()?;
         let evaluation = self.request(
@@ -180,6 +189,60 @@ impl Context {
                 "record-only execution requires one bounded tile",
             ));
         }
+        Executor::with_scope(self.programs.clone(), scope).prepare(&self.device, plan)
+    }
+
+    #[cfg(feature = "render")]
+    pub(crate) fn prewarm_texture(&self, image: Value) -> Result<(), Error> {
+        let region = image.domain().finite()?;
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("attachment program preparation"),
+            size: wgpu::Extent3d {
+                width: region.width,
+                height: region.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let job = Job::new(
+            image,
+            region,
+            Budget {
+                tile: [region.width, region.height],
+                scratch_bytes: self.device.limits().max_buffer_size,
+            },
+        )?
+        .with_policy(Policy::Composed)
+        .with_limits(self.device.limits());
+        for tile in job.texture_plan(&texture)?.tiles {
+            self.prewarm(&tile.fragment.work)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "render")]
+    pub(crate) fn record_to_texture(
+        &self,
+        mut evaluation: Evaluation,
+        scope: Materializations,
+        supplied: Vec<SuppliedImage>,
+        texture: &wgpu::Texture,
+    ) -> Result<Recorded, Error> {
+        if !scope.belongs_to(self) {
+            return Err(Error::InvalidParameter(
+                "materializations belong to a different evaluation context",
+            ));
+        }
+        evaluation.job = evaluation
+            .job
+            .with_supplied(supplied.into())
+            .with_materializations(scope.clone());
+        let plan = evaluation.job.texture_plan(texture)?;
         Executor::with_scope(self.programs.clone(), scope).prepare(&self.device, plan)
     }
 
@@ -299,10 +362,31 @@ impl Context {
 #[derive(Clone)]
 pub struct Evaluation {
     job: Job,
+    retain: bool,
 }
 
 impl Evaluation {
-    pub fn image(&self) -> &Arc<ImageNode> {
+    /// Keep this result through its consumers, without requesting optional cache ownership.
+    /// Independent requests and declared dependency units can still retain their values.
+    pub fn without_retention(mut self) -> Self {
+        self.retain = false;
+        self
+    }
+
+    pub(super) fn request_policy(&self) -> super::materializations::RequestPolicy {
+        super::materializations::RequestPolicy {
+            budget: Some(self.job.budget()),
+            retain: self.retain,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_policy(mut self, policy: Policy) -> Self {
+        self.job = self.job.with_policy(policy);
+        self
+    }
+
+    pub fn image(&self) -> &value::Value {
         self.job.image()
     }
 

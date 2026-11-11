@@ -6,21 +6,17 @@ struct Independent {
 }
 
 impl EffectDefinition for Independent {
-    fn support(&self, _: [f64; 2]) -> Support {
-        Support([self.margin, 0])
-    }
-
     #[cfg(feature = "gpu")]
     fn compose(
         &self,
-        input: Arc<crate::gpu::evaluation::ImageNode>,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
+        input: crate::gpu::evaluation::Value,
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
         Ok(input)
     }
 }
 
 #[test]
-fn independently_defined_effects_have_value_identity_and_declare_their_own_support() {
+fn independently_defined_effects_have_value_identity() {
     let a = PixelStage::new(Independent { margin: 3 });
     let b = PixelStage::new(Independent { margin: 3 });
     assert_eq!(a, b);
@@ -29,8 +25,6 @@ fn independently_defined_effects_have_value_identity_and_declare_their_own_suppo
         a,
         PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 0.75 })
     );
-    let pipeline = PixelPipeline { stages: vec![a, b] };
-    assert_eq!(pipeline.support([1.; 2]).unwrap(), Support([6, 0]));
 }
 
 #[test]

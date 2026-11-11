@@ -14,17 +14,6 @@ pub struct Support(pub [u32; 2]);
 impl Support {
     pub const NONE: Self = Self([0, 0]);
 
-    pub fn then(self, next: Self) -> Result<Self, Error> {
-        Ok(Self([
-            self.0[0]
-                .checked_add(next.0[0])
-                .ok_or(Error::InvalidParameter("processing support overflow"))?,
-            self.0[1]
-                .checked_add(next.0[1])
-                .ok_or(Error::InvalidParameter("processing support overflow"))?,
-        ]))
-    }
-
     pub fn expand(self, output: SourceRegion, source: SourceRegion) -> SourceRegion {
         let x = output.x.saturating_sub(self.0[0]).max(source.x);
         let y = output.y.saturating_sub(self.0[1]).max(source.y);

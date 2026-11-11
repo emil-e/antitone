@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::CellRegion as Rect;
 use crate::{halation::reference, pixel_pipeline::EffectDefinition as _};
 use wgpu::util::DeviceExt;
 
@@ -45,7 +46,7 @@ fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    root: Arc<ImageNode>,
+    root: Value,
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
     let region = root.domain.finite().unwrap();
@@ -419,17 +420,18 @@ fn zero_strength_bypasses_and_abandoned_recordings_leave_input_unchanged() {
     let (device, queue) = context();
     let data = fixture([19, 17], [1.; 2], 0, vec![[2., -0.2, 4., 3.]; 323]);
     let input = raster_input(data.domain);
-    assert!(Arc::ptr_eq(
-        &input,
-        &halation(
-            input.clone(),
-            HalationParameters {
-                sigma: 2.,
-                strength: 0.
-            }
+    assert!(
+        input.same_capture(
+            &halation(
+                input.clone(),
+                HalationParameters {
+                    sigma: 2.,
+                    strength: 0.
+                }
+            )
+            .unwrap()
         )
-        .unwrap()
-    ));
+    );
     let root = halation(
         input,
         HalationParameters {

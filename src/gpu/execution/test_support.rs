@@ -22,7 +22,7 @@ pub(crate) struct OriginalControls<'a> {
     pub input: InputSettings,
     pub roll: RollSettings,
     pub grade: AdjustmentLayerSnapshot,
-    pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
+    pub repairs: &'a [crate::dust_repair::Repair],
     pub composition: Composition,
     pub stages: PixelPipeline,
     pub output: OutputReference,
@@ -47,7 +47,7 @@ impl OriginalControls<'_> {
             self.field,
             InputTransform::for_scan(self.scan, self.input)?,
             Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,
-            crate::gpu::repairs::Snapshot::logical(self.repairs.to_vec())?,
+            self.repairs.to_vec(),
             &self.stages,
         )?;
         let definition = evaluation::Reference::capture(device, renderer, self.output, &self.luts)?

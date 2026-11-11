@@ -30,6 +30,20 @@ impl ImageSource<'_> {
     pub fn new(scan: &Scan, input: impl Into<InputSettings>) -> Result<ImageSource<'_>> {
         let input = input.into();
         let matrix = scan.positive_matrix(&input)?;
+        Self::with_transform(scan, input, matrix)
+    }
+
+    #[cfg(feature = "project")]
+    pub fn from_recipe<'a>(
+        scan: &'a Scan,
+        recipe: &crate::image_recipe::NeutralRecipe,
+    ) -> Result<ImageSource<'a>> {
+        recipe.require_scan(scan)?;
+        let (input, matrix) = recipe.processing_transform()?;
+        Self::with_transform(scan, input, matrix)
+    }
+
+    fn with_transform(scan: &Scan, input: InputSettings, matrix: DMat3) -> Result<ImageSource<'_>> {
         let pipeline = InputPipeline::new(input, matrix)?;
         let identity = ImageIdentity {
             camera: scan.source.identity(),

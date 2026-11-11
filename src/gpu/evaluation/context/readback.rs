@@ -17,13 +17,84 @@ impl Context {
         gate: &crate::gpu::submission::SubmissionGate,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
+        consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
+    ) -> Result<Option<WorkCounts>, Error> {
+        self.read_in(
+            (queue, gate),
+            evaluation,
+            (&cancelled, &|| {}),
+            HostWorkingSet::default(),
+            consume,
+        )
+    }
+
+    pub(super) fn read_in(
+        &self,
+        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        evaluation: &Evaluation,
+        (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
+        working: HostWorkingSet,
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
-        let mut executor = self.executor();
+        let scope = evaluation
+            .job
+            .materializations()
+            .cloned()
+            .unwrap_or_else(|| self.materializations());
+        let worker = Worker {
+            context: self,
+            queue,
+            gate,
+            scope: &scope,
+            working: &working,
+            budget: evaluation.job.budget(),
+            cancelled,
+            progress,
+        };
         let mut total = WorkCounts::default();
-        let mut readback: Option<wgpu::Buffer> = None;
-        let mut plans = evaluation.plans();
+        let host =
+            match worker.host_image(evaluation.job.image(), evaluation.job.region(), &mut total) {
+                Err(Error::Cancelled) if cancelled() => return Ok(None),
+                value => value?,
+            };
+        if let Some((region, image)) = host {
+            let values = image.as_host().expect("host image delivery");
+            for block in tiled_units(evaluation.job.region(), evaluation.job.budget().tile)? {
+                if cancelled() {
+                    return Ok(None);
+                }
+                let mut pixels = Vec::with_capacity(block.width as usize * block.height as usize);
+                for y in block.y..block.bottom() {
+                    let start = region.index([block.x, y]);
+                    pixels.extend_from_slice(&values[start..start + block.width as usize]);
+                }
+                consume(block, &pixels)?;
+            }
+            return Ok((!cancelled()).then_some(total));
+        }
+        let plans = super::production::admitted_plans(
+            evaluation.clone(),
+            evaluation.job.region(),
+            evaluation.job.budget(),
+            self.device.limits(),
+            (cancelled, progress),
+        )?;
+        worker.read_plans(plans, total, consume)
+    }
+}
 
+impl Worker<'_> {
+    fn read_plans(
+        &self,
+        mut plans: impl Iterator<Item = Result<Plan, Error>>,
+        mut total: WorkCounts,
+        mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
+    ) -> Result<Option<WorkCounts>, Error> {
+        let (queue, gate) = (self.queue, self.gate);
+        let (cancelled, progress) = (self.cancelled, self.progress);
+        let mut executor = Executor::with_scope(self.context.programs.clone(), self.scope.clone())
+            .with_working(self.working.clone());
+        let mut readback: Option<wgpu::Buffer> = None;
         loop {
             if cancelled() {
                 return Ok(None);
@@ -31,8 +102,10 @@ impl Context {
             let Some(plan) = plans.next() else {
                 break;
             };
-            let plan = plan?;
-            Executor::admit(&self.device.limits(), &plan)?;
+            let plan = match plan {
+                Err(Error::Cancelled) if cancelled() => return Ok(None),
+                value => value?,
+            };
             if plan.tiles.len() != 1 {
                 return Err(Error::InvalidParameter(
                     "host delivery requires one bounded evaluation block",
@@ -55,7 +128,7 @@ impl Context {
             }
 
             if readback.as_ref().is_none_or(|buffer| buffer.size() < bytes) {
-                readback = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                readback = Some(self.context.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("bounded image-query readback"),
                     size: bytes,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -66,11 +139,11 @@ impl Context {
             let buffer = readback.as_ref().unwrap();
             let (send, receive) = mpsc::channel();
 
-            let Some(stats) = self.run_sink(
+            let Some(stats) = self.context.run_sink(
                 &mut executor,
                 (queue, gate),
                 &plan,
-                (&cancelled, &|| {}),
+                (cancelled, progress),
                 Sink {
                     encode: |encoder: &mut wgpu::CommandEncoder,
                              image: PlannedImage,

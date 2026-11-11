@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu_export::authored::{Request, write, write_checked};
 use crate::processing::Calibration;
 
 #[cfg(feature = "editor")]

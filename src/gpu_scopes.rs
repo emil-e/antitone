@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::TextureMapping;
-use crate::gpu::evaluation::ImageNode;
+use crate::gpu::evaluation::Value;
 use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
@@ -31,7 +31,7 @@ struct Key {
     #[cfg(feature = "editor")]
     rendered_source: Option<(crate::gpu::view::request::SourceRequest, bool)>,
     image: Weak<GpuImage>,
-    calculation: Option<Weak<ImageNode>>,
+    calculation: Option<crate::gpu::evaluation::value::WeakValue>,
     look: Option<LookId>,
     settings: Settings,
     frame: FrameRaster,
@@ -48,7 +48,7 @@ fn accumulation_settings(mut settings: Settings) -> Settings {
 impl Key {
     fn new(
         image: &Arc<GpuImage>,
-        (root, luts): (&Arc<ImageNode>, &LutChain),
+        (root, luts): (&Value, &LutChain),
         frame: FrameRaster,
         settings: Settings,
     ) -> Self {
@@ -60,7 +60,7 @@ impl Key {
             #[cfg(feature = "editor")]
             rendered_source: None,
             image: Arc::downgrade(image),
-            calculation: Some(Arc::downgrade(&canonical)),
+            calculation: Some(canonical.downgrade()),
             look: luts.id(),
             settings: accumulation_settings(settings),
             frame,
@@ -471,7 +471,7 @@ impl GpuScopes {
     pub fn status_calculation(
         &self,
         image: &Arc<GpuImage>,
-        calculation: (&Arc<ImageNode>, &LutChain),
+        calculation: (&Value, &LutChain),
         frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
@@ -585,7 +585,7 @@ impl GpuScopes {
 pub struct ScopePaint {
     pub gpu: Arc<GpuScopes>,
     image: Arc<GpuImage>,
-    calculation: Option<Arc<ImageNode>>,
+    calculation: Option<Value>,
     luts: LutChain,
     #[cfg(feature = "editor")]
     rendered: Option<(
@@ -663,7 +663,7 @@ impl ScopePaint {
     pub fn with_calculation(
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
-        (calculation, luts): (Arc<ImageNode>, LutChain),
+        (calculation, luts): (Value, LutChain),
         frame: FrameRaster,
         settings: Settings,
         context: egui::Context,

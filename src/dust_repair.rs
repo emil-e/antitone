@@ -382,7 +382,7 @@ fn heal_crop(
     let [width, height] = target.size;
     if !target.has_exterior {
         return Err(Error::InvalidParameter(
-            "biharmonic correction requires a two-pixel exterior",
+            "biharmonic repair requires a two-pixel exterior",
         ));
     }
     let mut difference = vec![[0.; 3]; target.local.len()];
@@ -538,6 +538,77 @@ struct SearchTarget {
     gradient_scale: f64,
 }
 
+struct TargetLayout {
+    region: SourceRegion,
+    has_exterior: bool,
+}
+
+fn target_region(group: &SupportMask, active: SourceRegion) -> Option<TargetLayout> {
+    let points = group.selected_points().collect::<Vec<_>>();
+    let min_x = points.iter().map(|p| p[0]).min()?;
+    let max_x = points.iter().map(|p| p[0]).max()?;
+    let min_y = points.iter().map(|p| p[1]).min()?;
+    let max_y = points.iter().map(|p| p[1]).max()?;
+    let x = min_x.saturating_sub(CONTEXT_PADDING).max(active.x);
+    let y = min_y.saturating_sub(CONTEXT_PADDING).max(active.y);
+    let right = (max_x + CONTEXT_PADDING + 1).min(active.x + active.width);
+    let bottom = (max_y + CONTEXT_PADDING + 1).min(active.y + active.height);
+    Some(TargetLayout {
+        region: SourceRegion {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        },
+        has_exterior: min_x - x >= 2 && min_y - y >= 2 && right - max_x >= 3 && bottom - max_y >= 3,
+    })
+}
+
+/// Rectangular target and donor inputs for the same grouping used by the healer.
+#[cfg(feature = "gpu")]
+pub(crate) fn input_regions(
+    repair: &Repair,
+    active: SourceRegion,
+) -> Result<Vec<SourceRegion>, Error> {
+    active.validate()?;
+    repair.support.validate()?;
+    let [x, y] = repair.support.origin();
+    let [width, height] = repair.support.size();
+    if !active.contains_region(SourceRegion {
+        x,
+        y,
+        width,
+        height,
+    }) {
+        return Err(Error::InvalidParameter(
+            "repair support is outside the source",
+        ));
+    }
+    validate_offset(repair.offset, &repair.support, active)?;
+    let mut regions = Vec::new();
+    for group in repair.support.grouped_supports() {
+        if let Some(layout) = target_region(&group, active) {
+            let target = layout.region;
+            let donor = SourceRegion {
+                x: (i64::from(target.x) + i64::from(repair.offset[0]))
+                    .try_into()
+                    .map_err(|_| Error::InvalidParameter("donor coordinates overflow"))?,
+                y: (i64::from(target.y) + i64::from(repair.offset[1]))
+                    .try_into()
+                    .map_err(|_| Error::InvalidParameter("donor coordinates overflow"))?,
+                ..target
+            };
+            if !active.contains_region(target) || !active.contains_region(donor) {
+                return Err(Error::InvalidParameter(
+                    "repair input is outside the source",
+                ));
+            }
+            regions.extend([target, donor]);
+        }
+    }
+    Ok(regions)
+}
+
 /// One target crop for the best-effort donor search. The donor is scored from
 /// its own small crop, so candidate distance never changes the fetch size.
 #[allow(clippy::too_many_arguments)]
@@ -549,20 +620,12 @@ fn build_search_target(
     base: &mut impl BaseImage,
     execution: &mut Execution<'_>,
 ) -> Result<Option<SearchTarget>, Error> {
-    let points = group.selected_points().collect::<Vec<_>>();
-    if points.is_empty() {
+    let Some(layout) = target_region(group, active) else {
         return Ok(None);
-    }
-    let min_x = points.iter().map(|p| p[0]).min().unwrap();
-    let max_x = points.iter().map(|p| p[0]).max().unwrap();
-    let min_y = points.iter().map(|p| p[1]).min().unwrap();
-    let max_y = points.iter().map(|p| p[1]).max().unwrap();
-    let x0 = min_x.saturating_sub(CONTEXT_PADDING).max(active.x);
-    let y0 = min_y.saturating_sub(CONTEXT_PADDING).max(active.y);
-    let x1 = (max_x + CONTEXT_PADDING + 1).min(active.x + active.width);
-    let y1 = (max_y + CONTEXT_PADDING + 1).min(active.y + active.height);
-    let width = (x1 - x0) as usize;
-    let height = (y1 - y0) as usize;
+    };
+    let region = layout.region;
+    let (x0, y0) = (region.x, region.y);
+    let (width, height) = (region.width as usize, region.height as usize);
     let mut known = vec![false; width * height];
     let mut local = vec![false; width * height];
     let mut mask = vec![false; width * height];
@@ -671,7 +734,7 @@ fn build_search_target(
             .max(contrast * 1e-6)
     };
     Ok(Some(SearchTarget {
-        has_exterior: min_x - x0 >= 2 && min_y - y0 >= 2 && x1 - max_x >= 3 && y1 - max_y >= 3,
+        has_exterior: layout.has_exterior,
         origin: [x0, y0],
         size: [width, height],
         image,

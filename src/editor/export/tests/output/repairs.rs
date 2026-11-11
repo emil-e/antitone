@@ -78,15 +78,25 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         editor.document.project.acquisition_wb(),
     )
     .unwrap();
+    let source = crate::scan::ImageSource::from_recipe(&scan, &clean.neutral).unwrap();
     assert!(
-        crate::repair_source::resolve(&scan, &clean).is_err(),
-        "source-wide donor witness"
+        crate::repair_source::evaluate(&source, &clean.repairs[0]).is_err(),
+        "the source-edge repair cannot actually solve"
     );
-    assert!(
-        crate::repair_source::resolve_output(&scan, &clean)
-            .unwrap()
-            .is_empty()
-    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("outside-edge.tif");
+    editor = wait(editor, |editor, cx| {
+        editor.export(
+            path.clone(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+            cx,
+        )
+    });
+    assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+    acknowledge_export_summary(&mut editor);
+    assert_eq!(tiff_pixels(&path).len(), 32 * 32 * 3);
+    let before = std::fs::read(&path).unwrap();
     editor.document.project.output.grain = GrainSettings {
         enabled: true,
         amount: 0.,
@@ -94,9 +104,25 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         image_sigma: crate::grain::MAX_SIZE,
         ..Default::default()
     };
-    let film = editor.document.state.project.image_recipe(id).unwrap();
-    let error = crate::repair_source::resolve_output(&scan, &film).unwrap_err();
-    assert!(error.to_string().contains("repair"), "{error}");
+    editor = wait(editor, |editor, cx| {
+        editor.export(
+            path.clone(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Confirmed,
+            cx,
+        )
+    });
+    let failure = editor
+        .dialogs
+        .message()
+        .expect("failed repair must report its error");
+    assert_eq!(failure.title, FailureCase::Export.title());
+    assert!(
+        failure.details.contains("two-pixel exterior"),
+        "{}",
+        failure.details
+    );
+    assert_eq!(std::fs::read(path).unwrap(), before);
 }
 
 #[test]
@@ -187,9 +213,10 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             scan.camera_to_ap1,
         )
         .unwrap();
-        let repairs = crate::repair_source::resolve_output(&scan, &recipe).unwrap();
-        assert_eq!(repairs.len(), 1);
-        let expected_exr: Vec<_> = repairs[0]
+        assert_eq!(recipe.repairs.len(), 1);
+        let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+        let repaired = crate::repair_source::evaluate(&input, &recipe.repairs[0]).unwrap();
+        let expected_exr: Vec<_> = repaired
             .pixels()
             .map(|(point, neutral)| {
                 let graded = pipeline
@@ -218,11 +245,13 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             ("repaired-full.exr", OutputFormat::Exr(ExrPrecision::Full)),
         ] {
             assert!(
-                !editor
+                editor
                     .document
-                    .dust
-                    .has_evaluation(id, crate::dust_repair::RepairId(1)),
-                "export must not require or warm the viewer cache"
+                    .visit
+                    .working_view
+                    .completed_capture()
+                    .is_none(),
+                "export must not require a completed viewer request"
             );
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
@@ -283,15 +312,15 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             editor.document.project.acquisition_wb(),
         )
         .unwrap();
+        let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+        let edge = recipe
+            .repairs
+            .iter()
+            .find(|repair| repair.id == border)
+            .unwrap();
         assert!(
-            crate::repair_source::resolve(&scan, &recipe).is_err(),
-            "the source-edge border cannot satisfy the biharmonic exterior"
-        );
-        assert!(
-            crate::repair_source::resolve_output(&scan, &recipe)
-                .unwrap()
-                .is_empty(),
-            "zero exact output coverage, including a hole inside a support rectangle, excludes irrelevant repairs"
+            crate::repair_source::evaluate(&input, edge).is_err(),
+            "the cropped-out source edge cannot actually solve"
         );
         let cropped = directory.path().join("outside-failed-repair.tif");
         editor = wait(editor, |editor, cx| {

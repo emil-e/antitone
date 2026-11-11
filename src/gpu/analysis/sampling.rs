@@ -106,7 +106,7 @@ impl<'a> CameraSampler<'a> {
         self.floor
     }
 
-    fn gathered(&self, indices: Vec<usize>) -> Result<Arc<evaluation::ImageNode>, Error> {
+    fn gathered(&self, indices: Vec<usize>) -> Result<evaluation::Value, Error> {
         let count = u32::try_from(indices.len())
             .ok()
             .filter(|v| *v > 0)

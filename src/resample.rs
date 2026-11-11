@@ -94,7 +94,7 @@ pub struct AreaAverage {
     flags: wgpu::Buffer,
     dimensions: [u32; 4],
     affine: Option<[[f32; 2]; 3]>,
-    image: Arc<evaluation::ImageNode>,
+    image: evaluation::Value,
     expected: f32,
 }
 impl AreaAverage {
@@ -324,8 +324,10 @@ fn supplied_sample(p:vec2i)->vec4f {return textureLoad(supplied_image,p-vec2i(su
                 .expect("area averaging has a fixed output"),
         };
         fragment.work.push(Work::Render {
-            pipeline: self.pipelines.finish.clone(),
-            layout: self.pipelines.finish.get_bind_group_layout(0),
+            program: evaluation::RenderProgram::Captured {
+                pipeline: self.pipelines.finish.clone(),
+                layout: self.pipelines.finish.get_bind_group_layout(0),
+            },
             bindings: vec![
                 (0, Binding::Read(means)),
                 (1, Binding::Read(flags)),

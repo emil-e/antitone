@@ -1,5 +1,7 @@
 use super::*;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu_export::authored::Request;
+use crate::gpu_export::authored_area as write;
 use crate::processing::Calibration;
 
 #[test]

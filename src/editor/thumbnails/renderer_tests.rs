@@ -7,8 +7,66 @@ use std::sync::atomic::AtomicU64;
 mod adjustment_layers;
 
 #[test]
+fn calculation_retention_honors_the_full_settings_share_before_and_after_renderer_initialization() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let renderers = Arc::new(RendererCache::default());
+    let mut thumbnails = Thumbnails {
+        gpu: Some((device.clone(), queue.clone(), renderers.clone())),
+        ..Default::default()
+    };
+    let limits = cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 768 << 20,
+    };
+    thumbnails.set_limits(limits);
+    let renderer = renderers.get(&device, &queue).unwrap();
+    assert_eq!(
+        renderer.evaluation.cache_policy().generated_bytes,
+        limits.gpu_bytes
+    );
+    assert!(thumbnails.reserve_view(512 << 20));
+    assert_eq!(
+        renderer.evaluation.cache_policy().generated_bytes,
+        256 << 20
+    );
+    assert!(thumbnails.reserve_view(0));
+    assert_eq!(
+        renderer.evaluation.cache_policy().generated_bytes,
+        limits.gpu_bytes
+    );
+    let changed = cache_limits::CacheLimits {
+        gpu_bytes: 512 << 20,
+        ..limits
+    };
+    thumbnails.set_limits(changed);
+    assert_eq!(
+        renderer.evaluation.cache_policy().generated_bytes,
+        changed.gpu_bytes
+    );
+    assert!(Arc::ptr_eq(
+        &renderer,
+        &renderers.get(&device, &queue).unwrap()
+    ));
+    for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
+        thumbnails.apply_budgets(memory::CacheBudgets::new(changed, pressure));
+        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
+        assert_eq!(thumbnails.limits, changed);
+        thumbnails.apply_budgets(memory::CacheBudgets::new(changed, memory::Pressure::Normal));
+        assert_eq!(
+            renderer.evaluation.cache_policy().generated_bytes,
+            changed.gpu_bytes
+        );
+    }
+    thumbnails.set_limits(cache_limits::CacheLimits {
+        gpu_bytes: 0,
+        ..changed
+    });
+    assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
+}
+
+#[test]
 fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_owners() {
-    use crate::gpu::evaluation::{GpuImage as StoredImage, RetainedKey};
+    use crate::gpu::evaluation::{ImageValue as StoredImage, RetainedKey};
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();

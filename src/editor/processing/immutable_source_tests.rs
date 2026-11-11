@@ -1,11 +1,11 @@
 use super::*;
-use crate::gpu::evaluation::{Budget, ImageNode, Meaning, Region};
+use crate::gpu::evaluation::{Budget, Meaning, Region, Value};
 use crate::gpu::parameters::ProcessingParameters;
 use std::sync::{Arc, Weak};
 
-fn camera_cells(mut image: Arc<ImageNode>) -> Arc<ImageNode> {
+fn camera_cells(mut image: Value) -> Value {
     while image.domain().meaning != Meaning::CameraCodes {
-        image = image.input().expect("camera calculation").clone();
+        image = image.unary_input().expect("camera calculation").clone();
     }
     image
 }
@@ -13,7 +13,7 @@ fn camera_cells(mut image: Arc<ImageNode>) -> Arc<ImageNode> {
 fn pixels(
     renderer: &crate::renderer::GpuRenderer,
     queue: &wgpu::Queue,
-    image: Arc<ImageNode>,
+    image: Value,
 ) -> Vec<[f32; 4]> {
     let domain = image.domain();
     let request = renderer
@@ -63,7 +63,7 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
         let mut photographs = Vec::new();
         let mut inspections = Vec::new();
         let mut fields: Vec<Weak<crate::gpu::flat::GpuFlatField>> = Vec::new();
-        let mut original = None;
+        let mut original: Option<crate::gpu::evaluation::Value> = None;
         for gain in [
             glam::DVec3::ONE,
             glam::DVec3::new(0.8, 1.1, 1.2),
@@ -97,10 +97,10 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
                 .inspection(ProcessingParameters::source(), field)
                 .unwrap();
             let codes = camera_cells(photograph.clone());
-            assert!(Arc::ptr_eq(&codes, &camera_cells(inspection.clone())));
+            assert!(codes.same_capture(&camera_cells(inspection.clone())));
             if let Some(original) = &original {
                 assert!(
-                    Arc::ptr_eq(original, &codes),
+                    original.same_capture(&codes),
                     "correction must not replace uploaded camera samples or their coordinate declaration"
                 );
             } else {

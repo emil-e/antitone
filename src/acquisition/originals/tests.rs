@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn original_units_cover_plain_demand_exactly_once_on_the_declared_grid() {
+    let source: SourceRegion = [100, 80, 40, 30].into();
+    let output: SourceRegion = [108, 88, 24, 16].into();
+    let units = OriginalBatch::new(source, output, &PixelPipeline::default(), [10, 7])
+        .unwrap()
+        .units()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    assert_eq!(units.len(), 9);
+    assert_eq!(
+        units[0].plan.source_read(),
+        SourceRead::Originals([108, 88, 10, 7].into())
+    );
+    assert_eq!(units[8].output, [128, 102, 4, 2].into());
+    let mut coverage = [0; 24 * 16];
+    for unit in units {
+        assert_eq!(unit.offset, [0, 0]);
+        assert_eq!(unit.plan.pitch(), [1.; 2]);
+        for y in unit.output.y..unit.output.y + unit.output.height {
+            for x in unit.output.x..unit.output.x + unit.output.width {
+                coverage[((y - output.y) * output.width + x - output.x) as usize] += 1;
+            }
+        }
+    }
+    assert!(coverage.iter().all(|&count| count == 1));
+}
+
+#[test]
+fn original_batches_reject_empty_tiles_and_off_source_demand_without_stage_execution() {
+    let source: SourceRegion = [100, 80, 40, 30].into();
+    let pipeline = PixelPipeline::default();
+    assert!(OriginalBatch::new(source, source, &pipeline, [0, 7]).is_err());
+    assert!(OriginalBatch::new(source, [99, 80, 10, 10].into(), &pipeline, [10, 7]).is_err());
+}
+
+#[cfg(feature = "gpu")]
+#[test]
 fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_edges() {
     let source: SourceRegion = [100, 80, 40, 30].into();
     let output: SourceRegion = [108, 88, 24, 16].into();
@@ -44,6 +81,7 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
     assert_eq!(edge.offset, [0, 0]);
 }
 
+#[cfg(feature = "gpu")]
 #[test]
 fn original_batch_captures_stage_values_and_rejects_nonprogressing_or_exterior_demands() {
     let source: SourceRegion = [100, 80, 40, 30].into();

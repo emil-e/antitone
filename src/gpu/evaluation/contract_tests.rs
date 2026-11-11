@@ -1,4 +1,4 @@
-use super::tests::{fixture, make_plan};
+use super::tests::{fixture, make_plan, make_plan_with_policy};
 use super::*;
 use crate::gpu::photograph::test_support::{matrix, settings};
 use crate::{gpu::evaluation::CellRegion as Rect, gpu::grading::Grading};
@@ -23,7 +23,7 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
         ),
     )
     .unwrap();
-    let original = make_plan(graded.clone(), [27, 23]);
+    let original = make_plan_with_policy(graded.clone(), [27, 23], Policy::Composed);
     let mut executor = execute::Executor::default();
     let base = executor
         .run(&device, &queue, &Default::default(), &original, || false)
@@ -32,7 +32,6 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
     let base = execute::read(&device, &queue, &base.pixels);
     for gain in [0.75f32, 1.25] {
         let function = Function {
-            linked: Default::default(),
             code: format!(
                 r#"
 fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
@@ -44,9 +43,15 @@ fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
             symbol: "experiment_gain",
             bindings: vec![],
         };
-        let candidate = make_plan(
-            pointwise(graded.clone(), Meaning::Graded, function),
+        let candidate = make_plan_with_policy(
+            value::pointwise(
+                graded.clone(),
+                Meaning::Graded,
+                value::Operation::pointwise_function("gain witness", gain, function),
+            )
+            .unwrap(),
             [27, 23],
+            Policy::Composed,
         );
         assert_eq!(
             candidate.tiles[0].fragment.work.len(),
@@ -168,43 +173,20 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
 
 #[test]
 fn fragment_scheduling_rejects_undeclared_production_before_any_gpu_work() {
-    struct Broken;
-
-    impl Operation for Broken {
-        fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
-            Ok(Some(r))
-        }
-
-        fn lower(
-            &self,
-            f: &mut Fragment,
-            _input: Option<PlannedImage>,
-            output: PlannedImage,
-        ) -> Result<(), Error> {
-            let uninitialized = f.image(output.domain, output.region);
-            f.compute(
-                "unused shader code",
-                "main",
-                vec![
-                    (0, Binding::Read(uninitialized.resource)),
-                    (1, Binding::Write(output.resource)),
-                ],
-                output.cells(),
-            );
-            Ok(())
-        }
-    }
-    let node = source(Arc::new(fixture()));
-    let root = ImageNode::new(node.domain, Some(node), Broken);
-    let error = Plan::new(
-        root.clone(),
-        root.domain.finite().unwrap(),
-        Budget {
-            tile: [16, 16],
-            scratch_bytes: 1 << 20,
-        },
-    )
-    .err()
-    .unwrap();
+    let domain = fixture().domain();
+    let region = domain.finite().unwrap();
+    let mut fragment = Fragment::default();
+    let output = fragment.image(domain, region);
+    let uninitialized = fragment.image(domain, region);
+    fragment.compute(
+        "unused shader code",
+        "main",
+        vec![
+            (0, Binding::Read(uninitialized.resource)),
+            (1, Binding::Write(output.resource)),
+        ],
+        output.cells(),
+    );
+    let error = Plan::from_work(fragment, output, 1 << 20).err().unwrap();
     assert!(error.to_string().contains("uninitialized"));
 }

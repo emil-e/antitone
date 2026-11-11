@@ -1,7 +1,7 @@
 //! Immutable source-space sampling demand; mathematical inputs belong to the calculation.
 
 #[cfg(test)]
-use crate::gpu::interpretation::{InputTransform, SourceInterpretation};
+use crate::gpu::interpretation::InputTransform;
 use crate::{Error, frame_raster::FrameRaster, gpu::source::SourceGeometry};
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling},
@@ -14,26 +14,41 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct SourceRequest {
     pub identity: crate::gpu::source::identity::Identity,
-    pub repairs: crate::gpu::repairs::Snapshot,
     pub area: crate::raw::Rect,
     #[cfg(test)]
-    fixture: Option<SourceInterpretation>,
+    fixture: Option<SourceFixture>,
     #[cfg(test)]
     pub field: Option<Arc<crate::flat_field::FlatField>>,
     pub plan: Arc<Plan>,
     presentation: FrameRaster,
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+enum SourceFixture {
+    Photograph(crate::gpu::test_inputs::AuthoredPhotograph),
+    Inspection(DMat3),
+}
+
 impl PartialEq for SourceRequest {
     fn eq(&self, other: &Self) -> bool {
-        self.same_acquisition(other) && self.repairs == other.repairs
+        self.same_acquisition(other)
     }
 }
 
 impl SourceRequest {
     #[cfg(test)]
     pub(crate) fn with_program_fixture(mut self, program: InputTransform) -> Self {
-        self.fixture = Some(SourceInterpretation::Photograph(program));
+        let input = crate::gpu::test_inputs::AuthoredPhotograph::new(
+            &wgpu::Limits::default(),
+            program.input,
+            Default::default(),
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+            program.matrix,
+            self.area,
+        )
+        .expect("admitted source fixture");
+        self.fixture = Some(SourceFixture::Photograph(input));
         self
     }
 
@@ -49,31 +64,22 @@ impl SourceRequest {
         let request = Self::for_frame(frame)?;
         #[cfg(test)]
         let request = Self {
-            fixture: Some(SourceInterpretation::Photograph(*program)),
+            fixture: Some(SourceFixture::Photograph(input.clone())),
+            field: input.field.as_ref().map(|field| field.field().clone()),
             ..request
         };
-        request
-            .with_pipeline(input.pixel_pipeline())
-            .map(|request| request.with_repairs(input.repairs.clone()))
+        request.with_pipeline(input.pixel_pipeline())
     }
 
     #[cfg(test)]
     pub fn processing_fixture(&self) -> crate::gpu::test_inputs::AuthoredPhotograph {
-        if let Some(program) = self.program() {
-            crate::gpu::test_inputs::AuthoredPhotograph::new(
-                &wgpu::Limits::default(),
-                program.input,
-                Default::default(),
-                crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-                program.matrix,
-                self.area,
-            )
-            .unwrap()
-            .with_pixel_pipeline(self.plan.pipeline().clone())
-        } else {
-            crate::gpu::test_inputs::AuthoredPhotograph::from(
+        match &self.fixture {
+            Some(SourceFixture::Photograph(input)) => input
+                .clone()
+                .with_pixel_pipeline(self.plan.pipeline().clone()),
+            _ => crate::gpu::test_inputs::AuthoredPhotograph::from(
                 crate::gpu::parameters::ProcessingParameters::source(),
-            )
+            ),
         }
     }
     pub fn frame(&self) -> FrameRaster {
@@ -186,11 +192,6 @@ impl SourceRequest {
         self.plan.processing_frame()
     }
 
-    pub fn with_repairs(mut self, repairs: crate::gpu::repairs::Snapshot) -> Self {
-        self.repairs = repairs;
-        self
-    }
-
     pub fn underlay(&self) -> Result<Self, Error> {
         let mut frame = FrameRaster::full(self.frame().composition)?;
         // Bound coarse navigation coverage independently of selected detail resolution.
@@ -206,10 +207,17 @@ impl SourceRequest {
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let program = InputTransform::new(input, matrix)?;
-        program.neutral_parameters()?;
+        let fixture = crate::gpu::test_inputs::AuthoredPhotograph::new(
+            &wgpu::Limits::default(),
+            input,
+            Default::default(),
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new())?,
+            matrix,
+            frame.composition.area(),
+        )?;
+        fixture.input_transform().neutral_parameters()?;
         Ok(Self {
-            fixture: Some(SourceInterpretation::Photograph(program)),
+            fixture: Some(SourceFixture::Photograph(fixture)),
             field,
             ..Self::for_frame(frame)?
         })
@@ -229,7 +237,7 @@ impl SourceRequest {
         crate::processing::validate_camera_matrix(matrix)?;
         crate::gpu::parameters::CameraMatrix::new(matrix)?;
         Ok(Self {
-            fixture: Some(SourceInterpretation::Inspection(matrix)),
+            fixture: Some(SourceFixture::Inspection(matrix)),
             field,
             ..Self::inspection(frame)?
         })
@@ -237,22 +245,23 @@ impl SourceRequest {
 
     #[cfg(test)]
     pub fn is_inspection(&self) -> bool {
-        !matches!(self.fixture, Some(SourceInterpretation::Photograph(_)))
+        !matches!(self.fixture, Some(SourceFixture::Photograph(_)))
     }
 
     #[cfg(test)]
     pub fn matrix(&self) -> DMat3 {
-        self.fixture
-            .as_ref()
-            .expect("declared scalar fixture")
-            .matrix()
+        match self.fixture.as_ref().expect("declared scalar fixture") {
+            SourceFixture::Photograph(input) => input.input_transform().matrix,
+            SourceFixture::Inspection(matrix) => *matrix,
+        }
     }
 
     #[cfg(test)]
     pub fn program(&self) -> Option<&InputTransform> {
-        self.fixture
-            .as_ref()
-            .and_then(SourceInterpretation::transform)
+        match &self.fixture {
+            Some(SourceFixture::Photograph(input)) => input.source_transform(),
+            _ => None,
+        }
     }
 
     fn require_frame(frame: FrameRaster) -> Result<(), Error> {
@@ -276,7 +285,6 @@ impl SourceRequest {
         )?;
         Ok(Self {
             identity: crate::gpu::source::identity::Identity::unbound(),
-            repairs: Default::default(),
             area,
             #[cfg(test)]
             fixture: None,

@@ -1,4 +1,5 @@
 use super::*;
+mod latency;
 use crate::{dust_repair::RepairId, editor::history::Direction};
 
 mod persistence;
@@ -42,7 +43,7 @@ fn ready(h: &mut Harness<'_, Editor>, count: usize) {
     wait_for(h, |e| {
         !e.dust_search_pending()
             && e.dust_signature()
-                .is_some_and(|s| e.dust_evaluations(s).len() == count)
+                .is_some_and(|_| e.dust_images().len() == count)
             && e.document.visit.working_view.idle()
     });
 }
@@ -122,7 +123,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         let sig = h.read(|editor| editor.dust_signature().unwrap());
-        let first = h.read(|editor| editor.dust_evaluations(sig)[0].clone());
+        let first = h.read(|editor| editor.dust_images()[0].clone());
         let initial = h.read(|editor| {
             editor
                 .document
@@ -218,7 +219,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.step();
         ready(&mut h, 1);
         h.read(|editor| assert_eq!(editor.dust_signature(), Some(sig)));
-        h.read(|editor| assert!(Arc::ptr_eq(&first, &editor.dust_evaluations(sig)[0])));
+        h.read(|editor| assert!(first.same_definition(&editor.dust_images()[0])));
         h.read(|editor| {
             assert!(
                 editor
@@ -302,10 +303,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
             egui::CursorIcon::Grab
         );
         assert!(!brush_ring_at(&h, donor));
-        let same = h.read(|editor| editor.dust_evaluations(sig)[0].clone());
+        let same = h.read(|editor| editor.dust_images()[0].clone());
         click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
         ready(&mut h, 2);
-        h.read(|editor| assert!(Arc::ptr_eq(&same, &editor.dust_evaluations(sig)[0])));
+        h.read(|editor| assert!(same.same_definition(&editor.dust_images()[0])));
         h.read(|editor| {
             assert!(
                 initial_neutral
@@ -329,11 +330,11 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.read(|editor| assert!(!editor.dialogs.is_open()));
         h.read(|editor| assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1));
         ready(&mut h, 1);
-        let remaining = h.read(|editor| editor.dust_evaluations(sig)[0].clone());
+        let remaining = h.read(|editor| editor.dust_images()[0].clone());
         h.get_by_label("100%").click();
         h.step();
         ready(&mut h, 1);
-        h.read(|editor| assert!(Arc::ptr_eq(&remaining, &editor.dust_evaluations(sig)[0])));
+        h.read(|editor| assert!(remaining.same_definition(&editor.dust_images()[0])));
         let view = h.read(|editor| {
             editor
                 .document
@@ -353,17 +354,13 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.read(|editor| {
             assert!(
                 editor
-                    .dust_evaluations(editor.dust_signature().unwrap())
-                    .is_empty()
+                    .dust_images()
+                    .iter()
+                    .all(|image| !remaining.same_definition(image))
             )
         });
         ready(&mut h, 1);
-        h.read(|editor| {
-            assert!(!Arc::ptr_eq(
-                &remaining,
-                &editor.dust_evaluations(editor.dust_signature().unwrap())[0]
-            ))
-        });
+        h.read(|editor| assert!(!remaining.same_definition(&editor.dust_images()[0])));
         h.get_by_label("Reset dust repairs").click();
         h.step();
         h.read(|editor| assert!(editor.dust_repairs(source).is_none()));
@@ -384,8 +381,7 @@ fn accepted_repairs_remain_in_the_painted_image_after_crop_replaces_dust() {
         h.step();
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
-        let signature = h.read(|e| e.dust_signature().unwrap());
-        let evaluated = h.read(|e| e.dust_evaluations(signature)[0].clone());
+        let evaluated = h.read(|e| e.dust_images()[0].clone());
         let before = h.read(|e| e.document.state.project.clone());
         let history = h.read(|e| e.history_label(Direction::Undo));
         for phase in ["dust-tool", "dust-replaced-by-crop", "dust-closed-normal"] {
@@ -405,8 +401,17 @@ fn accepted_repairs_remain_in_the_painted_image_after_crop_replaces_dust() {
                 assert_eq!(e.document.state.project, before);
                 assert_eq!(e.history_label(Direction::Undo), history);
                 let view = e.document.visit.working_view.displayed.as_ref().unwrap();
-                assert_eq!(view.spec.repairs.0.len(), 1);
-                assert!(Arc::ptr_eq(&view.spec.repairs.0[0].evaluated, &evaluated));
+                let repairs = &view.capture.recipe().unwrap().repairs;
+                assert_eq!(repairs.len(), 1);
+                assert_eq!(&repairs[0].support, evaluated.support());
+                assert_eq!(
+                    view.spec.plan.sampling(),
+                    crate::acquisition::Sampling::NeutralFootprints
+                );
+                assert!(
+                    e.dust_images()[0].same_definition(&evaluated),
+                    "tool replacement preserves the healing calculation"
+                );
                 e.active_canvas().last_layout.unwrap().0.canvas
             });
             assert!(

@@ -10,7 +10,7 @@ use crate::pixel_pipeline::PixelStage;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
 use crate::processing::NegativeInput;
-use crate::processing::Response;
+use crate::processing::{Response, RollSettings};
 use glam::{DMat3, DVec3};
 
 #[test]
@@ -22,12 +22,8 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
         gamma: 0.75,
         balance: Default::default(),
     };
-    let capture = |input| {
-        Interpretation::Program(
-            InputTransform::new(input, DMat3::IDENTITY).unwrap(),
-            RollSettings::default(),
-        )
-    };
+    let capture =
+        |input| Interpretation::Program(InputTransform::new(input, DMat3::IDENTITY).unwrap());
     let original = capture(input);
     let mut changed = input;
     if let InputSettings::Negative { gamma, .. } = &mut changed {
@@ -36,11 +32,11 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
     let a = Native::new(original).unwrap();
     let b = Native::new(capture(changed)).unwrap();
     assert!(
-        a.pointwise().unwrap().bindings == b.pointwise().unwrap().bindings,
+        a.function().bindings == b.function().bindings,
         "control must collide in packed native constants"
     );
-    assert_ne!(a.identity(), b.identity());
-    assert_eq!(a.identity(), Native::new(original).unwrap().identity());
+    assert_ne!(a.key(), b.key());
+    assert_eq!(a.key(), Native::new(original).unwrap().key());
 
     let matrix = DMat3::IDENTITY;
     let mut changed = matrix;
@@ -48,13 +44,94 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
     let a = Working::new(original, matrix).unwrap();
     let b = Working::new(original, changed).unwrap();
     assert!(
-        a.pointwise().unwrap().bindings == b.pointwise().unwrap().bindings,
+        a.function().bindings == b.function().bindings,
         "control must collide in packed camera constants"
     );
-    assert_ne!(a.identity(), b.identity());
+    assert_ne!(a.key(), b.key());
+    assert_eq!(a.key(), Working::new(original, matrix).unwrap().key());
+}
+
+#[test]
+fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpretations() {
+    use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
+    use crate::gpu::{evaluation as e, photograph::PhotographGraph, repairs::definition};
+    struct Unread;
+    impl e::Source for Unread {
+        fn domain(&self) -> e::Domain {
+            e::Domain {
+                bounds: Some(e::CellRegion::new([0, 0], [128, 128])),
+                grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
+                meaning: e::Meaning::CameraCodes,
+            }
+        }
+        fn read(&self, _: e::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            panic!("provenance inspection must not acquire pixels")
+        }
+    }
+    let source = e::source(Arc::new(Unread));
+    let program = InputTransform::new(InputSettings::Digital, DMat3::IDENTITY).unwrap();
+    let neutral = |program: InputTransform| {
+        Assembly::captured(
+            Captured::new(
+                CameraInput {
+                    matrix: program.matrix,
+                    field: None,
+                    continuous: false,
+                    mapping: Mapping::Originals,
+                },
+                Interpretation::Program(program),
+            )
+            .unwrap(),
+        )
+        .unrepaired(source.clone())
+        .unwrap()
+    };
+    let base = neutral(program);
+    let support = SupportMask::new([30, 30], [3, 3], vec![true; 9]).unwrap();
+    let repaired = definition::compose(
+        base.clone(),
+        &[Repair {
+            id: RepairId(1),
+            enabled: true,
+            origin: RepairOrigin::Manual,
+            support: support.clone(),
+            offset: [32, 0],
+        }],
+    )
+    .unwrap();
     assert_eq!(
-        a.identity(),
-        Working::new(original, matrix).unwrap().identity()
+        repaired.inputs().len(),
+        2,
+        "the control must not be a unary graph"
+    );
+    assert_eq!(Assembly::input_transform(&repaired).unwrap(), Some(program));
+    assert!(PhotographGraph::has_correction(&repaired, None));
+    let changed = InputTransform::new(InputSettings::Digital, DMat3::IDENTITY * 2.).unwrap();
+    let foreign_heal = definition::healing_image(
+        &neutral(changed),
+        &Repair {
+            id: RepairId(2),
+            enabled: true,
+            origin: RepairOrigin::Manual,
+            support: support.clone(),
+            offset: [32, 0],
+        },
+    )
+    .unwrap();
+    assert!(
+        PhotographGraph::has_correction(&foreign_heal, None),
+        "lowered CPU dependencies must still describe their correction choice without acquiring pixels"
+    );
+    let foreign_repair =
+        definition::compose_images(base.clone(), vec![(support.clone(), foreign_heal)]).unwrap();
+    assert!(
+        Assembly::input_transform(&foreign_repair).is_err(),
+        "a lowered whole CPU value must retain its upstream interpretation facts"
+    );
+    let conflicting = definition::compose_images(base, vec![(support, neutral(changed))]).unwrap();
+    assert!(
+        Assembly::input_transform(&conflicting).is_err(),
+        "one photographic input must not claim conflicting branch interpretations"
     );
 }
 
@@ -62,11 +139,7 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
 struct Scale(DVec3);
 
 impl EffectDefinition for Scale {
-    fn support(&self, _: [f64; 2]) -> crate::processing_support::Support {
-        crate::processing_support::Support::NONE
-    }
-
-    fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, image: Value) -> Result<Value, Error> {
         let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
@@ -91,11 +164,7 @@ fn scale_assembly_input(pixel: vec4f, position: vec2f) -> vec4f {
 struct Square;
 
 impl EffectDefinition for Square {
-    fn support(&self, _: [f64; 2]) -> crate::processing_support::Support {
-        crate::processing_support::Support::NONE
-    }
-
-    fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, image: Value) -> Result<Value, Error> {
         let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
@@ -112,15 +181,11 @@ impl EffectDefinition for Square {
 struct FootprintScale;
 
 impl EffectDefinition for FootprintScale {
-    fn support(&self, _: [f64; 2]) -> crate::processing_support::Support {
-        crate::processing_support::Support::NONE
-    }
-
     fn integrates_footprint(&self) -> bool {
         true
     }
 
-    fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+    fn compose(&self, image: Value) -> Result<Value, Error> {
         Scale(DVec3::splat(image.domain().grid.pitch[0])).compose(image)
     }
 }
@@ -142,7 +207,7 @@ impl Source for Pixels {
     }
 }
 
-fn read(context: &Context, queue: &wgpu::Queue, image: Arc<ImageNode>) -> Vec<DVec3> {
+fn read(context: &Context, queue: &wgpu::Queue, image: Value) -> Vec<DVec3> {
     let request = context
         .request(
             image.clone(),
@@ -255,7 +320,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
             continuous: true,
             mapping: Mapping::Originals,
         },
-        Interpretation::Program(program, Default::default()),
+        Interpretation::Program(program),
     )
     .unwrap();
     let mut assembly = Assembly::captured(captured);
@@ -278,9 +343,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
         .photograph(codes.clone(), &effects)
         .unwrap();
     let prefix = assembly.neutral(codes).unwrap();
-    let native = Assembly::native(program, RollSettings::default())
-        .interpret(normalized)
-        .unwrap();
+    let native = Assembly::native(program).interpret(normalized).unwrap();
     let actual = read(context, &queue, graph.processed);
     let neutral = read(context, &queue, prefix);
     let native = read(context, &queue, native);
@@ -365,37 +428,4 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
             upstream * (f64::from(pair[0]).powi(2) + f64::from(pair[1]).powi(2)) * 0.5,
         );
     }
-}
-
-#[test]
-fn encoded_readouts_stop_at_the_requested_boundary_and_reject_unproven_scaling_crossings() {
-    let negative = InputSettings::negative(Calibration {
-        dmin: DVec3::splat(0.7),
-        dmax: DVec3::splat(0.14),
-    });
-    let program = InputTransform::new(negative, DMat3::IDENTITY).unwrap();
-    let encoding = RollSettings {
-        exposure: -crate::processing::MAX_EXPOSURE,
-        ..Default::default()
-    };
-    let assembly = Assembly::native(program, encoding);
-    let image = source(Arc::new(Pixels {
-        domain: Domain {
-            bounds: Some([0, 0, 1, 1].into()),
-            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Camera,
-        },
-        values: vec![[0.25, 0.25, 0.25, 0.]],
-    }));
-    let native = assembly.interpret(image).unwrap();
-    assert_eq!(native.domain().meaning, Meaning::NativePositive);
-    let effects = PixelPipeline {
-        stages: vec![PixelStage::new(Scale(DVec3::splat(0.5)))],
-    };
-    assert!(matches!(
-        assembly.effects(native, &effects),
-        Err(Error::InvalidParameter(
-            "readout encoding cannot cross an added image operation"
-        ))
-    ));
 }
