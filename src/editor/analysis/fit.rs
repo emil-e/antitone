@@ -366,7 +366,6 @@ impl Fit {
     }
 
     fn finish(mut self, cancelled: impl Fn() -> bool) -> Result<Option<Outcome>, Error> {
-        let device = &self.device;
         if cancelled() {
             return Ok(None);
         }
@@ -404,6 +403,19 @@ impl Fit {
         else {
             return Ok(None);
         };
+        self.propose(proposal, cancelled)
+    }
+
+    fn propose(
+        &self,
+        proposal: roll_analysis::Proposal,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Outcome>, Error> {
+        let request = &self.request;
+        let project = &request.document.project;
+        if proposal.frames.len() != project.order.len() {
+            return Err(Error::UnusableSample("analysis statistics count changed"));
+        }
         require_statistics(
             self.owned.iter().map(|frame| frame.film.pixels.len()).sum(),
             &proposal.frames,
@@ -435,13 +447,19 @@ impl Fit {
                 .extend(approved.entries.clone());
         }
         analysis::verify(request)?;
-        candidate.validate_for_device(device)?;
+        candidate.project.require_runtime()?;
         for id in &project.order {
             if cancelled() {
                 return Ok(None);
             }
-            let record = project.source(*id)?;
-            crate::gpu::parameters::CameraMatrix::require_source(self.matrix, true)?;
+            let record = candidate.project.source(*id)?;
+            super::super::processing::validate_source_with_matrix(
+                Some(&self.device),
+                candidate.project.input,
+                candidate.project.roll,
+                record,
+                self.matrix,
+            )?;
             if let Some(correction) = &self.correction {
                 correction
                     .gpu
@@ -454,7 +472,7 @@ impl Fit {
         }
         Ok(Some(Outcome {
             document: candidate,
-            frames: frames.len(),
+            frames: self.owned.len(),
             wb_rejections,
             support: self.film.expect("film geometry"),
         }))

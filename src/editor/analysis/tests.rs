@@ -502,26 +502,12 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
 }
 
 #[test]
-fn failure_cancel_and_invalid_controls_preserve_all_processing_state() {
-    for mode in 0..3 {
+fn failure_and_cancel_preserve_all_processing_state() {
+    for mode in 0..2 {
         let mut editor = state();
         let before = editor.document.state.project.clone();
         let request = capture_request(&editor);
-        let mut result = outcome(&request);
-        if mode == 2 {
-            result.document.project.set_gamma(f64::NAN);
-            result.document.project.set_balance(Balance {
-                warmth: 0.8,
-                tint: 0.8,
-            });
-            result
-                .document
-                .project
-                .set_response(crate::processing::Response {
-                    toe: 1.,
-                    shoulder: 0.02,
-                });
-        }
+        let result = outcome(&request);
         editor.accept_analysis(
             &request,
             if mode == 0 {

@@ -4,6 +4,7 @@ use crate::{
     scan_regions::Areas,
 };
 
+mod boundaries;
 mod film_edges;
 mod interpretation;
 

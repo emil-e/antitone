@@ -352,6 +352,7 @@ impl Document {
         self.validate_with_device(None)
     }
 
+    #[cfg(test)]
     /// Preflight known source domains without retaining offscreen images; unresolved
     /// Digital domains complete numerical admission during lazy preparation.
     pub fn validate_for_device(&self, device: &wgpu::Device) -> Result<()> {
