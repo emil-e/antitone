@@ -125,15 +125,32 @@ fn rgb16(path: &Path) -> Vec<u16> {
 }
 #[test]
 fn tiff_applies_one_scene_look_before_each_selected_output_and_records_identity() {
-    compare_tiff(false);
+    compare_tiff(false, look([-2.; 3], [2.; 3]));
 }
 
 #[test]
 fn repaired_tiff_applies_the_scene_look_after_neutral_replacement_and_matches_scalar_ocio() {
-    compare_tiff(true);
+    compare_tiff(true, look([-2.; 3], [2.; 3]));
 }
 
-fn compare_tiff(repaired: bool) {
+#[test]
+fn supra_paper_only_tiff_matches_scalar_for_both_outputs_without_another_negative() {
+    use antitone::looks::spektrafilm::{Model, Paper, Selection};
+    let selection = Selection {
+        negative: None,
+        paper: Paper::from_id("kodak_supra_endura").unwrap(),
+    };
+    let asset = Model::new(selection, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap()
+        .bake(
+            selection.authoring_grid(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+    compare_tiff(false, Arc::new(asset));
+}
+
+fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
     let (device, queue, renderer) = context();
     let (scan, calibration, roll, grade, composition) = fixture();
     let (instructions, repairs) = if repaired {
@@ -141,7 +158,6 @@ fn compare_tiff(repaired: bool) {
     } else {
         (vec![], vec![])
     };
-    let asset = look([-2.; 3], [2.; 3]);
     let pipeline = AdjustmentLayerPipeline::new(
         InputSettings::negative((calibration).validate().unwrap()),
         roll,

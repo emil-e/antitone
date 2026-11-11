@@ -102,6 +102,39 @@ fn current_material_labels_do_not_rebake_a_saved_129_cube_with_a_retired_generat
 }
 
 #[test]
+fn saved_supra_samples_remain_authoritative_when_the_current_paper_generator_changes() {
+    use antitone::looks::{authoring, spektrafilm};
+    use std::sync::atomic::AtomicBool;
+    let saved: Arc<LookAsset> = Arc::new(
+        serde_json::from_str(include_str!("fixtures/spektrafilm/supra-original.json")).unwrap(),
+    );
+    let selection = spektrafilm::Selection {
+        negative: None,
+        paper: spektrafilm::Paper::from_id("kodak_supra_endura").unwrap(),
+    };
+    assert_eq!(
+        spektrafilm::Selection::from_origin(saved.origin()),
+        Some(selection)
+    );
+    let fresh = spektrafilm::Model::new(selection, &AtomicBool::new(false))
+        .unwrap()
+        .bake(authoring::DEFAULT_GRID, &AtomicBool::new(false))
+        .unwrap();
+    assert_ne!(fresh.origin(), saved.origin());
+    assert_ne!(fresh.lut().id(), saved.lut().id());
+    let mut project = Project::default();
+    project.output.film_and_paper = Some(saved.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("accepted-supra.antitone");
+    project.save(&path, Save::New).unwrap();
+    let reopened = Project::load(&path).unwrap().output.film_and_paper.unwrap();
+    assert_eq!(reopened.origin(), saved.origin());
+    assert_eq!(reopened.lut().id(), saved.lut().id());
+    assert_eq!(reopened.lut().nodes(), saved.lut().nodes());
+    assert_eq!(reopened.lut().domain(), saved.lut().domain());
+}
+
+#[test]
 fn malformed_embedded_assets_in_either_slot_are_rejected_at_their_actual_fields() {
     let mut project = Project::default();
     project.output.lut = Some(lut(LookOrigin::Imported));

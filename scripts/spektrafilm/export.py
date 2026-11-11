@@ -7,6 +7,8 @@ No photograph inputs, fitted colour transforms or runtime Python are involved.
 
 from pathlib import Path
 import argparse
+import copy
+import dataclasses
 import hashlib
 import importlib
 import json
@@ -17,8 +19,11 @@ import tempfile
 import zlib
 
 from build import LOCK, REVISION, verify_environment
+from positive import expose, prepare
+from reference import NEGATIVE as REFERENCE_NEGATIVE
 
 ROOT = Path(__file__).resolve().parents[2]
+SUPRA = "kodak_supra_endura"
 
 
 def sha(path):
@@ -30,6 +35,7 @@ def main():
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scanner-size", type=int, default=33, choices=[17, 33, 65])
+    parser.add_argument("--apd-responsivities", type=Path, required=True)
     args = parser.parse_args()
     cache = ROOT / ".cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -139,8 +145,22 @@ def export(args, scratch):
         @ srgb_xyz
     )
 
-    def reference_rgb(rgb):
-        return np.asarray(rgb) @ to_ref.T
+    reference_space = "Antitone_p3rec50"
+    colour.RGB_COLOURSPACES[reference_space] = colour.RGB_Colourspace(
+        reference_space, refprim, white, whitepoint_name="D65"
+    )
+
+    def reference_rgb(rgb, paper):
+        return np.asarray(rgb) if paper == SUPRA else np.asarray(rgb) @ to_ref.T
+
+    def supra_scanner(p):
+        # Keep the fixed exposure calibration separate from output finishing.
+        p = copy.deepcopy(p)
+        p.io.output_color_space = reference_space
+        p.io.output_gamut_compress = dataclasses.replace(
+            p.io.output_gamut_compress, lightness_compression=None
+        )
+        return Pipeline(p)._scanning_stage
 
     gray_target = ocio([[0.18, 0.18, 0.18]], "forward")[0] @ np.linalg.inv(to_ref).T
 
@@ -250,6 +270,8 @@ def export(args, scratch):
         ]
     )
     fixtures = {"revision": REVISION, "cases": [], "paper_only": []}
+    positive_drivers = {}
+    output_validation = {}
     for name in paper_ids:
         p = params("kodak_portra_400", name)
         pipe = Pipeline(p)
@@ -276,6 +298,11 @@ def export(args, scratch):
             name,
             result.message,
         )
+        if name == SUPRA:
+            scanner = supra_scanner(p)
+            positive_drivers[name] = prepare(
+                p.print, params(REFERENCE_NEGATIVE, name).film, args.apd_responsivities
+            )
         nscan = args.scanner_size
         lo = curves.min(axis=0)
         hi = curves.max(axis=0)
@@ -287,7 +314,15 @@ def export(args, scratch):
                 for v in np.array_split(density, max(1, len(density) // 8192))
             ]
         )
-        encoded = cct(ocio(reference_rgb(rgb), "inverse"))
+        reference_values = reference_rgb(rgb, name)
+        carrier = ocio(reference_values, "inverse")
+        if name == SUPRA:
+            assert (reference_values >= 0).all() and (reference_values <= 1).all()
+            assert (carrier >= 0).all() and (carrier <= 1024).all()
+            roundtrip = float(np.max(abs(ocio(carrier, "forward") - reference_values)))
+            assert roundtrip < 0.00005
+            output_validation[name] = {"nodes": len(rgb), "max_reference_roundtrip": roundtrip}
+        encoded = cct(carrier)
         filename = f"{name}-scan.cct.z"
         (output / filename).write_bytes(zlib.compress(encoded.astype("<f4").tobytes(), 9))
         catalog["paper"].append(
@@ -302,7 +337,16 @@ def export(args, scratch):
                 "positive_gray_logH": result.x.tolist(),
             }
         )
-        paper_h = result.x - 0.6 * 17.52 * (cct(probes) - cct(np.full((1, 3), 0.18))) * np.log10(2)
+        if name in positive_drivers:
+            driver = positive_drivers[name]
+            catalog["paper"][-1]["positive_driver"] = {
+                key: driver[key] for key in ["input_luminance", "photometry", "reference"]
+            }
+            paper_h = expose(probes, axis, curves, result.x, driver)
+        else:
+            paper_h = result.x - 0.6 * 17.52 * (
+                cct(probes) - cct(np.full((1, 3), 0.18))
+            ) * np.log10(2)
         out = read_h(paper_h)
         density = stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
         fixtures["paper_only"].append(
@@ -311,9 +355,14 @@ def export(args, scratch):
                 "input": probes.tolist(),
                 "paper_h": paper_h.tolist(),
                 "paper_density": density.tolist(),
-                "reference_rgb": reference_rgb(out).tolist(),
+                "reference_rgb": reference_rgb(out, name).tolist(),
             }
         )
+        if name in positive_drivers:
+            # Undo the scanner's numeric log-zero epsilon for a physical-Y observation.
+            fixtures["paper_only"][-1]["physical_y"] = (
+                10 ** scanner.cmy_to_log_xyz(density.reshape(1, -1, 3))[0, :, 1] - 1e-10
+            ).tolist()
         for film in negative_ids:
             p = params(film, name)
             pipe = Pipeline(p)
@@ -341,6 +390,8 @@ def export(args, scratch):
                 np.asarray(stage._compute_exposure_factor_midgray(sensitivity, lamp)).reshape(-1)[0]
             )
             preflash = stage._compute_raw_preflash(source, sensitivity).reshape(3)
+            if name == SUPRA:
+                scanner = supra_scanner(p)
             catalog["pairs"].append(
                 {
                     "negative": film,
@@ -364,7 +415,7 @@ def export(args, scratch):
                     "film_density": d.reshape(-1, 3).tolist(),
                     "paper_h": ph.reshape(-1, 3).tolist(),
                     "paper_density": pd.reshape(-1, 3).tolist(),
-                    "reference_rgb": reference_rgb(out).tolist(),
+                    "reference_rgb": reference_rgb(out, name).tolist(),
                 }
             )
         print(name, "complete", flush=True)
@@ -395,7 +446,7 @@ def export(args, scratch):
         "source": "https://github.com/andreavolpato/spektrafilm",
         "author": "Andrea Volpato",
         "revision": REVISION,
-        "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds the positive-paper adapter and inverse authoring DRT; no photographic fitting. Data derivatives CC BY-SA4.0; native algorithm ports GPLv3.",
+        "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds a brightness-anchored convex reference-negative spectral adapter with boundary-only radial mapping and inverse authoring DRT; no photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived components are a private trial with separate unresolved public redistribution clearance.",
         "source_code_sha256": sources,
         "environment_lock_sha256": sha(LOCK),
         "build_tool_sha256": sha(ROOT / "scripts/spektrafilm/build.py"),
@@ -409,6 +460,19 @@ def export(args, scratch):
             "OpenColorIO": "2.6.0",
         },
         "generator_sha256": sha(Path(__file__)),
+        "positive_driver_sha256": sha(Path(__file__).with_name("positive.py")),
+        "reference_driver_sha256": sha(Path(__file__).with_name("reference.py")),
+        "positive_drivers": positive_drivers,
+        "paper_output_validation": output_validation,
+        "paper_output_overrides": {
+            SUPRA: {
+                "reference_parameters": reference,
+                "gamut_compression": "cam16ucs",
+                "knee": [0.0, 1.0, 6.0],
+                "lightness_compression": None,
+                "exposure_calibration": "Fixed sRGB reference; output finishing does not rebalance exposure.",
+            }
+        },
         "reference_helper_sha256": sha(ROOT / "native/spektrafilm/reference.cpp"),
         "source_lut_sha256": sha(
             upstream / "src/spektrafilm/data/luts/spectral_upsampling/irradiance_xy_tc.npy"

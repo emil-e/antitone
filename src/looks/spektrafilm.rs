@@ -14,6 +14,7 @@ use std::sync::{
 };
 mod data;
 mod grid;
+mod positive;
 use super::lookup::cubic_2d;
 use grid::{CubicGrid, bilinear};
 
@@ -67,6 +68,14 @@ pub struct Selection {
     pub paper: Paper,
 }
 impl Selection {
+    /// Finer sampling resolves the reference adapter's saturated exposure curvature.
+    pub fn authoring_grid(self) -> u32 {
+        if self.negative.is_none() && self.paper.id() == "kodak_supra_endura" {
+            129
+        } else {
+            super::authoring::DEFAULT_GRID
+        }
+    }
     pub fn name(self) -> String {
         self.negative.map_or_else(
             || self.paper.name().to_owned(),
@@ -111,6 +120,8 @@ fn fingerprint() -> &'static str {
             include_bytes!("sampling.rs").as_slice(),
             include_bytes!("spektrafilm/data.rs").as_slice(),
             include_bytes!("spektrafilm/grid.rs").as_slice(),
+            include_bytes!("spektrafilm/positive.rs").as_slice(),
+            include_bytes!("spektrafilm/positive/reference.rs").as_slice(),
             include_bytes!("lookup.rs").as_slice(),
         ] {
             hash.update(bytes);
@@ -259,6 +270,15 @@ fn film_cmy_to_print_log_raw(film: &data::Film, pair: &data::Pair, d: DVec3) -> 
         .map(f64::log10)
 }
 
+// An idealized RGB-record negative-equivalent reference, not measured printer
+// densities. The ordinary branch is g*log10(x/gray); its low/signed tangent
+// retains the shared scalar tone convention without clipping working AP1.
+fn reference_exposure(paper: &data::Paper, rgb: DVec3, mapping: &data::Mapping) -> DVec3 {
+    let stops = 17.52
+        * (rgb.map(photographic::encode) - DVec3::splat(photographic::encode(mapping.gray_ap1)));
+    paper.positive_gray_log_h - stops * (mapping.exposure_compression * std::f64::consts::LOG10_2)
+}
+
 pub struct Model {
     selection: Selection,
     film: Option<Filming>,
@@ -278,25 +298,22 @@ impl Model {
             scanner: data::scanner(paper)?,
         })
     }
-    fn paper_exposure(&self, rgb: DVec3) -> DVec3 {
-        match &self.film {
-            Some(film) => film
+    fn paper_exposure(&self, rgb: DVec3) -> Result<DVec3, Error> {
+        match (&self.film, &self.paper.positive_driver) {
+            (Some(film), _) => Ok(film
                 .printing
-                .sample(develop(film.profile, film.expose(rgb))),
-            None => {
-                // Existing positive-paper convention, not a recovered real-negative spectrum.
-                let mapping = &data::catalog().paper_mapping;
-                let stops = 17.52
-                    * (rgb.map(photographic::encode)
-                        - DVec3::splat(photographic::encode(mapping.gray_ap1)));
-                self.paper.positive_gray_log_h
-                    - stops * (mapping.exposure_compression * std::f64::consts::LOG10_2)
-            }
+                .sample(develop(film.profile, film.expose(rgb)))),
+            (None, Some(driver)) => driver.expose(rgb, self.paper, &data::catalog().paper_mapping),
+            (None, None) => Ok(reference_exposure(
+                self.paper,
+                rgb,
+                &data::catalog().paper_mapping,
+            )),
         }
     }
     pub fn encoded(&self, rgb: DVec3) -> Result<DVec3, Error> {
         require(rgb.is_finite(), "nonfinite spektrafilm input")?;
-        let density = develop_print_morph(self.paper, self.paper_exposure(rgb));
+        let density = develop_print_morph(self.paper, self.paper_exposure(rgb)?);
         let value = self.scanner.sample(density);
         require(value.is_finite(), "nonfinite spektrafilm output")?;
         Ok(value)

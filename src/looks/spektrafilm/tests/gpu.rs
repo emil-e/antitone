@@ -1,5 +1,6 @@
 use super::*;
-use crate::looks::authoring;
+#[cfg(feature = "ocio-reference")]
+mod sampling;
 
 #[test]
 fn native_treatment_matches_upstream_and_reports_final_bake_approximation() {
@@ -43,13 +44,17 @@ fn native_treatment_matches_upstream_and_reports_final_bake_approximation() {
         let mut baked_count = 0;
         for (selection, input, targets) in cases {
             let model = Model::new(selection, &cancel).unwrap();
-            let baked = if selection.paper == Paper::default()
+            let default_cases = selection.paper == Paper::default()
                 && selection
                     .negative
-                    .is_none_or(|n| ["kodak_portra_400", "kodak_ektar_100"].contains(&n.id()))
-            {
+                    .is_none_or(|n| ["kodak_portra_400", "kodak_ektar_100"].contains(&n.id()));
+            let supra_cases = selection.paper.id() == "kodak_supra_endura"
+                && selection
+                    .negative
+                    .is_none_or(|n| n.id() == "kodak_portra_400");
+            let baked = if default_cases || supra_cases {
                 baked_count += 1;
-                let asset = model.bake(authoring::DEFAULT_GRID, &cancel).unwrap();
+                let asset = model.bake(selection.authoring_grid(), &cancel).unwrap();
                 crate::looks::sampling::assert_material_vertices(asset.lut(), |rgb| {
                     model.encoded(rgb)
                 });
@@ -95,8 +100,8 @@ fn native_treatment_matches_upstream_and_reports_final_bake_approximation() {
             "viewed component approximation error {maximum}"
         );
         assert_eq!(
-            baked_count, 3,
-            "both source stocks and paper-only must exercise production-size baking"
+            baked_count, 5,
+            "default-paper stock/bypass and Supra stock/bypass must exercise production-size baking"
         );
         let actual = reference
             .apply(&device, &queue, &gate, false, &baked_scene)
@@ -105,8 +110,11 @@ fn native_treatment_matches_upstream_and_reports_final_bake_approximation() {
         // Approximation diagnostics are not perceptual acceptance thresholds;
         // judge ordinary gradients through the intended target DRT and encoding.
         println!(
-            "Three default{}³ bakes against source, including tetrahedral resampling: maxRGB error {maximum}",
-            authoring::DEFAULT_GRID
+            "Five provider-sized bakes against source, including tetrahedral resampling: maxRGB error {maximum}"
+        );
+        assert!(
+            maximum < 0.01,
+            "composed material/source approximation error {maximum}"
         );
     });
 }

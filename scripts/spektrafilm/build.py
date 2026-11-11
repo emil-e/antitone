@@ -116,14 +116,24 @@ def setup(python):
     )
 
 
-def generate(python, upstream, output):
+def generate(python, upstream, output, apd_responsivities):
     if sys.platform != "darwin":
         raise ValueError(
             "asset regeneration is currently supported on macOS; application builds use the checked-in components"
         )
     source = verify_source(upstream)
     env = dict(os.environ, PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1")
-    run(python, LOCK.with_name("export.py"), "--upstream", source, "--output", output, env=env)
+    run(
+        python,
+        LOCK.with_name("export.py"),
+        "--upstream",
+        source,
+        "--output",
+        output,
+        "--apd-responsivities",
+        apd_responsivities,
+        env=env,
+    )
     run(sys.executable, LOCK.with_name("check.py"), "--candidate", output)
 
 
@@ -147,6 +157,7 @@ def main():
         help="existing clean pinned checkout, or setup's cached source",
     )
     export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--apd-responsivities", type=Path, required=True)
     reference = commands.add_parser(
         "reference", help="regenerate pinned authoring-DRT GPU conformance resources"
     )
@@ -159,7 +170,7 @@ def main():
     if args.command == "setup":
         setup(args.python)
     elif args.command == "generate":
-        generate(args.python, args.upstream, args.output)
+        generate(args.python, args.upstream, args.output, args.apd_responsivities)
     elif args.command == "reference":
         run(sys.executable, LOCK.with_name("generate_reference.py"), "--output", args.output)
     else:

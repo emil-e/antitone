@@ -22,6 +22,8 @@ struct Case {
 }
 #[derive(Deserialize)]
 struct PaperCase {
+    #[serde(default)]
+    physical_y: Option<Vec<f64>>,
     paper: String,
     input: Vec<DVec3>,
     paper_h: Vec<DVec3>,
@@ -48,6 +50,22 @@ fn source_evaluated_catalogue_has_every_selectable_pair_and_preserves_identity()
         .map(|v| (v.negative.clone(), v.paper.clone()))
         .collect();
     assert_eq!(expected, actual);
+    let expected_papers: std::collections::BTreeSet<_> =
+        Paper::all().map(|p| p.id().to_owned()).collect();
+    let actual_papers = f.paper_only.iter().map(|p| p.paper.clone()).collect();
+    assert_eq!(expected_papers, actual_papers);
+    assert_eq!(f.paper_only.len(), Paper::all().len());
+    for case in &f.paper_only {
+        if case.paper == "kodak_supra_endura" {
+            assert_eq!(
+                case.physical_y
+                    .as_ref()
+                    .expect("Supra source photometry is required")
+                    .len(),
+                case.input.len()
+            );
+        }
+    }
     for case in &f.cases {
         assert_eq!(case.reference_rgb.len(), case.input.len());
         assert!(case.reference_rgb.iter().all(|v| v.is_finite()));
@@ -111,7 +129,7 @@ fn native_formation_and_spectral_projection_match_executed_upstream() {
 }
 
 #[test]
-fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention() {
+fn paper_only_exposure_and_density_match_executed_source_without_film_formation() {
     for case in fixtures().paper_only {
         assert_eq!(case.reference_rgb.len(), case.input.len());
         assert!(case.reference_rgb.iter().all(|v| v.is_finite()));
@@ -121,10 +139,14 @@ fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention
         };
         let model = Model::new(selection, &AtomicBool::new(false)).unwrap();
         for (i, input) in case.input.iter().enumerate() {
-            let h = model.paper_exposure(*input);
+            let h = model.paper_exposure(*input).unwrap();
             assert!((h - case.paper_h[i]).abs().max_element() < 1e-12);
             let d = develop_print_morph(model.paper, h);
             assert!((d - case.paper_density[i]).abs().max_element() < 1e-12);
+            if let Some(expected) = &case.physical_y {
+                let driver = model.paper.positive_driver.as_ref().unwrap();
+                assert!((driver.luminance(model.paper, h) - expected[i]).abs() < 2e-14);
+            }
             assert!(model.encoded(*input).unwrap().is_finite());
         }
         let neutral = model
@@ -133,6 +155,95 @@ fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention
             .map(photographic::decode);
         println!("{} paper-only gray {neutral:?}", case.paper);
         assert!((neutral - DVec3::splat(0.18)).abs().max_element() < 0.001);
+    }
+}
+
+#[test]
+fn supra_brightness_anchor_preserves_the_neutral_path_and_is_not_a_no_op() {
+    let model = Model::new(
+        Selection {
+            negative: None,
+            paper: Paper::from_id("kodak_supra_endura").unwrap(),
+        },
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(model.film.is_none());
+    let mapping = &data::catalog().paper_mapping;
+    let baseline = |rgb: DVec3| {
+        let stops = 17.52
+            * (rgb.map(photographic::encode)
+                - DVec3::splat(photographic::encode(mapping.gray_ap1)));
+        model.paper.positive_gray_log_h
+            - stops * (mapping.exposure_compression * std::f64::consts::LOG10_2)
+    };
+    for value in [-1., -0.02, 0., 0.003, 0.0078125, 0.18, 1., 16., 1024.] {
+        let input = DVec3::splat(value);
+        assert!(
+            (model.paper_exposure(input).unwrap() - baseline(input))
+                .abs()
+                .max_element()
+                < 1e-12
+        );
+        let unchanged = model
+            .scanner
+            .sample(develop_print_morph(model.paper, baseline(input)));
+        assert!(
+            (model.encoded(input).unwrap() - unchanged)
+                .abs()
+                .max_element()
+                < 1e-12
+        );
+    }
+    let colour = DVec3::new(0.32, 0.16, 0.10);
+    let driver = model.paper.positive_driver.as_ref().unwrap();
+    let target_h = baseline(DVec3::splat(driver.input_luminance.dot(colour)));
+    let target_y = driver.luminance(model.paper, target_h);
+    assert!((driver.luminance(model.paper, baseline(colour)) - target_y).abs() > 1e-6);
+    assert!(
+        (driver.luminance(model.paper, model.paper_exposure(colour).unwrap()) - target_y).abs()
+            < 2e-12
+    );
+    let uncalibrated = model
+        .scanner
+        .sample(develop_print_morph(model.paper, baseline(colour)));
+    assert!(
+        (model.encoded(colour).unwrap() - uncalibrated)
+            .abs()
+            .max_element()
+            > 1e-5
+    );
+}
+
+#[test]
+fn spectral_reference_adapter_changes_only_supra_paper_input() {
+    for paper in &data::catalog().paper {
+        assert_eq!(
+            paper.positive_driver.is_some(),
+            paper.id == "kodak_supra_endura"
+        );
+        let model = Model::new(
+            Selection {
+                negative: None,
+                paper: Paper::from_id(&paper.id).unwrap(),
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let input = DVec3::new(0.32, 0.16, 0.10);
+        let original = reference_exposure(paper, input, &data::catalog().paper_mapping);
+        let actual = model.paper_exposure(input).unwrap();
+        if paper.positive_driver.is_none() {
+            assert_eq!(actual, original);
+        } else {
+            let difference = actual - original;
+            assert!(
+                (difference - DVec3::splat(difference.x))
+                    .abs()
+                    .max_element()
+                    > 0.001
+            );
+        }
     }
 }
 

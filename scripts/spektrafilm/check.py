@@ -15,6 +15,8 @@ def validate(folder, files=None):
     provenance = json.loads((folder / "provenance.json").read_text())
     for field, path in [
         ("generator_sha256", ROOT / "scripts/spektrafilm/export.py"),
+        ("positive_driver_sha256", ROOT / "scripts/spektrafilm/positive.py"),
+        ("reference_driver_sha256", ROOT / "scripts/spektrafilm/reference.py"),
         ("reference_helper_sha256", ROOT / "native/spektrafilm/reference.cpp"),
         ("environment_lock_sha256", ROOT / "scripts/spektrafilm/requirements.lock"),
         ("build_tool_sha256", ROOT / "scripts/spektrafilm/build.py"),
