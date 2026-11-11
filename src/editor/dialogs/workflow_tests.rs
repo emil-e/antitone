@@ -176,7 +176,19 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
         let before = app.read(|editor| editor.document.project.clone());
         app.enter(|editor, cx| {
             let mut rejected = editor.document.capture();
-            rejected.project.roll.exposure = f64::INFINITY;
+            let area = rejected.project.sources[0].development.active_area;
+            let map = std::sync::Arc::new(
+                crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1e37); 4])
+                    .unwrap(),
+            );
+            rejected
+                .project
+                .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                    "overflowing-reference.dng",
+                    map,
+                )))
+                .unwrap();
+            rejected.project.require_runtime().unwrap();
             editor.start_correction(rejected, cx);
             assert!(editor.interaction_blocked() && editor.document.flat_correction.is_some());
         });

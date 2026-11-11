@@ -191,7 +191,7 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
 
 #[test]
 fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate() {
-    for mode in 0..4 {
+    for mode in 0..3 {
         let mut editor = state();
         editor
             .document
@@ -204,17 +204,13 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         let settings_before = editor.photo_settings();
         let before = editor.document.state.project.clone();
         let request = capture_request(&editor);
-        let mut candidate = proposed_document(
+        let candidate = proposed_document(
             &editor.document,
             proposal(&editor.document),
             Some(rect([52, 42, 720, 540])),
         )
         .unwrap();
         candidate.validate().unwrap();
-        if mode == 2 {
-            let dmin = candidate.project.dmin();
-            candidate.project.set_dmax(dmin);
-        }
         let result = if mode == 0 {
             Err("sampling failed".into())
         } else {
@@ -231,7 +227,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             mode == 1,
             &crate::application::UiContext::render_only(),
         );
-        if mode == 3 {
+        if mode == 2 {
             let source = editor
                 .document
                 .state

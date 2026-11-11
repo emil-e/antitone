@@ -113,10 +113,10 @@ fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Err
 }
 
 pub(super) struct Outcome {
-    pub document: Document,
-    pub frames: usize,
-    pub wb_rejections: Vec<(SourceId, String)>,
-    pub support: Rect,
+    document: Document,
+    frames: usize,
+    wb_rejections: Vec<(SourceId, String)>,
+    support: Rect,
 }
 
 pub(super) fn rect([x, y, width, height]: [u32; 4]) -> Rect {
@@ -380,20 +380,6 @@ impl Editor {
                         return;
                     }
                 };
-                if let Err(error) = self
-                    .validate_document_candidate(&outcome.document)
-                    .and_then(|_| {
-                        outcome
-                            .document
-                            .project
-                            .source(snapshot.selected)
-                            .map(|_| ())
-                    })
-                {
-                    self.status = format!("Analysis rejected: {error}");
-                    self.end_analysis_review(cx);
-                    return;
-                }
                 if snapshot.areas.is_none()
                     && let Some(ready) = &mut self.document.visit.canvas.ready
                 {

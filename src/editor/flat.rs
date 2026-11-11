@@ -92,19 +92,24 @@ impl Correction {
         document: &Document,
         previous: Option<&Arc<Self>>,
     ) -> Result<Option<Arc<Self>>, Error> {
-        document.validate_for_device(device)?;
         let Some(settings) = document.project.active_flat_field() else {
             return Ok(None);
         };
-        if let Some(previous) = previous
-            && previous.settings == *settings
-        {
-            return Ok(Some(previous.clone()));
-        }
-        let gpu = Arc::new(GpuFlatField::new(device, settings.map.clone())?);
+        let previous = previous.filter(|previous| previous.settings == *settings);
+        let gpu = match previous {
+            Some(previous) => previous.gpu.clone(),
+            None => Arc::new(GpuFlatField::new(device, settings.map.clone())?),
+        };
         for source in &document.project.sources {
             if document.project.order.contains(&source.id) {
-                let development = document.image_recipe(source.id)?.neutral.source_development;
+                let development = crate::development_metadata::Development::captured(
+                    source,
+                    &document
+                        .exposure_origin(source.id)
+                        .expect("registered photo locator"),
+                    document.project.input,
+                    &document.development_metadata,
+                );
                 let Ok(development) = development.resolved() else {
                     continue;
                 };
@@ -114,6 +119,9 @@ impl Correction {
                 gpu.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN)?;
                 SourceGeometry::new(source.development.active_area, [1, 1])?;
             }
+        }
+        if let Some(previous) = previous {
+            return Ok(Some(previous.clone()));
         }
         Ok(Some(Arc::new(Self {
             settings: settings.clone(),
@@ -753,6 +761,8 @@ mod resources_tests;
 mod testing;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validation_tests;
 
 impl Editor {
     pub(super) fn reference_failed(&mut self, details: String) {
