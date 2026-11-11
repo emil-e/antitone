@@ -232,7 +232,9 @@ impl Editor {
             return;
         }
         let scope = &mut self.document;
-        scope.sampling_inputs.retain(&scope.state);
+        scope
+            .sampling_inputs
+            .retain(&scope.state, &scope.initialization);
         if active_removed {
             self.document.visit.current_source = None;
         }

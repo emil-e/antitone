@@ -110,7 +110,7 @@ pub(in crate::editor) async fn prepare(
     let regions_ready = cached.groups.iter().map(|g| g.sources.len()).sum::<usize>()
         == document.project.order.len();
     let total = document.project.order.len();
-    retained.retain(&document);
+    retained.retain(&document, &initialization);
     let mut frames = Vec::with_capacity(total);
     let mut work = Vec::with_capacity(total);
     for &source in &document.project.order {

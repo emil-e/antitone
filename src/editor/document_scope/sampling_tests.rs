@@ -51,7 +51,7 @@ fn grading_does_not_invalidate_original_inputs_but_development_changes_do() {
         .development
         .camera_to_ap1[0][0] *= 1.1;
     assert!(inputs.get(id, &document.source_key(id).unwrap()).is_none());
-    inputs.retain(&document);
+    inputs.retain(&document, &Default::default());
     assert_eq!(inputs.retained_bytes(), 0);
 }
 

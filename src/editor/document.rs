@@ -1,5 +1,6 @@
-//! Document snapshots, candidate preparation and transactional editor installation.
-use super::{ActivityOptions, Editor, history};
+//! Project metadata snapshots, captured source facts and persistence.
+#[cfg(test)]
+use super::{Editor, history};
 use crate::{
     Error,
     project::{Project, Save, Source, SourceId},
@@ -630,17 +631,6 @@ mod tests;
 #[cfg(test)]
 mod workflow_tests;
 
-pub(super) struct Restore {
-    pub document: Document,
-    pub selected: Option<SourceId>,
-    pub direction: history::Direction,
-}
-
-pub(super) struct Prepared {
-    pub document: Document,
-    pub selected: Option<SourceId>,
-}
-
 pub(super) struct Write {
     pub document: Document,
     pub path: PathBuf,
@@ -651,147 +641,5 @@ impl Write {
     pub fn save(self, device: &wgpu::Device) -> Result<Document, Error> {
         self.document
             .save_with_device(&self.path, self.policy, Some(device))
-    }
-}
-
-fn prepare_restore(
-    mut restore: Restore,
-    initialization: Arc<crate::source::Initialization>,
-) -> Result<Prepared, Error> {
-    restore.document.capture_initialization(&initialization);
-    restore.document.validate_with_device(None)?;
-    Ok(Prepared {
-        document: restore.document,
-        selected: restore.selected,
-    })
-}
-
-#[derive(Default)]
-pub(super) struct RestoreTask {
-    task: Option<async_executor::Task<()>>,
-}
-
-impl Editor {
-    pub(super) fn start_history(
-        &mut self,
-        restore: Restore,
-        cx: &crate::application::UiContext<'_, Self>,
-    ) {
-        if self.dust_search_pending() {
-            self.status = "Wait for donor selection before changing the document".into();
-            return;
-        }
-        self.cancel_spatial();
-        self.cancel_control_edit();
-        self.history_pending = Some(history::Pending {
-            direction: restore.direction,
-            cleanup: self.dusting().then(|| self.dust_outlines()),
-        });
-        self.cancel_active_tool();
-        self.document.visit.masks.cancel();
-        let id = self.begin_document_operation();
-        let activity = self
-            .activities
-            .start(ActivityOptions::new("Restoring edit…").modal());
-        let initialization = self.document.initialization.clone();
-        self.history_restore.task = cx.spawn(move |cx| async move {
-            let result = crate::background::run(move |_| prepare_restore(restore, initialization))
-                .await
-                .map_err(|_| "History restoration worker panicked".to_owned())
-                .and_then(|result| result.map(Box::new).map_err(|error| error.to_string()));
-            drop(activity);
-            cx.update(|editor| {
-                editor.history_restored(id, result, &cx);
-                editor.acquire_working(&cx);
-            });
-        });
-    }
-
-    pub(super) fn history_restored(
-        &mut self,
-        id: u64,
-        result: Result<Box<Prepared>, String>,
-        cx: &crate::application::UiContext<'_, Self>,
-    ) {
-        if self.document_pending != Some(id) {
-            return;
-        }
-        self.history_restore = RestoreTask::default();
-        let pending_history = self.history_pending.take();
-        self.document_pending = None;
-        match result {
-            Ok(prepared) => {
-                let next = prepared.selected.and_then(|source| {
-                    prepared
-                        .document
-                        .source_input(source, &self.document.initialization)
-                        .ok()
-                });
-                let same_visit = self.document.visit.current_source == prepared.selected
-                    && match (&next, &self.document.visit.canvas.ready) {
-                        (Some(input), Some(ready)) => {
-                            input.matches(&ready.path, &ready.file, &ready.record)
-                        }
-                        (Some(input), None) => self
-                            .document
-                            .visit
-                            .source
-                            .input
-                            .as_ref()
-                            .is_some_and(|current| current.same_request(input)),
-                        (None, _) => true,
-                    };
-                let correction_changed = self.document.project.active_flat_field()
-                    != prepared.document.project.active_flat_field();
-                self.document.install(prepared.document);
-                self.remember_imported_look();
-                self.id = id;
-                if !same_visit {
-                    if self.document.visit.current_source == prepared.selected {
-                        self.reinterpret_photo(id);
-                    } else {
-                        self.replace_photo_scope(id);
-                    }
-                }
-                self.document.visit.current_source = prepared.selected;
-                self.document
-                    .roll_selection
-                    .reconcile(&self.document.state.project.order, prepared.selected);
-                self.document.selected = prepared
-                    .selected
-                    .and_then(|source| {
-                        self.document
-                            .project
-                            .order
-                            .iter()
-                            .position(|candidate| *candidate == source)
-                    })
-                    .unwrap_or(0);
-                self.refresh_adjustment_layer_selection();
-                self.invalidate_original();
-                if correction_changed {
-                    self.document.correction_restore = None;
-                    self.document.correction = Default::default();
-                    self.restore_correction(cx);
-                }
-                self.history_prepared(pending_history);
-                self.observe_gamma_pivot();
-                if !same_visit && let Some(input) = next {
-                    self.start_source_acquisition(input.path().to_owned(), cx);
-                } else {
-                    self.resume_source_after_document();
-                }
-            }
-            Err(error) => {
-                self.history_failed(pending_history);
-                self.resume_source_after_document();
-                self.status = error;
-                if self.document.visit.source.pending() {
-                    self.document.visit.return_notice = Some(self.status.clone());
-                }
-                self.source_epoch
-                    .store(self.id, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
     }
 }

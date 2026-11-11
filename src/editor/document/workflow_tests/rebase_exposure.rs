@@ -192,12 +192,14 @@ fn relative_save_as_keeps_normalized_range_admission() {
 }
 
 #[test]
-fn history_restoration_checks_known_offscreen_normalization_in_the_target_project() {
+fn history_restores_accepted_settings_while_known_offscreen_normalization_still_guards_saving() {
     let first = crate::exposure_fixture::neutral_dng(0.3);
     let second = crate::exposure_fixture::neutral_dng(1.3);
     let loader = source_loading::SourceLoader::new();
     let mut editor = editor(loader.clone());
     let mut document = digital(&[first.path().to_owned(), second.path().to_owned()]);
+    let destination = tempfile::tempdir().unwrap();
+    let output = destination.path().join("unsafe.antitone");
     let selected = document.project.order[0];
     let offscreen = document.project.order[1];
     range_stack(&mut document, offscreen);
@@ -231,20 +233,35 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     editor.document.history = Default::default();
     editor.record_edit(target.project.clone(), "Remove photo", None);
     with_application(editor, |app| {
-        app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| {
-            !e.interaction_blocked() && !e.document.visit.source.pending()
-        });
-        app.read(|e| {
-            assert_eq!(
-                e.document.state.project, removed,
-                "known offscreen normalization must reject the unsafe restored project"
+        app.enter(|e, cx| {
+            e.restore_history(crate::editor::history::Direction::Undo, cx);
+            assert_eq!(e.document.state.project, target.project);
+            assert!(
+                e.history_label(crate::editor::history::Direction::Undo)
+                    .is_none()
             );
             assert_eq!(
-                e.history_label(crate::editor::history::Direction::Undo),
+                e.history_label(crate::editor::history::Direction::Redo),
                 Some("Remove photo")
             );
+            assert!(!e.interaction_blocked() && e.document_pending.is_none());
+            let snapshot = e.document.capture();
+            assert!(
+                snapshot
+                    .validate_for_device(&e.source_services.as_ref().unwrap().device)
+                    .is_err()
+            );
+            assert!(snapshot.save(&output, crate::project::Save::New).is_err());
+            assert!(
+                !output.exists(),
+                "unsafe numerical output must still be rejected at persistence"
+            );
+            assert_eq!(e.document.state.project, target.project);
         });
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.document.visit.source.pending()
+        });
+        app.read(|e| assert_eq!(e.document.state.project, target.project));
     });
     loader.close_and_wait().unwrap();
 }

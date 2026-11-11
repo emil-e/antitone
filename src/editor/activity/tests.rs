@@ -3,50 +3,33 @@ use super::super::tests::{add_ready_fixture, app_frame, fixture};
 use super::super::*;
 
 #[test]
-
-fn document_transaction_ignores_stale_replies_and_feedback_ends_with_task_teardown() {
-    for save in [false, true] {
-        let mut editor = fixture();
-        if !save {
-            let before = editor.history_snapshot();
-            editor.document.project.roll.exposure += 0.25;
-            editor.record_edit(before, "Exposure", None);
-        }
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                let before = editor.document.state.project.clone();
-                if save {
-                    editor.save_project(
-                        "project.json".into(),
-                        crate::project::Save::New,
-                        Some(Transition::Close),
-                        cx,
-                    );
-                } else {
-                    editor.restore_history(history::Direction::Undo, cx);
-                }
-                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
-                let id = editor.document_pending.unwrap();
-                let title = editor.activities.view().unwrap().title;
-                editor.status = "Unrelated status".into();
-                editor.history_restored(id + 1, Err("stale".into()), cx);
-                assert_eq!(editor.activities.view().unwrap().title, title);
-                assert!(editor.interaction_blocked());
-                assert_eq!(editor.document.state.project, before);
-                if save {
-                    editor.save_result(id, Err("cannot save".into()), cx);
-                } else {
-                    editor.history_restored(id, Err("invalid history metadata".into()), cx);
-                }
-                assert!(editor.document_pending.is_none());
-                assert_eq!(editor.document.state.project, before);
-            });
-            app.pump();
-            app.read(|editor| {
-                assert!(editor.activities.view().is_none() && !editor.interaction_blocked())
-            });
+fn save_ignores_stale_replies_and_feedback_ends_with_task_teardown() {
+    crate::application::test_support::with_application(fixture(), |app| {
+        app.enter(|editor, cx| {
+            let before = editor.document.state.project.clone();
+            editor.save_project(
+                "project.json".into(),
+                crate::project::Save::New,
+                Some(Transition::Close),
+                cx,
+            );
+            assert!(editor.interaction_blocked());
+            let id = editor.document_pending.unwrap();
+            let title = editor.activities.view().unwrap().title;
+            editor.status = "Unrelated status".into();
+            editor.save_result(id + 1, Err("stale".into()), cx);
+            assert_eq!(editor.activities.view().unwrap().title, title);
+            assert!(editor.interaction_blocked());
+            assert_eq!(editor.document.state.project, before);
+            editor.save_result(id, Err("cannot save".into()), cx);
+            assert!(editor.document_pending.is_none());
+            assert_eq!(editor.document.state.project, before);
         });
-    }
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.activities.view().is_none() && !editor.interaction_blocked())
+        });
+    });
 }
 
 #[test]

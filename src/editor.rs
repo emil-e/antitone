@@ -264,8 +264,6 @@ pub struct Editor {
     preferences: preferences::Preferences,
     preference_store: Option<preferences::Store>,
     document: DocumentScope,
-    history_restore: document::RestoreTask,
-    history_pending: Option<history::Pending>,
 
     next_request: u64,
     document_pending: Option<u64>,
@@ -382,10 +380,8 @@ impl Editor {
             tab: 0,
             preferences: preferences::Preferences::default(),
             preference_store: None,
-            history_pending: None,
 
             document,
-            history_restore: document::RestoreTask::default(),
             next_request: 0,
             document_pending: None,
             export_services: None,
@@ -976,7 +972,6 @@ impl Editor {
     pub(super) fn begin_document_operation(&mut self) -> u64 {
         self.document.visit.interaction_action = None;
         self.document.write = save::State::default();
-        self.history_restore = document::RestoreTask::default();
         self.document.retire_edits();
         self.document.flat_correction = None;
         self.retire_look_selection();

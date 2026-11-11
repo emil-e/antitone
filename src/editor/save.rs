@@ -29,7 +29,6 @@ impl Editor {
             self.end_tool();
         }
         self.document.history.finish_group();
-        self.history_pending = None;
         let id = self.begin_document_operation();
         self.document.write.response = Some(send);
         let activity = self

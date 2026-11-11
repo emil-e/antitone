@@ -15,56 +15,57 @@ fn chronological_snapshots_group_gestures_and_branch_only_on_changed_acceptance(
     assert_eq!(history.undo.len(), 1);
     assert_eq!(history.undo[0].before.roll.exposure, 0.);
     assert_eq!(history.undo[0].after.roll.exposure, 1.);
-    history.complete(Direction::Undo);
+    let mut accepted = exposure(1.);
+    history.restore(&mut accepted, Direction::Undo).unwrap();
+    assert_eq!(accepted, exposure(0.));
     history.record(exposure(0.), exposure(0.), "No change", None, None);
     assert_eq!(history.redo.len(), 1);
-    history.complete(Direction::Redo);
+    history.restore(&mut accepted, Direction::Redo).unwrap();
+    assert_eq!(accepted, exposure(1.));
     history.group = None;
     history.record(exposure(1.), exposure(2.), "Exposure", None, gesture);
     assert_eq!(history.undo.len(), 2, "a new gesture is a separate edit");
-    history.complete(Direction::Undo);
+    accepted = exposure(2.);
+    history.restore(&mut accepted, Direction::Undo).unwrap();
+    assert_eq!(accepted, exposure(1.));
     history.record(exposure(1.), exposure(-1.), "Exposure", None, None);
     assert!(history.redo.is_empty());
     assert_eq!(history.undo.last().unwrap().after.roll.exposure, -1.);
 }
 
 fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
-    editor = crate::editor::tests::complete_document_operation(
-        editor,
-        Duration::from_secs(60),
-        |e, cx| {
-            e.restore_history(Direction::Undo, cx);
-            assert!(
-                e.interaction_blocked() && e.document_pending.is_some(),
-                "undo must start"
-            );
-        },
-    );
-    assert_eq!(&editor.document.state.project, before, "{}", editor.status);
-    editor = crate::editor::tests::complete_document_operation(
-        editor,
-        Duration::from_secs(60),
-        |e, cx| {
-            e.restore_history(Direction::Redo, cx);
-            assert!(
-                e.interaction_blocked() && e.document_pending.is_some(),
-                "redo must start"
-            );
-        },
-    );
-    assert_eq!(&editor.document.state.project, after, "{}", editor.status);
+    for (direction, expected) in [(Direction::Undo, before), (Direction::Redo, after)] {
+        editor = crate::editor::tests::complete_document_operation(
+            editor,
+            Duration::from_secs(60),
+            |e, cx| {
+                let depths = (e.document.history.undo.len(), e.document.history.redo.len());
+                e.restore_history(direction, cx);
+                assert_eq!(&e.document.state.project, expected, "{}", e.status);
+                assert!(e.document_pending.is_none() && !e.interaction_blocked());
+                let after = (e.document.history.undo.len(), e.document.history.redo.len());
+                assert_eq!(
+                    after,
+                    match direction {
+                        Direction::Undo => (depths.0 - 1, depths.1 + 1),
+                        Direction::Redo => (depths.0 + 1, depths.1 - 1),
+                    }
+                );
+            },
+        );
+    }
     editor
 }
 
 #[test]
-fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_real_worker() {
+fn authored_history_restores_import_crop_dust_local_and_analysis_before_consumers_prepare() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
     };
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
-        .expect("history worker test requires Metal");
+        .expect("history consumer test requires Metal");
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let mut editor = Editor::new(&device, &queue);
     editor.document.thumbnails =
@@ -203,7 +204,7 @@ fn a_gesture_returning_to_its_start_preserves_redo_and_does_not_absorb_an_earlie
     let mut history = History::default();
     history.record(exposure(0.), exposure(1.), "First", None, None);
     history.record(exposure(1.), exposure(2.), "Second", None, None);
-    history.complete(Direction::Undo);
+    history.restore(&mut exposure(2.), Direction::Undo).unwrap();
     let gesture = Some(egui::Id::new("gesture"));
     history.record(exposure(1.), exposure(1.5), "Gesture", None, gesture);
     history.record(exposure(1.5), exposure(1.), "Gesture", None, gesture);
@@ -332,7 +333,22 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
     let old = directory.path().join("old/grade.antitone");
     let new = directory.path().join("new/grade.antitone");
     let mut editor = controller();
+    let scans = old.parent().unwrap().join("scans");
+    std::fs::create_dir_all(&scans).unwrap();
+    for source in &mut editor.document.project.sources {
+        let name = source.path.file_name().unwrap().to_owned();
+        std::fs::copy(&source.path, scans.join(&name)).unwrap();
+        source.path = PathBuf::from("scans").join(name);
+    }
     editor.document.path = Some(old.clone());
+    editor.document.capture_source_files().unwrap();
+    let source = editor.document.visit.current_source.unwrap();
+    let expected_locator = editor
+        .document
+        .source_path(source)
+        .unwrap()
+        .canonicalize()
+        .unwrap();
     let before = editor.history_snapshot();
     editor.photo_settings_mut().exposure = 1.;
     editor.record_edit(before, "Exposure", editor.document.visit.current_source);
@@ -353,13 +369,37 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
         |e, cx| e.save_project(new.clone(), crate::project::Save::Replace, None, cx),
     );
     assert!(!editor.document.dirty());
-    let source = editor.document.visit.current_source.unwrap();
-    let locator = editor.document.source_path(source).unwrap();
+    assert_eq!(
+        editor
+            .document
+            .source_path(source)
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        expected_locator
+    );
     editor = accept_history(editor, Direction::Undo);
     assert!(editor.document.dirty());
     assert_eq!(editor.document.path, Some(new.clone()));
-    assert_eq!(editor.document.source_path(source).unwrap(), locator);
+    assert_eq!(
+        editor
+            .document
+            .source_path(source)
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        expected_locator
+    );
     editor = accept_history(editor, Direction::Redo);
+    assert_eq!(
+        editor
+            .document
+            .source_path(source)
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        expected_locator
+    );
     assert!(!editor.document.dirty());
     assert_eq!(editor.document.state.project, baseline);
     assert_eq!(editor.document.history.undo.len(), 1);
@@ -659,25 +699,225 @@ fn busy_work_and_decisions_cannot_dispatch_document_history() {
 }
 
 #[test]
-fn failed_and_stale_restoration_preserve_state_and_history_until_acceptance() {
+fn restoration_is_immediate_without_services_and_does_not_change_when_facts_resolve() {
+    use crate::application::test_support::with_application;
+    use crate::processing::InputSettings;
+    for resolved in [false, true] {
+        let raw = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
+        let mut state = Document::default();
+        state.import(&[raw.path().into()]).unwrap();
+        state.project.input = InputSettings::Digital;
+        state.project.scan = None;
+        let id = state.project.order[0];
+        let mut editor = crate::editor::tests::fixture();
+        editor.document = state.into();
+        editor.document.visit.current_source = Some(id);
+        assert!(editor.source_services.is_none() && editor.developments.is_none());
+        let physical = editor.document.source_input(id).unwrap();
+        assert!(physical.development().unwrap().resolved().is_err());
+        if resolved {
+            let loader = crate::source::SourceLoader::new();
+            assert!(
+                pollster::block_on(physical.camera_samples(&loader, None, &Default::default()))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(physical.development().unwrap().resolved().is_ok());
+            loader.close_and_wait().unwrap();
+        }
+        let before = editor.history_snapshot();
+        editor.document.project.roll.exposure = 0.75;
+        editor.record_edit(before.clone(), "Exposure", None);
+        let after = editor.document.project.clone();
+        std::fs::remove_file(raw.path()).unwrap();
+        with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                for (direction, expected, depths) in [
+                    (Direction::Undo, &before, (0, 1)),
+                    (Direction::Redo, &after, (1, 0)),
+                    (Direction::Undo, &before, (0, 1)),
+                ] {
+                    editor.restore_history(direction, cx);
+                    assert_eq!(&editor.document.state.project, expected);
+                    assert_eq!(
+                        (
+                            editor.document.history.undo.len(),
+                            editor.document.history.redo.len()
+                        ),
+                        depths
+                    );
+                    assert!(!editor.interaction_blocked());
+                    assert!(editor.document_pending.is_none());
+                    assert!(
+                        editor
+                            .activities
+                            .view()
+                            .is_none_or(|view| !view.title.contains("Restor"))
+                    );
+                }
+            });
+            app.run_until(Duration::from_secs(10), |editor| {
+                !editor.document.visit.source.pending()
+            });
+            app.read(|editor| {
+                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.history_label(Direction::Redo), Some("Exposure"));
+                assert!(editor.document.visit.canvas.ready.is_none());
+            });
+        });
+    }
+}
+
+#[test]
+fn grading_history_retains_lazy_camera_rasters_without_snapshotting_initialization() {
+    use crate::{processing::InputSettings, source::SourceLoader};
+    let raw = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
+    let mut state = Document::default();
+    state.import(&[raw.path().into()]).unwrap();
+    state.project.input = InputSettings::Digital;
+    state.project.scan = None;
+    let id = state.project.order[0];
     let mut editor = crate::editor::tests::fixture();
+    editor.document = state.into();
+    let physical = editor.document.source_input(id).unwrap();
+    let loader = SourceLoader::new();
+    let camera = pollster::block_on(physical.camera_samples(&loader, None, &Default::default()))
+        .unwrap()
+        .unwrap();
+    loader.close_and_wait().unwrap();
+    let pixels = camera.pixels();
+    editor.document.sampling_inputs.record(id, &camera);
+    assert!(
+        editor
+            .document
+            .state
+            .development_metadata
+            .entries
+            .is_empty(),
+        "facts belong to live initialization, not a captured document"
+    );
     let before = editor.history_snapshot();
-    editor.document.project.roll.exposure = 1.;
+    editor.document.project.roll.exposure = 0.75;
     editor.record_edit(before, "Exposure", None);
-    let accepted = editor.document.state.project.clone();
+    std::fs::remove_file(raw.path()).unwrap();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.restore_history(Direction::Undo, cx);
-            let request = editor.document_pending.unwrap();
-            assert_eq!(editor.document.state.project, accepted);
-            editor.history_restored(request + 1, Err("stale".into()), cx);
-            assert_eq!(editor.document_pending, Some(request));
-            editor.history_restored(request, Err("invalid snapshot".into()), cx);
-            assert_eq!(editor.document.state.project, accepted);
-            assert_eq!(editor.document.history.undo.len(), 1);
-            assert!(editor.document.history.redo.is_empty());
-            assert!(editor.document_pending.is_none());
+            assert_eq!(editor.document.project.roll.exposure, 0.);
+            assert!(Arc::ptr_eq(
+                &pixels,
+                &editor
+                    .document
+                    .sampling_inputs
+                    .get(id, camera.key())
+                    .unwrap()
+            ));
+            assert!(
+                editor
+                    .document
+                    .state
+                    .development_metadata
+                    .entries
+                    .is_empty()
+            );
         });
-        app.pump();
     });
+}
+
+#[test]
+fn correction_resource_failure_does_not_reverse_restoration_or_advance_history_again() {
+    let mut state = Document::default();
+    state
+        .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
+        .unwrap();
+    let source = &state.project.sources[0];
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            source.development.active_area,
+            [2, 2],
+            vec![DVec3::splat(2.); 4],
+        )
+        .unwrap(),
+    );
+    let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+    state.project.set_flat_field(Some(field)).unwrap();
+    let mut editor = crate::editor::tests::fixture();
+    editor.document = state.into();
+    let before = editor.history_snapshot();
+    editor.document.project.set_flat_field(None).unwrap();
+    editor.record_edit(before.clone(), "Clear correction", None);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.restore_history(Direction::Undo, cx);
+            assert_eq!(editor.document.project, before);
+            assert_eq!(
+                editor.history_label(Direction::Redo),
+                Some("Clear correction")
+            );
+            assert!(!editor.interaction_blocked());
+        });
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.correction.pending() && !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.document.project, before);
+            assert!(editor.document.correction.error().is_some());
+            assert_eq!(
+                (
+                    editor.document.history.undo.len(),
+                    editor.document.history.redo.len()
+                ),
+                (0, 1)
+            );
+            assert!(editor.document.project.active_flat_field().is_some());
+        });
+    });
+}
+
+#[test]
+fn a_live_project_or_document_edit_rejects_history_without_retiring_the_owner() {
+    for document in [false, true] {
+        let mut editor = crate::editor::tests::fixture();
+        let before = editor.history_snapshot();
+        editor.document.project.roll.exposure = 1.;
+        editor.record_edit(before, "Exposure", None);
+        let accepted = editor.document.project.clone();
+        if document {
+            let edit = editor.edit_document("Held document").unwrap();
+            editor.restore_history(Direction::Undo, &UiContext::render_only());
+            assert!(editor.owns_document_edit(&edit));
+            assert_eq!(editor.document.project, accepted);
+            assert_eq!(
+                (
+                    editor.document.history.undo.len(),
+                    editor.document.history.redo.len()
+                ),
+                (1, 0)
+            );
+            drop(edit);
+        } else {
+            let edit = editor.edit_project("Held project").unwrap();
+            let preview = edit.preview();
+            editor.restore_history(Direction::Undo, &UiContext::render_only());
+            assert!(preview.active());
+            assert_eq!(editor.document.project, accepted);
+            assert_eq!(
+                (
+                    editor.document.history.undo.len(),
+                    editor.document.history.redo.len()
+                ),
+                (1, 0)
+            );
+            drop(edit);
+        }
+        editor.restore_history(Direction::Undo, &UiContext::render_only());
+        assert_eq!(editor.document.project.roll.exposure, 0.);
+        assert_eq!(
+            (
+                editor.document.history.undo.len(),
+                editor.document.history.redo.len()
+            ),
+            (0, 1)
+        );
+    }
 }
