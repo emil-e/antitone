@@ -60,6 +60,34 @@ pub(crate) fn source_oriented(
     decoy: bool,
     orientation: u16,
 ) -> FixturePath {
+    source_image(order, tags, dng, decoy, orientation, |x, y| {
+        let base = match (x % 2, y % 2) {
+            (0, 0) => 4000,
+            (1, 1) => 10000,
+            _ => 7000,
+        };
+        base + x as u16 * 31 + y as u16 * 17
+    })
+}
+
+/// Uncompressed Sony-tagged Bayer samples authored independently of the developer.
+pub(crate) fn source_with_pixels(pixel: impl Fn(u32, u32) -> u16) -> FixturePath {
+    let order = Order::Little;
+    let levels = vec![
+        (50714, 5, [order.long(512), order.long(1)].concat()),
+        (50717, 4, order.long(16383)),
+    ];
+    source_image(order, levels, false, false, 1, pixel)
+}
+
+fn source_image(
+    order: Order,
+    tags: Vec<Entry>,
+    dng: bool,
+    decoy: bool,
+    orientation: u16,
+    pixel: impl Fn(u32, u32) -> u16,
+) -> FixturePath {
     let mut bytes = match order {
         Order::Little => b"II\x2a\0\x08\0\0\0".to_vec(),
         Order::Big => b"MM\0\x2a\0\0\0\x08".to_vec(),
@@ -179,16 +207,12 @@ pub(crate) fn source_oriented(
         if rendered {
             bytes.extend(std::iter::repeat_n(64, 8 * 8 * 3));
         } else {
-            // The spatial ramp exposes resampling. LibRaw treats Sony slots as 14-bit despite
-            // BitsPerSample=16; every declared sensor value fits that range.
+            // LibRaw treats Sony slots as 14-bit despite BitsPerSample=16.
             for y in 0..64 {
                 for x in 0..64 {
-                    let base = match (x % 2, y % 2) {
-                        (0, 0) => 4000,
-                        (1, 1) => 10000,
-                        _ => 7000,
-                    };
-                    bytes.extend(order.short(base + x * 31 + y * 17));
+                    let value = pixel(x, y);
+                    assert!(value < 16384);
+                    bytes.extend(order.short(value));
                 }
             }
         }

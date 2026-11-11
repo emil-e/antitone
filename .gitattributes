@@ -1,3 +1,6 @@
+# Pinned corrections need LF; empty unified-diff context lines contain a significant space.
+/native/libraw/*.patch text eol=lf whitespace=-blank-at-eol
+
 # Shader sources are compiled text and are compared as text in tests; keep one checkout form.
 *.wgsl text eol=lf
 

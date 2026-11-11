@@ -131,7 +131,7 @@ impl Metadata {
         if self.sdk.is_some() {
             return crate::project::Development::dng(white_balance);
         }
-        crate::project::Development::new(version(), white_balance)
+        crate::project::Development::new(development_version(), white_balance)
     }
 
     pub(crate) fn pre_applied_wb(&self) -> Option<[f64; 3]> {
@@ -446,6 +446,11 @@ pub fn version() -> String {
     unsafe { CStr::from_ptr(antitone_raw_version()) }
         .to_string_lossy()
         .into_owned()
+}
+
+/// Pixel-producer provenance, including changes to our pinned LibRaw development choices.
+pub fn development_version() -> String {
+    format!("{};bayer-dht-v2", version())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

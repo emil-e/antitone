@@ -28,16 +28,25 @@ fn main() {
     println!("cargo:rerun-if-changed=native/logging.h");
     #[cfg(feature = "raw")]
     {
+        println!("cargo:rerun-if-changed=native/libraw/dht-hashes.txt");
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
         let root = std::env::var_os("LIBRAW_SOURCE")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
-                let name = if target_os == "windows" {
-                    "LibRaw-0.22.3-msvc"
+                let hashes = std::fs::read_to_string("native/libraw/dht-hashes.txt")
+                    .expect("pinned LibRaw correction hashes");
+                let revision = hashes
+                    .lines()
+                    .find_map(|line| line.strip_prefix("patched="))
+                    .expect("patched LibRaw source hash");
+                assert!(revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit()));
+                let platform = if target_os == "windows" {
+                    "msvc"
                 } else {
-                    "LibRaw-0.22.3-openmp"
+                    "openmp"
                 };
-                std::path::PathBuf::from(".cache/native-deps").join(name)
+                std::path::PathBuf::from(".cache/native-deps")
+                    .join(format!("LibRaw-0.22.3-{}-{platform}", &revision[..12]))
             });
         if target_os == "windows" {
             assert!(

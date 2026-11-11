@@ -24,7 +24,6 @@ mod json;
 pub const SCHEMA_VERSION: u32 = 20;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
-// Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
 type Result<T> = std::result::Result<T, Error>;
 
@@ -114,7 +113,7 @@ impl Development {
     pub fn for_source(source: &SourceDevelopment) -> Self {
         let mut development = source.decode.clone();
         match development.backend {
-            Developer::LibRaw => development.backend_version = crate::raw::version(),
+            Developer::LibRaw => development.backend_version = crate::raw::development_version(),
             #[cfg(feature = "dng-sdk")]
             Developer::DngSdk => development.backend_version = crate::dng::INTERPRETATION.into(),
             #[cfg(not(feature = "dng-sdk"))]

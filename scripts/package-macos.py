@@ -156,6 +156,16 @@ def copy_monochrome_notices(notices):
             copy_notice(path, notices / relative.parent)
 
 
+def libraw_source():
+    if "LIBRAW_SOURCE" in os.environ:
+        return Path(os.environ["LIBRAW_SOURCE"])
+    hashes = dict(
+        line.split("=", 1)
+        for line in (ROOT / "native/libraw/dht-hashes.txt").read_text().splitlines()
+    )
+    return ROOT / f".cache/native-deps/LibRaw-0.22.3-{hashes['patched'][:12]}-openmp"
+
+
 def write_notices(resources):
     notices = resources / "Licenses"
     notices.mkdir()
@@ -187,9 +197,11 @@ def write_notices(resources):
     ]:
         copy_notice(sdk + path, notices / "DNG-SDK", path)
     copy_notice("vendor/dng-sdk/PROVENANCE.md", notices / "DNG-SDK")
-    raw = Path(os.environ.get("LIBRAW_SOURCE", ROOT / ".cache/native-deps/LibRaw-0.22.3-openmp"))
+    raw = libraw_source()
     for name in ["COPYRIGHT", "LICENSE.LGPL", "LICENSE.CDDL"]:
         copy_notice(raw / name, notices / "LibRaw")
+    for name in ["dht.patch", "dht-hashes.txt"]:
+        copy_notice(f"native/libraw/{name}", notices / "LibRaw")
     copy_notice(
         ".cache/native-deps/openmp-22.1.8-install/share/licenses/LLVM-OpenMP.txt",
         notices / "OpenMP",

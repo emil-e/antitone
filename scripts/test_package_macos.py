@@ -65,6 +65,23 @@ Load command 2
 
 
 class NoticeCollection(unittest.TestCase):
+    def test_libraw_notices_follow_the_corrected_source_revision_or_explicit_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "native/libraw/dht-hashes.txt"
+            manifest.parent.mkdir(parents=True)
+            with (
+                patch.object(packager, "ROOT", root),
+                patch.dict(packager.os.environ, {}, clear=True),
+            ):
+                for digest in ["a" * 64, "b" * 64]:
+                    manifest.write_text(f"upstream={'0' * 64}\npatched={digest}\n")
+                    expected = root / f".cache/native-deps/LibRaw-0.22.3-{digest[:12]}-openmp"
+                    self.assertEqual(packager.libraw_source(), expected)
+                manifest.unlink()
+                with patch.dict(packager.os.environ, {"LIBRAW_SOURCE": str(root / "shared")}):
+                    self.assertEqual(packager.libraw_source(), root / "shared")
+
     def test_material_notices_follow_bound_paper_and_negative_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

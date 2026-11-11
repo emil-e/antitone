@@ -65,6 +65,20 @@ foreach ($path in @(
         Copy-Item $source (Join-Path $notices (Split-Path -Leaf $path))
     }
 }
+$rawHashes = Get-Content -Raw (Join-Path $root 'native/libraw/dht-hashes.txt') | ConvertFrom-StringData
+$rawSource = if ($env:LIBRAW_SOURCE) {
+    $env:LIBRAW_SOURCE
+} else {
+    Join-Path $root ".cache/native-deps/LibRaw-0.22.3-$($rawHashes.patched.Substring(0, 12))-msvc"
+}
+$rawNotices = Join-Path $notices 'LibRaw'
+New-Item -ItemType Directory -Force $rawNotices | Out-Null
+foreach ($name in @('COPYRIGHT', 'LICENSE.LGPL', 'LICENSE.CDDL')) {
+    Copy-Item (Join-Path $rawSource $name) (Join-Path $rawNotices $name)
+}
+foreach ($name in @('dht.patch', 'dht-hashes.txt')) {
+    Copy-Item (Join-Path $root "native/libraw/$name") (Join-Path $rawNotices $name)
+}
 $spektrafilm = Join-Path $notices 'spektrafilm'
 New-Item -ItemType Directory -Force $spektrafilm | Out-Null
 foreach ($name in @('LICENSE-code.txt', 'LICENSE-data.txt', 'CHANGELOG.txt', 'provenance.json')) {

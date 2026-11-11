@@ -6,7 +6,7 @@ Commands for building the editor, running it and producing a local package. [Mak
 
 These instructions cover macOS on Apple Silicon and Windows 11 on x64; [current state](../README.md#current-state) has the platform status. Choose your platform's prerequisites, then follow [build and run](#build-and-run).
 
-Both platforms use [Rust through rustup](https://rustup.rs/). The checked-in `rust-toolchain.toml` selects Rust 1.99.0, rustfmt, Clippy, rust-analyzer and Rust sources without changing your global default. First use downloads missing components into your usual rustup installation. `Cargo.toml` separately declares an MSRV of 1.95.
+Both platforms need Git to apply the pinned native-source corrections and use [Rust through rustup](https://rustup.rs/). The checked-in `rust-toolchain.toml` selects Rust 1.99.0, rustfmt, Clippy, rust-analyzer and Rust sources without changing your global default. First use downloads missing components into your usual rustup installation. `Cargo.toml` separately declares an MSRV of 1.95.
 
 ### macOS
 

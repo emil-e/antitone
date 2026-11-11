@@ -522,8 +522,9 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     p.use_auto_wb = p.use_camera_wb = 0;
     p.no_auto_scale = 0;
     p.highlight = 1;
-    // LibRaw dispatches by CFA: AHD for Bayer, three-pass interpolation for X-Trans.
-    p.user_qual = 3;
+    // Ratio-based Bayer reconstruction avoids borrowing absolute green texture into
+    // weak channels. X-Trans retains its three-pass interpolation; RGB bypasses it.
+    p.user_qual = raw.imgdata.idata.filters == 9 ? 3 : 11;
     p.half_size = 0;
     p.four_color_rgb = 0;
     p.med_passes = p.fbdd_noiserd = p.green_matching = 0;
