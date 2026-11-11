@@ -95,37 +95,24 @@ fn calibrated(directory: &Path) -> Document {
 }
 
 #[test]
-fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
+fn photographic_construction_is_read_only_and_requires_calibration_only_for_positive_work() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
         let document = calibrated(directory.path());
         let before = document.project.clone();
-        document.validate_for_device(&device).unwrap();
-        document.validate_for_device(&device).unwrap();
-        assert_eq!(document.project, before);
-
-        document.validate().unwrap();
-        assert_eq!(document.project, before);
+        let id = document.project.order[0];
+        for limits in [device.limits(), wgpu::Limits::default()] {
+            crate::editor::tests::photograph(&document, id, &limits).unwrap();
+            assert_eq!(document.project, before);
+        }
         let mut uncalibrated = document.clone();
         uncalibrated.project.set_dmin(None);
         uncalibrated.project.set_dmax(None);
-        uncalibrated.validate_for_device(&device).unwrap();
-        uncalibrated.validate().unwrap();
+        uncalibrated.project.require_runtime().unwrap();
         assert!(
-            crate::gpu::test_inputs::AuthoredPhotograph::new(
-                &device.limits(),
-                uncalibrated.project.input,
-                uncalibrated.project.roll,
-                uncalibrated.project.sources[0].grade_snapshot().unwrap(),
-                glam::DMat3::IDENTITY,
-                uncalibrated.project.sources[0]
-                    .development
-                    .active_area
-                    .into()
-            )
-            .is_err(),
-            "saved layer intent remains valid while positive execution waits for interpretation"
+            crate::editor::tests::photograph(&uncalibrated, id, &device.limits()).is_err(),
+            "valid saved layer intent cannot fabricate a calibrated positive"
         );
         uncalibrated.project.sources[0]
             .adjustment_layers
@@ -133,24 +120,27 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
             .unwrap()
             .layers
             .clear();
-        uncalibrated.validate_for_device(&device).unwrap();
+        uncalibrated.project.require_runtime().unwrap();
     });
 }
 
 #[test]
-fn device_preflight_includes_offscreen_photos_and_validates_inactive_records() {
+fn per_photo_construction_is_scoped_and_inactive_records_still_obey_data_integrity() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
         let mut document = calibrated(directory.path());
-        let id = document.project.sources[1].id;
-        document.project.source_mut(id).unwrap().adjustment_layers = Some(unsupported_locals());
+        let good = document.project.order[0];
+        let bad = document.project.order[1];
+        document.project.source_mut(bad).unwrap().adjustment_layers = Some(unsupported_locals());
+        document.project.require_runtime().unwrap();
         let before = document.project.clone();
-        assert!(document.validate_for_device(&device).is_err());
+        crate::editor::tests::photograph(&document, good, &device.limits()).unwrap();
+        assert!(crate::editor::tests::photograph(&document, bad, &device.limits()).is_err());
         assert_eq!(document.project, before);
         for record in &mut document
             .project
-            .source_mut(id)
+            .source_mut(bad)
             .unwrap()
             .adjustment_layers
             .as_mut()
@@ -159,10 +149,10 @@ fn device_preflight_includes_offscreen_photos_and_validates_inactive_records() {
         {
             record.adjustment.enabled = false;
         }
-        document.validate_for_device(&device).unwrap();
+        crate::editor::tests::photograph(&document, bad, &device.limits()).unwrap();
         document
             .project
-            .source_mut(id)
+            .source_mut(bad)
             .unwrap()
             .adjustment_layers
             .as_mut()
@@ -171,42 +161,39 @@ fn device_preflight_includes_offscreen_photos_and_validates_inactive_records() {
             .adjustment
             .strength = f64::NAN;
         assert!(
-            document.validate_for_device(&device).is_err(),
-            "inactive photo records must obey the persisted mask/control contract"
+            document.project.require_runtime().is_err(),
+            "inactive records must still obey the persisted control contract"
         );
     });
 }
 
 #[test]
-fn document_preflight_preserves_calibration_under_correction_and_checks_processing_choices() {
-    pollster::block_on(async {
-        let device = device().await;
-        let directory = tempfile::tempdir().unwrap();
-        let mut document = calibrated(directory.path());
-        let calibration = document.project.calibration().unwrap().unwrap();
-        let source = &document.project.sources[0];
-        let field = Arc::new(
-            crate::flat_field::FlatField::from_nodes(
-                source.development.active_area,
-                [2, 2],
-                vec![DVec3::new(1.1, 0.9, 1.2); 4],
-            )
-            .unwrap(),
-        );
-        let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field);
-        document.project.set_flat_field(Some(settings)).unwrap();
-        assert_eq!(Some(calibration), document.project.calibration().unwrap());
-        document.validate_for_device(&device).unwrap();
-        let before = document.project.clone();
-        document.project.development_mut().unwrap().white_balance[0] = 2.;
-        assert!(document.validate_for_device(&device).is_err());
-        document.project = before;
-        document.project.processing_model = 3;
-        assert!(
-            document.validate_for_device(&device).is_err(),
-            "device preflight cannot bypass strict model/runtime compatibility"
-        );
-    });
+fn correction_retains_calibration_and_project_integrity_checks_processing_choices() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut document = calibrated(directory.path());
+    let calibration = document.project.calibration().unwrap().unwrap();
+    let source = &document.project.sources[0];
+    let field = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            source.development.active_area,
+            [2, 2],
+            vec![DVec3::new(1.1, 0.9, 1.2); 4],
+        )
+        .unwrap(),
+    );
+    let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field);
+    document.project.set_flat_field(Some(settings)).unwrap();
+    assert_eq!(Some(calibration), document.project.calibration().unwrap());
+    document.project.require_runtime().unwrap();
+    let before = document.project.clone();
+    document.project.development_mut().unwrap().white_balance[0] = 2.;
+    assert!(document.project.require_runtime().is_err());
+    document.project = before;
+    document.project.processing_model = 3;
+    assert!(
+        document.project.require_runtime().is_err(),
+        "metadata integrity must retain strict model/runtime compatibility"
+    );
 }
 
 #[test]
@@ -265,7 +252,9 @@ fn persistence_preserves_valid_photo_grades_even_when_render_admission_rejects_t
         rejected.project.sources[0].adjustment_layers = Some(unsupported_locals());
         let before = rejected.project.clone();
         let bytes = std::fs::read(&path).unwrap();
-        assert!(rejected.validate_for_device(&device).is_err());
+        assert!(
+            crate::editor::tests::photograph(&rejected, reference.id, &device.limits()).is_err()
+        );
         let written = rejected.save(&path, Save::Replace).unwrap();
         assert_eq!(rejected.project, before);
         assert!(rejected.dirty());
@@ -276,126 +265,6 @@ fn persistence_preserves_valid_photo_grades_even_when_render_admission_rejects_t
         assert!(rejected.save(&path, Save::Replace).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), complete);
         assert_eq!(saved.project, opened.project);
-    });
-}
-
-#[test]
-fn unsupported_offscreen_grade_blocks_export_before_retiring_accepted_state_or_dispatch() {
-    pollster::block_on(async {
-        let (mut editor, _, _) = crate::editor::processing::tests::fixture().await;
-
-        editor
-            .validate_document_candidate(&editor.document)
-            .unwrap();
-        let accepted = editor
-            .positive_processing(
-                editor.document.project.input,
-                editor.document.project.roll,
-                editor.photo_settings(),
-            )
-            .unwrap();
-        let mut retired = editor
-            .document
-            .project
-            .source(editor.document.visit.current_source.unwrap())
-            .unwrap()
-            .clone();
-        retired.id = SourceId(0);
-        retired.path = "retired.ARW".into();
-        retired.adjustment_layers = Some(unsupported_locals());
-        let id = editor.document.state.project.add_source(retired).unwrap();
-        assert!(editor.document.state.project.order.contains(&id));
-        let before = editor.document.state.project.clone();
-        let selected = editor.document.visit.current_source;
-        let loaded = editor.id;
-        let epoch = editor
-            .source_epoch
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let revision = editor.document.visit.canvas.original.continuation();
-        let viewport = editor.document.visit.canvas.viewport;
-        let path = editor
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .unwrap()
-            .path
-            .clone();
-        let directory = tempfile::tempdir().unwrap();
-        let destination = directory.path().join("existing.tif");
-        std::fs::write(&destination, b"keep destination").unwrap();
-        editor.export(
-            destination.clone(),
-            crate::editor::OutputFormat::Tiff(crate::rendering::OutputTarget::Srgb),
-            crate::export::Overwrite::Refuse,
-            &crate::application::UiContext::render_only(),
-        );
-        assert!(
-            editor
-                .status
-                .contains("mask coordinates exceed the f32 range"),
-            "{}",
-            editor.status
-        );
-        assert!(!editor.interaction_blocked());
-        assert!(editor.document.export.operation.is_none());
-        assert!(
-            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
-        );
-        assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
-        assert_eq!(editor.document.visit.current_source, selected);
-        assert_eq!(editor.id, loaded);
-        assert_eq!(
-            editor
-                .source_epoch
-                .load(std::sync::atomic::Ordering::Relaxed),
-            epoch
-        );
-        assert_eq!(
-            editor.document.visit.canvas.ready.as_ref().unwrap().path,
-            path
-        );
-        assert_eq!(editor.document.visit.canvas.viewport, viewport);
-        assert_eq!(
-            editor.document.visit.canvas.original.continuation(),
-            revision
-        );
-        assert_eq!(editor.document.state.project, before);
-        assert!(
-            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let destination = directory.path().join("existing.tif");
-        std::fs::write(&destination, b"keep destination").unwrap();
-        editor.export(
-            destination.clone(),
-            crate::editor::OutputFormat::Tiff(crate::rendering::OutputTarget::Srgb),
-            crate::export::Overwrite::Refuse,
-            &crate::application::UiContext::render_only(),
-        );
-        assert!(
-            editor
-                .status
-                .contains("mask coordinates exceed the f32 range"),
-            "{}",
-            editor.status
-        );
-        assert!(!editor.interaction_blocked());
-        assert!(editor.document.export.operation.is_none());
-        assert!(
-            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
-        );
-        assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
-        assert_eq!(editor.document.state.project, before);
-        let current = editor
-            .positive_processing(
-                editor.document.project.input,
-                editor.document.project.roll,
-                editor.photo_settings(),
-            )
-            .unwrap();
-        assert_eq!(accepted.clone(), current.clone());
     });
 }
 

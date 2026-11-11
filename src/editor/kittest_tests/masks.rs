@@ -125,11 +125,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
                 0.25
             )
         });
-        harness.read(|editor| {
-            editor
-                .validate_document_candidate(&editor.document)
-                .unwrap()
-        });
+        harness.read(|editor| editor.document.project.require_runtime().unwrap());
     });
 }
 

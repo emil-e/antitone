@@ -171,8 +171,7 @@ fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_rea
         .source_mut(id)
         .unwrap()
         .adjustment_layers = Some(locals);
-    editor
-        .validate_document_candidate(&editor.document)
+    crate::editor::tests::photograph(&editor.document.capture(), id, &device.limits())
         .expect("accepted controls must fit with the known baseline");
     let mut offscreen = editor.document.state.project.source(id).unwrap().clone();
     offscreen
@@ -212,9 +211,9 @@ fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_rea
     assert!(((normalized.x_axis.length() / native.x_axis.length()).log2() - 2.25).abs() < 0.03);
     let before = editor.document.state.project.clone();
     editor.validate_source_candidate(&offscreen).unwrap();
-    let mut candidate = editor.document.clone();
+    let mut candidate = editor.document.capture();
     candidate.project.source_mut(id).unwrap().adjustment_layers = offscreen.adjustment_layers;
-    editor.validate_document_candidate(&candidate).unwrap();
+    crate::editor::tests::photograph(&candidate, id, &device.limits()).unwrap();
     assert_eq!(editor.document.state.project, before);
     assert!(editor.document.visit.canvas.ready.is_none());
 }
@@ -274,8 +273,7 @@ fn save_and_open_preserve_restored_normalization_without_admitting_rendering() {
         document.capture().save(&path, Save::New).unwrap();
         if reference_ev < 0. {
             let opened = Document::open(&path).unwrap();
-            opened
-                .validate()
+            crate::editor::tests::photograph(&opened, id, &Default::default())
                 .expect("attenuation must remain available to rendering admission");
             assert_eq!(opened.project.roll, document.project.roll);
             assert_eq!(opened.project.sources, document.project.sources);
@@ -292,7 +290,7 @@ fn save_and_open_preserve_restored_normalization_without_admitting_rendering() {
             let opened =
                 Document::open(&path).expect("rendering range must not restrict metadata Open");
             assert!(
-                opened.validate().is_err(),
+                crate::editor::tests::photograph(&opened, id, &Default::default()).is_err(),
                 "restored amplification must still reject unsafe rendering"
             );
             let second = directory.path().join("amplified-roundtrip.antitone");

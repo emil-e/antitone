@@ -229,10 +229,6 @@ impl Document {
             .map(|entry| &entry.reference)
     }
 
-    fn has_normalization(&self, source: &Source) -> Result<bool> {
-        Ok(self.reference_exposure(source).is_some())
-    }
-
     pub fn dirty(&self) -> bool {
         self.project != self.saved
     }
@@ -327,52 +323,6 @@ impl Document {
                 .filter(|candidate| same_path(candidate, path))
                 .map(|_| source.id)
         })
-    }
-
-    #[cfg(test)]
-    pub fn validate(&self) -> Result<()> {
-        self.validate_with_device(None)
-    }
-
-    #[cfg(test)]
-    /// Preflight known source domains without retaining offscreen images; unresolved
-    /// Digital domains complete numerical admission during lazy preparation.
-    pub fn validate_for_device(&self, device: &wgpu::Device) -> Result<()> {
-        self.validate_with_device(Some(device))
-    }
-
-    fn validate_structure_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
-        self.project.require_runtime()?;
-        if let Some(device) = device {
-            for asset in self.project.output.luts().assets() {
-                crate::gpu::lut3d::Lut::require_limits(&device.limits(), asset.lut())?;
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
-        self.validate_structure_with_device(device)?;
-        let input = self.project.input;
-        for source in &self.project.sources {
-            // Unvisited Digital sources have no resolved AP1 domain yet. Their layer
-            // controls are structurally valid; numerical admission follows preparation.
-            if self
-                .image_recipe(source.id)?
-                .neutral
-                .source_development
-                .resolved()
-                .is_err()
-                || (!input.is_negative() && !self.has_normalization(source)?)
-            {
-                continue;
-            }
-            let recipe = self.image_recipe(source.id)?;
-            if input.ready() {
-                recipe.validate(&device.map(wgpu::Device::limits).unwrap_or_default())?;
-            }
-        }
-        Ok(())
     }
 
     pub fn open(path: &Path) -> Result<Self> {

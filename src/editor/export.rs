@@ -723,7 +723,6 @@ impl Editor {
             ));
         }
 
-        self.validate_document_candidate(&self.document)?;
         if !draft.folder.is_absolute() || !draft.folder.is_dir() {
             return Err(Error::InvalidParameter(
                 "choose an existing destination folder",

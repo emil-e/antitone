@@ -61,12 +61,6 @@ impl Editor {
         crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
     }
 
-    pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
-        let mut candidate = document.clone();
-        candidate.capture_initialization(&self.document.initialization);
-        candidate.validate_with_device(self.document.visit.working_view.device())
-    }
-
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
         let recipe = self.capture_recipe(
             source,

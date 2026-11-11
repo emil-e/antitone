@@ -1,5 +1,17 @@
 use super::*;
 
+/// Construct one captured photographic calculation through its real component admission.
+pub(super) fn photograph(
+    document: &Document,
+    source: SourceId,
+    limits: &wgpu::Limits,
+) -> Result<crate::gpu::test_inputs::AuthoredPhotograph, Error> {
+    crate::gpu::test_inputs::AuthoredPhotograph::from_recipe(
+        limits,
+        &document.image_recipe(source)?,
+    )
+}
+
 // Feature scenarios exercise real owners; this catalogue is test data only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FailureCase {
@@ -2111,7 +2123,8 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
 }
 
 #[test]
-fn export_owns_the_accepted_photo_snapshot_and_rejects_unrepresentable_masks() {
+fn export_captures_accepted_settings_while_photographic_construction_rejects_unrepresentable_masks()
+{
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
@@ -2180,15 +2193,36 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unrepresentable_masks() {
         rejection.contains("mask coordinates exceed the f32 range"),
         "{rejection}"
     );
-    editor.export(
-        "rejected.tif".into(),
-        OutputFormat::Tiff(OutputTarget::Srgb),
-        Overwrite::Refuse,
-        &UiContext::render_only(),
+    let captured = editor
+        .export_input(
+            "rejected.tif".into(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        captured.recipe.grade,
+        editor
+            .document
+            .project
+            .source(id)
+            .unwrap()
+            .grade_snapshot()
+            .unwrap()
     );
-    assert!(editor.document.export.operation.is_none());
+    let consumed = crate::gpu::test_inputs::AuthoredPhotograph::from_recipe(
+        &Default::default(),
+        &captured.recipe,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        consumed.contains("mask coordinates exceed the f32 range"),
+        "{consumed}"
+    );
     assert!(!editor.interaction_blocked());
-    assert!(editor.status.contains(&rejection), "{}", editor.status);
 }
 
 #[test]

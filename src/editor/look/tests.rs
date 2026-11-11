@@ -573,16 +573,22 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
         slot.set(&mut candidate, Some(make(3)));
         candidate.save(&path, crate::project::Save::New).unwrap();
         let device = &e.source_services.as_ref().unwrap().device;
-        Document::open(&path)
-            .unwrap()
-            .validate_for_device(device)
+        let services = e.source_services.as_ref().unwrap();
+        let renderer = services.renderers.get(device, &services.queue).unwrap();
+        let small = Document::open(&path).unwrap();
+        renderer
+            .look_resource(device, slot.asset(&small.project).unwrap())
             .unwrap();
         slot.set(&mut candidate, Some(make(5)));
         candidate
             .save(&path, crate::project::Save::Replace)
             .unwrap();
         let opened = Document::open(&path).unwrap();
-        assert!(opened.validate_for_device(device).is_err());
+        assert!(
+            renderer
+                .look_resource(device, slot.asset(&opened.project).unwrap())
+                .is_err()
+        );
         with_application(e, |app| {
             app.enter(|e, cx| e.open_project(path, cx));
             app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
@@ -591,9 +597,13 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
                 assert_eq!(e.document.path, opened.path);
                 assert!(!e.document.dirty());
                 assert!(
-                    e.document
-                        .validate_for_device(&e.source_services.as_ref().unwrap().device)
-                        .unwrap_err()
+                    renderer
+                        .look_resource(
+                            &e.source_services.as_ref().unwrap().device,
+                            slot.asset(&e.document.project).unwrap(),
+                        )
+                        .err()
+                        .unwrap()
                         .to_string()
                         .contains("limits")
                 );
