@@ -37,9 +37,9 @@ fn propose(app: &App<'_>, value: f64, active: bool) {
             *gamma = value;
         }
         editor.roll_control(
-            super::super::controls::ControlResponse {
+            super::super::ui::ControlResponse {
                 active,
-                ..super::super::controls::ControlResponse::action(
+                ..super::super::ui::ControlResponse::action(
                     egui::Id::new("test-document-field"),
                     true,
                 )
@@ -54,9 +54,9 @@ fn release(app: &App<'_>) {
     app.enter(|editor, cx| {
         let candidate = editor.document.project_snapshot().as_ref().clone();
         editor.roll_control(
-            super::super::controls::ControlResponse {
+            super::super::ui::ControlResponse {
                 active: false,
-                ..super::super::controls::ControlResponse::action(
+                ..super::super::ui::ControlResponse::action(
                     egui::Id::new("test-document-field"),
                     true,
                 )
@@ -120,9 +120,9 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
                 *gamma = 0.8;
             }
             editor.roll_control(
-                super::super::controls::ControlResponse {
+                super::super::ui::ControlResponse {
                     active: false,
-                    ..super::super::controls::ControlResponse::action(
+                    ..super::super::ui::ControlResponse::action(
                         egui::Id::new("test-document-field"),
                         true,
                     )
@@ -201,9 +201,9 @@ fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start(
                 tint: -0.1,
             };
             editor.roll_control(
-                super::super::controls::ControlResponse {
+                super::super::ui::ControlResponse {
                     active: false,
-                    ..super::super::controls::ControlResponse::action(
+                    ..super::super::ui::ControlResponse::action(
                         egui::Id::new("test-document-field"),
                         true,
                     )
@@ -415,9 +415,9 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
         app.enter(|editor, cx| {
             let candidate = editor.document.project_snapshot().as_ref().clone();
             editor.roll_control(
-                super::super::controls::ControlResponse {
+                super::super::ui::ControlResponse {
                     active: false,
-                    ..super::super::controls::ControlResponse::action(
+                    ..super::super::ui::ControlResponse::action(
                         egui::Id::new("test-document-field"),
                         true,
                     )

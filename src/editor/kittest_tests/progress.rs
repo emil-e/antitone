@@ -32,9 +32,9 @@ fn indeterminate_highlight_never_paints_outside_the_pill_at_either_end() {
                                 egui::Color32::TRANSPARENT
                             };
                         });
-                        presentation::ProgressContent {
+                        ui::ProgressContent {
                             title: "Working…",
-                            progress: presentation::Progress::Indeterminate,
+                            progress: ui::Progress::Indeterminate,
                             cancel: None,
                         }
                         .modal(ui.ctx(), egui::Id::new("pill-coverage"));

@@ -427,7 +427,7 @@ impl Editor {
 
     pub(super) fn begin_control(
         &mut self,
-        response: controls::ControlResponse,
+        response: ui::ControlResponse,
         photo: bool,
     ) -> Option<ControlEdit> {
         let slot = if photo {
@@ -474,7 +474,7 @@ impl Editor {
     pub(super) fn retain_control(
         &mut self,
         mut edit: ControlEdit,
-        response: controls::ControlResponse,
+        response: ui::ControlResponse,
         photo: bool,
     ) {
         edit.finished = !response.active;

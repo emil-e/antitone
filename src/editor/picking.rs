@@ -205,8 +205,8 @@ impl tool::Tool for PickTool {
     fn presentation(&self, editor: &Editor) -> tool::Presentation {
         let state = self.state.borrow();
         tool::Presentation {
-            identity: presentation::ToolIdentity {
-                icon: if state.display.area { icons::Icon::Crop } else { icons::Icon::Pick },
+            identity: ui::ToolIdentity {
+                icon: if state.display.area { ui::icons::Icon::Crop } else { ui::icons::Icon::Pick },
                 title: state.display.label,
             },
             primary: Some(tool::Primary { label: "Apply", enabled: state.region.is_some() && !editor.interaction_blocked() }),

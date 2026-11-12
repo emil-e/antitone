@@ -3,6 +3,7 @@ use super::{
     adjustment_layers::Target,
     measurement,
     picking::{self, Display, View},
+    ui,
 };
 use crate::{Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, scan::Scan};
 #[cfg(test)]
@@ -18,6 +19,47 @@ pub(super) const LAYER: Display = Display {
     lock_layer_selection: true,
     ..Display::sample("WB neutral", View::Working)
 };
+
+/// Section composition belongs to white balance; value widgets only edit local values.
+pub(super) fn controls(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut Balance,
+    editable: bool,
+    can_pick: bool,
+) -> ([ui::ControlResponse; 4], bool) {
+    let changed = *value != Balance::default();
+    let (body, action) = ui::section(
+        ui,
+        id,
+        "White balance",
+        ui::SectionHeader {
+            summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
+            changed,
+            reset: Some(changed && editable),
+            tool: Some(ui::balance_pick_tool(
+                can_pick,
+                "Pick neutral for white balance",
+            )),
+            default_open: Some(true),
+        },
+        |ui| {
+            ui.add_enabled_ui(editable, |ui| {
+                ui::BalanceControl::new("balance", ui::ColorControl::WhiteBalance).show(ui, value)
+            })
+            .inner
+        },
+    );
+    let mut responses = [ui::ControlResponse::idle(ui.id()); 4];
+    if let Some(body) = body {
+        responses[..3].copy_from_slice(&body);
+    }
+    if action.reset {
+        *value = Balance::default();
+        responses[3] = ui::ControlResponse::action(ui.make_persistent_id((id, "reset")), true);
+    }
+    (responses, action.tool)
+}
 
 pub(super) fn roll_input(editor: &Editor) -> Result<crate::image_recipe::ImageRecipe, String> {
     let mut recipe = editor

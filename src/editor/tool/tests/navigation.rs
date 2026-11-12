@@ -10,8 +10,8 @@ struct AroundCanvas {
 impl Tool for AroundCanvas {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Pick,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Pick,
                 title: "Canvas probe",
             },
             primary: None,
@@ -94,7 +94,7 @@ fn tool_composes_layout_and_wraps_or_omits_navigation_with_its_chosen_viewport()
                 ));
                 crate::application::test_support::with_application(editor, |app| {
                     let context = egui::Context::default();
-                    presentation::configure_fonts(&context);
+                    ui::configure_fonts(&context);
                     let canvas =
                         egui::Rect::from_min_size(egui::pos2(20., 20.), egui::vec2(200., 150.));
                     let render = |events| {

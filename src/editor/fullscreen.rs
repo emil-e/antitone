@@ -74,7 +74,7 @@ impl Editor {
                     .reframe(layout, layout.composition, density);
             }
             self.document.thumbnails.cancel();
-            presentation::ViewerBar::reset_overlay(context);
+            ui::ViewerBar::reset_overlay(context);
         }
         context.memory_mut(|memory| {
             if let Some(id) = memory.focused() {

@@ -1,4 +1,4 @@
-use super::presentation::ContactSheetLayout;
+use super::ui::ContactSheetLayout;
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
@@ -1413,7 +1413,7 @@ impl Editor {
                     }
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     card.caption(ui, &name);
-                    use presentation::{ContextualStatus, StatusLevel};
+                    use ui::{ContextualStatus, StatusLevel};
                     let mut status = if let Some(error) = &error {
                         Some(ContextualStatus::new(
                             StatusLevel::Error,

@@ -475,7 +475,7 @@ impl Editor {
 
     pub(super) fn photo_control(
         &mut self,
-        response: controls::ControlResponse,
+        response: ui::ControlResponse,
         write: impl FnOnce(&mut crate::adjustment_layers::AdjustmentLayer),
     ) {
         let Some(source) = self.document.visit.current_source else {
@@ -519,11 +519,11 @@ impl Editor {
             if reveal {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
-            let (_, action) = presentation::section(
+            let (_, action) = ui::section(
                 ui,
                 "photo-exposure",
                 "Exposure",
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: &format!("{:+.2} EV", photo.exposure),
                     changed: photo.exposure != 0.,
                     reset: Some(photo.exposure != 0.),
@@ -531,11 +531,21 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    let response = controls::parameter_edit(
-                        ui,
-                        controls::Parameter::Exposure,
-                        &mut photo.exposure,
-                    );
+                    let response = ui::ParameterRow::new(
+                        "exposure",
+                        "Exposure",
+                        -crate::processing::MAX_EXPOSURE..=crate::processing::MAX_EXPOSURE,
+                    )
+                    .default_value(0.)
+                    .slider_range(-3.0..=3.0)
+                    .step(0.05)
+                    .speed(0.01)
+                    .unit("EV")
+                    .slider_help(
+                        "Slider: ±3 EV; type a value for up to ±16 EV. Shift-drag for finer steps.",
+                    )
+                    .show(ui, &mut photo.exposure)
+                    .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.exposure = photo.exposure
                     });
@@ -543,7 +553,7 @@ impl Editor {
             );
             if action.reset {
                 self.photo_control(
-                    controls::ControlResponse::action(
+                    ui::ControlResponse::action(
                         ui.make_persistent_id("reset-photo-exposure"),
                         true,
                     ),
@@ -551,8 +561,13 @@ impl Editor {
                 );
             }
         });
-        let (responses, pick) =
-            controls::white_balance(ui, "photo-white-balance", &mut photo.wb, editable, can_pick);
+        let (responses, pick) = super::white_balance::controls(
+            ui,
+            "photo-white-balance",
+            &mut photo.wb,
+            editable,
+            can_pick,
+        );
         for response in responses {
             self.photo_control(response, |adjustment| adjustment.photo.wb = photo.wb);
         }
@@ -561,11 +576,11 @@ impl Editor {
             let changed = photo.contrast != defaults.contrast
                 || photo.pivot != defaults.pivot
                 || photo.contrast_colour_mix != defaults.contrast_colour_mix;
-            let (_, action) = presentation::section(
+            let (_, action) = ui::section(
                 ui,
                 "photo-contrast",
                 "Contrast",
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: &format!(
                         "{:.2} · Pivot {:.3} · Preserve {:.2}",
                         photo.contrast, photo.pivot, photo.contrast_colour_mix
@@ -576,22 +591,29 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    let response = controls::parameter_edit(
-                        ui,
-                        controls::Parameter::Contrast,
-                        &mut photo.contrast,
-                    );
+                    let response = ui::ParameterRow::new("contrast", "Contrast", 0.4..=1.6)
+                        .default_value(defaults.contrast)
+                        .help("Adjust contrast around Pivot; 1 leaves contrast unchanged.")
+                        .show(ui, &mut photo.contrast)
+                        .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.contrast = photo.contrast
                     });
-                    let response =
-                        controls::parameter_edit(ui, controls::Parameter::Pivot, &mut photo.pivot);
+                    let response = ui::ParameterRow::new("pivot", "Pivot", 0.01..=1.0)
+                        .default_value(defaults.pivot)
+                        .step(0.001)
+                        .decimals(3)
+                        .logarithmic(true)
+                        .help("Set the brightness that contrast pivots around.")
+                        .show(ui, &mut photo.pivot)
+                        .edit;
                     self.photo_control(response, |adjustment| adjustment.photo.pivot = photo.pivot);
-                    let response = controls::parameter_edit(
-                        ui,
-                        controls::Parameter::ColourMix,
-                        &mut photo.contrast_colour_mix,
-                    );
+                    let response =
+                        ui::ParameterRow::new("contrast-colour-mix", "Preserve", 0.0..=1.0)
+                            .default_value(defaults.contrast_colour_mix)
+                            .help("Reduce colour shifts caused by contrast.")
+                            .show(ui, &mut photo.contrast_colour_mix)
+                            .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.contrast_colour_mix = photo.contrast_colour_mix
                     });
@@ -599,7 +621,7 @@ impl Editor {
             );
             if action.reset {
                 self.photo_control(
-                    controls::ControlResponse::action(
+                    ui::ControlResponse::action(
                         ui.make_persistent_id("reset-photo-contrast"),
                         true,
                     ),
@@ -612,11 +634,11 @@ impl Editor {
             }
             let changed = photo.saturation != defaults.saturation
                 || photo.saturation_density != defaults.saturation_density;
-            let (_, action) = presentation::section(
+            let (_, action) = ui::section(
                 ui,
                 "photo-saturation",
                 "Saturation",
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: &format!(
                         "{:.2} · Density {:.2}",
                         photo.saturation, photo.saturation_density
@@ -627,19 +649,19 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    let response = controls::parameter_edit(
-                        ui,
-                        controls::Parameter::Saturation,
-                        &mut photo.saturation,
-                    );
+                    let response = ui::ParameterRow::new("saturation", "Saturation", 0.0..=2.0)
+                        .default_value(defaults.saturation)
+                        .help("0 makes the image grey; 1 leaves saturation unchanged.")
+                        .show(ui, &mut photo.saturation)
+                        .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.saturation = photo.saturation
                     });
-                    let response = controls::parameter_edit(
-                        ui,
-                        controls::Parameter::Density,
-                        &mut photo.saturation_density,
-                    );
+                    let response = ui::ParameterRow::new("density", "Density", 0.0..=1.0)
+                        .default_value(defaults.saturation_density)
+                        .help("Higher values darken colours more as saturation increases.")
+                        .show(ui, &mut photo.saturation_density)
+                        .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.saturation_density = photo.saturation_density
                     });
@@ -647,7 +669,7 @@ impl Editor {
             );
             if action.reset {
                 self.photo_control(
-                    controls::ControlResponse::action(
+                    ui::ControlResponse::action(
                         ui.make_persistent_id("reset-photo-saturation"),
                         true,
                     ),
@@ -700,11 +722,11 @@ impl Editor {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
             let title = selected.map_or_else(|| "Layers".into(), |record| format!("Layers: {}", record.name));
-            let (body, _) = presentation::section(
+            let (body, _) = ui::section(
                 ui,
                 "adjustment-layers",
                 &title,
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: "",
                     changed: false,
                     reset: None,
@@ -720,9 +742,9 @@ impl Editor {
                                 let mut show = self.document.visit.adjustment_layers.show_coverage;
                                 if ui
                                     .add_enabled_ui(available, |ui| {
-                                        icons::toggle(
+                                        ui::icons::toggle(
                                             ui,
-                                            icons::Icon::Eye,
+                                            ui::icons::Icon::Eye,
                                             &mut show,
                                             "Mask overlay",
                                             "Show mask coverage",
@@ -734,9 +756,9 @@ impl Editor {
                                     overlay = Some(Action::Overlay(show));
                                 }
                             }
-                            if icons::button(
+                            if ui::icons::button(
                                 ui,
-                                icons::Icon::AddGlobalAdjustmentLayer,
+                                ui::icons::Icon::AddGlobalAdjustmentLayer,
                                 available && !self.document.source,
                                 "Add global",
                                 "Add a whole-image adjustment layer",
@@ -747,19 +769,19 @@ impl Editor {
                             }
                             for (icon, name, radial, help) in [
                                 (
-                                    icons::Icon::AddRadialGradient,
+                                    ui::icons::Icon::AddRadialGradient,
                                     "Add radial",
                                     true,
                                     "Add radial gradient",
                                 ),
                                 (
-                                    icons::Icon::AddLinearGradient,
+                                    ui::icons::Icon::AddLinearGradient,
                                     "Add linear",
                                     false,
                                     "Add linear gradient",
                                 ),
                             ] {
-                                if icons::button(ui, icon, self.tool_start_available() && self.document.project.input.ready(), name, help)
+                                if ui::icons::button(ui, icon, self.tool_start_available() && self.document.project.input.ready(), name, help)
                                     .clicked()
                                 {
                                     creation = Some(radial);
@@ -799,7 +821,7 @@ impl Editor {
                                         });
                                     let response = ui
                                         .add_sized(
-                                            [ui.available_width(), presentation::CONTROL_HEIGHT],
+                                            [ui.available_width(), ui::CONTROL_HEIGHT],
                                             egui::TextEdit::singleline(text)
                                                 .id(rename_id)
                                                 .hint_text("Adjustment name"),
@@ -824,7 +846,7 @@ impl Editor {
                                     }
                                 } else {
                                     let mut enabled = record.adjustment.enabled;
-                                    let (row, toggle) = presentation::draggable_icon_row(
+                                    let (row, toggle) = ui::draggable_icon_row(
                                         ui,
                                         mask_icon(record.adjustment.mask),
                                         &record.name,
@@ -901,7 +923,13 @@ impl Editor {
                                         }
                                     });
                                     let mut strength = adjustment.strength;
-                                    let response = controls::parameter_edit(ui, controls::Parameter::Strength, &mut strength);
+                                    let response = ui::ParameterRow::new(
+                                        "strength", "Strength", 0.0..=1.0,
+                                    )
+                                    .default_value(1.)
+                                    .help("Scale the adjustment from no effect to full strength.")
+                                    .show(ui, &mut strength)
+                                    .edit;
                                     self.photo_control(response, |adjustment| adjustment.strength = strength);
                                     ui.add_enabled_ui(adjustment.strength > 0., |ui| {
                                         if let crate::adjustment_layers::AdjustmentLayerCoverage::Radial {
@@ -909,7 +937,15 @@ impl Editor {
                                             ..
                                         } = adjustment.mask
                                         {
-                                            let response = controls::parameter_edit(ui, controls::Parameter::Feather, &mut feather);
+                                            let response = ui::ParameterRow::new(
+                                                "feather", "Feather", 0.0..=1.0,
+                                            )
+                                            .default_value(super::mask_editor::DEFAULT_RADIAL_FEATHER)
+                                            .help(
+                                                "Soften the oval's edge; 0 is hard, 1 fades across the full radius.",
+                                            )
+                                            .show(ui, &mut feather)
+                                            .edit;
                                             self.photo_control(response, |adjustment| {
                                                 if let crate::adjustment_layers::AdjustmentLayerCoverage::Radial { feather: value, .. } = &mut adjustment.mask { *value = feather; }
                                             });
@@ -1025,12 +1061,12 @@ impl Editor {
             .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))?;
         let title = format!("Delete {}?", record.name);
         let response = self.dialogs.show(move |context, dialog, escape| {
-            presentation::DecisionDialog::new(&title,
+            ui::DecisionDialog::new(&title,
                 "This removes the layer and its coverage. Other layers and the RAW file are unchanged.",
                 "Delete layer").warning().show(context, dialog, escape)
         });
         self.document.visit.interaction_action = cx.spawn(move |cx| async move {
-            if response.await != Ok(presentation::DialogChoice::Confirm) {
+            if response.await != Ok(ui::DialogChoice::Confirm) {
                 return;
             }
             cx.update(|editor| {
@@ -1058,16 +1094,16 @@ impl Editor {
     }
 }
 
-fn mask_icon(mask: crate::adjustment_layers::AdjustmentLayerCoverage) -> icons::Icon {
+fn mask_icon(mask: crate::adjustment_layers::AdjustmentLayerCoverage) -> ui::icons::Icon {
     match mask {
         crate::adjustment_layers::AdjustmentLayerCoverage::Global {} => {
-            icons::Icon::GlobalAdjustmentLayer
+            ui::icons::Icon::GlobalAdjustmentLayer
         }
         crate::adjustment_layers::AdjustmentLayerCoverage::Linear { .. } => {
-            icons::Icon::LinearGradient
+            ui::icons::Icon::LinearGradient
         }
         crate::adjustment_layers::AdjustmentLayerCoverage::Radial { .. } => {
-            icons::Icon::RadialGradient
+            ui::icons::Icon::RadialGradient
         }
     }
 }

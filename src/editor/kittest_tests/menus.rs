@@ -68,8 +68,7 @@ fn native_paste_reaches_the_field_before_enter_commits_it() {
                 37 * cache_limits::MIB
             )
         });
-        harness
-            .read(|editor| assert_eq!(editor.menus.panel, Some(presentation::AppPanel::Settings)));
+        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
     });
 }
 
@@ -86,8 +85,7 @@ fn operation_failure_owns_escape_above_settings_without_closing_settings() {
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
         harness.read(|editor| assert!(!editor.dialogs.is_open()));
-        harness
-            .read(|editor| assert_eq!(editor.menus.panel, Some(presentation::AppPanel::Settings)));
+        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
     });
 }
 
@@ -105,8 +103,7 @@ fn settings_escape_cancels_numeric_text_before_dismissing_the_panel() {
         harness.step();
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness
-            .read(|editor| assert_eq!(editor.menus.panel, Some(presentation::AppPanel::Settings)));
+        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
         harness.read(|editor| assert_eq!(editor.document.thumbnails.limits, before));
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();

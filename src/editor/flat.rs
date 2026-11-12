@@ -229,11 +229,11 @@ impl Editor {
             Some(_) => "Disabled",
             None => "Not configured",
         };
-        let (_, action) = presentation::section(
+        let (_, action) = ui::section(
             ui,
             "roll-flat-field",
             "Flat-field correction",
-            presentation::SectionHeader {
+            ui::SectionHeader {
                 summary,
                 changed: configured,
                 reset: Some(configured && !self.interaction_blocked() && !self.tool_interacting()),
@@ -245,16 +245,13 @@ impl Editor {
                     return;
                 }
                 if let Some(error) = self.document.correction.error() {
-                    let status = presentation::ContextualStatus::new(
-                        presentation::StatusLevel::Error,
-                        error,
-                    );
+                    let status = ui::ContextualStatus::new(ui::StatusLevel::Error, error);
                     ui.horizontal(|ui| {
                         let (_, response) = ui.allocate_exact_size(
-                            egui::Vec2::splat(presentation::INSPECTOR_ROW_HEIGHT),
+                            egui::Vec2::splat(ui::INSPECTOR_ROW_HEIGHT),
                             egui::Sense::hover(),
                         );
-                        presentation::status_icon(
+                        ui::status_icon(
                             ui,
                             response,
                             "Correction error",
@@ -272,7 +269,7 @@ impl Editor {
                             self.change_correction(Some(enabled), cx);
                         }
                         ui.add(egui::Label::new(name).truncate());
-                    } else if presentation::TextAction::new("Set up…")
+                    } else if ui::TextAction::new("Set up…")
                         .help("Choose a film-free RAW of the light source from the same scanning setup.")
                         .show(ui)
                         .clicked()
@@ -365,8 +362,8 @@ impl tool::Tool for FlatTool {
     fn presentation(&self, editor: &Editor) -> tool::Presentation {
         let state = self.state.borrow();
         tool::Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Crop,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Crop,
                 title: "Flat-field",
             },
             primary: Some(tool::Primary {
@@ -404,7 +401,7 @@ impl tool::Tool for FlatTool {
     }
 
     fn drawer(&mut self, ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
-        presentation::ToolIdentity { icon: icons::Icon::Crop, title: "Flat-field" }.inspector(ui, |_| false, |ui, _| {
+        ui::ToolIdentity { icon: ui::icons::Icon::Crop, title: "Flat-field" }.inspector(ui, |_| false, |ui, _| {
             if let Some(ready) = self.state.borrow().view.ready.as_ref() {
                 ui.add(egui::Label::new(ready.path.file_name().unwrap_or_default().to_string_lossy()).truncate()).on_hover_text(ready.path.display().to_string());
             }
@@ -767,7 +764,7 @@ mod validation_tests;
 impl Editor {
     pub(super) fn reference_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not prepare reference",
             explanation: "Your existing correction and photographic settings are unchanged. Check the reference file and try again.",
             details,
@@ -775,7 +772,7 @@ impl Editor {
     }
     pub(super) fn support_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Warning,
+            severity: super::ui::Severity::Warning,
             title: "Area not accepted",
             explanation: "No correction has been applied. The current area and accepted settings are unchanged. Dismiss this message to adjust the rectangle.",
             details,
@@ -783,7 +780,7 @@ impl Editor {
     }
     pub(super) fn correction_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not change correction",
             explanation: "The correction change was not applied. Your existing correction, calibration and Photo layers are unchanged. Review the details before trying again.",
             details,

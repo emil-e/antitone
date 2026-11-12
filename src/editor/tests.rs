@@ -42,7 +42,7 @@ impl FailureCase {
 impl Editor {
     pub(super) fn block_with_decision(&mut self) {
         drop(self.dialogs.show(|context, id, escape| {
-            presentation::DecisionDialog::new("Pending decision", "Fixture decision", "Continue")
+            ui::DecisionDialog::new("Pending decision", "Fixture decision", "Continue")
                 .show(context, id, escape)
         }));
     }
@@ -1258,7 +1258,7 @@ pub(super) fn app_frame(
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
     editor.before_frame();
-    presentation::configure_fonts(context);
+    ui::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {
@@ -2780,7 +2780,7 @@ fn controls_frame_sized(
     height: f32,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Rect)> {
-    presentation::configure_fonts(context);
+    ui::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {

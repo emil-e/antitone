@@ -40,7 +40,9 @@ fn parameter_reset_is_a_name_gesture_and_respects_disabled_state() {
     let mut harness = EguiHarness::builder().with_max_steps(12).build_ui_state(
         |ui, state: &mut (f64, bool)| {
             ui.add_enabled_ui(state.1, |ui| {
-                controls::parameter(ui, controls::Parameter::Contrast, &mut state.0);
+                ui::ParameterRow::new("contrast", "Contrast", 0.4..=1.6)
+                    .default_value(1.)
+                    .show(ui, &mut state.0);
             });
         },
         (1.4, true),
@@ -455,7 +457,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
     assert!(egui::Popup::is_any_open(&harness.ctx));
     harness.enter(|editor, cx| editor.guard_transition(Transition::New, cx));
     harness.run();
-    harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
+    harness.event(super::ui::test_support::key(egui::Key::Escape).remove(0));
     harness.step();
     assert!(!egui::Popup::is_any_open(&harness.ctx));
     harness.read(|editor| {
@@ -464,7 +466,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             "popover Escape also cancelled the decision"
         )
     });
-    harness.event(super::presentation::tests::key(egui::Key::Escape).remove(0));
+    harness.event(super::ui::test_support::key(egui::Key::Escape).remove(0));
     harness.step();
     wait_for(&mut harness, |editor| !editor.files.pending());
     for (layout, size) in [

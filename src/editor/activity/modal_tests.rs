@@ -3,8 +3,8 @@ use crate::{
     application::test_support::with_application,
     editor::{
         Editor,
-        presentation::tests::pointer,
         tests::{add_ready_fixture, app_frame, fixture, with_document_services},
+        ui::test_support::pointer,
     },
 };
 

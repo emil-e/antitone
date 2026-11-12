@@ -68,7 +68,7 @@ impl Scopes {
         target: OutputTarget,
         reserved_height: f32,
     ) -> Option<Slot> {
-        icons::row_at(ui, super::presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+        ui::icons::row_at(ui, super::ui::INSPECTOR_ROW_HEIGHT, |ui| {
             let width = ui.available_width();
             // Reserve a stable menu width so switching plots never moves the disclosure.
             let menu_width = 156.;
@@ -78,7 +78,7 @@ impl Scopes {
             } else {
                 width
             };
-            presentation::section_disclosure(ui, "Scopes", &mut self.visible, heading_width);
+            ui::section_disclosure(ui, "Scopes", &mut self.visible, heading_width);
             if was_visible != self.visible {
                 ui.ctx().request_repaint();
             }

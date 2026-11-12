@@ -42,7 +42,7 @@ impl Viewer<'_> {
         }
         if !editor.has_hosted_tool() {
             let fullscreen = editor.fullscreen.is_some();
-            presentation::viewer_surface(self.ui, fullscreen, |ui| {
+            ui::viewer_surface(self.ui, fullscreen, |ui| {
                 editor.viewer_canvas(ui, bar.zoom.or(self.zoom), fullscreen, cx)
             });
             return None;
@@ -50,7 +50,7 @@ impl Viewer<'_> {
         let zoom = bar.zoom.or(self.zoom);
         let fullscreen = editor.fullscreen.is_some();
         editor.canvas_frame = Frame::default();
-        presentation::viewer_surface(self.ui, fullscreen, |ui| {
+        ui::viewer_surface(self.ui, fullscreen, |ui| {
             let size = ui
                 .available_rect_before_wrap()
                 .intersect(ui.clip_rect())
@@ -317,7 +317,7 @@ impl Editor {
                 self.toggle_fullscreen(ui.ctx());
             }
             let fullscreen = self.fullscreen.is_some();
-            presentation::viewer_surface(ui, fullscreen, |ui| {
+            ui::viewer_surface(ui, fullscreen, |ui| {
                 self.viewer_canvas(ui, bar.zoom.or(menu_zoom), fullscreen, cx)
             });
         }

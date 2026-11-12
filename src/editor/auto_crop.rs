@@ -446,8 +446,8 @@ impl tool::Tool for AutoCropTool {
                 .or_else(|| draft.warning(editor).map(str::to_owned))
         });
         tool::Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Crop,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Crop,
                 title: "Auto-crop",
             },
             primary: Some(tool::Primary {
@@ -659,8 +659,8 @@ impl Draft {
         let mut show = self.show_outline;
         let mut margin = editor.auto_crop_margin;
         let editable = self.editable(editor);
-        presentation::ToolIdentity {
-            icon: icons::Icon::Crop,
+        ui::ToolIdentity {
+            icon: ui::icons::Icon::Crop,
             title: "Auto-crop",
         }
         .inspector(
@@ -672,7 +672,17 @@ impl Draft {
             |ui, _| {
                 if !self.entries.is_empty() {
                     ui.add_enabled_ui(editable, |ui| {
-                        controls::parameter(ui, controls::Parameter::CropMargin, &mut margin);
+                        ui::ParameterRow::new(
+                            "crop-margin",
+                            "Margin",
+                            0.0..=crate::auto_crop::MAX_MARGIN_PERCENT,
+                        )
+                        .default_value(crate::auto_crop::DEFAULT_MARGIN_PERCENT)
+                        .unit("%")
+                        .help(
+                            "Trim each edge by a percentage of the detected frame's shorter side.",
+                        )
+                        .show(ui, &mut margin);
                         ui.checkbox(&mut show, "Show crop outline")
                             .on_hover_text("Hold H to hide the artwork temporarily.");
                     });

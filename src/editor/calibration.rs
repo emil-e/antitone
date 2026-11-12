@@ -1,6 +1,7 @@
 use super::{
     Balance, DVec3, Editor, InputSettings, UiContext, measurement,
     picking::{self, Display, View},
+    ui,
 };
 
 mod query;
@@ -11,6 +12,55 @@ mod tests;
 pub(super) const DMIN: Display = Display::sample("Dmin", View::Source);
 pub(super) const DMAX: Display = Display::sample("Dmax", View::Source);
 pub(super) const GAMMA: Display = Display::sample("Gamma neutral", View::Working);
+
+pub(super) fn reference_control(
+    ui: &mut egui::Ui,
+    id: &str,
+    label: &str,
+    rgb: Option<DVec3>,
+    enabled: bool,
+    meaning: &str,
+) -> bool {
+    ui.push_id(id, |ui| {
+        let pick = ui::labelled_row_at(
+            ui,
+            ui::INSPECTOR_ROW_HEIGHT,
+            label,
+            Some(meaning),
+            |ui, _| {
+                let name = format!("Pick {label}");
+                ui::icons::button_at(
+                    ui,
+                    ui::Icon::Pick,
+                    enabled,
+                    &name,
+                    &name,
+                    ui::INSPECTOR_ROW_HEIGHT,
+                )
+                .clicked()
+            },
+        )
+        .inner;
+
+        if let Some(rgb) = rgb {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!(
+                        "R {:.6}   G {:.6}   B {:.6}",
+                        rgb.x, rgb.y, rgb.z
+                    ))
+                    .small(),
+                )
+                .truncate(),
+            );
+        } else {
+            ui.weak("Not measured");
+        }
+        ui.add_space(ui::PARAMETER_GAP);
+        pick
+    })
+    .inner
+}
 
 pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
     let captured = cx.read(|editor| {

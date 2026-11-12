@@ -826,10 +826,10 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
             ui.add_space(8.);
             ui.strong("Destination");
             ui.horizontal(|ui| {
-                let choose = presentation::TextAction::new("Choose…");
+                let choose = ui::TextAction::new("Choose…");
                 let available =
                     (ui.available_width() - choose.width(ui) - ui.spacing().item_spacing.x).max(1.);
-                let size = egui::vec2(available, presentation::CONTROL_HEIGHT);
+                let size = egui::vec2(available, ui::CONTROL_HEIGHT);
                 ui.allocate_ui_with_layout(
                     size,
                     egui::Layout::left_to_right(egui::Align::Center),
@@ -850,7 +850,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
             });
             ui.add_space(8.);
             ui.strong("Output");
-            presentation::labelled_row(ui, "Format", None, |ui, label| {
+            ui::labelled_row(ui, "Format", None, |ui, label| {
                 egui::ComboBox::from_id_salt("export-format")
                     .width(240.)
                     .selected_text(match draft.kind {
@@ -864,7 +864,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
                     .response
                     .labelled_by(label);
             });
-            presentation::labelled_row(ui, "Target", None, |ui, label| {
+            ui::labelled_row(ui, "Target", None, |ui, label| {
                 ui.add_enabled_ui(draft.kind == Kind::Tiff, |ui| {
                     egui::ComboBox::from_id_salt("export-target")
                         .width(240.)
@@ -889,7 +889,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
                 });
             });
             if draft.kind == Kind::Exr {
-                presentation::labelled_row(ui, "Precision", None, |ui, label| {
+                ui::labelled_row(ui, "Precision", None, |ui, label| {
                     egui::ComboBox::from_id_salt("export-precision")
                         .width(240.)
                         .selected_text(match draft.precision {
@@ -913,19 +913,19 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
                 });
                 ui.small("Creative look and display rendering are not applied.");
             } else {
-                presentation::labelled_row(ui, "Bit depth", None, |ui, _| {
+                ui::labelled_row(ui, "Bit depth", None, |ui, _| {
                     ui.label("16-bit RGB");
                 });
-                presentation::labelled_row(ui, "Compression", None, |ui, _| {
+                ui::labelled_row(ui, "Compression", None, |ui, _| {
                     ui.label("Lossless · Deflate");
                 });
             }
             ui.add_space(8.);
             ui.strong("Files");
-            presentation::labelled_row(ui, "Filename", None, |ui, _| {
+            ui::labelled_row(ui, "Filename", None, |ui, _| {
                 ui.label("Original filename");
             });
-            presentation::labelled_row(ui, "Suffix", None, |ui, label| {
+            ui::labelled_row(ui, "Suffix", None, |ui, label| {
                 ui.add(egui::TextEdit::singleline(&mut draft.suffix).desired_width(240.))
                     .labelled_by(label);
             });
@@ -936,7 +936,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
             ) {
                 ui.small(format!("Example: {}", name.display()));
             }
-            presentation::labelled_row(ui, "Existing files", None, |ui, label| {
+            ui::labelled_row(ui, "Existing files", None, |ui, label| {
                 egui::ComboBox::from_id_salt("export-existing")
                     .width(240.)
                     .selected_text(match draft.collision {
@@ -977,7 +977,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
         } else {
             all
         };
-        let export = presentation::TextAction::new(&format!(
+        let export = ui::TextAction::new(&format!(
             "Export {count} {}",
             if count == 1 { "photo" } else { "photos" }
         ))
@@ -985,9 +985,9 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
         .enabled(count > 0 && !draft.folder.as_os_str().is_empty())
         .show(ui);
         intent.export = export.clicked();
-        let cancel = presentation::TextAction::new("Cancel").show(ui);
+        let cancel = ui::TextAction::new("Cancel").show(ui);
         intent.close = cancel.clicked();
-        presentation::focus_default(ui, &cancel);
+        ui::focus_default(ui, &cancel);
     });
     intent
 }
@@ -1019,11 +1019,11 @@ impl Editor {
         if let Some(mut draft) = self.document.export.draft.take() {
             let selected = self.export_ids(Scope::Selected).len();
             let all = self.export_ids(Scope::All).len();
-            let response = presentation::modal(context, egui::Id::new("export-photos"), |ui| {
+            let response = ui::modal(context, egui::Id::new("export-photos"), |ui| {
                 ui.set_width((context.content_rect().width() - 80.).clamp(1., 500.));
                 form(ui, &mut draft, selected, all)
             });
-            if response.inner.close || presentation::escape_requested(&response, escape) {
+            if response.inner.close || ui::escape_requested(&response, escape) {
                 return;
             }
             if response.inner.choose {
@@ -1056,7 +1056,7 @@ impl Editor {
             self.document.export.summary = Some(summary.clone());
         }
         drop(self.dialogs.show(move |context, id, escape| {
-            let response = presentation::modal(context, id, |ui| {
+            let response = ui::modal(context, id, |ui| {
                 ui.heading(if summary.stopped {
                     "Export stopped"
                 } else {
@@ -1083,34 +1083,32 @@ impl Editor {
                     .outcomes
                     .iter()
                     .find(|o| matches!(o, Outcome::Exported(_)))
-                    && presentation::TextAction::new("Show in Finder")
-                        .show(ui)
-                        .clicked()
+                    && ui::TextAction::new("Show in Finder").show(ui).clicked()
                 {
                     reveal = Some(path.clone());
                 }
-                let ok = presentation::TextAction::new("OK").show(ui);
-                presentation::focus_default(ui, &ok);
+                let ok = ui::TextAction::new("OK").show(ui);
+                ui::focus_default(ui, &ok);
                 (ok.clicked(), reveal)
             });
             if let Some(path) = &response.inner.1 {
                 reveal_file(path.clone());
             }
-            (response.inner.0 || presentation::escape_requested(&response, escape)).then_some(())
+            (response.inner.0 || ui::escape_requested(&response, escape)).then_some(())
         }));
     }
 
     pub(super) fn request_export_replacement(&mut self, draft: Draft, cx: &UiContext<'_, Self>) {
         let detail = draft.folder.display().to_string();
         let response = self.dialogs.show(move |context, id, escape| {
-            presentation::DecisionDialog::new("Replace existing exported files?",
+            ui::DecisionDialog::new("Replace existing exported files?",
                 "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.",
                 "Replace and export").warning().detail(&detail).show(context, id, escape)
         });
         self.document.dialog_action = cx.spawn(move |cx| async move {
             let Ok(choice) = response.await else { return };
             cx.update(|editor| {
-                if choice == presentation::DialogChoice::Confirm {
+                if choice == ui::DialogChoice::Confirm {
                     editor.accept_export(draft, &cx);
                 } else {
                     editor.document.export.draft = Some(draft);
@@ -1151,7 +1149,7 @@ fn reveal_file(path: PathBuf) {
 impl Editor {
     pub(super) fn export_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not export image",
             explanation: "Nothing was exported. The project and any existing destination file are unchanged. Review the details, then try exporting again.",
             details,

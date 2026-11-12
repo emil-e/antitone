@@ -585,9 +585,9 @@ fn photo_draft_keeps_accepted_state_until_one_exact_history_commit() {
     let mut adjustment = record.adjustment;
     adjustment.photo.exposure = 7.123456789012345;
     editor.photo_control(
-        controls::ControlResponse {
+        ui::ControlResponse {
             active: true,
-            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+            ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
         },
         move |v| *v = adjustment,
     );
@@ -595,9 +595,9 @@ fn photo_draft_keeps_accepted_state_until_one_exact_history_commit() {
     assert_eq!(editor.document.state.project, original);
     assert!(editor.document.history.undo.is_empty());
     editor.photo_control(
-        controls::ControlResponse {
+        ui::ControlResponse {
             active: false,
-            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+            ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
         },
         move |v| *v = adjustment,
     );

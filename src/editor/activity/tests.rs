@@ -1,5 +1,5 @@
-use super::super::presentation::tests::{key, pointer};
 use super::super::tests::{add_ready_fixture, app_frame, fixture};
+use super::super::ui::test_support::{key, pointer};
 use super::super::*;
 
 #[test]

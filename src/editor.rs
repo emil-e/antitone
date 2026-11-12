@@ -29,7 +29,6 @@ use std::sync::mpsc;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod cache_limits;
-mod controls;
 
 use crate::source as source_loading;
 
@@ -40,11 +39,10 @@ mod document_scope;
 use document_scope::DocumentScope;
 mod editing;
 mod history;
-mod icons;
 mod menu;
 mod preferences;
-mod presentation;
 mod tool;
+mod ui;
 use crate::project::{Source, SourceId};
 use document::Document;
 mod files;
@@ -416,7 +414,7 @@ impl Editor {
 
     fn roll_control(
         &mut self,
-        response: controls::ControlResponse,
+        response: ui::ControlResponse,
         cx: &UiContext<'_, Self>,
         write: impl FnOnce(&mut crate::project::Project),
     ) {
@@ -477,7 +475,7 @@ impl Editor {
 
     fn output_control(
         &mut self,
-        response: controls::ControlResponse,
+        response: ui::ControlResponse,
         write: impl FnOnce(&mut crate::project::Output),
     ) {
         let Some(mut edit) = self.begin_control(response, false) else {
@@ -504,7 +502,7 @@ impl Editor {
             .find(|preset| preset.matches(grade.output.grain, grade.output.halation));
         let label = current.map_or("Custom", GrainPreset::label);
         let mut selected = None;
-        presentation::inspector_dropdown(ui, "grain-preset", "Preset", label, |ui| {
+        ui::inspector_dropdown(ui, "grain-preset", "Preset", label, |ui| {
             for preset in [GrainPreset::ThirtyFiveMm, GrainPreset::MediumFormat] {
                 if ui
                     .selectable_label(Some(preset) == current, preset.label())
@@ -516,7 +514,7 @@ impl Editor {
         });
         if let Some(preset) = selected {
             self.output_control(
-                controls::ControlResponse::action(ui.make_persistent_id("grain-preset"), true),
+                ui::ControlResponse::action(ui.make_persistent_id("grain-preset"), true),
                 |output| {
                     output.grain = GrainSettings {
                         enabled: output.grain.enabled,
@@ -539,11 +537,11 @@ impl Editor {
         } else {
             "Off".to_owned()
         };
-        let (_, action) = presentation::section(
+        let (_, action) = ui::section(
             ui,
             "halation",
             "Halation",
-            presentation::SectionHeader {
+            ui::SectionHeader {
                 summary: &summary,
                 changed,
                 reset: Some(changed),
@@ -551,35 +549,42 @@ impl Editor {
                 default_open: Some(true),
             },
             |ui| {
-                let enabled = ui
-                    .checkbox(&mut settings.enabled, "Enable halation")
-                    .changed();
-                self.output_control(
-                    controls::ControlResponse::action(
-                        ui.make_persistent_id("halation-enabled"),
-                        enabled,
-                    ),
-                    |output| output.halation.enabled = settings.enabled,
-                );
-                let response = controls::parameter_edit(
-                    ui,
-                    controls::Parameter::HalationStrength,
-                    &mut settings.strength,
-                );
+                let enabled = ui.checkbox(&mut settings.enabled, "Enable halation");
+                self.output_control(ui::ControlResponse::discrete(&enabled), |output| {
+                    output.halation.enabled = settings.enabled
+                });
+                let response = ui::ParameterRow::new(
+                    "halation-strength",
+                    "Strength",
+                    0.0..=crate::halation::MAX_STRENGTH,
+                )
+                .default_value(crate::halation::DEFAULT_STRENGTH)
+                .help("Redistribute positive light into a warm halo; 0 leaves the image unchanged.")
+                .show(ui, &mut settings.strength)
+                .edit;
                 self.output_control(response, |output| {
                     output.halation.strength = settings.strength
                 });
-                let response = controls::parameter_edit(
-                    ui,
-                    controls::Parameter::HalationSize,
-                    &mut settings.size,
-                );
+                let response = ui::ParameterRow::new(
+                    "halation-size",
+                    "Core size",
+                    crate::halation::MIN_SIZE..=crate::halation::MAX_SIZE,
+                )
+                .default_value(crate::halation::DEFAULT_SIZE)
+                .slider_range(crate::halation::MIN_SIZE..=0.21)
+                .step(0.001)
+                .decimals(3)
+                .unit("%")
+                .help("Core width as a percentage of the cropped frame's shorter side.")
+                .slider_help("Slider: 0.01–0.21%; type larger sizes up to 0.50%.")
+                .show(ui, &mut settings.size)
+                .edit;
                 self.output_control(response, |output| output.halation.size = settings.size);
             },
         );
         if action.reset {
             self.output_control(
-                controls::ControlResponse::action(ui.make_persistent_id("reset-halation"), true),
+                ui::ControlResponse::action(ui.make_persistent_id("reset-halation"), true),
                 |output| output.halation = Default::default(),
             );
         }
@@ -593,11 +598,11 @@ impl Editor {
         } else {
             "Off".to_owned()
         };
-        let (_, action) = presentation::section(
+        let (_, action) = ui::section(
             ui,
             "grain",
             "Grain",
-            presentation::SectionHeader {
+            ui::SectionHeader {
                 summary: &summary,
                 changed,
                 reset: Some(changed),
@@ -605,36 +610,54 @@ impl Editor {
                 default_open: Some(true),
             },
             |ui| {
-                let enabled = ui.checkbox(&mut settings.enabled, "Enable").changed();
-                self.output_control(
-                    controls::ControlResponse::action(
-                        ui.make_persistent_id("grain-enabled"),
-                        enabled,
-                    ),
-                    |output| output.grain.enabled = settings.enabled,
-                );
-                let response = controls::parameter_edit(
-                    ui,
-                    controls::Parameter::FilmAmount,
-                    &mut settings.amount,
-                );
+                let enabled = ui.checkbox(&mut settings.enabled, "Enable");
+                self.output_control(ui::ControlResponse::discrete(&enabled), |output| {
+                    output.grain.enabled = settings.enabled
+                });
+                let response = ui::ParameterRow::new(
+                    "grain-amount",
+                    "Amount",
+                    crate::grain::MIN_AMOUNT..=crate::grain::MAX_AMOUNT,
+                )
+                .default_value(crate::grain::DEFAULT_AMOUNT)
+                .step(0.001)
+                .decimals(3)
+                .help("Grain contrast before pixel averaging; 0 removes grain.")
+                .show(ui, &mut settings.amount)
+                .edit;
                 self.output_control(response, |output| output.grain.amount = settings.amount);
-                let response =
-                    controls::parameter_edit(ui, controls::Parameter::FilmSize, &mut settings.size);
+                let response = ui::ParameterRow::new(
+                    "grain-size",
+                    "Size",
+                    crate::grain::MIN_SIZE..=crate::grain::MAX_SIZE,
+                )
+                .default_value(crate::grain::DEFAULT_SIZE)
+                .step(0.001)
+                .decimals(3)
+                .unit("%")
+                .help("Scale grain and image softness together in fixed crop-relative units.")
+                .show(ui, &mut settings.size)
+                .edit;
                 self.output_control(response, |output| {
                     output.grain = output.grain.resized(settings.size)
                 });
-                let response = controls::parameter_edit(
-                    ui,
-                    controls::Parameter::FilmColour,
-                    &mut settings.colour,
-                );
+                let response = ui::ParameterRow::new(
+                    "grain-colour",
+                    "Colour",
+                    crate::grain::MIN_COLOUR..=crate::grain::MAX_COLOUR,
+                )
+                .default_value(crate::grain::DEFAULT_COLOUR)
+                .help(
+                    "0 is monochrome; 0.5 matches the reference colour grain; 1 increases chroma.",
+                )
+                .show(ui, &mut settings.colour)
+                .edit;
                 self.output_control(response, |output| output.grain.colour = settings.colour);
             },
         );
         if action.reset {
             self.output_control(
-                controls::ControlResponse::action(ui.make_persistent_id("reset-grain"), true),
+                ui::ControlResponse::action(ui.make_persistent_id("reset-grain"), true),
                 |output| output.grain = Default::default(),
             );
         }
@@ -669,7 +692,7 @@ impl Editor {
             ("GPU cache", &mut limits.gpu_bytes),
         ] {
             let mut mib = *bytes / MIB;
-            let response = presentation::labelled_row(
+            let response = ui::labelled_row(
                 ui,
                 label,
                 Some("Optional retained storage; not total application memory."),
@@ -689,16 +712,13 @@ impl Editor {
                 info.label = Some(label.into());
                 info
             });
-            let cancelled = controls::numeric_cancelled(ui, &response);
+            let cancelled = ui::numeric_cancelled(ui, &response);
             if response.changed() && response.enabled() && !cancelled && *bytes != mib * MIB {
                 *bytes = mib * MIB;
                 changed = true;
             }
         }
-        if presentation::TextAction::new("Reset cache limits")
-            .show(ui)
-            .clicked()
-        {
+        if ui::TextAction::new("Reset cache limits").show(ui).clicked() {
             limits = self.document.thumbnails.default_limits();
             changed = true;
         }
@@ -887,14 +907,14 @@ impl Editor {
                 || self.document.project.flat_field().is_some());
         if discards_settings {
             let response = self.dialogs.show(move |context, id, escape| {
-                presentation::DecisionDialog::new(
+                ui::DecisionDialog::new(
                     "Switch input stage?",
                     "Switching stages discards the current stage's settings: calibration, gamma, balance, response and flat-field correction. Your source files are not changed.",
                     "Switch stage",
                 ).warning().show(context, id, escape)
             });
             self.document.input_change = cx.spawn(move |cx| async move {
-                let confirmed = response.await == Ok(presentation::DialogChoice::Confirm);
+                let confirmed = response.await == Ok(ui::DialogChoice::Confirm);
                 cx.update(|editor| {
                     editor.document.input_change = None;
                     if confirmed {
@@ -966,8 +986,8 @@ impl Editor {
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {
-        use controls::{ColorControl, Parameter};
-        use presentation::SectionHeader;
+        use ui::ColorControl;
+        use ui::SectionHeader;
 
         let grade = self.document.project_snapshot();
         let requested_input = self
@@ -978,16 +998,16 @@ impl Editor {
         let mut stage_target = None;
         let mut toggle_pivot = false;
         let previous_orientation = (self.document.project.orientation, self.photo_orientation());
-        presentation::inspector_spacing(ui);
+        ui::inspector_spacing(ui);
         // The inspector column width is authoritative; content must not widen the panel.
         let inspector_width = ui.available_width();
         ui.set_width(inspector_width);
-        presentation::restore_expansion(ui.ctx(), self.preferences.sections.clone());
+        ui::restore_expansion(ui.ctx(), self.preferences.sections.clone());
         let scope_slot = self.scope_panel(ui);
         ui.add_space(8.);
 
         let mut next_tab = self.tab;
-        presentation::stage_tabs(ui, &mut next_tab);
+        ui::stage_tabs(ui, &mut next_tab);
         if next_tab != self.tab {
             ui.ctx().memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
@@ -1063,7 +1083,7 @@ impl Editor {
                                 (false, true) => "Dmin not measured",
                                 (true, false) => "Dmax not measured",
                             };
-                            presentation::section(
+                            ui::section(
                                 ui,
                                 "roll-calibration",
                                 "Calibration",
@@ -1075,7 +1095,7 @@ impl Editor {
                                     default_open: Some(true),
                                 },
                                 |ui| {
-                                    if controls::calibration(
+                                    if calibration::reference_control(
                                         ui,
                                         "dmin",
                                         "Dmin (film base)",
@@ -1086,7 +1106,7 @@ impl Editor {
                                         start_pick =
                                             Some(|cx| Box::pin(calibration::pick_dmin(cx)));
                                     }
-                                    if controls::calibration(
+                                    if calibration::reference_control(
                                         ui,
                                         "dmax",
                                         "Dmax",
@@ -1110,7 +1130,7 @@ impl Editor {
                             {
                                 let inversion_changed = gamma != crate::processing::DEFAULT_GAMMA
                                     || balance != Balance::default();
-                                let (_, reset) = presentation::section_with_secondary_tool(
+                                let (_, reset) = ui::section_with_secondary_tool(
                                     ui,
                                     "roll-gamma-balance",
                                     "Gamma & balance",
@@ -1125,7 +1145,7 @@ impl Editor {
                                         ),
                                         changed: inversion_changed,
                                         reset: Some(inversion_changed && editable),
-                                        tool: Some(controls::balance_pick_tool(
+                                        tool: Some(ui::balance_pick_tool(
                                             can_pick,
                                             "Pick neutral for gamma balance",
                                         )),
@@ -1139,11 +1159,15 @@ impl Editor {
                                                     && !self.interaction_blocked()
                                                     && !self.tool_interacting(),
                                             |ui| {
-                                                let response = controls::parameter_edit(
-                                                    ui,
-                                                    Parameter::Gamma,
-                                                    &mut gamma,
-                                                );
+                                                let response = ui::ParameterRow::new(
+                                                    "gamma",
+                                                    "Gamma",
+                                                    crate::processing::MIN_GAMMA
+                                                        ..=crate::processing::MAX_GAMMA,
+                                                )
+                                                .default_value(crate::processing::DEFAULT_GAMMA)
+                                                .show(ui, &mut gamma)
+                                                .edit;
                                                 self.roll_control(response, cx, |project| {
                                                     if let InputSettings::Negative {
                                                         gamma: value,
@@ -1161,11 +1185,12 @@ impl Editor {
                                                     && !self.interaction_blocked()
                                                     && !self.tool_interacting(),
                                             |ui| {
-                                                for response in controls::balance_body(
-                                                    ui,
+                                                for response in ui::BalanceControl::new(
+                                                    "balance",
                                                     ColorControl::GammaBalance,
-                                                    &mut balance,
-                                                ) {
+                                                )
+                                                .show(ui, &mut balance)
+                                                {
                                                     self.roll_control(response, cx, |project| {
                                                         if let InputSettings::Negative {
                                                             balance: value,
@@ -1188,7 +1213,7 @@ impl Editor {
                                 }
                                 if reset.reset {
                                     self.roll_control(
-                                        controls::ControlResponse::action(
+                                        ui::ControlResponse::action(
                                             ui.make_persistent_id("reset-gamma-balance"),
                                             true,
                                         ),
@@ -1208,7 +1233,7 @@ impl Editor {
                                     "Toe {:.2} · Shoulder {:.4}",
                                     response.toe, response.shoulder
                                 );
-                                let (_, reset) = presentation::section(
+                                let (_, reset) = ui::section(
                                     ui,
                                     "roll-response",
                                     "Toe & shoulder",
@@ -1224,11 +1249,15 @@ impl Editor {
                                     },
                                     |ui| {
                                         ui.add_enabled_ui(editable, |ui| {
-                                            let edit = controls::parameter_edit(
-                                                ui,
-                                                Parameter::Toe,
-                                                &mut response.toe,
-                                            );
+                                            let edit = ui::ParameterRow::new(
+                                                "toe",
+                                                "Toe",
+                                                crate::processing::MIN_TOE
+                                                    ..=crate::processing::MAX_TOE,
+                                            )
+                                            .default_value(crate::processing::DEFAULT_TOE)
+                                            .show(ui, &mut response.toe)
+                                            .edit;
                                             self.roll_control(edit, cx, |project| {
                                                 if let InputSettings::Negative {
                                                     response: value,
@@ -1238,11 +1267,17 @@ impl Editor {
                                                     value.toe = response.toe;
                                                 }
                                             });
-                                            let edit = controls::parameter_edit(
-                                                ui,
-                                                Parameter::Shoulder,
-                                                &mut response.shoulder,
-                                            );
+                                            let edit = ui::ParameterRow::new(
+                                                "shoulder",
+                                                "Shoulder",
+                                                0.0..=crate::processing::MAX_SHOULDER,
+                                            )
+                                            .default_value(0.)
+                                            .step(0.0001)
+                                            .decimals(4)
+                                            .help("Highlight roll-off; 0 turns the shoulder off.")
+                                            .show(ui, &mut response.shoulder)
+                                            .edit;
                                             self.roll_control(edit, cx, |project| {
                                                 if let InputSettings::Negative {
                                                     response: value,
@@ -1257,7 +1292,7 @@ impl Editor {
                                 );
                                 if reset.reset {
                                     self.roll_control(
-                                        controls::ControlResponse::action(
+                                        ui::ControlResponse::action(
                                             ui.make_persistent_id("reset-response"),
                                             true,
                                         ),
@@ -1273,7 +1308,7 @@ impl Editor {
                                 }
                             }
                             let mut wb = grade.roll.wb;
-                            let (responses, pick) = controls::white_balance(
+                            let (responses, pick) = white_balance::controls(
                                 ui,
                                 "roll-white-balance",
                                 &mut wb,
@@ -1287,7 +1322,7 @@ impl Editor {
                                 start_pick = Some(|cx| Box::pin(white_balance::pick_roll(cx)));
                             }
                             let mut exposure = grade.roll.exposure;
-                            let (_, action) = presentation::section(
+                            let (_, action) = ui::section(
                                 ui,
                                 "roll-exposure",
                                 "Exposure",
@@ -1300,11 +1335,22 @@ impl Editor {
                                 },
                                 |ui| {
                                     ui.add_enabled_ui(editable, |ui| {
-                                        let response = controls::parameter_edit(
-                                            ui,
-                                            Parameter::Exposure,
-                                            &mut exposure,
-                                        );
+                                        let response = ui::ParameterRow::new(
+                                            "exposure",
+                                            "Exposure",
+                                            -crate::processing::MAX_EXPOSURE
+                                                ..=crate::processing::MAX_EXPOSURE,
+                                        )
+                                        .default_value(0.)
+                                        .slider_range(-3.0..=3.0)
+                                        .step(0.05)
+                                        .speed(0.01)
+                                        .unit("EV")
+                                        .slider_help(
+                                            "Slider: ±3 EV; type a value for up to ±16 EV. Shift-drag for finer steps.",
+                                        )
+                                        .show(ui, &mut exposure)
+                                        .edit;
                                         self.roll_control(response, cx, |project| {
                                             project.roll.exposure = exposure
                                         });
@@ -1313,7 +1359,7 @@ impl Editor {
                             );
                             if action.reset {
                                 self.roll_control(
-                                    controls::ControlResponse::action(
+                                    ui::ControlResponse::action(
                                         ui.make_persistent_id("reset-roll-exposure"),
                                         true,
                                     ),
@@ -1333,7 +1379,7 @@ impl Editor {
                             && !self.tool_interacting()
                             && !self.controls_pending();
                         ui.add_enabled_ui(allowed, |ui| {
-                            presentation::section(
+                            ui::section(
                                 ui,
                                 "film-texture",
                                 "Film texture",
@@ -1357,7 +1403,7 @@ impl Editor {
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(!self.tool_interacting() && !self.controls_pending(), |ui| {
                         let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
-                        let (_, action) = presentation::section(
+                        let (_, action) = ui::section(
                             ui,
                             "rendering-target",
                             "Target",
@@ -1375,7 +1421,7 @@ impl Editor {
                                 default_open: Some(true),
                             },
                             |ui| {
-                                presentation::inspector_dropdown(
+                                ui::inspector_dropdown(
                                     ui,
                                     "rendering-target",
                                     "Target",
@@ -1397,7 +1443,7 @@ impl Editor {
                                                 .clicked()
                                             {
                                                 self.output_control(
-                                                    controls::ControlResponse::action(
+                                                    ui::ControlResponse::action(
                                                         ui.make_persistent_id("target"),
                                                         true,
                                                     ),
@@ -1413,7 +1459,7 @@ impl Editor {
                         );
                         if action.reset {
                             self.output_control(
-                                controls::ControlResponse::action(
+                                ui::ControlResponse::action(
                                     ui.make_persistent_id("reset-target"),
                                     true,
                                 ),
@@ -1424,7 +1470,7 @@ impl Editor {
                 }
             });
 
-        self.preferences.sections = presentation::collect_expansion(ui.ctx());
+        self.preferences.sections = ui::collect_expansion(ui.ctx());
         self.preferences.scopes_visible = self.scopes.visible;
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
         if previous_orientation != (self.document.project.orientation, self.photo_orientation()) {

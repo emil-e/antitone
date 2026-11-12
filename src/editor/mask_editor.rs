@@ -14,6 +14,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
+pub(super) const DEFAULT_RADIAL_FEATHER: f64 = 0.8;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
     Linear,
@@ -412,7 +414,7 @@ impl Editor {
                     kind,
                     feather: match mask {
                         Some(AdjustmentLayerCoverage::Radial { feather, .. }) => feather,
-                        _ => controls::DEFAULT_RADIAL_FEATHER,
+                        _ => DEFAULT_RADIAL_FEATHER,
                     },
                     drag: None,
                     error: None,
@@ -877,14 +879,14 @@ impl CreationTool {
         Self { edit, reveal: true }
     }
 
-    fn identity(&self) -> presentation::ToolIdentity<'static> {
+    fn identity(&self) -> ui::ToolIdentity<'static> {
         match self.edit.borrow().kind {
-            Kind::Linear => presentation::ToolIdentity {
-                icon: icons::Icon::LinearGradient,
+            Kind::Linear => ui::ToolIdentity {
+                icon: ui::icons::Icon::LinearGradient,
                 title: "New linear gradient",
             },
-            Kind::Radial => presentation::ToolIdentity {
-                icon: icons::Icon::RadialGradient,
+            Kind::Radial => ui::ToolIdentity {
+                icon: ui::icons::Icon::RadialGradient,
                 title: "New radial gradient",
             },
         }

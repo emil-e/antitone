@@ -694,9 +694,9 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         ..Default::default()
     };
     editor.photo_control(
-        controls::ControlResponse {
+        ui::ControlResponse {
             active: true,
-            ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+            ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
         },
         move |v| *v = adjustment,
     );

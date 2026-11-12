@@ -75,7 +75,7 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
 #[test]
 fn stage_tabs_have_readable_distinct_named_hit_regions_and_keyboard_activation() {
     let context = egui::Context::default();
-    presentation::configure_fonts(&context);
+    ui::configure_fonts(&context);
     context.enable_accesskit();
     let mut selected = 0;
     let mut frame = |events| {
@@ -89,7 +89,7 @@ fn stage_tabs_have_readable_distinct_named_hit_regions_and_keyboard_activation()
                 ..Default::default()
             },
             |ui| {
-                presentation::stage_tabs(ui, &mut selected);
+                ui::stage_tabs(ui, &mut selected);
             },
         );
         output.textures_delta.clear();

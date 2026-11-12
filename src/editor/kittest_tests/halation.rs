@@ -35,6 +35,20 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
                 h.step();
             }
             if scale == 1. {
+                for label in ["Core size", "Strength"] {
+                    let role = egui::accesskit::Role::Slider;
+                    h.get_by_role_and_label(role, label).scroll_to_me();
+                    h.try_run_realtime().unwrap();
+                    let control = h.get_by_role_and_label(role, label);
+                    let node = control.accesskit_node();
+                    let start = node.min_numeric_value().unwrap();
+                    let end = node.max_numeric_value().unwrap();
+                    let position = (node.numeric_value().unwrap() - start) / (end - start);
+                    assert!(
+                        (0.45..=0.55).contains(&position),
+                        "{label} default stays near the centre of its slider"
+                    );
+                }
                 h.read(|e| {
                     assert_eq!(e.document.project.output.halation.size, 0.109);
                     assert_eq!(e.document.project.output.halation.strength, 0.54);

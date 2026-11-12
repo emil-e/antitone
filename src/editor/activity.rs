@@ -1,4 +1,4 @@
-use super::presentation::{Progress, ProgressContent};
+use super::ui::{Progress, ProgressContent};
 use crate::cancellation::Cancellation;
 use std::{
     sync::{

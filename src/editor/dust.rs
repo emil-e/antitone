@@ -679,8 +679,8 @@ impl Editor {
 impl tool::Tool for DustTool {
     fn presentation(&self, _editor: &Editor) -> tool::Presentation {
         tool::Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Dust,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Dust,
                 title: "Dust cleanup",
             },
             primary: None,
@@ -708,16 +708,16 @@ impl tool::Tool for DustTool {
             && editor.selected_area().is_some()
             && self.donor().is_none()
             && (repair_count > 0 || searching);
-        presentation::ToolIdentity {
-            icon: icons::Icon::Dust,
+        ui::ToolIdentity {
+            icon: ui::icons::Icon::Dust,
             title: "Dust repair"
         }.inspector(
             ui,
             |ui| ui
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let reset = icons::button(
+                    let reset = ui::icons::button(
                         ui,
-                        icons::Icon::Reset,
+                        ui::icons::Icon::Reset,
                         reset_enabled,
                         "Reset dust repairs",
                         "Reset dust repairs to defaults."

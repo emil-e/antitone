@@ -88,7 +88,7 @@ fn an_uninitialized_viewer_does_not_paint_through_an_alternate_proxy_renderer() 
     editor.document.source = true;
     editor.scopes.visible = false;
     let context = egui::Context::default();
-    presentation::configure_fonts(&context);
+    ui::configure_fonts(&context);
     for _ in 0..3 {
         let mut output = context.run_ui(
             egui::RawInput {

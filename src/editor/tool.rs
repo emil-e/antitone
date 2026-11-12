@@ -33,7 +33,7 @@ impl From<&'static str> for Primary {
 
 #[derive(Clone)]
 pub(super) struct Presentation {
-    pub identity: presentation::ToolIdentity<'static>,
+    pub identity: ui::ToolIdentity<'static>,
     pub primary: Option<Primary>,
     pub dismiss: &'static str,
     pub warning: Option<String>,

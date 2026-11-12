@@ -1,4 +1,4 @@
-use super::presentation::{DecisionDialog, DialogChoice};
+use super::ui::{DecisionDialog, DialogChoice};
 use super::*;
 
 #[cfg(test)]

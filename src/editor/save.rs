@@ -72,7 +72,7 @@ impl Editor {
 
     pub(super) fn save_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not save project",
             explanation: "Your edits are still in memory and the destination file was not replaced. Review the details, then try saving again.",
             details,

@@ -520,7 +520,7 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
     std::fs::copy(fixture("patches.dng"), &other).unwrap();
     let artwork = |h: &Harness<'_, Editor>| {
         let context = egui::Context::default();
-        presentation::configure_fonts(&context);
+        ui::configure_fonts(&context);
         let mut canvas = None;
         let mut output = context.run_ui(
             egui::RawInput {
