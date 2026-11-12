@@ -31,6 +31,7 @@ mod progress;
 mod project;
 mod roll_selection;
 mod shared_controls;
+mod tool_browsing;
 mod tools;
 mod typography;
 mod workflow;

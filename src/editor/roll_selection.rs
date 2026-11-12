@@ -40,9 +40,6 @@ impl Editor {
         !self.workspace_input.is_blocked()
             && self.document.look.is_none()
             && self.fullscreen.is_none()
-            && !self.picking()
-            && !self.cropping()
-            && !self.masking()
             && !self.allow_close
     }
 
@@ -109,8 +106,7 @@ impl Editor {
             self.document.roll_selection.anchor = Some(id);
             id
         };
-        let retry = active == id && self.document.visit.canvas.ready.is_none();
-        if self.document.visit.current_source != Some(active) || retry {
+        if self.document.visit.current_source != Some(active) {
             self.document.selected = self
                 .document
                 .project
