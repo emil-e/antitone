@@ -26,6 +26,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native/raw_bridge.cpp");
     println!("cargo:rerun-if-changed=native/raw_bridge.h");
     println!("cargo:rerun-if-changed=native/logging.h");
+    println!("cargo:rerun-if-changed=native/highlights.h");
     #[cfg(feature = "raw")]
     {
         println!("cargo:rerun-if-changed=native/libraw/dht-hashes.txt");
@@ -332,6 +333,7 @@ fn build_dng() {
         "native/dng_bridge.cpp",
         "native/dng_bridge.h",
         "native/dng_execution.h",
+        "native/dng_highlights.h",
     ] {
         println!("cargo:rerun-if-changed={path}");
     }

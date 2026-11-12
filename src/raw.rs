@@ -11,6 +11,8 @@ use crate::sampling::mean;
 
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
+#[cfg(all(test, feature = "editor"))]
+mod highlights_observation;
 mod lens_source;
 #[cfg(feature = "editor")]
 mod source_preview;
@@ -376,6 +378,7 @@ pub use crate::geometry::SourceRegion as Rect;
 #[derive(Clone, Copy)]
 struct NativeView {
     pixels: *const u16,
+    rgb: *const f32,
     width: u32,
     height: u32,
     maximum: u32,
@@ -450,7 +453,7 @@ pub fn version() -> String {
 
 /// Pixel-producer provenance, including changes to our pinned LibRaw development choices.
 pub fn development_version() -> String {
-    format!("{};bayer-dht-v2", version())
+    format!("{};bayer-dht-v2;blend-highlights-v4", version())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -784,16 +787,12 @@ impl RawFile {
             if let Some(geometry) = &self.correction {
                 let started = std::time::Instant::now();
                 let original = self.borrow_view(view)?;
-                let corrected = lens_source::reconstruct(
-                    original.pixels,
-                    [view.width, view.height],
-                    geometry,
-                    threads as usize,
-                )?;
+                let corrected = lens_source::reconstruct(&original, geometry, threads as usize)?;
                 // The immutable f32 raster replaces LibRaw's RGB16 allocation.
                 unsafe { antitone_raw_free_image(self.handle.as_ptr()) };
                 self.camera_view = Some(NativeView {
                     pixels: std::ptr::null(),
+                    rgb: std::ptr::null(),
                     ..view
                 });
                 log::debug!(
@@ -896,12 +895,20 @@ impl RawFile {
             .and_then(|v| v.checked_mul(4))
             .filter(|v| *v > 0 && *v <= isize::MAX as usize / size_of::<u16>())
             .ok_or_else(|| Error::Raw("invalid developed-image dimensions".into()))?;
-        if view.pixels.is_null() {
+        if view.pixels.is_null() && view.rgb.is_null() {
             return Err(Error::Raw("missing developed pixels".into()));
         }
         Ok(Developed {
-            pixels: unsafe { std::slice::from_raw_parts(view.pixels, count) },
-            continuous: None,
+            pixels: if view.pixels.is_null() {
+                &[]
+            } else {
+                unsafe { std::slice::from_raw_parts(view.pixels, count) }
+            },
+            continuous: if view.rgb.is_null() {
+                None
+            } else {
+                Some(unsafe { std::slice::from_raw_parts(view.rgb.cast(), count / 4) })
+            },
             sample_scale: 1.,
             width: view.width,
             height: view.height,
@@ -1399,7 +1406,7 @@ mod tests {
     fn bridge_layout_matches_native_static_assertions() {
         assert_eq!(size_of::<NativeMetadata>(), 664);
         assert_eq!(size_of::<SonyLensData>(), 160);
-        assert_eq!(size_of::<NativeView>(), 64);
+        assert_eq!(size_of::<NativeView>(), 72);
         #[cfg(feature = "editor")]
         assert_eq!(size_of::<NativeThumbnail>(), 32);
     }

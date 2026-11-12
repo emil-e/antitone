@@ -1,6 +1,7 @@
 #include "dng_bridge.h"
 #include "logging.h"
 #include "dng_execution.h"
+#include "dng_highlights.h"
 
 #include "dng_abort_sniffer.h"
 #include "dng_area_task.h"
@@ -51,6 +52,7 @@ static_assert(kDNGSDK_MajorVersion == 1 && kDNGSDK_MinorVersion == 7 && kDNGSDK_
               "This adapter's interpretation is pinned to DNG SDK 1.7.1 build 2768");
 
 using Clock = std::chrono::steady_clock;
+constexpr double kMaximumCameraValue = 256.;
 
 double elapsed(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
@@ -99,10 +101,28 @@ public:
     }
 };
 
-// Integer input still uses the SDK linearizer, but avoids its intermediate u16 rounding.
+struct Source {
+    AntitoneDngView view{};
+    std::vector<float> rgb;
+    std::vector<uint8_t> program;
+    double highlight_scale = 1.;
+
+    void finish() {
+        view.rgb = rgb.data();
+        view.program = program.data();
+        view.program_size = program.size();
+        view.retained_bytes = sizeof(Source) + rgb.capacity() * sizeof(float) + program.capacity();
+    }
+};
+
+// Integer input still uses the SDK linearizer, avoiding intermediate u16 rounding.
 class FloatNegative final : public dng_negative {
+    Source &source;
+    antitone_dng::Execution &execution;
+
 public:
-    explicit FloatNegative(dng_host &host) : dng_negative(host) {
+    FloatNegative(dng_host &host, Source &value, antitone_dng::Execution &workers)
+        : dng_negative(host), source(value), execution(workers) {
         Initialize();
     }
 
@@ -112,18 +132,12 @@ protected:
         fStage2Image.Reset(host.Make_dng_image(info.fActiveArea.Size(), 1, ttFloat));
         info.Linearize(host, *this, *fStage1Image.Get(), *fStage2Image.Get());
     }
-};
 
-struct Source {
-    AntitoneDngView view{};
-    std::vector<float> rgb;
-    std::vector<uint8_t> program;
-
-    void finish() {
-        view.rgb = rgb.data();
-        view.program = program.data();
-        view.program_size = program.size();
-        view.retained_bytes = sizeof(Source) + rgb.capacity() * sizeof(float) + program.capacity();
+    void DoBuildStage3(dng_host &host, int32 plane, dng_matrix *transforms) override {
+        dng_negative::DoBuildStage3(host, plane, transforms);
+        source.highlight_scale = antitone_dng::repair_highlights(
+            host, *fStage3Image.Get(), execution, source.view.as_shot_wb, source.view.wb,
+            OpcodeList3(), kMaximumCameraValue);
     }
 };
 
@@ -223,7 +237,7 @@ public:
     }
 
     dng_negative *Make_dng_negative() override {
-        return new FloatNegative(*this);
+        return new FloatNegative(*this, source, execution);
     }
 
     void validate_stage2(const dng_image &image) {
@@ -575,8 +589,9 @@ std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &opti
         if (i % (size_t(source->view.width) * 3) == 0) {
             sniffer.Sniff();
         }
-        const double value = double(source->rgb[i]) * source->view.wb[i % 3];
-        require(std::isfinite(value) && value >= 0 && value <= 256,
+        const double value =
+            double(source->rgb[i]) * source->view.wb[i % 3] / source->highlight_scale;
+        require(std::isfinite(value) && value >= 0 && value <= kMaximumCameraValue,
                 "Developed sample outside the prototype camera range");
         source->rgb[i] = float(value);
     }

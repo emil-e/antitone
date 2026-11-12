@@ -1,10 +1,12 @@
 #include "raw_bridge.h"
 #include "logging.h"
+#include "highlights.h"
 #include <libraw/libraw.h>
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__linux__) || defined(_WIN32)
@@ -13,13 +15,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 #if defined(_WIN32)
 #include <windows.h>
 #endif
 
 static_assert(sizeof(AntitoneRawMetadata) == 664);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
-static_assert(sizeof(AntitoneRawView) == 64);
+static_assert(sizeof(AntitoneRawView) == 72);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
 namespace {
@@ -27,6 +30,56 @@ class PreviewRaw : public LibRaw {
     std::array<bool, LIBRAW_IFD_MAXCOUNT> oriented_ifds{};
 
 public:
+    std::vector<float> highlight_rgb;
+
+    void repair_highlights(int threads, float white_shortfall) {
+        const auto &d = imgdata;
+        // A pre-balanced transformed RAW does not expose original sensor clipping
+        // through these uniform developed ceilings. Preserve it, without rejecting it.
+        if (d.color.as_shot_wb_applied)
+            return;
+        const float white_fraction = 1.f - white_shortfall / float(d.color.maximum);
+        if (!std::isfinite(white_fraction) || white_fraction <= 0)
+            return;
+        std::array<float, 3> reference, balance;
+        for (unsigned c = 0; c < 3; ++c) {
+            reference[c] = 65535.f * d.color.pre_mul[c] * white_fraction;
+            balance[c] = d.color.cam_mul[c];
+        }
+        const antitone::HighlightBlend repair(reference, balance, true);
+        if (!repair.supported())
+            return;
+        const size_t count = size_t(d.sizes.width) * d.sizes.height;
+        bool clipped = false;
+#pragma omp parallel for schedule(static) num_threads(threads) reduction(|| : clipped)
+        for (int64_t i = 0; i < static_cast<int64_t>(count); ++i) {
+            const std::array<float, 3> pixel = {float(d.image[i][0]), float(d.image[i][1]),
+                                                float(d.image[i][2])};
+            clipped |= repair.clipped(pixel);
+        }
+        if (!clipped)
+            return;
+        bool changed = false;
+#pragma omp parallel for schedule(static) num_threads(threads) reduction(|| : changed)
+        for (int64_t i = 0; i < static_cast<int64_t>(count); ++i) {
+            std::array<float, 3> pixel = {float(d.image[i][0]), float(d.image[i][1]),
+                                          float(d.image[i][2])};
+            changed |= repair.apply(pixel);
+        }
+        if (!changed)
+            return;
+        highlight_rgb.resize(count * 3);
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int64_t i = 0; i < static_cast<int64_t>(count); ++i) {
+            std::array<float, 3> pixel = {float(d.image[i][0]), float(d.image[i][1]),
+                                          float(d.image[i][2])};
+            repair.apply(pixel);
+            std::copy(pixel.begin(), pixel.end(), highlight_rgb.data() + i * 3);
+        }
+        // Continuous source replaces RGB16; repeated development still starts from rawdata.
+        free_image();
+    }
+
     void capture_orientation(int encoded_tag) {
         const auto tag = uint32_t(encoded_tag);
         const auto ifd = tag >> 20;
@@ -333,7 +386,7 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
         d.idata.xmpdata};
     for (size_t i = 0; i < LIBRAW_AFDATA_MAXCOUNT; ++i)
         blocks[11 + i] = d.makernotes.common.afdata[i].AFInfoData;
-    uint64_t total = 0;
+    uint64_t total = static_cast<PreviewRaw &>(raw).highlight_rgb.capacity() * sizeof(float);
     for (size_t i = 0; i < blocks.size(); ++i) {
         const auto *block = blocks[i];
         if (!block || std::find(blocks.begin(), blocks.begin() + i, block) != blocks.begin() + i)
@@ -356,7 +409,9 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
 }
 
 extern "C" void antitone_raw_free_image(void *handle) {
-    static_cast<LibRaw *>(handle)->free_image();
+    auto &raw = *static_cast<PreviewRaw *>(static_cast<LibRaw *>(handle));
+    raw.free_image();
+    std::vector<float>().swap(raw.highlight_rgb);
 }
 
 extern "C" const char *antitone_raw_version() {
@@ -501,12 +556,13 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
 }
 
 extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
-                                    AntitoneRawView *view, char *error, size_t size) {
+                                    AntitoneRawView *view, char *error, size_t size) try {
     antitone::NativeLog diagnostic("raw", "develop");
     if (check_threads(threads, error, size))
         return -1;
     ThreadBudget budget(threads);
-    auto &raw = *static_cast<LibRaw *>(handle);
+    auto &raw = *static_cast<PreviewRaw *>(static_cast<LibRaw *>(handle));
+    std::vector<float>().swap(raw.highlight_rgb);
     auto &p = raw.imgdata.params;
     for (int c = 0; c < 4; ++c)
         p.user_mul[c] = static_cast<float>(wb[c]);
@@ -533,6 +589,22 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     p.user_flip = 0;
     p.use_fuji_rotate = 0;
     p.camera_profile = p.output_profile = nullptr;
+    float white_shortfall = 0;
+    libraw_decoder_info_t decoder{};
+    raw.get_decoder_info(&decoder);
+    if (std::strcmp(decoder.decoder_name, "sony_arw2_load_raw()") == 0) {
+        // The codec expands 11-bit codes through curve[pix<<1]. Nominal sensor
+        // white need not be representable (e.g. 16380 lies between 16372 and 16404).
+        // Use its last decoded code, capturing the curve before development.
+        unsigned endpoint = 0;
+        for (unsigned code = 0; code <= 0x7ff; ++code) {
+            const unsigned value = raw.imgdata.color.curve[code << 1];
+            if (value <= raw.imgdata.color.maximum)
+                endpoint = std::max(endpoint, value);
+        }
+        if (endpoint > 0)
+            white_shortfall = float(raw.imgdata.color.maximum - endpoint);
+    }
     int code = raw.dcraw_process();
     if (code != 0)
         diagnostic.complete(code, 2);
@@ -543,7 +615,10 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
         std::snprintf(error, size, "Developer did not return a three-channel camera image");
         return -1;
     }
+    if (output_color == 0)
+        raw.repair_highlights(threads, white_shortfall);
     view->pixels = reinterpret_cast<const uint16_t *>(d.image);
+    view->rgb = raw.highlight_rgb.empty() ? nullptr : raw.highlight_rgb.data();
     view->width = d.sizes.width;
     view->height = d.sizes.height;
     view->maximum = d.color.maximum;
@@ -553,6 +628,12 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
         view->pre_mul[c] = d.color.pre_mul[c];
     diagnostic.complete();
     return 0;
+}
+
+catch (const std::bad_alloc &) {
+
+    std::snprintf(error, size, "Unable to allocate highlight development");
+    return -1;
 }
 
 extern "C" void antitone_raw_close(void *handle) {

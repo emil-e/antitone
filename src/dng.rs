@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use glam::DMat3;
 
 /// SDK build and stage/WB/precision interpretation, not a source-file revision.
-pub const INTERPRETATION: &str = "adobe-dng-1.7.1.2768-float-bilinear-post-op-wb-quantum-v2";
+pub const INTERPRETATION: &str = "adobe-dng-1.7.1.2768-float-bilinear-blend-highlights-v4";
 
 #[derive(Clone, Default)]
 pub struct Cancellation(Arc<AtomicBool>);

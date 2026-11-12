@@ -77,11 +77,15 @@ pub struct Fixture {
     pub lists: [Vec<Opcode>; 3],
     pub marker: Option<(u32, u32, u16)>,
     pub neutral: [(u32, u32); 3],
+    pub omit_neutral: bool,
     pub orientation: u16,
     pub ramp: bool,
+    pub clipped_corner: bool,
     pub bits: u16,
     pub lossless_jpeg: bool,
     pub pattern: [u8; 4],
+    /// Per-channel sensor signal above the declared black level, before capture clipping.
+    pub signal: [u16; 3],
     pub extra: Vec<(u16, u16, Vec<u8>)>,
 }
 
@@ -92,11 +96,14 @@ impl Default for Fixture {
             lists: Default::default(),
             marker: None,
             neutral: [(1, 1); 3],
+            omit_neutral: false,
             orientation: 1,
             ramp: false,
+            clipped_corner: false,
             bits: 16,
             lossless_jpeg: false,
             pattern: [0, 1, 1, 2],
+            signal: [1024, 1536, 2048],
             extra: Vec::new(),
         }
     }
@@ -173,6 +180,9 @@ impl Fixture {
                 [long(4), long(6), long(self.side - 4), long(self.side - 2)].concat(),
             ),
         ];
+        if self.omit_neutral {
+            entries.retain(|(tag, _, _)| *tag != 50728);
+        }
         for (stage, opcodes) in self.lists.iter().enumerate() {
             if !opcodes.is_empty() {
                 let mut bytes = (opcodes.len() as u32).to_be_bytes().to_vec();
@@ -228,9 +238,11 @@ impl Fixture {
         for y in 0..self.side {
             for x in 0..self.side {
                 let channel = self.pattern[(y % 2 * 2 + x % 2) as usize] as usize;
-                let mut value = 64
-                    + [1024_u16, 1536, 2048][channel]
-                    + if self.ramp { (4 * x + 2 * y) as u16 } else { 0 };
+                let mut value =
+                    64 + self.signal[channel] + if self.ramp { (4 * x + 2 * y) as u16 } else { 0 };
+                if self.clipped_corner && x < 16 && y < 16 {
+                    value = 4160;
+                }
                 if let Some((mx, my, code)) = self.marker
                     && x == mx
                     && y == my

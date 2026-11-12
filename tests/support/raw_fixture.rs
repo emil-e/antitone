@@ -16,19 +16,35 @@ pub fn bayer_dng_with_rgb(rgb: [u16; 3]) -> FixturePath {
 }
 
 pub fn bayer_dng_with_camera(rgb: [u16; 3], xyz_to_camera: [f64; 9]) -> FixturePath {
-    camera_with_neutral(rgb, xyz_to_camera, [(1, 1); 3])
+    camera_with_neutral(xyz_to_camera, [(1, 1); 3], |_, _| rgb)
 }
 
 /// Declares capture WB in the RAW itself, independently of the requested development balance.
 #[allow(dead_code)]
 pub fn bayer_dng_with_as_shot(rgb: [u16; 3], gains: [u32; 3]) -> FixturePath {
-    camera_with_neutral(rgb, XYZ_TO_CAMERA, gains.map(|gain| (1, gain)))
+    bayer_dng_with_as_shot_samples(gains, |_, _| rgb)
+}
+
+#[allow(dead_code)]
+pub fn bayer_dng_with_as_shot_and_clipped_corner(rgb: [u16; 3], gains: [u32; 3]) -> FixturePath {
+    bayer_dng_with_as_shot_samples(
+        gains,
+        |x, y| if x < 16 && y < 16 { [65535; 3] } else { rgb },
+    )
+}
+
+#[allow(dead_code)]
+pub fn bayer_dng_with_as_shot_samples(
+    gains: [u32; 3],
+    pixel: impl Fn(u32, u32) -> [u16; 3],
+) -> FixturePath {
+    camera_with_neutral(XYZ_TO_CAMERA, gains.map(|gain| (1, gain)), pixel)
 }
 
 fn camera_with_neutral(
-    rgb: [u16; 3],
     xyz_to_camera: [f64; 9],
     neutral: [(u32, u32); 3],
+    pixel: impl Fn(u32, u32) -> [u16; 3],
 ) -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
@@ -112,10 +128,11 @@ fn camera_with_neutral(
     bytes[strip_offset..strip_offset + 4].copy_from_slice(&position.to_le_bytes());
     for y in 0..SIDE {
         for x in 0..SIDE {
+            let signal = pixel(x, y);
             let value: u16 = match (x % 2, y % 2) {
-                (0, 0) => rgb[0],
-                (1, 1) => rgb[2],
-                _ => rgb[1],
+                (0, 0) => signal[0],
+                (1, 1) => signal[2],
+                _ => signal[1],
             };
             bytes.extend_from_slice(&value.to_le_bytes());
         }

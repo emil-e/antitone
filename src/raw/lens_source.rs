@@ -12,12 +12,16 @@ impl CorrectedImage {
 }
 
 pub(super) fn reconstruct(
-    input: &[u16],
-    input_size: [u32; 2],
+    input: &super::Developed<'_>,
     geometry: &EmbeddedLensGeometry,
     threads: usize,
 ) -> Result<CorrectedImage, Error> {
     let size = geometry.size();
+    // Workers borrow plain immutable slices, not the thread-local native owner.
+    let codes = input.pixels;
+    let continuous = input.continuous;
+    let width = input.width;
+    let sample_scale = input.sample_scale;
     let count = (size[0] as usize)
         .checked_mul(size[1] as usize)
         .filter(|&n| n <= isize::MAX as usize / size_of::<[f32; 3]>())
@@ -42,9 +46,12 @@ pub(super) fn reconstruct(
                         let right = point.x.ceil() as u32;
                         let bottom = point.y.ceil() as u32;
                         let sample = |x: u32, y: u32| {
-                            let value =
-                                input[(y as usize * input_size[0] as usize + x as usize) * 4 + c];
-                            f64::from(value) * geometry.source_gain(x, y)
+                            let index = y as usize * width as usize + x as usize;
+                            let value = match continuous {
+                                Some(pixels) => pixels[index][c],
+                                None => f32::from(codes[index * 4 + c]),
+                            };
+                            f64::from(value * sample_scale) * geometry.source_gain(x, y)
                         };
                         let u = point.x - left as f64;
                         let v = point.y - top as f64;
@@ -70,6 +77,27 @@ mod tests {
     use super::*;
     use crate::{lens::EmbeddedLensProfile, raw::Rect};
     use glam::DVec2;
+
+    fn reconstruct(
+        input: &[u16],
+        input_size: [u32; 2],
+        geometry: &EmbeddedLensGeometry,
+        threads: usize,
+    ) -> Result<CorrectedImage, Error> {
+        let image = super::super::Developed {
+            pixels: input,
+            continuous: None,
+            sample_scale: 1.,
+            width: input_size[0],
+            height: input_size[1],
+            maximum: 65535,
+            data_maximum: 65535,
+            warnings: 0,
+            pre_mul: [1.; 4],
+            _owner: std::marker::PhantomData,
+        };
+        super::reconstruct(&image, geometry, threads)
+    }
 
     #[test]
     fn reconstruction_preserves_constant_channels_across_geometry_and_worker_partitions() {
@@ -132,6 +160,39 @@ mod tests {
                 .flatten()
                 .all(|&v| (v - expected).abs() < 0.01)
         );
+    }
+
+    #[test]
+    fn continuous_repaired_light_retains_fractions_and_overrange_through_optics() {
+        let pixels = vec![[70000.25, 120000.5, 65535.75]; 64 * 64];
+        let image = super::super::Developed {
+            pixels: &[],
+            continuous: Some(&pixels),
+            sample_scale: 1.,
+            width: 64,
+            height: 64,
+            maximum: 65535,
+            data_maximum: 65535,
+            warnings: 0,
+            pre_mul: [1.; 4],
+            _owner: std::marker::PhantomData,
+        };
+        let geometry = EmbeddedLensGeometry::new(
+            EmbeddedLensProfile::from_knots(&[1.02; 2], &[DVec2::new(1.01, 0.99); 2], &[0.5; 2])
+                .unwrap(),
+            Rect::from([0, 0, 64, 64]),
+        )
+        .unwrap();
+        for threads in [1, 8] {
+            let output = super::reconstruct(&image, &geometry, threads).unwrap();
+            assert!(
+                output
+                    .pixels
+                    .iter()
+                    .all(|p| *p == [140000.5, 240001., 131071.5]),
+                "optics must consume repaired floats, not stale RGB16 codes or a rounded reconstruction"
+            );
+        }
     }
 
     #[test]
