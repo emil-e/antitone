@@ -57,7 +57,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         harness.read(|editor| {
             assert!(!editor.application_menu_state().enabled(Action::New));
             assert_eq!(
-                editor.document.export.draft.as_ref().unwrap().target,
+                editor.document.export.form.as_ref().unwrap().draft.target,
                 OutputTarget::DisplayP3
             );
         });
@@ -74,7 +74,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         choose(&mut harness, "Format", "TIFF");
         harness.read(|editor| {
             assert_eq!(
-                editor.document.export.draft.as_ref().unwrap().target,
+                editor.document.export.form.as_ref().unwrap().draft.target,
                 OutputTarget::DisplayP3
             )
         });
@@ -127,13 +127,13 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
-            let draft = editor.document.export.draft.as_ref().unwrap();
+            let draft = &editor.document.export.form.as_ref().unwrap().draft;
             assert_eq!(draft.target, OutputTarget::DisplayP3);
             assert_eq!(draft.folder, directory.path());
         });
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert!(editor.document.export.draft.is_none()));
+        harness.read(|editor| assert!(editor.document.export.form.is_none()));
         let restored = preferences::Store::open(directory.path().join("preferences.json"))
             .unwrap()
             .1;
@@ -260,7 +260,7 @@ fn export_blocks_unfinished_numeric_input_and_uses_the_explicitly_committed_valu
         open(&mut harness);
         harness.read(|editor| {
             assert!(editor.editing());
-            assert!(editor.document.export.draft.is_none());
+            assert!(editor.document.export.form.is_none());
             assert_eq!(editor.photo_settings().exposure, 0.);
         });
         harness.key_press(egui::Key::Enter);
@@ -304,7 +304,7 @@ fn destination_paths_share_a_left_edge_and_choose_stays_on_the_right() {
                 directory.path().join("Photographs"),
             ] {
                 harness.update(|editor| {
-                    editor.document.export.draft.as_mut().unwrap().folder = folder.clone()
+                    editor.document.export.form.as_mut().unwrap().draft.folder = folder.clone()
                 });
                 harness.try_run_realtime().unwrap();
                 let text = folder.display().to_string();
@@ -355,6 +355,7 @@ fn narrow_dialog_can_be_cancelled_without_exporting_or_changing_the_document() {
         let accepted = harness.read(|editor| editor.document.state.project.clone());
         harness.set_size(egui::vec2(800., 600.));
         open(&mut harness);
+        harness.read(|editor| assert!(editor.workspace_input.is_blocked()));
         let cancel = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel");
         assert!(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.))
@@ -368,10 +369,11 @@ fn narrow_dialog_can_be_cancelled_without_exporting_or_changing_the_document() {
         harness.try_run_realtime().unwrap();
         harness.read(|editor| {
             assert!(
-                editor.document.export.draft.is_none()
-                    && editor.document.export.operation.is_none()
+                editor.document.export.form.is_none() && editor.document.export.operation.is_none()
             );
             assert_eq!(editor.document.state.project, accepted);
+            assert!(!editor.workspace_input.is_blocked());
+            assert!(editor.tool_start_available());
         });
         assert!(!directory.path().join("patches.tif").exists());
     });

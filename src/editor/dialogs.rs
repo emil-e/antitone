@@ -1,4 +1,7 @@
-use super::ui::{FeedbackDialog, Severity};
+use super::{
+    ui::{FeedbackDialog, Severity},
+    workspace_input::{WorkspaceBlock, WorkspaceInput},
+};
 use futures_channel::oneshot;
 use std::{collections::VecDeque, sync::Arc};
 
@@ -25,19 +28,36 @@ type Paint = Box<dyn FnMut(&egui::Context, bool) -> bool>;
 
 struct Pending {
     paint: Paint,
+    _workspace: WorkspaceBlock,
     #[cfg(test)]
     message: Option<Message>,
 }
 
 /// Owns submitted presentation until the user answers; callers own the consequences.
-#[derive(Default)]
 pub(super) struct Dialogs {
+    input: WorkspaceInput,
     pending: VecDeque<Pending>,
     next: u64,
     changed: Arc<event_listener::Event>,
 }
 
+#[cfg(test)]
+impl Default for Dialogs {
+    fn default() -> Self {
+        Self::new(WorkspaceInput::default())
+    }
+}
+
 impl Dialogs {
+    pub fn new(input: WorkspaceInput) -> Self {
+        Self {
+            input,
+            pending: VecDeque::new(),
+            next: 0,
+            changed: Arc::default(),
+        }
+    }
+
     /// Submission is immediate. Dropping the response only abandons the continuation.
     pub fn show<R: 'static>(
         &mut self,
@@ -48,6 +68,7 @@ impl Dialogs {
         let id = egui::Id::new("dialog").with(self.next);
         self.next += 1;
         self.pending.push_back(Pending {
+            _workspace: self.input.block(),
             paint: Box::new(move |context, escape| {
                 let Some(answer) = present(context, id, escape) else {
                     return false;

@@ -144,7 +144,7 @@ fn file_and_export_admission_wait_for_the_gesture_not_for_a_mask_mode() {
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(!editor.files.pending());
-                assert!(editor.document.export.draft.is_none());
+                assert!(editor.document.export.form.is_none());
                 assert_eq!(editor.document.state.project, before);
             });
             app.update(|editor| editor.finish_mask(false));
@@ -152,7 +152,7 @@ fn file_and_export_admission_wait_for_the_gesture_not_for_a_mask_mode() {
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(
-                    editor.document.export.draft.is_some(),
+                    editor.document.export.form.is_some(),
                     "export remains reachable immediately after the individual gesture"
                 );
                 assert_eq!(editor.document.state.project, before);

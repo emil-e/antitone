@@ -111,7 +111,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, old_view));
                 harness.key_press(egui::Key::Escape);
                 harness.step();
-                harness.read(|editor| assert!(editor.activities.blocks_workspace()));
+                harness.read(|editor| assert!(editor.workspace_input.is_blocked()));
                 drop(activity);
                 harness.step();
                 stage(&mut harness, "Roll");

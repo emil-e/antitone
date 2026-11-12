@@ -510,7 +510,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 ui_frame(app, &context, vec![]);
                 click(app, &context, egui::pos2(30., 15.));
                 app.read(|editor| {
-                    assert!(editor.files.pending() || editor.document.export.draft.is_some());
+                    assert!(editor.files.pending() || editor.document.export.form.is_some());
                     assert!(
                         !editor.document.write.pending()
                             && editor.document.export.operation.is_none()
@@ -521,7 +521,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                     assert!(
                         !editor.dialogs.is_open()
                             && !editor.files.pending()
-                            && editor.document.export.draft.is_none()
+                            && editor.document.export.form.is_none()
                     );
                     assert!(
                         !editor.document.write.pending()
@@ -713,7 +713,10 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         let before = editor.document.state.project.clone();
         let context = egui::Context::default();
         with_application(editor, |app| {
-            app.enter(|e, cx| e.request_export_replacement(draft, cx));
+            app.enter(|e, cx| {
+                let modal = export::Form::new(draft, &e.workspace_input);
+                e.request_export_replacement(modal, cx);
+            });
             ui_frame(app, &context, vec![]);
             let labels = ui_frame(app, &context, vec![]);
             let point = labels
@@ -724,7 +727,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
                 .center();
             click(app, &context, point);
             app.read(|e| {
-                assert!(e.document.export.draft.is_none() && e.document.export.operation.is_some())
+                assert!(e.document.export.form.is_none() && e.document.export.operation.is_some())
             });
             app.run_until(Duration::from_secs(30), |e| {
                 e.document.export.operation.is_none()

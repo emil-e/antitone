@@ -34,6 +34,7 @@ mod shared_controls;
 mod tools;
 mod typography;
 mod workflow;
+mod workspace_input;
 
 #[test]
 fn parameter_reset_is_a_name_gesture_and_respects_disabled_state() {
@@ -496,7 +497,8 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                         PathBuf::from("/exports/Scans/照片-long-export-folder"),
                     );
                     draft.collision = crate::editor::export::Collision::Replace;
-                    editor.request_export_replacement(draft, cx);
+                    let modal = crate::editor::export::Form::new(draft, &editor.workspace_input);
+                    editor.request_export_replacement(modal, cx);
                 }
                 _ => unreachable!(),
             });
@@ -526,7 +528,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             harness.run();
             if decision == 2 {
                 harness.read(|editor| {
-                    assert!(editor.document.export.draft.is_some() && !editor.dialogs.is_open())
+                    assert!(editor.document.export.form.is_some() && !editor.dialogs.is_open())
                 });
                 harness.get_by_label("Cancel").click();
                 harness.run();
@@ -535,7 +537,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                 assert!(
                     !editor.files.pending()
                         && !editor.dialogs.is_open()
-                        && editor.document.export.draft.is_none()
+                        && editor.document.export.form.is_none()
                 )
             });
             harness.read(|editor| assert!(!editor.interaction_blocked()));

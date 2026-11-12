@@ -2657,10 +2657,12 @@ fn navigation_invalidates_pending_export_dialog() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.export.draft =
-                Some(export::Draft::new(OutputTarget::DisplayP3, PathBuf::new()));
+            editor.document.export.form = Some(export::Form::new(
+                export::Draft::new(OutputTarget::DisplayP3, PathBuf::new()),
+                &editor.workspace_input,
+            ));
             editor.load("another.arw".into(), cx);
-            assert!(editor.document.export.draft.is_none());
+            assert!(editor.document.export.form.is_none());
             assert!(editor.document.visit.source.pending());
         });
     });

@@ -2,6 +2,8 @@ use super::ui::{DecisionDialog, DialogChoice};
 use super::*;
 
 #[cfg(test)]
+mod input_tests;
+#[cfg(test)]
 mod tests;
 
 // Picker hints only; decoded sensor data and metadata determine compatibility.
@@ -178,7 +180,9 @@ impl Editor {
         let activity = self
             .activities
             .start(ActivityOptions::new("Opening project…").modal());
+        let block = self.workspace_input.block();
         self.files.open = cx.spawn(move |cx| async move {
+            let _workspace = block;
             let result = crate::background::run(move |_| Document::open(&path))
                 .await
                 .map_err(|_| "Project reader panicked".to_owned())
@@ -231,8 +235,10 @@ impl Editor {
         }
         let closing = transition == Transition::Close;
         let id = self.id;
+        let block = self.workspace_input.block();
         self.files.action = cx
             .spawn(move |cx| async move {
+                let _workspace = block;
                 guarded_transition(&cx, id, transition).await;
             })
             .map(|task| Pending { closing, task });
@@ -260,8 +266,10 @@ impl Editor {
             return;
         };
         let closing = after == Some(Transition::Close);
+        let block = self.workspace_input.block();
         self.files.action = cx
             .spawn(move |cx| async move {
+                let _workspace = block;
                 let Ok(success) = response.await else { return };
                 if let Some(transition) = after {
                     if success && cx.read(|editor| !editor.document.dirty()) {
@@ -329,8 +337,10 @@ impl Editor {
 
         let id = self.id;
         let closing = after == Some(Transition::Close);
+        let block = self.workspace_input.block();
         self.files.action = cx
             .spawn(move |cx| async move {
+                let _workspace = block;
                 match save_to(&cx, id, destination).await {
                     Some(true) => {
                         if let Some(transition) = after {

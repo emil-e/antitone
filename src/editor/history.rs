@@ -159,14 +159,10 @@ impl Editor {
     }
 
     pub(super) fn history_available(&self) -> bool {
-        !self.interaction_blocked()
+        !self.workspace_input.is_blocked()
             && !self.editing()
             && !self.controls_pending()
-            && !self.dialogs.is_open()
-            && self.menus.panel.is_none()
             && self.document.look.is_none()
-            && !self.export_modal()
-            && !self.files.pending()
             && !self.allow_close
             && !self.document.visit.adjustment_layers.dragging()
             && !self.dust_history_draft()

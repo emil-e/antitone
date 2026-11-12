@@ -15,13 +15,7 @@ pub(super) struct FullscreenView {
 
 impl Editor {
     fn fullscreen_blocked(&self) -> bool {
-        self.menus.panel.is_some()
-            || self.activities.blocks_workspace()
-            || self.dialogs.is_open()
-            || self.files.pending()
-            || self.allow_close
-            || self.export_modal()
-            || self.dialogs.is_open()
+        self.workspace_input.is_blocked() || self.allow_close
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {

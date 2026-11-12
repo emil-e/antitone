@@ -52,6 +52,7 @@ use files::Transition;
 mod dialogs;
 
 mod activity;
+mod workspace_input;
 #[cfg(test)]
 use activity::Reporter as ActivityReporter;
 use activity::{Activities, Activity, Options as ActivityOptions};
@@ -249,6 +250,7 @@ pub struct Editor {
     id: u64,
     look: look::Session,
     status: String,
+    workspace_input: workspace_input::WorkspaceInput,
     activities: Activities,
     #[cfg(test)]
     fixture_activity: Option<Activity>,
@@ -274,7 +276,7 @@ pub struct Editor {
 
 impl Editor {
     fn interaction_blocked(&self) -> bool {
-        self.document.look.is_some() || self.activities.blocks_workspace()
+        self.document.look.is_some() || self.activities.has_modal()
     }
 
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
@@ -350,6 +352,7 @@ impl Editor {
         };
         let mut document: document_scope::DocumentScope = document.into();
         document.project.input = input;
+        let workspace_input = workspace_input::WorkspaceInput::default();
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
@@ -363,10 +366,11 @@ impl Editor {
             id: 0,
             look: Default::default(),
             status: "Add scans to begin".into(),
-            activities: Activities::default(),
+            activities: Activities::new(workspace_input.clone()),
             #[cfg(test)]
             fixture_activity: None,
-            dialogs: Default::default(),
+            dialogs: dialogs::Dialogs::new(workspace_input.clone()),
+            workspace_input,
 
             auto_crop_margin: crate::auto_crop::DEFAULT_MARGIN_PERCENT,
 
@@ -1574,6 +1578,7 @@ impl host::App for Editor {
 impl Editor {
     fn draw_ui(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.activities.set_context(ui.ctx());
+        self.workspace_input.set_context(ui.ctx());
         if self.allow_close {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;

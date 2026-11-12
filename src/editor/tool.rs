@@ -173,12 +173,9 @@ impl Editor {
     }
 
     pub(super) fn tool_start_available(&self) -> bool {
-        !self.interaction_blocked()
+        !self.workspace_input.is_blocked()
+            && self.document.look.is_none()
             && !self.controls_pending()
-            && !self.export_modal()
-            && !self.dialogs.is_open()
-            && !self.files.pending()
-            && self.menus.panel.is_none()
     }
 
     pub(super) fn prepare_tool(&mut self) -> bool {

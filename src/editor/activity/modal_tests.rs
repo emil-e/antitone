@@ -77,7 +77,7 @@ fn regions_preparation_owns_modal_feedback_even_after_its_requesting_tool_retire
         app.pump();
         app.update(|editor| {
             assert!(editor.document.spatial_preparing.is_some());
-            assert!(editor.activities.blocks_workspace());
+            assert!(editor.workspace_input.is_blocked());
             assert!(editor.interaction_blocked());
             editor.begin_crop();
             assert!(

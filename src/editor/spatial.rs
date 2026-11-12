@@ -204,7 +204,7 @@ impl Editor {
         let Some(mut pending) = self.document.spatial_preparing.take() else {
             return;
         };
-        let foreground = !self.activities.blocks_workspace();
+        let foreground = !self.activities.has_modal();
         let result = result
             .and_then(|metadata| metadata.ok_or_else(|| "Region preparation cancelled".to_owned()));
         let metadata = match result {

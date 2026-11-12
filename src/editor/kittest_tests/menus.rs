@@ -68,7 +68,12 @@ fn native_paste_reaches_the_field_before_enter_commits_it() {
                 37 * cache_limits::MIB
             )
         });
-        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.menus.panel.as_ref().map(|panel| panel.kind),
+                Some(ui::AppPanel::Settings)
+            )
+        });
     });
 }
 
@@ -82,10 +87,28 @@ fn operation_failure_owns_escape_above_settings_without_closing_settings() {
         });
         harness.try_run_realtime().unwrap();
         assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
+        harness.read(|editor| {
+            assert!(editor.workspace_input.is_blocked());
+            assert!(!editor.application_menu_state().enabled(Action::Close));
+        });
+        native_action(&mut harness, Action::Close);
+        harness.read(|editor| assert!(editor.menus.panel.is_some() && editor.dialogs.is_open()));
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert!(!editor.dialogs.is_open()));
-        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
+        harness.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(
+                editor.menus.panel.as_ref().map(|panel| panel.kind),
+                Some(ui::AppPanel::Settings)
+            );
+            assert!(editor.workspace_input.is_blocked());
+            assert!(editor.application_menu_state().enabled(Action::Close));
+        });
+        native_action(&mut harness, Action::Close);
+        harness.read(|editor| {
+            assert!(editor.menus.panel.is_none());
+            assert!(!editor.workspace_input.is_blocked());
+        });
     });
 }
 
@@ -103,7 +126,12 @@ fn settings_escape_cancels_numeric_text_before_dismissing_the_panel() {
         harness.step();
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert_eq!(editor.menus.panel, Some(ui::AppPanel::Settings)));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.menus.panel.as_ref().map(|panel| panel.kind),
+                Some(ui::AppPanel::Settings)
+            )
+        });
         harness.read(|editor| assert_eq!(editor.document.thumbnails.limits, before));
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
