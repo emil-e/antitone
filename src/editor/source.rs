@@ -470,7 +470,7 @@ impl Editor {
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
-        self.document.export.draft = None;
+        self.document.export.form = None;
         #[cfg(test)]
         {
             self.document.export.summary = None;

@@ -16,7 +16,7 @@ mod tests;
 
 pub(super) struct State {
     pub operation: Option<Operation>,
-    pub draft: Option<Draft>,
+    pub form: Option<Form>,
     #[cfg(test)]
     pub summary: Option<Summary>,
 }
@@ -515,6 +515,20 @@ impl Kind {
     }
 }
 
+pub(super) struct Form {
+    pub draft: Draft,
+    _workspace: workspace_input::WorkspaceBlock,
+}
+
+impl Form {
+    pub fn new(draft: Draft, input: &workspace_input::WorkspaceInput) -> Self {
+        Self {
+            draft,
+            _workspace: input.block(),
+        }
+    }
+}
+
 pub(super) struct Draft {
     pub scope: Scope,
     pub folder: PathBuf,
@@ -993,11 +1007,10 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
 }
 
 impl Editor {
-    pub(super) fn export_modal(&self) -> bool {
-        self.document.export.draft.is_some()
-    }
-
     pub(super) fn open_export_dialog(&mut self) {
+        if self.workspace_input.is_blocked() {
+            return;
+        }
         if self.tool_interacting() || self.document.visit.masks.editing() {
             self.status = "Finish the active interaction before exporting".into();
             return;
@@ -1007,7 +1020,10 @@ impl Editor {
             return;
         }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();
-        self.document.export.draft = Some(Draft::new(self.document.target(), folder));
+        self.document.export.form = Some(Form::new(
+            Draft::new(self.document.target(), folder),
+            &self.workspace_input,
+        ));
     }
 
     pub(super) fn export_dialogs(
@@ -1016,12 +1032,13 @@ impl Editor {
         escape: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        if let Some(mut draft) = self.document.export.draft.take() {
+        if let Some(mut modal) = self.document.export.form.take() {
+            let draft = &mut modal.draft;
             let selected = self.export_ids(Scope::Selected).len();
             let all = self.export_ids(Scope::All).len();
             let response = ui::modal(context, egui::Id::new("export-photos"), |ui| {
                 ui.set_width((context.content_rect().width() - 80.).clamp(1., 500.));
-                form(ui, &mut draft, selected, all)
+                form(ui, draft, selected, all)
             });
             if response.inner.close || ui::escape_requested(&response, escape) {
                 return;
@@ -1040,12 +1057,12 @@ impl Editor {
             }
             if response.inner.export {
                 if draft.collision == Collision::Replace {
-                    self.request_export_replacement(draft, cx);
+                    self.request_export_replacement(modal, cx);
                 } else {
-                    self.accept_export(draft, cx);
+                    self.accept_export(modal, cx);
                 }
             } else {
-                self.document.export.draft = Some(draft);
+                self.document.export.form = Some(modal);
             }
         }
     }
@@ -1098,8 +1115,8 @@ impl Editor {
         }));
     }
 
-    pub(super) fn request_export_replacement(&mut self, draft: Draft, cx: &UiContext<'_, Self>) {
-        let detail = draft.folder.display().to_string();
+    pub(super) fn request_export_replacement(&mut self, modal: Form, cx: &UiContext<'_, Self>) {
+        let detail = modal.draft.folder.display().to_string();
         let response = self.dialogs.show(move |context, id, escape| {
             ui::DecisionDialog::new("Replace existing exported files?",
                 "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.",
@@ -1109,24 +1126,24 @@ impl Editor {
             let Ok(choice) = response.await else { return };
             cx.update(|editor| {
                 if choice == ui::DialogChoice::Confirm {
-                    editor.accept_export(draft, &cx);
+                    editor.accept_export(modal, &cx);
                 } else {
-                    editor.document.export.draft = Some(draft);
+                    editor.document.export.form = Some(modal);
                 }
             });
         });
     }
 
-    fn accept_export(&mut self, mut draft: Draft, cx: &UiContext<'_, Self>) {
-        match self.capture_export(&draft) {
+    fn accept_export(&mut self, mut modal: Form, cx: &UiContext<'_, Self>) {
+        match self.capture_export(&modal.draft) {
             Ok(request) => {
-                self.preferences.export_folder = Some(draft.folder);
+                self.preferences.export_folder = Some(modal.draft.folder);
                 self.persist_preferences();
                 self.export_photos(request, cx);
             }
             Err(error) => {
-                draft.error = Some(error.to_string());
-                self.document.export.draft = Some(draft);
+                modal.draft.error = Some(error.to_string());
+                self.document.export.form = Some(modal);
             }
         }
     }

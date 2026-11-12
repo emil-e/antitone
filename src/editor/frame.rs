@@ -152,14 +152,11 @@ impl Editor {
         fullscreen_was_active: bool,
         text_was_focused: bool,
     ) {
-        if !self.interaction_blocked()
-            && self.menus.panel.is_none()
+        if !self.workspace_input.is_blocked()
+            && self.document.look.is_none()
             && self.fullscreen.is_none()
             && !fullscreen_was_active
-            && !self.dialogs.is_open()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
-            && !self.export_modal()
-            && !self.files.pending()
             && !ui.ctx().egui_wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx())
         {
@@ -249,12 +246,7 @@ impl Editor {
     }
 
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
-        if self.menus.panel.is_some()
-            || self.activities.blocks_workspace()
-            || self.dialogs.is_open()
-            || self.export_modal()
-            || self.files.pending()
-        {
+        if self.workspace_input.is_blocked() {
             ui.disable();
         }
     }

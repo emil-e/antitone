@@ -266,6 +266,36 @@ fn a_late_first_poll_does_not_replace_a_newer_tool() {
 }
 
 #[test]
+fn a_late_first_poll_refuses_reserved_input_without_replaying_after_release() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    with_application(editor, |app| {
+        let task = launch(
+            app,
+            Display::sample("Late reading", View::Source),
+            |_, _| Ok(42),
+        );
+        let block = app.update(|editor| editor.workspace_input.block());
+        app.run_until(LIMIT, |_| task.is_finished());
+        assert_eq!(pollster::block_on(task), None);
+        app.read(|editor| assert!(!editor.picking()));
+
+        drop(block);
+        app.pump();
+        app.read(|editor| assert!(!editor.picking(), "a refused picker is not replayed"));
+        let retry = launch(
+            app,
+            Display::sample("Fresh reading", View::Source),
+            |_, _| Ok(42),
+        );
+        app.pump();
+        app.read(|editor| assert!(editor.picking()));
+        app.enter(|editor, cx| editor.finish_pick(cx));
+        app.run_until(LIMIT, |_| retry.is_finished());
+        assert_eq!(pollster::block_on(retry), None);
+    });
+}
+
+#[test]
 fn replacing_an_unpolled_action_drops_the_callers_continuation() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let continued = Rc::new(Cell::new(false));

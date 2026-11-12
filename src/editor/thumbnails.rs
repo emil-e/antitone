@@ -1092,7 +1092,7 @@ impl Editor {
             && !self.cropping()
             && !self.masking()
             && !self.files.pending()
-            && !self.export_modal()
+            && self.document.export.form.is_none()
             && !self.dialogs.is_open()
     }
 

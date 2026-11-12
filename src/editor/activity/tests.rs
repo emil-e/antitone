@@ -260,7 +260,7 @@ fn export_blocks_the_workspace_before_its_progress_modal_becomes_prominent() {
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.activities.blocks_workspace());
+            assert!(editor.workspace_input.is_blocked());
             assert!(
                 !editor
                     .application_menu_state()

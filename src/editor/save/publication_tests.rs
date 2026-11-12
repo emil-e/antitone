@@ -120,6 +120,14 @@ fn file_workflow_retirement_does_not_disown_an_already_published_save() {
         wait_for(app, &starts);
         let bytes = std::fs::read(&path).unwrap();
         app.update(|editor| editor.files = Default::default());
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.document.write.pending());
+            assert!(
+                editor.workspace_input.is_blocked(),
+                "the write owns its own reservation"
+            );
+        });
         release.now();
         published.recv_timeout(Duration::from_secs(15)).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
@@ -166,6 +174,7 @@ fn selected_native_acquisition_can_finish_under_a_held_save_without_restarting_t
                 "actual native acquisition must complete before releasing the write"
             );
             assert!(editor.document.write.pending() && editor.interaction_blocked());
+            assert!(editor.workspace_input.is_blocked());
             assert_eq!(editor.document.visit.view, view);
             assert_eq!(
                 editor

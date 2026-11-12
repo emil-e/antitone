@@ -1,4 +1,7 @@
-use super::ui::{Progress, ProgressContent};
+use super::{
+    ui::{Progress, ProgressContent},
+    workspace_input::{WorkspaceBlock, WorkspaceInput},
+};
 use crate::cancellation::Cancellation;
 use std::{
     sync::{
@@ -117,12 +120,24 @@ impl Entry {
 }
 
 /// Observes live activities without owning their lifetime.
-#[derive(Default)]
-pub(super) struct Activities(Arc<Registry>);
+pub(super) struct Activities {
+    registry: Arc<Registry>,
+    input: WorkspaceInput,
+}
+
+#[cfg(test)]
+impl Default for Activities {
+    fn default() -> Self {
+        Self::new(WorkspaceInput::default())
+    }
+}
 
 /// Owns the activity's visible lifetime.
 #[must_use = "keep the activity in its workflow scope"]
-pub(super) struct Activity(Arc<Entry>);
+pub(super) struct Activity {
+    entry: Arc<Entry>,
+    _workspace: Option<WorkspaceBlock>,
+}
 
 /// Workers may report progress without retaining the activity after its owner retires.
 #[derive(Clone, Default, Debug)]
@@ -136,8 +151,15 @@ impl PartialEq for Reporter {
 }
 
 impl Activities {
+    pub fn new(input: WorkspaceInput) -> Self {
+        Self {
+            registry: Arc::default(),
+            input,
+        }
+    }
+
     pub fn set_context(&self, context: &egui::Context) {
-        *self.0.context.lock().unwrap() = Some(context.clone());
+        *self.registry.context.lock().unwrap() = Some(context.clone());
     }
 
     pub fn start(&self, options: Options) -> Activity {
@@ -145,28 +167,32 @@ impl Activities {
         let entry = Arc::new(Entry {
             live: AtomicBool::new(true),
 
-            started: Mutex::new(self.0.now()),
+            started: Mutex::new(self.registry.now()),
             display: Mutex::new(Display {
                 title: String::new(),
                 measured: None,
             }),
             modal: options.modal,
             cancel: options.cancel,
-            registry: Arc::downgrade(&self.0),
+            registry: Arc::downgrade(&self.registry),
         });
-        let mut entries = self.0.entries.lock().unwrap();
+        let mut entries = self.registry.entries.lock().unwrap();
         entries.retain(|entry| entry.upgrade().is_some_and(|entry| entry.live()));
         entries.push(Arc::downgrade(&entry));
         drop(entries);
-        let activity = Activity(entry);
+        let block = options.modal.then(|| self.input.block());
+        let activity = Activity {
+            entry,
+            _workspace: block,
+        };
         activity.status(title);
-        self.0.repaint();
+        self.registry.repaint();
         activity
     }
 
     pub fn view(&self) -> Option<View> {
         // Modal work takes precedence over local feedback; otherwise show the newest activity.
-        let entries = self.0.entries.lock().unwrap();
+        let entries = self.registry.entries.lock().unwrap();
         let mut selected = None;
         for entry in entries.iter().filter_map(Weak::upgrade) {
             if !entry.live() {
@@ -182,15 +208,15 @@ impl Activities {
 
     #[cfg(test)]
     pub fn any(&self, mut matches: impl FnMut(&View) -> bool) -> bool {
-        self.0.entries.lock().unwrap().iter().any(|entry| {
+        self.registry.entries.lock().unwrap().iter().any(|entry| {
             Reporter(entry.clone())
                 .view()
                 .is_some_and(|view| matches(&view))
         })
     }
 
-    pub fn blocks_workspace(&self) -> bool {
-        self.0
+    pub fn has_modal(&self) -> bool {
+        self.registry
             .entries
             .lock()
             .unwrap()
@@ -215,13 +241,13 @@ impl Activities {
 
     #[cfg(test)]
     pub fn freeze_time(&self) {
-        *self.0.clock.lock().unwrap() = Some(Instant::now());
+        *self.registry.clock.lock().unwrap() = Some(Instant::now());
     }
 
     #[cfg(test)]
     pub fn elapse(&self, duration: Duration) {
         for entry in self
-            .0
+            .registry
             .entries
             .lock()
             .unwrap()
@@ -235,7 +261,7 @@ impl Activities {
 
 impl Activity {
     pub fn reporter(&self) -> Reporter {
-        Reporter(Arc::downgrade(&self.0))
+        Reporter(Arc::downgrade(&self.entry))
     }
     pub fn status(&self, title: impl Into<String>) {
         self.reporter().status(title);
@@ -245,7 +271,7 @@ impl Activity {
     }
 
     pub async fn cancelled(&self) {
-        match &self.0.cancel {
+        match &self.entry.cancel {
             Some(cancel) => cancel.signal.wait().await,
             None => std::future::pending().await,
         }
@@ -255,8 +281,8 @@ impl Activity {
 impl Drop for Activity {
     fn drop(&mut self) {
         // Even a transient observer upgrade cannot extend the owning handle's lifetime.
-        self.0.live.store(false, Ordering::Release);
-        self.0.repaint();
+        self.entry.live.store(false, Ordering::Release);
+        self.entry.repaint();
     }
 }
 

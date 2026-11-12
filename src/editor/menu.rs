@@ -10,12 +10,24 @@ mod tests;
 pub(super) struct Menus {
     pub(super) native: bool,
     pub(super) pending: std::collections::VecDeque<Action>,
-    pub(super) panel: Option<ui::AppPanel>,
+    pub(super) panel: Option<Panel>,
     pub(super) text_focused: bool,
     pub(super) history_input_blocked: bool,
 }
 
+pub(super) struct Panel {
+    pub kind: ui::AppPanel,
+    workspace: workspace_input::WorkspaceBlock,
+}
+
 impl Editor {
+    fn open_application_panel(&mut self, kind: ui::AppPanel) {
+        self.menus.panel = Some(Panel {
+            kind,
+            workspace: self.workspace_input.block(),
+        });
+    }
+
     pub(super) fn menu_targets_text(&self, action: Action) -> bool {
         action.text_edit()
             || self.menus.text_focused && matches!(action, Action::Undo | Action::Redo)
@@ -48,7 +60,7 @@ impl Editor {
         if self.application_quit_state() != host::QuitState::Running {
             return;
         }
-        if self.file_available() {
+        if self.application_menu_state().enabled(Action::Quit) {
             // Preserve leading text operations before the close guard, but do not
             // strand a native request behind unrelated menu commands or a failure.
             let text = self
@@ -65,27 +77,21 @@ impl Editor {
     }
 
     pub(super) fn file_available(&self) -> bool {
-        !self.interaction_blocked() && self.file_context_available()
+        !self.workspace_input.is_blocked()
+            && self.document.look.is_none()
+            && self.file_context_available()
     }
 
     fn save_available(&self) -> bool {
-        !self.interaction_blocked() && self.file_context_available()
+        self.file_available()
     }
 
     fn file_context_available(&self) -> bool {
         !self.dust_search_pending()
             && !self.editing()
-            && !self.application_modal()
+            && !self.allow_close
             && !self.tool_interacting()
             && !self.document.visit.masks.editing()
-    }
-
-    fn application_modal(&self) -> bool {
-        self.allow_close
-            || self.activities.blocks_workspace() && self.document.spatial_preparing.is_none()
-            || self.dialogs.is_open()
-            || self.document.export.draft.is_some()
-            || self.files.pending()
     }
 
     pub(super) fn application_menu_state(&self) -> State {
@@ -109,15 +115,20 @@ impl Editor {
                 .history_label(history::Direction::Redo)
                 .map(|label| format!("Redo {label}"));
         }
-        if self.application_modal() {
+        if let Some(panel) = &self.menus.panel {
+            if !self.allow_close && !panel.workspace.is_covered() {
+                state.enabled.insert(Close);
+                if self.document.look.is_none() && self.file_context_available() {
+                    state.enabled.insert(Quit);
+                }
+            }
+            return state;
+        }
+        if self.allow_close || self.workspace_input.is_blocked() {
             return state;
         }
         if self.file_available() {
             state.enabled.insert(Quit);
-        }
-        if self.menus.panel.is_some() {
-            state.enabled.insert(Close);
-            return state;
         }
         if !self.menus.text_focused
             && self.history_available()
@@ -257,9 +268,9 @@ impl Editor {
         match action {
             Undo => self.restore_history(history::Direction::Undo, cx),
             Redo => self.restore_history(history::Direction::Redo, cx),
-            About => self.menus.panel = Some(ui::AppPanel::About),
-            Settings => self.menus.panel = Some(ui::AppPanel::Settings),
-            Help => self.menus.panel = Some(ui::AppPanel::Help),
+            About => self.open_application_panel(ui::AppPanel::About),
+            Settings => self.open_application_panel(ui::AppPanel::Settings),
+            Help => self.open_application_panel(ui::AppPanel::Help),
             Close => self.menus.panel = None,
             Quit => {
                 // Closing Settings commits its focused field before the next frame's
@@ -285,7 +296,7 @@ impl Editor {
     }
 
     pub(super) fn application_panel(&mut self, context: &egui::Context, escape_available: bool) {
-        if let Some(panel) = self.menus.panel
+        if let Some(panel) = self.menus.panel.as_ref().map(|panel| panel.kind)
             && ui::app_panel(context, panel, escape_available, |ui| {
                 self.cache_preferences(ui)
             })

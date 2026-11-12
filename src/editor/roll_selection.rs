@@ -37,15 +37,13 @@ impl Editor {
     }
 
     pub(super) fn roll_navigation_available(&self) -> bool {
-        !self.interaction_blocked()
+        !self.workspace_input.is_blocked()
+            && self.document.look.is_none()
             && self.fullscreen.is_none()
             && !self.picking()
             && !self.cropping()
             && !self.masking()
-            && !self.dialogs.is_open()
-            && !self.files.pending()
             && !self.allow_close
-            && !self.export_modal()
     }
 
     pub(super) fn select_roll_photo(

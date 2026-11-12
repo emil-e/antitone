@@ -8,10 +8,10 @@ fn only_the_scoped_handle_owns_visibility_even_with_live_observer_upgrades() {
     let reporter = activity.reporter();
     let snapshot = activities.view().unwrap();
     let observing = reporter.entry().unwrap();
-    assert!(activities.blocks_workspace());
+    assert!(activities.input.is_blocked());
     drop(activity);
     assert!(activities.view().is_none());
-    assert!(!activities.blocks_workspace());
+    assert!(!activities.input.is_blocked());
     reporter.progress(1, 2);
     reporter.status("Late update");
     snapshot.request_cancel();
@@ -55,7 +55,7 @@ fn modal_precedence_does_not_destroy_overlapping_local_feedback() {
     assert_eq!(activities.view().unwrap().title, "Transaction");
     drop(modal);
     assert_eq!(activities.view().unwrap().title, "Local");
-    assert!(!activities.blocks_workspace());
+    assert!(!activities.input.is_blocked());
     drop(local);
     assert!(activities.view().is_none());
 }
@@ -99,9 +99,9 @@ fn cancel_wakes_the_workflow_and_keeps_feedback_until_acknowledgement() {
         let view = activities.view().unwrap();
         assert_eq!(view.title, "Stopping");
         assert!(view.cancel.is_none() && view.measured.is_none());
-        assert!(activities.blocks_workspace());
+        assert!(activities.input.is_blocked());
         drop(activity);
-        assert!(!activities.blocks_workspace());
+        assert!(!activities.input.is_blocked());
     });
 }
 
