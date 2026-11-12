@@ -483,7 +483,7 @@ fn export_cannot_replace_the_open_project_document() {
 
 #[test]
 fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispatch() {
-    use super::super::presentation::tests::key;
+    use super::super::ui::test_support::key;
     for decision in 0..3 {
         for cancel_key in [egui::Key::Escape, egui::Key::Enter] {
             let directory = tempfile::tempdir().unwrap();
@@ -1139,9 +1139,9 @@ fn shortcut_save_captures_the_current_accepted_document_after_edit_commit() {
             let mut adjustment = record.adjustment;
             adjustment.photo.exposure = 7.123456789012345;
             e.photo_control(
-                controls::ControlResponse {
+                ui::ControlResponse {
                     active: true,
-                    ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+                    ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
                 },
                 move |v| *v = adjustment,
             );
@@ -1161,9 +1161,9 @@ fn shortcut_save_captures_the_current_accepted_document_after_edit_commit() {
                 0.
             );
             e.photo_control(
-                controls::ControlResponse {
+                ui::ControlResponse {
                     active: false,
-                    ..controls::ControlResponse::action(egui::Id::new("test-photo-field"), true)
+                    ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
                 },
                 move |v| *v = adjustment,
             );

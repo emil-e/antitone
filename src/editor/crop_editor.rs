@@ -1,7 +1,7 @@
 use super::*;
 use crate::{geometry::FramePoint, viewport::CanvasLayout};
-use icons::Icon;
 use std::{cell::RefCell, rc::Rc};
+use ui::icons::Icon;
 
 #[cfg(test)]
 pub(super) mod tests;
@@ -193,11 +193,11 @@ impl CropTool {
         let previous = edit.draft;
 
         aspect_control(ui, &mut edit, composition);
-        ui.add_space(presentation::PARAMETER_GAP);
+        ui.add_space(ui::PARAMETER_GAP);
         angle_control(ui, &mut edit, composition, status);
-        ui.add_space(presentation::PARAMETER_GAP);
+        ui.add_space(ui::PARAMETER_GAP);
         guides_control(ui, &mut edit.guides);
-        ui.add_space(presentation::PARAMETER_GAP);
+        ui.add_space(ui::PARAMETER_GAP);
         if reset {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;
@@ -309,7 +309,8 @@ impl CropTool {
             return;
         };
         let angle = (point - pivot).angle() + std::f32::consts::FRAC_PI_2;
-        let image = icons::rotation_cursor(ui.ctx(), response.id.with("rotation-cursor"), angle);
+        let image =
+            ui::icons::rotation_cursor(ui.ctx(), response.id.with("rotation-cursor"), angle);
         ui.ctx().set_cursor_image(Some(image));
     }
 
@@ -329,43 +330,39 @@ fn aspect_control(ui: &mut egui::Ui, edit: &mut CropEdit, composition: Compositi
     let full = edit.base.cropped(Crop::from_region(area)).unwrap();
     let size = composition.size();
     let previous_ratio = edit.ratio;
-    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-        let label = presentation::name_label(ui, "Aspect");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button_at(
-                ui,
-                Icon::Swap,
-                edit.ratio.is_some(),
-                "Swap portrait / landscape",
-                "Swap portrait / landscape",
-                presentation::INSPECTOR_ROW_HEIGHT,
-            )
-            .clicked()
-            {
-                edit.ratio = edit.ratio.map(|r| 1. / r);
-            }
-            egui::ComboBox::from_id_salt("crop-aspect")
-                .width(96.)
-                .selected_text(aspect_label(edit.ratio))
-                .show_ui(ui, |ui| {
-                    for (label, ratio) in [
-                        ("Free", None),
-                        ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
-                        (
-                            "Original",
-                            Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
-                        ),
-                        ("1:1", Some(1.)),
-                        ("3:2", Some(1.5)),
-                        ("4:3", Some(4. / 3.)),
-                        ("5:4", Some(1.25)),
-                        ("16:9", Some(16. / 9.)),
-                    ] {
-                        ui.selectable_value(&mut edit.ratio, ratio, label);
-                    }
-                });
-        });
-        label
+    ui::inspector_row(ui, "Aspect", |ui, _| {
+        if ui::icons::button_at(
+            ui,
+            Icon::Swap,
+            edit.ratio.is_some(),
+            "Swap portrait / landscape",
+            "Swap portrait / landscape",
+            ui::INSPECTOR_ROW_HEIGHT,
+        )
+        .clicked()
+        {
+            edit.ratio = edit.ratio.map(|r| 1. / r);
+        }
+        egui::ComboBox::from_id_salt("crop-aspect")
+            .width(96.)
+            .selected_text(aspect_label(edit.ratio))
+            .show_ui(ui, |ui| {
+                for (label, ratio) in [
+                    ("Free", None),
+                    ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
+                    (
+                        "Original",
+                        Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
+                    ),
+                    ("1:1", Some(1.)),
+                    ("3:2", Some(1.5)),
+                    ("4:3", Some(4. / 3.)),
+                    ("5:4", Some(1.25)),
+                    ("16:9", Some(16. / 9.)),
+                ] {
+                    ui.selectable_value(&mut edit.ratio, ratio, label);
+                }
+            });
     });
     if edit.ratio != previous_ratio
         && let Some(ratio) = edit.ratio
@@ -392,33 +389,30 @@ fn angle_control(
     let mut degrees = -composition.crop().angle.to_degrees() * composition.handedness();
     let previous_degrees = degrees;
     let mut reset_angle = false;
-    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-        let angle_label = presentation::name_label(ui, "Angle");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            reset_angle = icons::button_at(
-                ui,
-                Icon::Reset,
-                degrees != 0.,
-                "Reset straighten",
-                "Reset straighten",
-                presentation::INSPECTOR_ROW_HEIGHT,
+    ui::inspector_row(ui, "Angle", |ui, label_id| {
+        reset_angle = ui::icons::button_at(
+            ui,
+            Icon::Reset,
+            degrees != 0.,
+            "Reset straighten",
+            "Reset straighten",
+            ui::INSPECTOR_ROW_HEIGHT,
+        )
+        .clicked();
+        let angle = ui
+            .add_sized(
+                [96., ui::INSPECTOR_ROW_HEIGHT - 2.],
+                egui::DragValue::new(&mut degrees)
+                    .range(-180.0..=180.0)
+                    .speed(0.1)
+                    .fixed_decimals(2)
+                    .update_while_editing(false)
+                    .suffix("°"),
             )
-            .clicked();
-            let angle = ui
-                .add_sized(
-                    [96., presentation::INSPECTOR_ROW_HEIGHT - 2.],
-                    egui::DragValue::new(&mut degrees)
-                        .range(-180.0..=180.0)
-                        .speed(0.1)
-                        .fixed_decimals(2)
-                        .update_while_editing(false)
-                        .suffix("°"),
-                )
-                .labelled_by(angle_label.id);
-            if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
-                degrees = previous_degrees;
-            }
-        });
+            .labelled_by(label_id);
+        if ui::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
+            degrees = previous_degrees;
+        }
     });
     if degrees != previous_degrees || reset_angle {
         let angle = if reset_angle {
@@ -434,19 +428,16 @@ fn angle_control(
 }
 
 fn guides_control(ui: &mut egui::Ui, guides: &mut bool) {
-    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-        presentation::name_label(ui, "Guides");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let size = presentation::INSPECTOR_ROW_HEIGHT;
-            icons::toggle_at(
-                ui,
-                Icon::Guides,
-                guides,
-                "Thirds guides",
-                "Show thirds guides. Composition aid only; never affects measurements or exports.",
-                size,
-            );
-        });
+    ui::inspector_row(ui, "Guides", |ui, _| {
+        let size = ui::INSPECTOR_ROW_HEIGHT;
+        ui::icons::toggle_at(
+            ui,
+            Icon::Guides,
+            guides,
+            "Thirds guides",
+            "Show thirds guides. Composition aid only; never affects measurements or exports.",
+            size,
+        );
     });
 }
 
@@ -687,8 +678,8 @@ fn interaction_cursor(
 impl tool::Tool for CropTool {
     fn presentation(&self, _editor: &Editor) -> tool::Presentation {
         tool::Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Crop,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Crop,
                 title: "Crop",
             },
             primary: Some("Apply".into()),
@@ -717,17 +708,17 @@ impl tool::Tool for CropTool {
         if std::mem::take(&mut self.edit.borrow_mut().reveal_controls) {
             ui.scroll_to_cursor(Some(egui::Align::Min));
         }
-        presentation::ToolIdentity {
-            icon: icons::Icon::Crop,
+        ui::ToolIdentity {
+            icon: ui::icons::Icon::Crop,
             title: "Crop & straighten",
         }
         .inspector(
             ui,
             |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    icons::button(
+                    ui::icons::button(
                         ui,
-                        icons::Icon::Reset,
+                        ui::icons::Icon::Reset,
                         true,
                         "Reset draft",
                         "Reset crop and angle.",
@@ -737,9 +728,7 @@ impl tool::Tool for CropTool {
                 .inner
             },
             |ui, reset| {
-                let propose = presentation::TextAction::new("Auto-crop")
-                    .show(ui)
-                    .clicked();
+                let propose = ui::TextAction::new("Auto-crop").show(ui).clicked();
                 self.controls(ui, reset, &mut editor.status);
                 if propose && let Some(photo) = editor.document.visit.current_source {
                     self.request_auto_crop(editor, photo, cx);

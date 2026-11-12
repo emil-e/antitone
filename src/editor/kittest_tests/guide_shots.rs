@@ -258,7 +258,7 @@ fn file_label(path: &Path) -> String {
 }
 
 fn escape() -> egui::Event {
-    super::super::presentation::tests::key(egui::Key::Escape).remove(0)
+    super::super::ui::test_support::key(egui::Key::Escape).remove(0)
 }
 
 /// Paints a few frames without waiting for idle: full-resolution thumbnail work

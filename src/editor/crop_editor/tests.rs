@@ -530,7 +530,7 @@ fn crop_brackets_and_thirds_follow_the_frame_without_changing_geometry() {
 }
 
 fn assert_rotation_cursor(h: &Harness, point: egui::Pos2, pivot: egui::Pos2) {
-    let expected = icons::rotation_cursor(
+    let expected = ui::icons::rotation_cursor(
         &h.context,
         egui::Id::new("expected-rotation-cursor"),
         (point - pivot).angle() + std::f32::consts::FRAC_PI_2,

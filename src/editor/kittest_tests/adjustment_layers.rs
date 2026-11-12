@@ -147,6 +147,45 @@ fn delete_selected(harness: &mut Harness<'_, Editor>) {
 }
 
 #[test]
+fn photographic_rows_keep_their_ranges_and_reset_only_the_edited_value() {
+    type SetValue = fn(&mut AdjustmentLayerSettings, f64);
+    let cases: [(&str, [f64; 2], f64, SetValue); 5] = [
+        ("Contrast", [0.4, 1.6], 1., |p, v| p.contrast = v),
+        ("Pivot", [0.01, 1.], 0.18, |p, v| p.pivot = v),
+        ("Preserve", [0., 1.], 0., |p, v| p.contrast_colour_mix = v),
+        ("Saturation", [0., 2.], 1., |p, v| p.saturation = v),
+        ("Density", [0., 1.], 0., |p, v| p.saturation_density = v),
+    ];
+    workflow::calibrated_workflow(|mut harness, _, _directory| {
+        show_layers(&mut harness);
+        workflow::enter_numeric(&mut harness, "Exposure", "0.625");
+        for (label, bounds, default, set) in cases {
+            for value in bounds {
+                let mut expected = harness.read(|editor| editor.photo_settings());
+                set(&mut expected, value);
+                workflow::enter_numeric(&mut harness, label, &value.to_string());
+                harness.read(|editor| assert_eq!(editor.photo_settings(), expected));
+            }
+            let slider = harness.get_by_role_and_label(egui::accesskit::Role::Slider, label);
+            assert_eq!(slider.accesskit_node().min_numeric_value(), Some(bounds[0]));
+            assert_eq!(slider.accesskit_node().max_numeric_value(), Some(bounds[1]));
+            let mut expected = harness.read(|editor| editor.photo_settings());
+            set(&mut expected, default);
+            let number = egui::accesskit::Role::SpinButton;
+            harness.get_by_role_and_label(number, label).scroll_to_me();
+            harness.try_run_realtime().unwrap();
+            harness
+                .get_by_role_and_label(number, label)
+                .click_secondary();
+            harness.try_run_realtime().unwrap();
+            harness.get_by_label("Reset to default").click();
+            harness.step();
+            harness.read(|editor| assert_eq!(editor.photo_settings(), expected));
+        }
+    });
+}
+
+#[test]
 fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         show_layers(&mut harness);

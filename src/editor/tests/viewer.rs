@@ -468,7 +468,7 @@ fn viewer_requests_a_native_rotation_cursor_and_restores_it_on_popup_and_crop_ex
         size,
         vec![egui::Event::PointerMoved(point)],
     );
-    let expected = icons::rotation_cursor(
+    let expected = ui::icons::rotation_cursor(
         &context,
         egui::Id::new("expected-rotation-cursor"),
         (point - layout.image.center()).angle() + std::f32::consts::FRAC_PI_2,

@@ -14,7 +14,7 @@ fn frame(
     events: Vec<egui::Event>,
     cx: &UiContext<'_, Editor>,
 ) -> Vec<(String, egui::Rect)> {
-    super::super::presentation::configure_fonts(context);
+    super::super::ui::configure_fonts(context);
     context.enable_accesskit();
     let mut output = context.run_ui(
         egui::RawInput {

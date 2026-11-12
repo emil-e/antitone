@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::presentation::{DecisionDialog, DialogChoice};
+use crate::editor::ui::{DecisionDialog, DialogChoice};
 
 fn message(title: &'static str) -> Message {
     Message {

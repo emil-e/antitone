@@ -1,4 +1,4 @@
-use super::presentation::{FeedbackDialog, Severity};
+use super::ui::{FeedbackDialog, Severity};
 use futures_channel::oneshot;
 use std::{collections::VecDeque, sync::Arc};
 

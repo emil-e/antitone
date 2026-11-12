@@ -201,13 +201,13 @@ fn roll_controls_reject_nonfinite_values_and_output_controls_accept_target_edits
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.output_control(
-                    controls::ControlResponse::action(egui::Id::new("target"), true),
+                    ui::ControlResponse::action(egui::Id::new("target"), true),
                     |output| output.tiff = crate::project::TiffTarget::Srgb,
                 );
                 assert_eq!(editor.document.target(), OutputTarget::Srgb);
                 let accepted = editor.document.project.clone();
                 editor.roll_control(
-                    controls::ControlResponse::action(egui::Id::new("invalid"), true),
+                    ui::ControlResponse::action(egui::Id::new("invalid"), true),
                     cx,
                     |project| match field {
                         0 => project.roll.exposure = f64::NAN,
@@ -236,7 +236,7 @@ fn roll_controls_reject_nonfinite_values_and_output_controls_accept_target_edits
 fn rendering_controls_validate_their_own_texture_values_before_publishing() {
     for grain in [false, true] {
         let mut editor = crate::editor::tests::fixture();
-        let response = |id| controls::ControlResponse::action(egui::Id::new(id), true);
+        let response = |id| ui::ControlResponse::action(egui::Id::new(id), true);
         editor.output_control(response("valid"), |output| output.grain.amount = 0.12);
         assert_eq!(editor.document.project.output.grain.amount, 0.12);
         let accepted = editor.document.project.clone();

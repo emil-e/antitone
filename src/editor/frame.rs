@@ -13,8 +13,8 @@ impl Editor {
             return false;
         }
         self.started = true;
-        presentation::configure_branding(ui);
-        presentation::configure_fonts(ui.ctx());
+        ui::configure_branding(ui);
+        ui::configure_fonts(ui.ctx());
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
         // Named font families become available at the start of the next pass.
@@ -267,7 +267,7 @@ impl Editor {
     ) {
         if self.fullscreen.is_none() {
             // The menu bar belongs to the platform; the header keeps the project identity.
-            presentation::app_header(ui, |ui| self.project_identity(ui));
+            ui::app_header(ui, |ui| self.project_identity(ui));
         }
         if actions.file.is_some()
             || actions
@@ -281,7 +281,7 @@ impl Editor {
             });
         }
         egui::Panel::bottom("status")
-            .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
+            .exact_size(ui::ACTIVITY_BAR_HEIGHT)
             .show(ui, |ui| {
                 if let Some(view) = self.activities.view() {
                     view.compact(ui);
@@ -333,7 +333,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Option<ScopeSlot> {
         let scope_slot = self.workspace_controls(ui, cx);
-        let adjusting = controls::values_are_being_adjusted(ui.ctx());
+        let adjusting = ui::values_are_being_adjusted(ui.ctx());
         if self.document.visit.adjustment_layers.adjusting_values != adjusting {
             self.document.visit.adjustment_layers.adjusting_values = adjusting;
             ui.ctx().request_repaint();

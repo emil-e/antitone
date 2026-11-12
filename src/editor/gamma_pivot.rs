@@ -95,14 +95,11 @@ impl Editor {
         }
     }
 
-    pub(super) fn gamma_pivot_tool(
-        &self,
-        enabled: bool,
-    ) -> super::presentation::SectionTool<'static> {
+    pub(super) fn gamma_pivot_tool(&self, enabled: bool) -> super::ui::SectionTool<'static> {
         let choosing = self.document.visit.picker.display() == Some(DISPLAY);
         let locked = self.document.gamma_pivot.locked();
-        super::presentation::SectionTool {
-            icon: super::icons::Icon::Pin {
+        super::ui::SectionTool {
+            icon: super::ui::icons::Icon::Pin {
                 active: choosing || locked,
                 filled: locked && !choosing,
             },

@@ -18,8 +18,8 @@ struct OwnedInteraction {
 impl crate::editor::tool::Tool for OwnedInteraction {
     fn presentation(&self, _editor: &crate::editor::Editor) -> crate::editor::tool::Presentation {
         crate::editor::tool::Presentation {
-            identity: crate::editor::presentation::ToolIdentity {
-                icon: crate::editor::icons::Icon::Pick,
+            identity: crate::editor::ui::ToolIdentity {
+                icon: crate::editor::ui::icons::Icon::Pick,
                 title: "Owned interaction",
             },
             primary: None,

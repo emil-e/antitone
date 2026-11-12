@@ -184,12 +184,12 @@ impl Editor {
             format!("Remove {} photos from project?", ids.len())
         };
         let response = self.dialogs.show(move |context, id, escape| {
-            presentation::DecisionDialog::new(&title,
+            ui::DecisionDialog::new(&title,
                 "The photos will be removed from this roll. Their project data will be discarded. Your RAW files are not changed.",
                 "Remove photos").warning().show(context, id, escape)
         });
         self.document.dialog_action = cx.spawn(move |cx| async move {
-            if response.await == Ok(presentation::DialogChoice::Confirm) {
+            if response.await == Ok(ui::DialogChoice::Confirm) {
                 cx.update(|editor| editor.remove_selected_photos(ids, &cx));
             }
         });

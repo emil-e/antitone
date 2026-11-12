@@ -2,8 +2,8 @@ use super::*;
 
 impl Editor {
     pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        use icons::Icon;
-        use presentation::{ToolButton, ToolShelf};
+        use ui::icons::Icon;
+        use ui::{ToolButton, ToolShelf};
 
         let cropping = self.cropping();
         let dusting = self.dusting();

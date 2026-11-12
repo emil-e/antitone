@@ -29,8 +29,8 @@ impl Drop for Probe {
 impl Tool for Probe {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Crop,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Crop,
                 title: "Probe",
             },
             primary: None,
@@ -48,8 +48,8 @@ impl Tool for Probe {
         normal
     }
     fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
-        presentation::ToolIdentity {
-            icon: icons::Icon::Pick,
+        ui::ToolIdentity {
+            icon: ui::icons::Icon::Pick,
             title: "Reference bounds",
         }
         .inspector(
@@ -57,9 +57,9 @@ impl Tool for Probe {
             |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let reset = self.reset.is_some_and(|enabled| {
-                        icons::button(
+                        ui::icons::button(
                             ui,
-                            icons::Icon::Reset,
+                            ui::icons::Icon::Reset,
                             enabled,
                             "Reset reference bounds",
                             "Reset reference bounds.",
@@ -188,8 +188,8 @@ struct Candidate(Crop);
 impl Tool for Candidate {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            identity: presentation::ToolIdentity {
-                icon: icons::Icon::Crop,
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Crop,
                 title: "Candidate",
             },
             primary: Some("Accept".into()),

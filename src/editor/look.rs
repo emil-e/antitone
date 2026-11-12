@@ -470,15 +470,11 @@ impl Editor {
             )
         };
         let response = self.dialogs.show(move |context, id, escape| {
-            presentation::DecisionDialog::new(
-                "Switch Film & paper?",
-                &explanation,
-                "Switch materials",
-            )
-            .show(context, id, escape)
+            ui::DecisionDialog::new("Switch Film & paper?", &explanation, "Switch materials")
+                .show(context, id, escape)
         });
         self.document.dialog_action = cx.spawn(move |cx| async move {
-            if response.await == Ok(presentation::DialogChoice::Confirm) {
+            if response.await == Ok(ui::DialogChoice::Confirm) {
                 cx.update(|editor| editor.prepare_look(Source::Photochemical(selection), &cx));
             }
         });
@@ -515,11 +511,11 @@ impl Editor {
         let mut clear = false;
         let mut import = false;
         ui.add_enabled_ui(self.lut_controls_allowed(Slot::Lut), |ui| {
-            let (_, action) = presentation::section(
+            let (_, action) = ui::section(
                 ui,
                 "rendering-lut",
                 "LUT",
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: &name,
                     changed,
                     reset: Some(changed),
@@ -527,7 +523,7 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    presentation::inspector_dropdown(ui, "creative-lut", "LUT", &name, |ui| {
+                    ui::inspector_dropdown(ui, "creative-lut", "LUT", &name, |ui| {
                         if ui.selectable_label(!changed, "None").clicked() && changed {
                             clear = true;
                         }
@@ -608,11 +604,11 @@ impl Editor {
         let mut paper_choice = None;
         let mut clear = false;
         ui.add_enabled_ui(self.lut_controls_allowed(Slot::FilmAndPaper), |ui| {
-            let (_, action) = presentation::section(
+            let (_, action) = ui::section(
                 ui,
                 "film-and-paper",
                 "Film & paper",
-                presentation::SectionHeader {
+                ui::SectionHeader {
                     summary: &name,
                     changed,
                     reset: Some(changed),
@@ -620,7 +616,7 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    presentation::labelled_inspector_dropdown(
+                    ui::labelled_inspector_dropdown(
                         ui,
                         "negative-stock",
                         "Negative",
@@ -649,7 +645,7 @@ impl Editor {
                             }
                         },
                     );
-                    presentation::labelled_inspector_dropdown(
+                    ui::labelled_inspector_dropdown(
                         ui,
                         "print-paper",
                         "Paper",
@@ -702,7 +698,7 @@ impl Editor {
 impl Editor {
     pub(super) fn look_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not prepare look",
             explanation: "Your existing look and layers are unchanged. Review the details, then choose another look or LUT file.",
             details,
@@ -710,7 +706,7 @@ impl Editor {
     }
     pub(super) fn look_render_failed(&mut self, details: String) {
         drop(self.dialogs.report(dialogs::Message {
-            severity: super::presentation::Severity::Error,
+            severity: super::ui::Severity::Error,
             title: "Could not render look",
             explanation: "The look could not be rendered. Your selection and photographic layers are unchanged. Review the details before trying again.",
             details,

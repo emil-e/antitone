@@ -1,0 +1,494 @@
+mod dropdowns;
+mod selection;
+mod value_edits;
+
+use super::CONTROL_HEIGHT;
+use crate::editor::ui::test_support::{frame, key, pointer};
+use crate::editor::{
+    ui::icons::{self, Icon},
+    ui::inspector::SectionAction,
+    ui::{
+        SectionHeader, collect_expansion, labelled_row, restore_expansion, section,
+        section_disclosure,
+    },
+};
+use egui::{Context, Event, Response, Ui};
+use std::collections::BTreeMap;
+
+fn contents(ui: &mut Ui, numeric: bool) -> Vec<Response> {
+    if numeric {
+        let reset = icons::button(ui, Icon::Reset, true, "Reset value", "Reset value");
+        ui.label("EV");
+        let mut value = 1.23456789;
+        let numeric = ui
+            .push_id("numeric", |ui| {
+                ui.add_sized(
+                    [85., ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut value).update_while_editing(false),
+                )
+            })
+            .inner;
+        vec![reset, numeric]
+    } else {
+        vec![icons::button(
+            ui,
+            Icon::Pick,
+            true,
+            "Pick value",
+            "Pick value",
+        )]
+    }
+}
+
+#[test]
+fn inspector_rows_share_a_name_column_and_return_native_control_interactions() {
+    for scale in [1., 2.] {
+        for width in [270., 315.] {
+            for enabled in [true, false] {
+                let context = Context::default();
+                context.set_pixels_per_point(scale);
+                let render = |events| {
+                    frame(&context, width, enabled, events, |ui| {
+                        ui.vertical(|ui| {
+                            ["Short", "Long inspector name"].map(|label| {
+                                crate::editor::ui::inspector_row(ui, label, |ui, label_id| {
+                                    ui.button("Choose").labelled_by(label_id)
+                                })
+                                .inner
+                            })
+                        })
+                        .inner
+                    })
+                };
+                let (first, _) = render(vec![]);
+                let (stable, output) = render(vec![]);
+                let label_bounds = ["Short", "Long inspector name"].map(|label| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.galley.rect.translate(text.pos.to_vec2()))
+                            }
+                            _ => None,
+                        })
+                        .expect("each row paints its name")
+                });
+                assert!(label_bounds[0].width() < label_bounds[1].width());
+                assert!((label_bounds[0].right() - label_bounds[1].right()).abs() <= 1. / scale);
+                for (label, control) in label_bounds.iter().zip(&stable) {
+                    assert!(label.right() <= control.rect.left());
+                }
+                assert_eq!(first[0].rect.left(), first[1].rect.left());
+                assert_ne!(first[0].id, first[1].id);
+                assert_eq!(first[0].id, stable[0].id);
+                render(pointer(stable[1].rect.center(), true));
+                let (clicked, _) = render(pointer(stable[1].rect.center(), false));
+                assert_eq!(clicked[1].clicked(), enabled);
+                assert!(!clicked[0].clicked());
+                context.memory_mut(|memory| memory.request_focus(stable[0].id));
+                let (keyboard, _) = render(key(egui::Key::Space));
+                assert_eq!(keyboard[0].clicked(), enabled);
+            }
+        }
+    }
+}
+
+#[test]
+fn labelled_rows_keep_labels_left_of_controls_with_stable_ids_and_inherited_disable() {
+    for scale in [1., 2.] {
+        for width in [315., 270.] {
+            for enabled in [true, false] {
+                for numeric in [true, false] {
+                    for help in [None, Some("Caller meaning")] {
+                        let context = Context::default();
+                        context.set_pixels_per_point(scale);
+                        frame(&context, width, enabled, vec![], |_| ());
+                        let label = if numeric {
+                            "Exposure"
+                        } else {
+                            "Dmin (film base)"
+                        };
+                        let render = || {
+                            frame(&context, width, enabled, vec![], |ui| {
+                                ui.push_id("caller", |ui| {
+                                    let row = labelled_row(ui, label, help, |ui, _| {
+                                        contents(ui, numeric)
+                                    });
+                                    (row, ui.button("Following"))
+                                })
+                                .inner
+                            })
+                        };
+                        let ((before, following_before), _) = render();
+                        let ((after, following_after), output) = render();
+                        assert_eq!(after.response.rect, before.response.rect);
+                        assert_eq!(after.response.id, before.response.id);
+                        assert_eq!(after.response.rect.height(), CONTROL_HEIGHT);
+                        let label_bounds = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) if text.galley.job.text == label => {
+                                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        assert!(after.response.rect.expand(0.5).contains_rect(label_bounds));
+                        for (before, after_control) in before.inner.iter().zip(&after.inner) {
+                            assert_eq!(after_control.rect, before.rect);
+                            assert_eq!(after_control.id, before.id);
+                            assert_eq!(after_control.enabled(), enabled);
+                            assert!(after.response.rect.contains_rect(after_control.rect));
+                            assert!(label_bounds.right() <= after_control.rect.left());
+                        }
+                        assert_eq!(following_after.id, following_before.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn labelled_rows_return_caller_responses_and_keep_focus_and_activation() {
+    for enabled in [true, false] {
+        let context = Context::default();
+        let render = |events| {
+            frame(&context, 270., enabled, events, |ui| {
+                labelled_row(ui, "Caller label", None, |ui, _| {
+                    [ui.button("First"), ui.button("Second")]
+                })
+                .inner
+            })
+        };
+        let (responses, _) = render(vec![]);
+        render(pointer(responses[0].rect.center(), true));
+        assert_eq!(
+            render(pointer(responses[0].rect.center(), false)).0[0].clicked(),
+            enabled
+        );
+        context.memory_mut(|memory| memory.request_focus(responses[0].id));
+        assert_eq!(render(key(egui::Key::Space)).0[0].clicked(), enabled);
+        if enabled {
+            render(key(egui::Key::Tab));
+            assert_eq!(
+                context.memory(|memory| memory.focused()),
+                Some(responses[1].id)
+            );
+        }
+    }
+}
+
+#[test]
+fn compact_disclosure_keeps_shared_semantics_focus_and_independent_trailing_controls() {
+    for scale in [1., 2.] {
+        for width in [270., 315.] {
+            for enabled in [true, false] {
+                let context = Context::default();
+                context.set_pixels_per_point(scale);
+                context.enable_accesskit();
+                let mut open = true;
+                let render = |open: &mut bool, events| {
+                    frame(&context, width, enabled, events, |ui| {
+                        icons::row(ui, |ui| {
+                            let width = ui.available_width() - 164.;
+                            let header = section_disclosure(ui, "Scopes", open, width);
+                            let menu = ui.button("Plot settings");
+                            (header, menu)
+                        })
+                        .inner
+                    })
+                };
+                render(&mut open, vec![]);
+                let ((header, menu), output) = render(&mut open, vec![]);
+                assert!(header.rect.right() <= menu.rect.left());
+                assert_eq!(header.rect.height(), 28.);
+                let node = &output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some("Scopes"))
+                    .unwrap()
+                    .1;
+                assert_eq!(node.is_expanded(), Some(true));
+                render(&mut open, pointer(header.rect.center(), true));
+                render(&mut open, pointer(header.rect.center(), false));
+                assert_eq!(open, !enabled);
+                if enabled {
+                    context.memory_mut(|memory| memory.request_focus(header.id));
+                    render(&mut open, key(egui::Key::Space));
+                    assert!(open);
+                    render(&mut open, key(egui::Key::Tab));
+                    assert_eq!(context.memory(|memory| memory.focused()), Some(menu.id));
+                    assert!(
+                        collect_expansion(&context).is_empty(),
+                        "caller owns visibility, not inspector preferences"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn section_frame(
+    context: &Context,
+    width: f32,
+    events: Vec<Event>,
+    preferences: &mut BTreeMap<String, bool>,
+    pinned: bool,
+) -> (Option<Response>, bool, egui::FullOutput) {
+    context.enable_accesskit();
+    let mut body = None;
+    let mut action = SectionAction::default();
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, 300.),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            restore_expansion(ui.ctx(), preferences.clone());
+            (body, action) = section(
+                ui,
+                "caller-section",
+                "Caller section",
+                SectionHeader {
+                    summary: "Caller summary",
+                    changed: true,
+                    reset: Some(true),
+                    tool: None,
+                    default_open: if pinned { None } else { Some(true) },
+                },
+                |ui| ui.button("Caller body"),
+            );
+            *preferences = collect_expansion(ui.ctx());
+        },
+    );
+    output.textures_delta.clear();
+    (body, action.reset, output)
+}
+
+#[test]
+fn modified_sections_have_a_visible_cue_independent_of_value_and_reset_availability() {
+    for scale in [1., 2.] {
+        for width in [270., 315.] {
+            let context = Context::default();
+            context.set_pixels_per_point(scale);
+            let render = |changed| {
+                let (section, output) = frame(&context, width, true, vec![], |ui| {
+                    ui.vertical(|ui| {
+                        section(
+                            ui,
+                            "changed-cue",
+                            "Section",
+                            SectionHeader {
+                                summary: "Current setting",
+                                changed,
+                                reset: None,
+                                tool: None,
+                                default_open: Some(false),
+                            },
+                            |_| (),
+                        );
+                    })
+                });
+                output
+                    .shapes
+                    .into_iter()
+                    .filter(|shape| {
+                        section
+                            .response
+                            .rect
+                            .intersects(shape.shape.visual_bounding_rect())
+                    })
+                    // Clip metadata and accessibility changes alone are not a visible cue.
+                    .map(|shape| shape.shape)
+                    .collect::<Vec<_>>()
+            };
+            render(false);
+            let ordinary = render(false);
+            assert!(!ordinary.is_empty());
+            assert_ne!(ordinary, render(true));
+            assert_eq!(ordinary, render(false));
+        }
+    }
+}
+
+#[test]
+fn sections_keep_pinned_expansion_and_independent_reset_without_domain_fixtures() {
+    for scale in [1., 2.] {
+        for width in [315., 270.] {
+            let context = Context::default();
+            context.set_pixels_per_point(scale);
+            let mut preferences = BTreeMap::from([("caller-section".into(), false)]);
+            section_frame(&context, width, vec![], &mut preferences, false);
+            let (body, reset, output) =
+                section_frame(&context, width, vec![], &mut preferences, false);
+            assert!(body.is_none() && !reset);
+            assert_eq!(preferences.get("caller-section"), Some(&false));
+            let header = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Caller section"))
+                .unwrap();
+            assert_eq!(header.1.role(), egui::accesskit::Role::Button);
+            assert_eq!(header.1.is_expanded(), Some(false));
+            let bounds = header.1.bounds().unwrap();
+            let header_pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.) as f32,
+                ((bounds.y0 + bounds.y1) / 2.) as f32,
+            );
+            let reset = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Reset Caller section"))
+                .unwrap();
+            let bounds = reset.1.bounds().unwrap();
+            let reset_pos = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.) as f32,
+                ((bounds.y0 + bounds.y1) / 2.) as f32,
+            );
+            section_frame(
+                &context,
+                width,
+                pointer(reset_pos, true),
+                &mut preferences,
+                false,
+            );
+            assert!(
+                section_frame(
+                    &context,
+                    width,
+                    pointer(reset_pos, false),
+                    &mut preferences,
+                    false
+                )
+                .1
+            );
+            assert_eq!(preferences.get("caller-section"), Some(&false));
+            let (pinned, _, output) =
+                section_frame(&context, width, vec![], &mut preferences, true);
+            assert!(pinned.is_some());
+            let title = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Label
+                        && node.value() == Some("Caller section")
+                })
+                .unwrap();
+            assert_eq!(title.1.is_expanded(), None);
+            assert_eq!(preferences.get("caller-section"), Some(&false));
+            assert!(
+                section_frame(&context, width, vec![], &mut preferences, false)
+                    .0
+                    .is_none()
+            );
+            section_frame(
+                &context,
+                width,
+                pointer(header_pos, true),
+                &mut preferences,
+                false,
+            );
+            let (opened, _, _) = section_frame(
+                &context,
+                width,
+                pointer(header_pos, false),
+                &mut preferences,
+                false,
+            );
+            assert!(
+                opened.is_some(),
+                "scale {scale}, width {width}, header {header_pos:?}, preferences {preferences:?}"
+            );
+            let id = opened.unwrap().id;
+            assert_eq!(preferences.get("caller-section"), Some(&true));
+            let fresh = Context::default();
+            fresh.set_pixels_per_point(scale);
+            let (restored, _, _) = section_frame(&fresh, width, vec![], &mut preferences, false);
+            assert_eq!(restored.unwrap().id, id);
+        }
+    }
+}
+
+#[test]
+fn section_context_labels_preserve_disclosure_identity_and_full_accessible_names() {
+    for width in [270., 315.] {
+        let context = Context::default();
+        let title =
+            "Layers: A long selected layer name that needs truncation in a narrow inspector";
+        let render = |title: &str, events| {
+            frame(&context, width, true, events, |ui| {
+                section(
+                    ui,
+                    "selected-layer",
+                    title,
+                    SectionHeader {
+                        summary: "",
+                        changed: false,
+                        reset: None,
+                        tool: None,
+                        default_open: Some(true),
+                    },
+                    |ui| ui.label("Layer contents"),
+                )
+                .0
+                .is_some()
+            })
+        };
+        render(title, vec![]);
+        let (open, output) = render(title, vec![]);
+        assert!(open);
+        let header = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(title))
+            .unwrap();
+        let id = header.0;
+        let rect = header.1.bounds().unwrap();
+        let point = egui::pos2(
+            ((rect.x0 + rect.x1) / 2.) as f32,
+            ((rect.y0 + rect.y1) / 2.) as f32,
+        );
+        render(title, pointer(point, true));
+        let (open, _) = render(title, pointer(point, false));
+        assert!(!open);
+        let (open, output) = render("Layers: Renamed", vec![]);
+        assert!(!open);
+        let header = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Layers: Renamed"))
+            .unwrap();
+        assert_eq!(header.0, id);
+    }
+}

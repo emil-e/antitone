@@ -53,8 +53,7 @@ fn radial_creation_keeps_the_pressed_center_and_expands_a_circle_through_every_o
             let layout = layout(turns, flipped);
             let start = egui::pos2(layout.image.left() - 35., layout.image.top() + 40.);
             let end = layout.image.right_bottom() + egui::vec2(10., 20.);
-            let draft = RadialDrag::begin(None, layout, start, controls::DEFAULT_RADIAL_FEATHER)
-                .update(end);
+            let draft = RadialDrag::begin(None, layout, start, DEFAULT_RADIAL_FEATHER).update(end);
             draft.validate().unwrap();
             let AdjustmentLayerCoverage::Radial {
                 center,

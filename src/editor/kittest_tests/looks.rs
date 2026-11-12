@@ -141,7 +141,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                     .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Target")
                     .rect();
                 assert_eq!(look.x_range(), target.x_range());
-                assert_eq!(look.height(), presentation::CONTROL_HEIGHT);
+                assert_eq!(look.height(), ui::CONTROL_HEIGHT);
                 assert_eq!(target.height(), look.height());
                 assert!(look.left() >= size.x - width && look.right() <= size.x);
                 let negative = harness
@@ -157,7 +157,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                     ("Target", target),
                 ] {
                     assert_eq!(rect.x_range(), target.x_range());
-                    assert_eq!(rect.height(), presentation::CONTROL_HEIGHT);
+                    assert_eq!(rect.height(), ui::CONTROL_HEIGHT);
                     let headings: Vec<_> = harness
                         .output()
                         .shapes

@@ -10,7 +10,7 @@ mod tests;
 pub(super) struct Menus {
     pub(super) native: bool,
     pub(super) pending: std::collections::VecDeque<Action>,
-    pub(super) panel: Option<presentation::AppPanel>,
+    pub(super) panel: Option<ui::AppPanel>,
     pub(super) text_focused: bool,
     pub(super) history_input_blocked: bool,
 }
@@ -257,9 +257,9 @@ impl Editor {
         match action {
             Undo => self.restore_history(history::Direction::Undo, cx),
             Redo => self.restore_history(history::Direction::Redo, cx),
-            About => self.menus.panel = Some(presentation::AppPanel::About),
-            Settings => self.menus.panel = Some(presentation::AppPanel::Settings),
-            Help => self.menus.panel = Some(presentation::AppPanel::Help),
+            About => self.menus.panel = Some(ui::AppPanel::About),
+            Settings => self.menus.panel = Some(ui::AppPanel::Settings),
+            Help => self.menus.panel = Some(ui::AppPanel::Help),
             Close => self.menus.panel = None,
             Quit => {
                 // Closing Settings commits its focused field before the next frame's
@@ -286,7 +286,7 @@ impl Editor {
 
     pub(super) fn application_panel(&mut self, context: &egui::Context, escape_available: bool) {
         if let Some(panel) = self.menus.panel
-            && presentation::app_panel(context, panel, escape_available, |ui| {
+            && ui::app_panel(context, panel, escape_available, |ui| {
                 self.cache_preferences(ui)
             })
         {

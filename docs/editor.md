@@ -90,7 +90,7 @@ Colour wheels drag relative to the accepted value; holding Shift gives ten-times
 
 Notifications and decisions use one [dialog host](../src/editor/dialogs.rs). Features submit presentation and await a typed answer when their continuation needs one. Captured targets and subsequent actions stay in the feature's async workflow, retained by its document, photo visit or file-action owner. The host presents one dialog at a time until an explicit user answer; later submissions wait. Dropping a response waiter or succeeding on a later attempt does not erase an unread dialog.
 
-A decision asks permission before changing or replacing something; a failure explains why an attempt did not complete. Save/Discard and replacement choices use shared [decision presentation](../src/editor/presentation/dialogs.rs). [Notice presentation](../src/editor/presentation/feedback.rs) supplies named severity, glyph, restrained colour and expandable diagnostic Details. Required choices are not labelled operation failures. Analyze folds its Photo-reset consequence into its sampling-area review. Other import/analysis failures remain passive status rather than acknowledged messages.
+A decision asks permission before changing or replacing something; a failure explains why an attempt did not complete. Save/Discard and replacement choices use shared [decision presentation](../src/editor/ui/dialogs.rs). [Notice presentation](../src/editor/ui/feedback.rs) supplies named severity, glyph, restrained colour and expandable diagnostic Details. Required choices are not labelled operation failures. Analyze folds its Photo-reset consequence into its sampling-area review. Other import/analysis failures remain passive status rather than acknowledged messages.
 
 ## Working feedback follows what remains usable
 
@@ -109,7 +109,7 @@ New installs an empty document without resource preparation. Input-stage accepta
 
 [Activities](../src/editor/activity.rs) are scoped handles carrying caller-supplied status, progress, modality and cancellation feedback. Keep the handle in the async workflow; destruction removes its feedback. Worker reporters and UI snapshots observe weakly. Feature state and explicit modality govern admission; the presence of nonmodal feedback does not make the editor unavailable.
 
-Cancel signals the workflow's cooperative cancellation token. Export and Analyze retain their handles until acknowledgement; cancelling feedback replaces counts and the Cancel action. [Working presentation](../src/editor/presentation/progress.rs) renders modal or local feedback. Modal activities take precedence over local feedback; within either class the newest live activity is shown.
+Cancel signals the workflow's cooperative cancellation token. Export and Analyze retain their handles until acknowledgement; cancelling feedback replaces counts and the Cancel action. [Working presentation](../src/editor/ui/progress.rs) renders modal or local feedback. Modal activities take precedence over local feedback; within either class the newest live activity is shown.
 
 ## Export photographs
 
@@ -204,16 +204,18 @@ Settings controls CPU/GPU optional retention in whole MiB, including zero, indep
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor/presentation.rs): header/branding, fallback menus and panels, labelled rows, stage tool shelves.
-- [Viewer framing](../src/editor/presentation/viewer.rs) / [Hierarchy](../src/editor/presentation/hierarchy.rs): docked controls, sections, disclosure/reset, stage tabs, selectable rows.
-- [Decisions](../src/editor/presentation/dialogs.rs), [Feedback](../src/editor/presentation/feedback.rs), [Activities](../src/editor/activity.rs), [Working](../src/editor/presentation/progress.rs): the shared modal, severity, task and progress surfaces.
-- [Cards](../src/editor/presentation/cards.rs), [Icons](../src/editor/icons.rs), [Controls](../src/editor/controls.rs): filmstrip geometry, semantic actions, photographic value widgets.
+- [UI](../src/editor/ui.rs): the shared entry point; [theme](../src/editor/ui/theme.rs) owns colours and typography, [application](../src/editor/ui/application.rs) owns header/branding and panels.
+- [Inspector](../src/editor/ui/inspector.rs), [parameter rows](../src/editor/ui/parameter.rs), [balance](../src/editor/ui/balance.rs): section hierarchy, row layout and value widgets.
+- [Viewer framing](../src/editor/ui/viewer.rs), [tools](../src/editor/ui/tools.rs), [actions](../src/editor/ui/actions.rs), [icons](../src/editor/ui/icons.rs), [cards](../src/editor/ui/cards.rs): shared framing and interaction components.
+- [Decisions](../src/editor/ui/dialogs.rs), [feedback](../src/editor/ui/feedback.rs), [working](../src/editor/ui/progress.rs): shared modal, severity and progress surfaces; [activities](../src/editor/activity.rs) own their lifetimes.
 
-Presentation receives display-ready state and returns responses; controllers own feature availability, accepted/draft state and dispatch. Shared value widgets edit local values and return interaction responses; features apply those values to their own working projects. Each completed control edit is independently undoable. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
+Features compose `editor::ui` components through body closures and ordinary egui layout, owning availability, accepted/draft state and dispatch. [ParameterRow](../src/editor/ui/parameter.rs) receives an explicit identity, label, bounds and value options together at its call site; shared spacing and gestures stay inside the component. [BalanceControl](../src/editor/ui/balance.rs) composes those rows with a wheel, while [white balance](../src/editor/white_balance.rs) owns its section framing and actions. Non-numeric controls use the fixed-name inspector row where they share that layout, and ordinary themed egui controls inside it.
+
+Shared value widgets edit local values and return interaction responses; features apply those values to their own working projects. Each completed control edit is independently undoable. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
 
 ### Inspector density and value grammar
 
-The inspector uses its own spacing scale, tighter than the rest of the application: [Presentation](../src/editor/presentation.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset and related section tools. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
+The inspector uses its own spacing scale, tighter than the rest of the application: [Inspector](../src/editor/ui/inspector.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset and related section tools. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
 
 A parameter is one row: a fixed-width name column, the track, then an editable value with its unit. The shared name column makes every track start at the same x, and names are right-aligned inside it so each sits against the control it labels; a unit label shortens the track's right end, and a name longer than the column truncates rather than buying track. Reset is a name gesture rather than a control — double-click or Option-click the name — backed by a **Reset to default** item in the value's context menu; a section reset still covers its whole group. Keep the row to those three parts: a per-row icon competes with the value for the narrow column.
 
@@ -229,7 +231,7 @@ Controllers and hosted tools use ordinary `&mut Editor` and raw `egui::Ui`; a se
 
 ### Contextual status indicators
 
-Use the named [contextual status pattern](../src/editor/presentation/feedback.rs) for a local condition, not a feature-specific badge or global notification. `ContextualStatus` carries display-ready reason and level; cards and tool warning identities reuse the same primitive, and controllers own the condition and its retirement.
+Use the named [contextual status pattern](../src/editor/ui/feedback.rs) for a local condition, not a feature-specific badge or global notification. `ContextualStatus` carries display-ready reason and level; cards and tool warning identities reuse the same primitive, and controllers own the condition and its retirement.
 
 | Condition | Presentation |
 | --- | --- |
@@ -254,11 +256,11 @@ Before adding help, ask: *What is unclear here? Does this text resolve it? Is th
 
 ### Typography roles
 
-Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active tool names and compact readouts. [Presentation](../src/editor/presentation.rs) installs the fonts and owns `instrument_label`, `instrument_readout` and `TextAction::readout`; use those shared roles rather than restyling per feature. The Arimo wordmark remains separate artwork; stage tabs share equal breathing room around their labels rather than equal widths.
+Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active tool names and compact readouts. [Theme](../src/editor/ui/theme.rs) installs the fonts and owns `instrument_label` and `instrument_readout`; [text actions](../src/editor/ui/actions.rs) share the readout role. Use those roles rather than restyling per feature. The Arimo wordmark remains separate artwork; stage tabs share equal breathing room around their labels rather than equal widths.
 
 ### Colour roles
 
-Colour expresses interaction state, not feature ownership. Presentation installs the editor theme once; ordinary egui widgets and shared components inherit its selection, active-state and link colours. Custom interaction painting reads the applicable role from `ui.visuals()` or `ui.style().interact(&response)` rather than copying brand RGB values. Contact-sheet fills and image wells stay deliberately neutral; photographic wheels and scope plots keep colours that represent image data.
+Colour expresses interaction state, not feature ownership. The shared UI theme installs the editor colours once; ordinary egui widgets and shared components inherit its selection, active-state and link colours. Custom interaction painting reads the applicable role from `ui.visuals()` or `ui.style().interact(&response)` rather than copying brand RGB values. Contact-sheet fills and image wells stay deliberately neutral; photographic wheels and scope plots keep colours that represent image data.
 
 ## Working on this area
 
