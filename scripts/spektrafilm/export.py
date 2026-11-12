@@ -154,6 +154,20 @@ def export(args, scratch):
         p.debug.lut_mode = True
         return api.digest_params(p)
 
+    def source_photometry(profile):
+        # Retain an independent spectral-Y basis in fixtures, not runtime driver data.
+        observer = importlib.import_module("spektrafilm.config").STANDARD_OBSERVER_CMFS.values
+        dyes = np.asarray(profile.data.channel_density)
+        base = np.asarray(profile.data.base_density)
+        support = np.isfinite(dyes).all(axis=1) & np.isfinite(base)
+        light = standard_illuminant(profile.info.viewing_illuminant)
+        weights = light * observer[:, 1]
+        weights /= weights.sum()
+        return {
+            "dyes": dyes[support].tolist(),
+            "weights": (weights[support] * 10 ** -base[support]).tolist(),
+        }
+
     paths = sorted((upstream / "src/spektrafilm/data/profiles").glob("*.json"))
     infos = {p.stem: json.loads(p.read_text())["info"] for p in paths}
     negative_ids = [
@@ -314,15 +328,16 @@ def export(args, scratch):
             }
         )
         catalog["paper"][-1]["positive_driver"] = {
-            key: driver[key] for key in ["input_luminance", "photometry", "reference"]
+            key: driver[key] for key in ["input_luminance", "reference"]
         }
-        paper_h = expose(probes, axis, curves, result.x, driver)
+        paper_h = expose(probes, result.x, driver)
         out = read_h(paper_h)
         density = stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
         fixtures["paper_only"].append(
             {
                 "paper": name,
                 "input": probes.tolist(),
+                "photometry": source_photometry(p.print),
                 "paper_h": paper_h.tolist(),
                 "paper_density": density.tolist(),
                 "reference_rgb": out.tolist(),
@@ -413,7 +428,7 @@ def export(args, scratch):
         "source": "https://github.com/andreavolpato/spektrafilm",
         "author": "Andrea Volpato",
         "revision": REVISION,
-        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared brightness-anchored convex reference-negative spectral entry with boundary-only radial mapping and inverse authoring DRT; no photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
+        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared convex reference-negative spectral entry with calibrated neutral exposure, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
         "source_code_sha256": sources,
         "environment_lock_sha256": sha(LOCK),
         "build_tool_sha256": sha(ROOT / "scripts/spektrafilm/build.py"),

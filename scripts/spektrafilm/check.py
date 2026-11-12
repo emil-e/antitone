@@ -73,7 +73,7 @@ def validate(folder, files=None):
     for medium in catalog["paper"]:
         if medium["positive_driver"] != {
             key: provenance["positive_drivers"][medium["id"]][key]
-            for key in ["input_luminance", "photometry", "reference"]
+            for key in ["input_luminance", "reference"]
         }:
             raise ValueError("reference driver/provenance mismatch")
         values = zlib.decompress(files[medium["scanner_file"]])

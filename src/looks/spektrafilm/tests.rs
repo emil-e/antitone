@@ -21,7 +21,13 @@ struct Case {
     reference_rgb: Vec<DVec3>,
 }
 #[derive(Deserialize)]
+struct Photometry {
+    dyes: Vec<DVec3>,
+    weights: Vec<f64>,
+}
+#[derive(Deserialize)]
 struct PaperCase {
+    photometry: Photometry,
     physical_y: Vec<f64>,
     paper: String,
     input: Vec<DVec3>,
@@ -34,6 +40,23 @@ fn fixtures() -> Fixtures {
         "../../../tests/fixtures/spektrafilm/conformance.json"
     ))
     .unwrap()
+}
+
+pub(super) fn paper_luminance(paper: &data::Paper, h: DVec3) -> f64 {
+    static SOURCE: std::sync::OnceLock<Fixtures> = std::sync::OnceLock::new();
+    let case = SOURCE
+        .get_or_init(fixtures)
+        .paper_only
+        .iter()
+        .find(|case| case.paper == paper.id)
+        .expect("source photometry for every medium");
+    let density = develop_print_morph(paper, h);
+    case.photometry
+        .dyes
+        .iter()
+        .zip(&case.photometry.weights)
+        .map(|(dye, weight)| weight * 10_f64.powf(-dye.dot(density)))
+        .sum()
 }
 
 #[test]
@@ -56,6 +79,8 @@ fn source_evaluated_catalogue_has_every_selectable_pair_and_preserves_identity()
     assert_eq!(f.paper_only.len(), Paper::all().len());
     for case in &f.paper_only {
         assert_eq!(case.physical_y.len(), case.input.len());
+        assert!(!case.photometry.weights.is_empty());
+        assert_eq!(case.photometry.dyes.len(), case.photometry.weights.len());
     }
     for case in &f.cases {
         assert_eq!(case.reference_rgb.len(), case.input.len());
@@ -134,10 +159,7 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
             assert!((h - case.paper_h[i]).abs().max_element() < 1e-12);
             let d = develop_print_morph(model.paper, h);
             assert!((d - case.paper_density[i]).abs().max_element() < 1e-12);
-            assert!(
-                (model.paper.positive_driver.luminance(model.paper, h) - case.physical_y[i]).abs()
-                    < 2e-14
-            );
+            assert!((paper_luminance(model.paper, h) - case.physical_y[i]).abs() < 2e-14);
             assert!(model.encoded(*input).unwrap().is_finite());
         }
         let neutral = model
@@ -150,7 +172,7 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
 }
 
 #[test]
-fn every_media_reference_retains_scalar_tone_and_supplies_nontrivial_colour_at_fixed_y() {
+fn every_media_reference_retains_neutral_tone_and_allows_colour_dependent_luminance() {
     let mapping = &data::catalog().paper_mapping;
     for paper in Paper::all() {
         let model = Model::new(
@@ -189,9 +211,9 @@ fn every_media_reference_retains_scalar_tone_and_supplies_nontrivial_colour_at_f
             let neutral = baseline(driver.input_luminance.dot(colour));
             let actual = model.paper_exposure(colour).unwrap();
             assert!(
-                (driver.luminance(model.paper, actual) - driver.luminance(model.paper, neutral))
+                (paper_luminance(model.paper, actual) - paper_luminance(model.paper, neutral))
                     .abs()
-                    < 2e-12,
+                    > 1e-6,
                 "{}",
                 paper.id()
             );

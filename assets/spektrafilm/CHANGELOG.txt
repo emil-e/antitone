@@ -20,11 +20,11 @@ Antitone modifications:
 - Use the historical Academy universal reference and a convex APD-action
   spectral selector for every colour medium's paper-only entry, with a supplied base prior,
   constant-Y radial adapter boundary and low-positive receiver tangent.
-  Retain the scalar neutral log-exposure law, original paper photometry and
-  common exposure solve, including the neutral path's tone-dependent tint.
+  Add reference receiver differences directly to calibrated neutral exposure,
+  retaining the neutral log-exposure law and tone-dependent tint. Coloured
+  luminance follows the spectral reference and medium response.
   No output hue/saturation fit or selected-negative characteristic curves
-  define this virtual reference. Colour-brightness interaction is deliberately
-  compensated. The separate historical APD input is canonically identified;
+  define this virtual reference. The separate historical APD input is canonically identified;
   its derived functional coefficients rely on the source's implementation
   non-enforcement covenant, with the original notices retained separately
   in NOTICE-Academy-APD.txt rather than relicensed by the spektrafilm licenses.
