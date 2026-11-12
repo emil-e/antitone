@@ -30,6 +30,7 @@ struct AntitoneRawMetadata {
 
 struct AntitoneRawView {
     const uint16_t *pixels;
+    const float *rgb; // Optional continuous camera RGB, three floats per pixel.
     uint32_t width, height, maximum, data_maximum, warnings;
     double pre_mul[4];
 };

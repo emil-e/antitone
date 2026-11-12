@@ -1,5 +1,3 @@
-#[path = "../support/output.rs"]
-mod authored_export;
 use super::*;
 use authored_export::Request;
 #[path = "../support/working_precision.rs"]

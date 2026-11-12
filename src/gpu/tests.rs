@@ -122,11 +122,11 @@ fn authored_source_preview_scale_agrees_with_actual_libraw_development_gains() {
     ] {
         let mut raw = crate::raw::RawFile::open_uncorrected(&path).unwrap();
         let image = raw.develop_camera(wb).unwrap();
-        let before = image.pixel_codes(32, 32).unwrap();
+        let before = image.pixel(32, 32).unwrap();
         let gain = 2. / image.pre_mul[1];
         let parameters = ProcessingParameters::source_preview(Some(wb), 0.).unwrap();
         assert!((f64::from(parameters.post[0].x) - gain).abs() < 1e-6 * gain);
-        assert_eq!(image.pixel_codes(32, 32).unwrap(), before);
+        assert_eq!(image.pixel(32, 32).unwrap(), before);
     }
 }
 

@@ -16,6 +16,14 @@ mod fixture;
 #[path = "support/fixture_path.rs"]
 mod fixture_path;
 use fixture::{Fixture, Opcode};
+#[cfg(all(feature = "gpu", feature = "export"))]
+#[path = "support/output.rs"]
+mod authored_export;
+#[cfg(all(feature = "gpu", feature = "export"))]
+#[path = "dng_integration/highlight_consumers.rs"]
+mod highlight_consumers;
+#[path = "dng_integration/highlights.rs"]
+mod highlights;
 
 #[cfg(all(
     feature = "gpu",
