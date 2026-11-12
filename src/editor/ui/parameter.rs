@@ -98,7 +98,10 @@ impl<'a> ParameterRow<'a> {
     }
 
     pub fn show(self, ui: &mut Ui, value: &mut f64) -> ParameterResponse {
-        parameter_row(ui, &self, value)
+        let mut response = parameter_row(ui, &self, value);
+        response.slider = response.slider.labelled_by(response.label.id);
+        response.numeric = response.numeric.labelled_by(response.label.id);
+        response
     }
 }
 
@@ -138,13 +141,7 @@ fn name_reset_gesture(ui: &Ui, label: &Response) -> bool {
 }
 
 /// The track: absolute drag normally, slow relative travel when the press began with Shift.
-fn track(
-    ui: &mut Ui,
-    row: &ParameterRow<'_>,
-    value: &mut f64,
-    width: f32,
-    name: egui::Id,
-) -> Response {
+fn track(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64, width: f32) -> Response {
     let step = row.step
         * if ui.input(|input| input.modifiers.shift) {
             0.1
@@ -214,7 +211,6 @@ fn track(
         response
     })
     .inner
-    .labelled_by(name)
 }
 
 fn numeric_field(
@@ -269,9 +265,7 @@ fn parameter_row(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64) -> Parame
                 let width = (ui.available_width() - reserved).max(48.);
                 let mut slider_value = previous;
                 let slider = ui
-                    .push_id("track", |ui| {
-                        track(ui, row, &mut slider_value, width, label.id)
-                    })
+                    .push_id("track", |ui| track(ui, row, &mut slider_value, width))
                     .inner;
                 let mut numeric_value = previous;
                 let (numeric, cancelled) = ui
@@ -290,7 +284,6 @@ fn parameter_row(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64) -> Parame
                                 )
                             })
                             .inner;
-                        let numeric = numeric.labelled_by(label.id);
                         if row.default_value.is_some() {
                             numeric.clone().context_menu(|ui| {
                                 if ui.button("Reset to default").clicked() {
