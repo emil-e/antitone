@@ -7,6 +7,7 @@ No photograph inputs, fitted colour transforms or runtime Python are involved.
 
 from pathlib import Path
 import argparse
+import dataclasses
 import hashlib
 import importlib
 import json
@@ -17,6 +18,8 @@ import tempfile
 import zlib
 
 from build import LOCK, REVISION, verify_environment
+from positive import expose, prepare
+from reference import NEGATIVE as REFERENCE_NEGATIVE
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,7 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scanner-size", type=int, default=33, choices=[17, 33, 65])
+    parser.add_argument("--scanner-size", type=int, default=65, choices=[17, 33, 65])
+    parser.add_argument("--apd-responsivities", type=Path, required=True)
     args = parser.parse_args()
     cache = ROOT / ".cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -128,30 +132,41 @@ def export(args, scratch):
 
     refprim = np.array(reference[1:7]).reshape(3, 2)
     white = np.array(reference[7:9])
-    refXYZ = colour.normalised_primary_matrix(refprim, white)
-    srgb = colour.RGB_COLOURSPACES["sRGB"]
-    srgb_xyz = colour.normalised_primary_matrix(srgb.primaries, srgb.whitepoint)
-    to_ref = (
-        np.linalg.inv(refXYZ)
-        @ colour.adaptation.matrix_chromatic_adaptation_VonKries(
-            colour.xy_to_XYZ(srgb.whitepoint), colour.xy_to_XYZ(white), transform="Bradford"
-        )
-        @ srgb_xyz
+    reference_xyz = colour.normalised_primary_matrix(refprim, white)
+
+    reference_space = "Antitone_p3rec50"
+    colour.RGB_COLOURSPACES[reference_space] = colour.RGB_Colourspace(
+        reference_space, refprim, white, whitepoint_name="D65"
     )
 
-    def reference_rgb(rgb):
-        return np.asarray(rgb) @ to_ref.T
-
-    gray_target = ocio([[0.18, 0.18, 0.18]], "forward")[0] @ np.linalg.inv(to_ref).T
+    gray_target = ocio([[0.18, 0.18, 0.18]], "forward")[0]
+    finishing = gamut.OutputGamutCompressSpec(
+        algorithm="cam16ucs", knee=(0.0, 1.0, 6.0), lightness_compression=None
+    )
 
     def params(film, paper):
         p = api.init_params(film, paper)
         p.io.input_color_space = "ACEScg"
         p.io.input_cctf_decoding = False
-        p.io.output_color_space = "sRGB"
+        p.io.output_color_space = reference_space
         p.io.output_cctf_encoding = False
+        p.io.output_gamut_compress = finishing
         p.debug.lut_mode = True
         return api.digest_params(p)
+
+    def source_photometry(profile):
+        # Retain an independent spectral-Y basis in fixtures, not runtime driver data.
+        observer = importlib.import_module("spektrafilm.config").STANDARD_OBSERVER_CMFS.values
+        dyes = np.asarray(profile.data.channel_density)
+        base = np.asarray(profile.data.base_density)
+        support = np.isfinite(dyes).all(axis=1) & np.isfinite(base)
+        light = standard_illuminant(profile.info.viewing_illuminant)
+        weights = light * observer[:, 1]
+        weights /= weights.sum()
+        return {
+            "dyes": dyes[support].tolist(),
+            "weights": (weights[support] * 10 ** -base[support]).tolist(),
+        }
 
     paths = sorted((upstream / "src/spektrafilm/data/profiles").glob("*.json"))
     infos = {p.stem: json.loads(p.read_text())["info"] for p in paths}
@@ -250,6 +265,8 @@ def export(args, scratch):
         ]
     )
     fixtures = {"revision": REVISION, "cases": [], "paper_only": []}
+    positive_drivers = {}
+    output_validation = {}
     for name in paper_ids:
         p = params("kodak_portra_400", name)
         pipe = Pipeline(p)
@@ -276,6 +293,8 @@ def export(args, scratch):
             name,
             result.message,
         )
+        driver = prepare(p.print, params(REFERENCE_NEGATIVE, name).film, args.apd_responsivities)
+        positive_drivers[name] = driver
         nscan = args.scanner_size
         lo = curves.min(axis=0)
         hi = curves.max(axis=0)
@@ -287,7 +306,13 @@ def export(args, scratch):
                 for v in np.array_split(density, max(1, len(density) // 8192))
             ]
         )
-        encoded = cct(ocio(reference_rgb(rgb), "inverse"))
+        carrier = ocio(rgb, "inverse")
+        assert (rgb >= 0).all() and (rgb <= 1).all()
+        assert (carrier >= 0).all() and (carrier <= 1024).all()
+        roundtrip = float(np.max(abs(ocio(carrier, "forward") - rgb)))
+        assert roundtrip < 0.00005
+        output_validation[name] = {"nodes": len(rgb), "max_reference_roundtrip": roundtrip}
+        encoded = cct(carrier)
         filename = f"{name}-scan.cct.z"
         (output / filename).write_bytes(zlib.compress(encoded.astype("<f4").tobytes(), 9))
         catalog["paper"].append(
@@ -302,16 +327,24 @@ def export(args, scratch):
                 "positive_gray_logH": result.x.tolist(),
             }
         )
-        paper_h = result.x - 0.6 * 17.52 * (cct(probes) - cct(np.full((1, 3), 0.18))) * np.log10(2)
+        catalog["paper"][-1]["positive_driver"] = {
+            key: driver[key] for key in ["input_luminance", "reference"]
+        }
+        paper_h = expose(probes, result.x, driver)
         out = read_h(paper_h)
         density = stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
         fixtures["paper_only"].append(
             {
                 "paper": name,
                 "input": probes.tolist(),
+                "photometry": source_photometry(p.print),
                 "paper_h": paper_h.tolist(),
                 "paper_density": density.tolist(),
-                "reference_rgb": reference_rgb(out).tolist(),
+                "reference_rgb": out.tolist(),
+                # Undo the scanner's numeric log-zero epsilon for physical photometry.
+                "physical_y": (
+                    10 ** scanner.cmy_to_log_xyz(density.reshape(1, -1, 3))[0, :, 1] - 1e-10
+                ).tolist(),
             }
         )
         for film in negative_ids:
@@ -326,7 +359,7 @@ def export(args, scratch):
             def gray_at(logtime):
                 h = np.log10(10**pre_h * 10**logtime + 1e-10)
                 out = scanner.scan(stage.develop(h)).reshape(3)
-                return float(out @ srgb_xyz[1]) - 0.1
+                return float(out @ reference_xyz[1]) - 0.1
 
             logtime = optimize.brentq(gray_at, -4, 4, xtol=1e-13)
             p.enlarger.print_exposure = 10**logtime
@@ -364,7 +397,7 @@ def export(args, scratch):
                     "film_density": d.reshape(-1, 3).tolist(),
                     "paper_h": ph.reshape(-1, 3).tolist(),
                     "paper_density": pd.reshape(-1, 3).tolist(),
-                    "reference_rgb": reference_rgb(out).tolist(),
+                    "reference_rgb": out.tolist(),
                 }
             )
         print(name, "complete", flush=True)
@@ -395,7 +428,7 @@ def export(args, scratch):
         "source": "https://github.com/andreavolpato/spektrafilm",
         "author": "Andrea Volpato",
         "revision": REVISION,
-        "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds the positive-paper adapter and inverse authoring DRT; no photographic fitting. Data derivatives CC BY-SA4.0; native algorithm ports GPLv3.",
+        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared convex reference-negative spectral entry with calibrated neutral exposure, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
         "source_code_sha256": sources,
         "environment_lock_sha256": sha(LOCK),
         "build_tool_sha256": sha(ROOT / "scripts/spektrafilm/build.py"),
@@ -409,6 +442,15 @@ def export(args, scratch):
             "OpenColorIO": "2.6.0",
         },
         "generator_sha256": sha(Path(__file__)),
+        "positive_driver_sha256": sha(Path(__file__).with_name("positive.py")),
+        "reference_driver_sha256": sha(Path(__file__).with_name("reference.py")),
+        "positive_drivers": positive_drivers,
+        "paper_output_validation": output_validation,
+        "output_finishing": {
+            "reference_parameters": reference,
+            **dataclasses.asdict(finishing),
+            "exposure_calibration": "Common authoring-reference gray 0.18; negative/media print time targets viewed Y=0.1 through the same finish.",
+        },
         "reference_helper_sha256": sha(ROOT / "native/spektrafilm/reference.cpp"),
         "source_lut_sha256": sha(
             upstream / "src/spektrafilm/data/luts/spectral_upsampling/irradiance_xy_tc.npy"

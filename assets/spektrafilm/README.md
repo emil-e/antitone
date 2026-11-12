@@ -8,9 +8,15 @@ The generator evaluates the upstream deterministic, nonspatial model. It exports
 
 The Rust [consumer](../../src/looks/spektrafilm.rs) constructs a stock exposure lookup and pair-specific spectral printing lookup on demand, then samples one final ACEScct/AP1 LUT. Installed data does not contain final LUTs for every combination. The current on-demand spectral printing grid is 33³; its cubic interpolation is an implementation choice checked against source evaluations.
 
-Each print medium has a sampled density-to-readout component combined with the pinned inverse authoring DRT. This includes upstream spectral readout, white adaptation and configured output finishing. It is not a measured scanner-device profile. The component stores ACEScct/AP1 coordinates; ordinary selected-output ACES still follows the accepted final LUT. End users need neither Python, an OCIO installation nor a compiler.
+Each print medium has a sampled density-to-readout component combined with the pinned inverse authoring DRT. All media compress gamut directly in the same wide authoring reference, without a separate lightness rolloff. Neutral exposure calibration and final readout use this common finish. The component is not a measured scanner-device profile. The component stores ACEScct/AP1 coordinates; ordinary selected-output ACES still follows the accepted final LUT. End users need neither Python, an OCIO installation nor a compiler.
 
-The camera-negative entry contains the upstream negative-film profiles, not reversal films needing a different positive-output interpretation. Printing media include papers and the upstream printing-film profiles. With negative bypassed, the existing positive-paper convention maps AP1 channel stops to paper exposure at compression 0.6. Its neutral anchor is calibrated on controlled 0.18, not photographs; it does not reconstruct the source negative's spectrum. Full film+paper print time instead uses the frozen rendering reference's neutral output Y=0.1 convention. These are distinct entry contracts, not physical calibration of real negatives.
+The camera-negative entry contains upstream negative-film profiles, not reversal films needing a different positive-output interpretation. Printing media include papers and upstream printing-film profiles. Without a selected negative, the interpreted positive enters the shared spectral reference adapter. Full film+paper uses the selected negative's formation and spectral projection, with print time calibrated to viewed Y=0.1 through the common finish.
+
+Paper-only processing for every colour printing medium uses the historical Academy universal negative reference to obtain three APD flux constraints. A convex minimum-relative-entropy selector chooses a positive spectrum relative to the supplied 250D base. Its probability measure is summed APD action; the selected shape is invariant to a common flux scale. Positive relative-filter interpolation and held endpoints define transmission between and beyond the APD knots, with opaque support outside the supplied negative spectra. The TH-KG3 lamp and paper sensitivities then determine receiver exposures. These are explicit rendering assumptions, not recovered film layers or a named negative's characteristic curves.
+
+Only adapter records outside the nonnegative reference cone move toward neutral along a constant-input-Y ray. Nonpositive input Y has zero extra input chroma. Receiver log exposure retains a Taylor continuation below the query threshold 1/128; signed working AP1 remains intact upstream. Reference receiver differences add directly to the calibrated neutral exposure. The neutral law retains gray 0.18, authoring compression 0.6 and the medium's tone-dependent tint; coloured luminance and contrast follow the spectral reference and medium response. Source observations use independent SciPy moment solves, with spectral-Y coefficients retained in test fixtures. No photograph determines the spectrum prior or an output colour fit.
+
+Only final numeric LUTs execute on photographic pixels. Treatments use the shared 65³ float32 authoring grid; explicit bake dimensions remain available for diagnostics.
 
 Source interpretation, photographic grading and existing grain remain upstream of this treatment. The [output guide](../../docs/colour-and-output.md) owns selection and viewing, and [project storage](../../docs/projects.md#embed-accepted-colour-assets) owns saved numeric assets.
 
@@ -22,9 +28,12 @@ Use an existing Python **3.14.6** interpreter and the normal [pinned OCIO setup]
 
 ```sh
 python3 scripts/spektrafilm/build.py setup --python /path/to/python3.14
-python3 scripts/spektrafilm/build.py generate --output .cache/spektrafilm-candidate
+python3 scripts/spektrafilm/build.py generate --output .cache/spektrafilm-candidate \
+  --apd-responsivities /path/to/APD-2010.csv
 python3 scripts/spektrafilm/build.py check
 ```
+
+The separately supplied APD CSV has columns `wavelength_nm,red,green,blue`; its numeric hash identifies the complete 186-row [S-2008-002 v1.1 (2010) table](https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf). Antitone distributes derived functional coefficients relying on the specification's implementation non-enforcement covenant, retaining the [Academy notice](NOTICE-Academy-APD.txt). The spektrafilm licenses do not relicense that source.
 
 Generation rejects a modified or differently pinned upstream checkout and writes only a fresh candidate. Its output includes numeric source observations and provenance for the source, dependency lock, exporter, reference helper and component bytes. The checker validates candidates before anything is copied into maintained assets. `--upstream` and `--python` allow reuse of an existing verified checkout/environment.
 
@@ -35,4 +44,4 @@ cargo test --locked --release --features ui-tests --lib looks::spektrafilm
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-The scanner grid is currently 33³. A new upstream pin needs source and numerical review: data/parameter changes can regenerate, while algorithm changes may also require a native port update. If the fixed authoring DRT changes, regenerate its [reference resources](../ocio/README.md#fixed-reference-for-creative-look-generation) too. Compact data and model conformance are separate from the [public-release licensing review](../../NOTICE.md#local-packages-versus-public-releases).
+The density-to-readout grid is currently 65³. A new upstream pin needs source and numerical review: data/parameter changes can regenerate, while algorithm changes may also require a native port update. If the fixed authoring DRT changes, regenerate its [reference resources](../ocio/README.md#fixed-reference-for-creative-look-generation) too. Compact data and model conformance are separate from the [public-release licensing review](../../NOTICE.md#local-packages-versus-public-releases).

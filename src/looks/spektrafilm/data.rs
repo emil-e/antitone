@@ -68,6 +68,7 @@ pub(super) struct Paper {
     pub scanner_file: String,
     #[serde(rename = "positive_gray_logH")]
     pub positive_gray_log_h: DVec3,
+    pub positive_driver: super::positive::Driver,
     #[serde(skip)]
     pub scanner: OnceLock<Result<Arc<CubicGrid>, Error>>,
 }
@@ -195,6 +196,7 @@ fn load_catalog() -> Result<Catalog, Error> {
     }
     for p in &value.paper {
         validate_curve(&p.log_exposure, &p.density_curves)?;
+        p.positive_driver.validate()?;
         require(
             p.scanner_min.is_finite()
                 && p.scanner_max.is_finite()

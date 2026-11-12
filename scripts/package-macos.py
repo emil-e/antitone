@@ -166,6 +166,17 @@ def libraw_source():
     return ROOT / f".cache/native-deps/LibRaw-0.22.3-{hashes['patched'][:12]}-openmp"
 
 
+def copy_spektrafilm_notices(notices):
+    for name in [
+        "LICENSE-code.txt",
+        "LICENSE-data.txt",
+        "NOTICE-Academy-APD.txt",
+        "CHANGELOG.txt",
+        "provenance.json",
+    ]:
+        copy_notice(f"assets/spektrafilm/{name}", notices / "spektrafilm")
+
+
 def write_notices(resources):
     notices = resources / "Licenses"
     notices.mkdir()
@@ -177,8 +188,7 @@ def write_notices(resources):
         "licenses/BSL-1.0.txt",
     ]:
         copy_notice(path, notices)
-    for name in ["LICENSE-code.txt", "LICENSE-data.txt", "CHANGELOG.txt", "provenance.json"]:
-        copy_notice(f"assets/spektrafilm/{name}", notices / "spektrafilm")
+    copy_spektrafilm_notices(notices)
     copy_monochrome_notices(notices)
     sdk = "vendor/dng-sdk/"
     for path in [

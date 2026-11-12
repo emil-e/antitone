@@ -87,6 +87,16 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
             assert_eq!(s.paper, Paper::from_id("kodak_2383").unwrap());
             assert_eq!(e.document.project.output.grain, texture);
         });
+        for paper in Paper::all() {
+            choose_component(&mut h, "Paper", paper.name());
+            h.read(|e| {
+                let asset = e.document.project.output.film_and_paper.as_ref().unwrap();
+                let selection = Selection::from_origin(asset.origin()).unwrap();
+                assert_eq!(selection.negative, None);
+                assert_eq!(selection.paper, paper);
+                assert_eq!(asset.lut().size(), DEFAULT_GRID);
+            });
+        }
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("paper-only.antitone");
         let accepted = h.read(|e| e.document.state.project.clone());

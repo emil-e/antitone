@@ -60,11 +60,13 @@ class GenerationWorkflow(unittest.TestCase):
             patch.object(build, "run") as run,
             patch.object(build, "acquire_source") as fetch,
         ):
-            build.generate(Path("python"), source, output)
+            apd = Path("responsivities.csv")
+            build.generate(Path("python"), source, output, apd)
             fetch.assert_not_called()
             self.assertEqual(run.call_count, 2)
-            self.assertIn("--output", run.call_args_list[0].args)
-            self.assertEqual(run.call_args_list[0].args[-1], output)
+            args = run.call_args_list[0].args
+            self.assertEqual(args[args.index("--output") + 1], output)
+            self.assertEqual(args[args.index("--apd-responsivities") + 1], apd)
             self.assertEqual(run.call_args_list[1].args[-2:], ("--candidate", output))
 
     def test_locked_dependencies_require_wheel_hashes_and_actual_versions(self):

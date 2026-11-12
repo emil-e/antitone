@@ -21,7 +21,14 @@ struct Case {
     reference_rgb: Vec<DVec3>,
 }
 #[derive(Deserialize)]
+struct Photometry {
+    dyes: Vec<DVec3>,
+    weights: Vec<f64>,
+}
+#[derive(Deserialize)]
 struct PaperCase {
+    photometry: Photometry,
+    physical_y: Vec<f64>,
     paper: String,
     input: Vec<DVec3>,
     paper_h: Vec<DVec3>,
@@ -33,6 +40,23 @@ fn fixtures() -> Fixtures {
         "../../../tests/fixtures/spektrafilm/conformance.json"
     ))
     .unwrap()
+}
+
+pub(super) fn paper_luminance(paper: &data::Paper, h: DVec3) -> f64 {
+    static SOURCE: std::sync::OnceLock<Fixtures> = std::sync::OnceLock::new();
+    let case = SOURCE
+        .get_or_init(fixtures)
+        .paper_only
+        .iter()
+        .find(|case| case.paper == paper.id)
+        .expect("source photometry for every medium");
+    let density = develop_print_morph(paper, h);
+    case.photometry
+        .dyes
+        .iter()
+        .zip(&case.photometry.weights)
+        .map(|(dye, weight)| weight * 10_f64.powf(-dye.dot(density)))
+        .sum()
 }
 
 #[test]
@@ -48,6 +72,16 @@ fn source_evaluated_catalogue_has_every_selectable_pair_and_preserves_identity()
         .map(|v| (v.negative.clone(), v.paper.clone()))
         .collect();
     assert_eq!(expected, actual);
+    let expected_papers: std::collections::BTreeSet<_> =
+        Paper::all().map(|p| p.id().to_owned()).collect();
+    let actual_papers = f.paper_only.iter().map(|p| p.paper.clone()).collect();
+    assert_eq!(expected_papers, actual_papers);
+    assert_eq!(f.paper_only.len(), Paper::all().len());
+    for case in &f.paper_only {
+        assert_eq!(case.physical_y.len(), case.input.len());
+        assert!(!case.photometry.weights.is_empty());
+        assert_eq!(case.photometry.dyes.len(), case.photometry.weights.len());
+    }
     for case in &f.cases {
         assert_eq!(case.reference_rgb.len(), case.input.len());
         assert!(case.reference_rgb.iter().all(|v| v.is_finite()));
@@ -111,7 +145,7 @@ fn native_formation_and_spectral_projection_match_executed_upstream() {
 }
 
 #[test]
-fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention() {
+fn paper_only_exposure_and_density_match_executed_source_without_film_formation() {
     for case in fixtures().paper_only {
         assert_eq!(case.reference_rgb.len(), case.input.len());
         assert!(case.reference_rgb.iter().all(|v| v.is_finite()));
@@ -121,10 +155,11 @@ fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention
         };
         let model = Model::new(selection, &AtomicBool::new(false)).unwrap();
         for (i, input) in case.input.iter().enumerate() {
-            let h = model.paper_exposure(*input);
+            let h = model.paper_exposure(*input).unwrap();
             assert!((h - case.paper_h[i]).abs().max_element() < 1e-12);
             let d = develop_print_morph(model.paper, h);
             assert!((d - case.paper_density[i]).abs().max_element() < 1e-12);
+            assert!((paper_luminance(model.paper, h) - case.physical_y[i]).abs() < 2e-14);
             assert!(model.encoded(*input).unwrap().is_finite());
         }
         let neutral = model
@@ -133,6 +168,91 @@ fn paper_only_has_no_film_formation_and_retains_the_positive_exposure_convention
             .map(photographic::decode);
         println!("{} paper-only gray {neutral:?}", case.paper);
         assert!((neutral - DVec3::splat(0.18)).abs().max_element() < 0.001);
+    }
+}
+
+#[test]
+fn every_media_reference_retains_neutral_tone_and_allows_colour_dependent_luminance() {
+    let mapping = &data::catalog().paper_mapping;
+    for paper in Paper::all() {
+        let model = Model::new(
+            Selection {
+                negative: None,
+                paper,
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(model.film.is_none());
+        let driver = &model.paper.positive_driver;
+        let baseline = |brightness| {
+            let offset = mapping.exposure_compression
+                * 17.52
+                * (photographic::encode(brightness) - photographic::encode(mapping.gray_ap1))
+                * std::f64::consts::LOG10_2;
+            model.paper.positive_gray_log_h - DVec3::splat(offset)
+        };
+        for value in [-1., -0.02, 0., 0.003, 0.0078125, 0.18, 1., 16., 1024.] {
+            let expected = baseline(value);
+            let actual = model.paper_exposure(DVec3::splat(value)).unwrap();
+            assert!(
+                (actual - expected).abs().max_element() < 1e-12,
+                "{}",
+                paper.id()
+            );
+            assert_eq!(
+                model.encoded(DVec3::splat(value)).unwrap(),
+                model
+                    .scanner
+                    .sample(develop_print_morph(model.paper, actual))
+            );
+        }
+        for colour in [DVec3::new(0.32, 0.16, 0.10), DVec3::new(0.05, 0.18, 0.30)] {
+            let neutral = baseline(driver.input_luminance.dot(colour));
+            let actual = model.paper_exposure(colour).unwrap();
+            assert!(
+                (paper_luminance(model.paper, actual) - paper_luminance(model.paper, neutral))
+                    .abs()
+                    > 1e-6,
+                "{}",
+                paper.id()
+            );
+            let difference = actual - neutral;
+            assert!(
+                (difference - DVec3::splat(difference.x))
+                    .abs()
+                    .max_element()
+                    > 1e-6,
+                "{}",
+                paper.id()
+            );
+            assert!(
+                (model.encoded(colour).unwrap()
+                    - model
+                        .scanner
+                        .sample(develop_print_morph(model.paper, neutral)))
+                .abs()
+                .max_element()
+                    > 1e-5,
+                "{}",
+                paper.id()
+            );
+        }
+    }
+}
+
+#[test]
+fn every_media_record_requires_its_reference_driver() {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&data::decompress("catalog.json.z").unwrap()).unwrap();
+    for i in 0..value["paper"].as_array().unwrap().len() {
+        let driver = value["paper"][i]
+            .as_object_mut()
+            .unwrap()
+            .remove("positive_driver")
+            .unwrap();
+        assert!(serde_json::from_value::<data::Catalog>(value.clone()).is_err());
+        value["paper"][i]["positive_driver"] = driver;
     }
 }
 

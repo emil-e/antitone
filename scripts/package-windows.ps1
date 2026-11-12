@@ -81,7 +81,7 @@ foreach ($name in @('dht.patch', 'dht-hashes.txt')) {
 }
 $spektrafilm = Join-Path $notices 'spektrafilm'
 New-Item -ItemType Directory -Force $spektrafilm | Out-Null
-foreach ($name in @('LICENSE-code.txt', 'LICENSE-data.txt', 'CHANGELOG.txt', 'provenance.json')) {
+foreach ($name in @('LICENSE-code.txt', 'LICENSE-data.txt', 'NOTICE-Academy-APD.txt', 'CHANGELOG.txt', 'provenance.json')) {
     Copy-Item (Join-Path $root "assets/spektrafilm/$name") (Join-Path $spektrafilm $name)
 }
 $papers = Join-Path $notices 'papers'
