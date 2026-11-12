@@ -226,7 +226,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
             );
             assert!(
                 !node(&output, name).1.is_disabled(),
-                "allow retry after failure"
+                "an unavailable photo remains selectable"
             );
             assert_eq!(editor.document.visit.current_source, Some(selected));
             assert_eq!(editor.document.state.project, before);
@@ -235,7 +235,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
 }
 
 #[test]
-fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus() {
+fn modal_input_blocks_filmstrip_mouse_and_keyboard_and_releases_existing_focus() {
     let editor = crate::editor::tests::fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -249,7 +249,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
             let output = frame(editor, &context, vec![], cx);
             let target = node(&output, "photo-0.ARW").0;
             let point = point(&output, "photo-0.ARW");
-            for state in ["busy", "crop", "flat", "pick"] {
+            for state in ["activity", "dialog"] {
                 let mut focused = false;
                 for _ in 0..12 {
                     frame(editor, &context, key(Key::Tab), cx);
@@ -264,17 +264,8 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 }
                 assert!(focused, "enabled card is keyboard reachable");
                 match state {
-                    "busy" => editor.set_test_busy(true),
-                    "crop" => editor.begin_crop(),
-                    "pick" => picking::preview(editor, PickerCase::Gamma.display()),
-                    "flat" => editor
-                        .document
-                        .set_flat_edit(Some(crate::editor::flat::FlatEdit {
-                            services: None,
-                            view: Default::default(),
-                            region: None,
-                            task: None,
-                        })),
+                    "activity" => editor.set_test_busy(true),
+                    "dialog" => editor.block_with_decision(),
                     _ => unreachable!(),
                 }
                 let output = frame(editor, &context, key(Key::Space), cx);
@@ -304,8 +295,9 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 );
                 assert_eq!(editor.document.state.project, before);
                 editor.set_test_busy(false);
-                editor.hosted_action(tool::Action::Dismiss);
-                editor.document.set_flat_edit(None);
+                if editor.dialogs.is_open() {
+                    editor.dialogs.answer_for_test("Cancel");
+                }
                 frame(editor, &context, vec![], cx);
             }
             frame(editor, &context, pointer(point, true), cx);
@@ -429,7 +421,7 @@ fn disabled_cards_keep_actionable_error_tooltips() {
 }
 
 #[test]
-fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
+fn filmstrip_departure_retires_each_picker_without_accepting_a_measurement() {
     for pick in [
         PickerCase::Dmin,
         PickerCase::Dmax,
@@ -454,31 +446,46 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
             app.enter(|editor, cx| editor.begin_test_picker(pick, cx));
             app.pump();
             app.enter(|editor, cx| {
-                let context = egui::Context::default();
-                frame(editor, &context, vec![], cx);
-                let output = frame(editor, &context, vec![], cx);
-                assert!(node(&output, "photo-0.ARW").1.is_disabled());
-                let point = point(&output, "photo-0.ARW");
-                frame(editor, &context, pointer(point, true), cx);
-                frame(editor, &context, pointer(point, false), cx);
-                assert_eq!(editor.document.visit.current_source, working);
-                assert_eq!(editor.document.selected, 2);
                 assert_eq!(editor.test_pick(), Some(pick.display()));
-                assert!(!editor.document.visit.source.pending());
-                assert_eq!(editor.document.state.project, before);
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.visit.current_source, working);
                 assert_eq!(editor.document.visit.canvas.viewport, viewport);
                 assert!(editor.test_pick().is_none());
+                assert_eq!(editor.document.state.project, before);
+            });
+            app.enter(|editor, cx| editor.begin_test_picker(pick, cx));
+            app.pump();
+            app.enter(|editor, cx| {
+                assert_eq!(editor.test_pick(), Some(pick.display()));
+                let history = editor.history_label(history::Direction::Undo);
+                editor.select_roll_photo(0, Modifiers::COMMAND, cx);
+                assert!(editor.picking());
+                assert_eq!(editor.document.visit.current_source, working);
+                let context = egui::Context::default();
+                frame(editor, &context, vec![], cx);
                 let output = frame(editor, &context, vec![], cx);
                 assert!(!node(&output, "photo-0.ARW").1.is_disabled());
+                assert_eq!(
+                    node(&output, "photo-0.ARW").1.toggled(),
+                    Some(egui::accesskit::Toggled::True)
+                );
+                let point = point(&output, "photo-0.ARW");
+                selected_outline(&output, point, false);
                 frame(editor, &context, pointer(point, true), cx);
                 frame(editor, &context, pointer(point, false), cx);
+                assert_ne!(editor.document.visit.current_source, working);
                 assert_eq!(
                     editor.document.visit.current_source,
                     Some(editor.document.project.order[0])
                 );
+                assert_eq!(editor.document.selected, 0);
+                assert!(editor.test_pick().is_none());
+                assert!(editor.document.visit.interaction_action.is_none());
+                assert!(!editor.measurement_pending());
                 assert!(editor.document.visit.source.pending());
+                assert!(editor.document.visit.canvas.selection_timing.is_some());
+                assert_eq!(editor.document.state.project, before);
+                assert_eq!(editor.history_label(history::Direction::Undo), history);
             });
         });
     }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerCoverage;
+mod browsing;
 mod contextual;
 mod creation;
 mod radial;

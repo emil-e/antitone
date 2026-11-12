@@ -451,7 +451,6 @@ impl Editor {
 
     pub(super) fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
         let started = std::time::Instant::now();
-        let selecting_photo = !self.picking();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
@@ -460,12 +459,10 @@ impl Editor {
         self.id = self.request_id();
         self.replace_photo_scope(self.id);
         self.document.visit.current_source = self.document.find_source(&path);
-        if selecting_photo {
-            self.document.roll_selection.reconcile(
-                &self.document.state.project.order,
-                self.document.visit.current_source,
-            );
-        }
+        self.document.roll_selection.reconcile(
+            &self.document.state.project.order,
+            self.document.visit.current_source,
+        );
         self.refresh_adjustment_layer_selection();
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
@@ -480,16 +477,13 @@ impl Editor {
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.document.visit.canvas.ready = None;
         self.document.visit.canvas.selection_timing =
-            selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
+            Some(Arc::new(SelectionTiming::new(self.id, started)));
         self.document.source =
             !self.document.project.input.ready() || self.document.correction.error().is_some();
         self.status = "Developing full-resolution RAW…".into();
 
         self.start_source_acquisition(path, cx);
-        if selecting_photo
-            && !self.picking()
-            && let Some(source) = self.document.visit.current_source
-        {
+        if let Some(source) = self.document.visit.current_source {
             match self
                 .document
                 .thumbnails

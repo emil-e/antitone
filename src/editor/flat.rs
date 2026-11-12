@@ -389,17 +389,6 @@ impl tool::Tool for FlatTool {
         }
     }
 
-    fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-        editor.filmstrip_readonly(ui, cx);
-    }
-
-    fn shortcuts(&mut self, ui: &mut egui::Ui, _editor: &mut Editor) {
-        ui.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
-            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
-        });
-    }
-
     fn drawer(&mut self, ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         ui::ToolIdentity { icon: ui::icons::Icon::Crop, title: "Flat-field" }.inspector(ui, |_| false, |ui, _| {
             if let Some(ready) = self.state.borrow().view.ready.as_ref() {

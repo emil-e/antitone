@@ -1,6 +1,6 @@
 use super::*;
 
-fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
+pub(super) fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
     let (tab, label) = match kind {
         PickerCase::Dmin => ("Roll", "Pick Dmin (film base)"),
         PickerCase::Dmax => ("Roll", "Pick Dmax"),

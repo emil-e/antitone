@@ -178,8 +178,17 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                     "output commands cannot export a draft"
                 )
             });
-            for index in [2, 1] {
-                h.get_by_label(&format!("crop-{index}.dng")).click();
+            for (index, key) in [
+                (2, None),
+                (1, None),
+                (2, Some(egui::Key::ArrowRight)),
+                (1, Some(egui::Key::ArrowLeft)),
+            ] {
+                if let Some(key) = key {
+                    h.key_press(key);
+                } else {
+                    h.get_by_label(&format!("crop-{index}.dng")).click();
+                }
                 h.step();
                 wait_for(&mut h, |e| {
                     !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()

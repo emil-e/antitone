@@ -437,11 +437,14 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         assert_eq!(
             harness.get_by_label("other.dng").accesskit_node().toggled(),
-            Some(egui::accesskit::Toggled::True),
-            "crop draft retains selection"
+            Some(egui::accesskit::Toggled::False),
+            "selection-only input remains available during a crop draft"
         );
-        harness.read(|editor| assert!(!editor.dialogs.is_open()));
-        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert!(editor.document.crop_edit().is_some());
+            assert_eq!(editor.document.state.project, before);
+        });
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.set_size(egui::vec2(640., 560.));

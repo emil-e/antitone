@@ -378,8 +378,93 @@ fn an_ordinary_picker_preserves_multiselection_and_anchor() {
 }
 
 #[test]
-fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
-    for blocker in ["busy", "pick", "failure", "transition", "removal"] {
+fn selecting_the_active_photo_preserves_pending_and_failed_acquisition_and_its_crop() {
+    let editor = fixture(0);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let ids = editor.document.state.project.order.clone();
+            let before = editor.document.state.project.clone();
+            let history = editor.history_label(history::Direction::Undo);
+            editor.load(editor.document.source_path(ids[0]).unwrap(), cx);
+            editor.begin_crop();
+            assert!(editor.cropping() && editor.document.visit.source.pending());
+            let visit = editor.document.visit.view;
+            editor.document.crop_edit_mut().unwrap().draft.size = [240, 160];
+
+            editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
+            editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
+            assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
+            editor.select_roll_photo(2, egui::Modifiers::SHIFT, cx);
+            assert_eq!(editor.document.roll_selection.ids, ids[..=2]);
+            editor.select_active_photo_only();
+            assert_eq!(editor.document.roll_selection.ids, vec![ids[0]]);
+            assert_eq!(editor.document.visit.view, visit);
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(editor.document.crop_edit().unwrap().draft.size, [240, 160]);
+
+            editor.source_result(visit, Err("fixture source failure".into()));
+            assert!(!editor.document.visit.source.pending());
+            editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
+            assert_eq!(editor.document.visit.view, visit);
+            assert!(
+                !editor.document.visit.source.pending(),
+                "same-photo selection does not retry"
+            );
+            assert!(editor.cropping());
+            assert_eq!(editor.document.crop_edit().unwrap().draft.size, [240, 160]);
+
+            editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
+            assert_eq!(editor.document.visit.current_source, Some(ids[1]));
+            assert_ne!(editor.document.visit.view, visit);
+            assert!(!editor.cropping());
+            assert!(editor.document.visit.source.pending());
+            let other_visit = editor.document.visit.view;
+            editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
+            assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+            assert_ne!(editor.document.visit.view, other_visit);
+            assert!(
+                editor.document.visit.source.pending(),
+                "returning starts a fresh acquisition"
+            );
+            assert!(
+                !editor.cropping(),
+                "returning does not restore the discarded draft"
+            );
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.history_label(history::Direction::Undo), history);
+        });
+    });
+}
+
+#[test]
+fn picker_departure_uses_normal_selection_and_source_acquisition() {
+    for picker in [PickerCase::Dmin, PickerCase::Gamma] {
+        let editor = fixture(0);
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                let before = editor.document.state.project.clone();
+                let ids = editor.document.state.project.order.clone();
+                editor.preview_picker(picker);
+                assert!(editor.picking());
+                editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
+                assert!(editor.picking());
+                assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+                assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
+                editor.select_roll_photo(4, egui::Modifiers::NONE, cx);
+                assert!(!editor.picking());
+                assert_eq!(editor.document.visit.current_source, Some(ids[4]));
+                assert!(editor.document.roll_selection.contains(ids[4]));
+                assert!(editor.document.visit.canvas.selection_timing.is_some());
+                assert!(editor.document.visit.source.pending());
+                assert_eq!(editor.document.state.project, before);
+            });
+        });
+    }
+}
+
+#[test]
+fn modal_work_and_decisions_reject_selection_and_removal() {
+    for blocker in ["busy", "failure", "transition", "removal"] {
         let editor = fixture(2);
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
@@ -390,7 +475,6 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                     .push(editor.document.state.project.order[4]);
                 match blocker {
                     "busy" => editor.set_test_busy(true),
-                    "pick" => picking::preview(editor, PickerCase::Dmax.display()),
                     "failure" => editor.report_failure(FailureCase::Save, "fixture".into()),
                     "transition" => editor.guard_transition(Transition::Close, cx),
                     "removal" => editor.request_removal(cx),

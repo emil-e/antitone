@@ -222,10 +222,7 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if !self.picking()
-            && !self.cropping()
-            && !self.masking()
-            && !self.document.visit.adjustment_layers.dragging()
+        if !self.document.visit.adjustment_layers.dragging()
             && !self.document.state.project.order.is_empty()
         {
             let previous = ui

@@ -498,7 +498,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
         harness.step();
         assert!(
-            harness
+            !harness
                 .get_by_label("patches.dng")
                 .accesskit_node()
                 .is_disabled()

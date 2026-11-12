@@ -1110,10 +1110,6 @@ impl Editor {
         self.filmstrip_preview(ui, Preview::default(), cx);
     }
 
-    pub(super) fn filmstrip_readonly(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let _ = self.filmstrip_presentation(ui, Preview::default(), false, cx);
-    }
-
     pub(super) fn filmstrip_preview(
         &mut self,
         ui: &mut egui::Ui,
@@ -1222,11 +1218,7 @@ impl Editor {
                         .expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
                     let active = self.document.visit.current_source == Some(id);
-                    let selected = if self.picking() {
-                        active
-                    } else {
-                        active || self.document.roll_selection.contains(id)
-                    };
+                    let selected = active || self.document.roll_selection.contains(id);
                     let response_id = ui.id().with(id.0);
                     let card = layout.begin(
                         ui,

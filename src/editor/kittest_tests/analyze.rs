@@ -705,6 +705,24 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             )
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        for (key, index) in [(egui::Key::ArrowLeft, 0), (egui::Key::ArrowRight, 1)] {
+            harness.key_press(key);
+            harness.step();
+            wait_for(&mut harness, |editor| {
+                !editor.document.visit.source.pending()
+            });
+            harness.read(|editor| {
+                assert_eq!(
+                    editor.document.visit.current_source,
+                    Some(editor.document.project.order[index])
+                );
+                assert!(editor.document.analysis_review().is_some());
+                let retained = editor.review_areas(first.unwrap()).unwrap();
+                assert_eq!(retained.opening, edited.opening);
+                assert_eq!(retained.picture, edited.picture);
+                assert_eq!(editor.document.state.project, before);
+            });
+        }
         harness.get_by_label("Cancel").click();
         harness.step();
         wait_for(&mut harness, |e| !e.interaction_blocked());

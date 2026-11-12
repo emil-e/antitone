@@ -315,7 +315,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         let snapshot = input.grade().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
         assert!(editor.document.visit.masks.gesture().is_some());
-        assert!(!editor.roll_edit_available());
+        assert!(editor.roll_navigation_available());
         let mask = AdjustmentLayerCoverage::Linear {
             start: SourcePoint([100., 70.]),
             end: SourcePoint([149., 99.]),
