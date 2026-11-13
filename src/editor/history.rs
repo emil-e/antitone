@@ -161,11 +161,8 @@ impl Editor {
     pub(super) fn history_available(&self) -> bool {
         !self.workspace_input.is_blocked()
             && !self.editing()
-            && !self.controls_pending()
             && self.document.look.is_none()
             && !self.allow_close
-            && !self.document.visit.adjustment_layers.dragging()
-            && !self.dust_history_draft()
     }
 
     pub(super) fn restore_history(&mut self, direction: Direction, cx: &UiContext<'_, Self>) {
@@ -176,11 +173,6 @@ impl Editor {
         if self.document.history.entry(direction).is_none() {
             return;
         }
-        let cleanup = self.dusting().then(|| self.dust_outlines());
-        self.document.visit.interaction_action = None;
-        self.cancel_active_tool();
-        self.document.visit.masks.cancel();
-
         let Restored {
             before,
             label,
@@ -243,6 +235,7 @@ impl Editor {
             }
         }
         if stage_changed {
+            self.document.hosted_tool = Default::default();
             self.cancel_spatial();
             self.document.thumbnails.cancel();
         }
@@ -267,12 +260,6 @@ impl Editor {
             self.document.correction_restore = None;
             self.document.correction = Default::default();
             self.restore_correction(cx);
-        }
-        if let Some(show_masks) = cleanup
-            && !self.document.source
-            && self.document.visit.canvas.ready.is_some()
-        {
-            self.restore_dust(show_masks);
         }
         self.observe_gamma_pivot();
         if !same_visit && let Some(input) = next {

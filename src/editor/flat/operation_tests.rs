@@ -1,4 +1,6 @@
 use super::*;
+
+mod history_tests;
 use crate::{
     application::test_support::{TestApplication, with_application},
     editor::{document::Document, source, source_loading, tests::fixture},

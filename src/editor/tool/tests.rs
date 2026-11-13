@@ -1,4 +1,6 @@
 use super::*;
+
+mod history_tests;
 use std::{cell::Cell, rc::Rc};
 
 mod navigation;

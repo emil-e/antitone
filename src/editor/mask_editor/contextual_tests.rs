@@ -1,5 +1,7 @@
 use super::*;
 
+mod history_tests;
+
 fn start(editor: &mut Editor) -> AdjustmentLayerId {
     editor.tab = 1;
     let source = editor.document.visit.current_source.unwrap();

@@ -1,4 +1,6 @@
 use super::*;
+
+mod history_tests;
 use crate::application::test_support::{TestApplication, with_application};
 use crate::editor::crop_editor::tests::request_auto_crop;
 use futures_channel::oneshot;

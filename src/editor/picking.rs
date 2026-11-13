@@ -39,15 +39,17 @@ impl Display {
     }
 }
 
+type Submit = Box<dyn FnOnce(Coverage, &Editor)>;
+
 struct Interaction {
     display: Display,
     region: Option<Coverage>,
     drag: Option<PickDrag>,
-    submit: Option<oneshot::Sender<Coverage>>,
+    submit: Option<Submit>,
 }
 
 impl Interaction {
-    fn new(display: Display, submit: Option<oneshot::Sender<Coverage>>) -> Self {
+    fn new(display: Display, submit: Option<Submit>) -> Self {
         Self {
             display,
             region: None,
@@ -56,15 +58,8 @@ impl Interaction {
         }
     }
 
-    fn submit(&mut self) -> bool {
-        if let Some(region) = self.region
-            && let Some(send) = self.submit.take()
-        {
-            let _ = send.send(region);
-            true
-        } else {
-            false
-        }
+    fn submission(&mut self) -> Option<(Coverage, Submit)> {
+        Some((self.region?, self.submit.take()?))
     }
 }
 
@@ -310,8 +305,9 @@ impl tool::Tool for PickTool {
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
             tool::Action::Primary if !editor.interaction_blocked() => {
-                let submitted = self.state.borrow_mut().submit();
-                if submitted {
+                let submission = self.state.borrow_mut().submission();
+                if let Some((region, submit)) = submission {
+                    submit(region, editor);
                     editor.end_tool();
                 }
             }
@@ -372,10 +368,24 @@ impl Drop for InteractionLease<'_> {
     }
 }
 
-/// Select a region. Apply ends the tool before returning the accepted coverage.
+#[cfg(test)]
 pub(super) async fn pick(cx: &UiContext<'_, Editor>, display: Display) -> Option<Coverage> {
+    pick_with(cx, display, |_| ())
+        .await
+        .map(|(region, ())| region)
+}
+
+/// Capture feature inputs in the Apply transaction; the caller resumes after the tool ends.
+pub(super) async fn pick_with<T: 'static>(
+    cx: &UiContext<'_, Editor>,
+    display: Display,
+    capture: impl FnOnce(&Editor) -> T + 'static,
+) -> Option<(Coverage, T)> {
     let (submit, selected) = oneshot::channel();
-    let state = Rc::new(RefCell::new(Interaction::new(display, Some(submit))));
+    let send = Box::new(move |region, editor: &Editor| {
+        let _ = submit.send((region, capture(editor)));
+    });
+    let state = Rc::new(RefCell::new(Interaction::new(display, Some(send))));
     let _lease = InteractionLease {
         state: Rc::downgrade(&state),
         cx: cx.clone(),

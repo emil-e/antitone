@@ -55,39 +55,43 @@ struct DonorDrag {
     offset: [i32; 2],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct DonorDraft {
-    pub repair: RepairId,
+    previous: Repair,
     pub offset: [i32; 2],
     drag: Option<DonorDrag>,
 }
 
 #[derive(Clone)]
 pub(super) struct MaskDraft {
-    target: Option<RepairId>,
-    original_support: Option<SupportMask>,
+    previous: Option<Repair>,
     pixels: BTreeSet<[u32; 2]>,
     last: Option<[f64; 2]>,
     rejected: bool,
 }
 
 impl MaskDraft {
-    fn new(target: Option<RepairId>, support: Option<&SupportMask>) -> Self {
+    fn new(previous: Option<Repair>) -> Self {
+        let pixels = previous
+            .as_ref()
+            .into_iter()
+            .flat_map(|repair| repair.support.selected_points())
+            .collect();
         Self {
-            target,
-            original_support: support.cloned(),
-            pixels: support
-                .into_iter()
-                .flat_map(SupportMask::selected_points)
-                .collect(),
+            previous,
+            pixels,
             last: None,
             rejected: false,
         }
     }
 
+    fn target(&self) -> Option<RepairId> {
+        self.previous.as_ref().map(|repair| repair.id)
+    }
+
     fn support(&self) -> Result<SupportMask, Error> {
         // Unchanged support keeps its declared rectangle, including saved blank margins.
-        if let Some(original) = &self.original_support
+        if let Some(original) = self.previous.as_ref().map(|repair| &repair.support)
             && original.selected_points().count() == self.pixels.len()
             && original
                 .selected_points()
@@ -466,18 +470,10 @@ impl Editor {
         self.document.visit.dust.preview.upgrade()
     }
 
+    #[cfg(test)]
     pub(super) fn dust_outlines(&self) -> bool {
         self.dust_session()
             .is_some_and(|session| session.edit.borrow().show_masks)
-    }
-
-    pub(super) fn dust_history_draft(&self) -> bool {
-        self.dust_session().is_some_and(|session| {
-            let edit = session.edit.borrow();
-            edit.mask_draft.is_some()
-                || edit.donor_draft.is_some()
-                || !session.searches.borrow().is_empty()
-        })
     }
 
     pub(super) fn dust_repairs(&self, source: SourceId) -> Option<&RepairSet> {
@@ -594,20 +590,12 @@ impl Editor {
             self.document.visit.dust.brush_size = initial_brush_size(active);
             self.document.visit.dust.brush_source = Some(source);
         }
-        let tool = DustTool::new(true, true);
+        let tool = DustTool::new();
         let preview = Rc::downgrade(&tool.interaction);
         if self.activate_tool(tool::Placement::Photo, Box::new(tool)) {
             self.document.source = false;
             self.document.visit.dust.preview = preview;
         }
-    }
-
-    pub(super) fn restore_dust(&mut self, show_masks: bool) {
-        let tool = DustTool::new(show_masks, false);
-        let preview = Rc::downgrade(&tool.interaction);
-        self.document
-            .set_hosted_tool(tool::Placement::Photo, Box::new(tool));
-        self.document.visit.dust.preview = preview;
     }
 
     pub(super) fn selected_dust_repair(&self) -> Option<RepairId> {
@@ -621,6 +609,11 @@ impl Editor {
                 self.dust_repairs(source)
                     .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == *id))
             })
+    }
+
+    fn dust_repair_current(&self, source: SourceId, previous: &Repair) -> bool {
+        self.dust_repairs(source)
+            .is_some_and(|repairs| repairs.repairs().contains(previous))
     }
 
     fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
@@ -637,14 +630,19 @@ impl Editor {
         }
         let session = self.dust_session()?;
         let edit = session.edit.borrow();
-        let mask = edit.mask_draft.as_ref();
+        let mask = edit.mask_draft.as_ref().filter(|draft| {
+            draft
+                .previous
+                .as_ref()
+                .is_none_or(|previous| source.repairs.repairs().contains(previous))
+        });
         let target = mask
             .filter(|draft| !draft.rejected)
-            .and_then(|draft| draft.target);
+            .and_then(|draft| draft.target());
         let support = mask
-            .filter(|draft| draft.target.is_some() && !draft.rejected)
+            .filter(|draft| draft.target().is_some() && !draft.rejected)
             .and_then(|draft| draft.support().ok());
-        let donor = edit.donor_draft;
+        let donor = edit.donor_draft.as_ref();
         Some(
             source
                 .repairs
@@ -655,7 +653,7 @@ impl Editor {
                     if Some(repair.id) == target {
                         repair.support = support.clone()?;
                     }
-                    if let Some(donor) = donor.filter(|donor| donor.repair == repair.id) {
+                    if let Some(donor) = donor.filter(|donor| donor.previous == repair) {
                         repair.offset = donor.offset;
                     }
                     Some(repair)
@@ -865,16 +863,16 @@ impl tool::Tool for DustTool {
 }
 
 impl DustTool {
-    fn new(show_masks: bool, reveal_controls: bool) -> Self {
+    fn new() -> Self {
         Self {
             interaction: Rc::new(Interaction {
                 edit: Rc::new(RefCell::new(Edit {
-                    show_masks,
+                    show_masks: true,
                     ..Default::default()
                 })),
                 searches: RefCell::default(),
             }),
-            reveal_controls,
+            reveal_controls: true,
         }
     }
 
@@ -894,7 +892,7 @@ impl DustTool {
         self.interaction.edit.borrow_mut().mask_draft = value;
     }
     fn donor(&self) -> Option<DonorDraft> {
-        self.interaction.edit.borrow().donor_draft
+        self.interaction.edit.borrow().donor_draft.clone()
     }
     fn donor_mut(&mut self) -> Option<RefMut<'_, DonorDraft>> {
         RefMut::filter_map(self.interaction.edit.borrow_mut(), |edit| {
@@ -997,16 +995,19 @@ impl DustTool {
         }
         self.interaction.edit.borrow_mut().show_masks = true;
         self.set_donor(None);
-        let support = target.and_then(|id| {
+        let previous = target.and_then(|id| {
             let source = editor.document.visit.current_source?;
             editor
                 .dust_repairs(source)?
                 .repairs()
                 .iter()
                 .find(|repair| repair.id == id)
-                .map(|repair| repair.support.clone())
+                .cloned()
         });
-        self.set_mask(Some(MaskDraft::new(target, support.as_ref())));
+        if target.is_some() && previous.is_none() {
+            return;
+        }
+        self.set_mask(Some(MaskDraft::new(previous)));
     }
 
     fn cancel_dust_mask(&mut self) {
@@ -1015,16 +1016,27 @@ impl DustTool {
     }
 
     fn commit_dust_mask(&mut self, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-        let Some((target, empty)) = self
+        let Some((previous, empty)) = self
             .mask()
-            .map(|draft| (draft.target, draft.pixels.is_empty()))
+            .map(|draft| (draft.previous.clone(), draft.pixels.is_empty()))
         else {
             return;
         };
+        if previous.as_ref().is_some_and(|previous| {
+            editor
+                .document
+                .visit
+                .current_source
+                .is_none_or(|source| !editor.dust_repair_current(source, previous))
+        }) {
+            self.cancel_dust_mask();
+            editor.status = "Dust mask discarded: repair changed during gesture".into();
+            return;
+        }
         if empty {
             self.cancel_dust_mask();
-            if target.is_some() {
-                self.delete_selected_dust_repair(editor);
+            if let Some(previous) = previous {
+                self.delete_dust_repair(editor, previous.id);
             }
         } else {
             self.apply_dust_mask(editor, cx);
@@ -1098,7 +1110,9 @@ impl DustTool {
                 "Dust stroke rejected: repair budget exceeded; no changes applied".into();
             return;
         }
-        let Some((target, support)) = self.mask().map(|draft| (draft.target, draft.support()))
+        let Some((previous, support)) = self
+            .mask()
+            .map(|draft| (draft.previous.clone(), draft.support()))
         else {
             return;
         };
@@ -1110,21 +1124,9 @@ impl DustTool {
                 return;
             }
         };
-        let previous = target.and_then(|id| {
-            editor
-                .dust_repairs(source)?
-                .repairs()
-                .iter()
-                .find(|r| r.id == id)
-                .cloned()
-        });
         if let Some(previous) = &previous
             && previous.support == support
         {
-            self.cancel_dust_mask();
-            return;
-        }
-        if target.is_some() && previous.is_none() {
             self.cancel_dust_mask();
             return;
         }
@@ -1178,7 +1180,7 @@ impl DustTool {
         if self.mask().is_some_and(|draft| draft.rejected) {
             return;
         }
-        let Some(target) = self.mask().map(|draft| draft.target) else {
+        let Some(target) = self.mask().map(|draft| draft.target()) else {
             return;
         };
         let blocked = editor
@@ -1290,10 +1292,13 @@ impl DustTool {
     }
 
     fn delete_selected_dust_repair(&mut self, editor: &mut Editor) {
+        if let Some(id) = editor.selected_dust_repair() {
+            self.delete_dust_repair(editor, id);
+        }
+    }
+
+    fn delete_dust_repair(&mut self, editor: &mut Editor, id: RepairId) {
         let Some(source) = editor.document.visit.current_source else {
-            return;
-        };
-        let Some(id) = editor.selected_dust_repair() else {
             return;
         };
         self.cancel_dust_mask();
@@ -1321,8 +1326,8 @@ impl DustTool {
         let source = editor.document.visit.current_source?;
         let repair_id = self
             .donor()
-            .map(|draft| draft.repair)
-            .or_else(|| self.mask().and_then(|draft| draft.target))
+            .map(|draft| draft.previous.id)
+            .or_else(|| self.mask().and_then(|draft| draft.target()))
             .or_else(|| {
                 self.mask()
                     .is_none()
@@ -1399,7 +1404,15 @@ impl DustTool {
             return;
         };
         if self.donor().is_none() {
-            let Some(repair) = editor.selected_dust_repair() else {
+            let Some(previous) = editor.document.visit.current_source.and_then(|source| {
+                let id = editor.selected_dust_repair()?;
+                editor
+                    .dust_repairs(source)?
+                    .repairs()
+                    .iter()
+                    .find(|repair| repair.id == id)
+                    .cloned()
+            }) else {
                 return;
             };
             let (target, donor) = (region.target, region.donor);
@@ -1411,7 +1424,7 @@ impl DustTool {
             };
             let offset = [offset_x, offset_y];
             self.set_donor(Some(DonorDraft {
-                repair,
+                previous,
                 offset,
                 drag: None,
             }));
@@ -1436,20 +1449,18 @@ impl DustTool {
         let Some(active) = editor.selected_area() else {
             return;
         };
-        let Some(support) = editor
+        let Some(draft) = self.donor() else {
+            return;
+        };
+        if editor
             .document
             .visit
             .current_source
-            .and_then(|source| {
-                editor
-                    .selected_dust_repair()
-                    .and_then(|id| editor.effective_dust_repair(source, id))
-            })
-            .map(|r| r.support)
-        else {
+            .is_none_or(|source| !editor.dust_repair_current(source, &draft.previous))
+        {
             return;
-        };
-        let Ok(target) = donor_target(&support, active) else {
+        }
+        let Ok(target) = donor_target(&draft.previous.support, active) else {
             return;
         };
         let Some(mut draft) = self.donor_mut() else {
@@ -1494,18 +1505,12 @@ impl DustTool {
         let Some(source) = editor.document.visit.current_source else {
             return;
         };
-        let Some((support, accepted_offset)) = editor
-            .dust_repairs(source)
-            .and_then(|set| {
-                set.repairs()
-                    .iter()
-                    .find(|repair| repair.id == draft.repair)
-            })
-            .map(|repair| (repair.support.clone(), repair.offset))
-        else {
+        if !editor.dust_repair_current(source, &draft.previous) {
+            editor.status = "Dust donor discarded: repair changed during gesture".into();
             return;
-        };
-        if draft.offset == accepted_offset {
+        }
+        let support = &draft.previous.support;
+        if draft.offset == draft.previous.offset {
             return;
         }
         let mut transaction = match editor.edit_photo("Dust donor") {
@@ -1518,13 +1523,13 @@ impl DustTool {
         let result = editor
             .selected_area()
             .ok_or(Error::InvalidParameter("manual donor unavailable"))
-            .and_then(|active| validate_dust_offset(draft.offset, &support, active))
+            .and_then(|active| validate_dust_offset(draft.offset, support, active))
             .and_then(|()| {
                 transaction.update(|project| {
                     project
                         .source_mut(source)?
                         .repairs
-                        .set_offset(draft.repair, draft.offset)
+                        .set_offset(draft.previous.id, draft.offset)
                 })
             });
         match result {
@@ -1581,7 +1586,7 @@ impl DustTool {
                 editor.photo_settings(),
             )
             .ok();
-        let mask_target = self.mask().and_then(|draft| draft.target);
+        let mask_target = self.mask().and_then(|draft| draft.target());
         for repair in set.into_iter().flat_map(RepairSet::repairs) {
             if mask_target == Some(repair.id) || editor.dust_target_pending(source, repair.id) {
                 continue;
@@ -1742,9 +1747,16 @@ impl DustTool {
 pub(super) struct PendingStroke {
     pub source: SourceId,
     pub support: SupportMask,
-    target: Option<RepairId>,
+    previous: Option<Repair>,
+    neutral: crate::image_recipe::NeutralRecipe,
     released: std::time::Instant,
     select: Cell<bool>,
+}
+
+impl PendingStroke {
+    fn target(&self) -> Option<RepairId> {
+        self.previous.as_ref().map(|repair| repair.id)
+    }
 }
 
 struct SearchInput {
@@ -1792,13 +1804,14 @@ impl SearchState {
     }
 
     fn has_target(&self, source: SourceId, repair: RepairId) -> bool {
-        self.pending()
-            .any(|pending| pending.stroke.source == source && pending.stroke.target == Some(repair))
+        self.pending().any(|pending| {
+            pending.stroke.source == source && pending.stroke.target() == Some(repair)
+        })
     }
 
     fn cancel_target(&mut self, source: SourceId, repair: RepairId) {
         self.tasks.retain(|pending| {
-            pending.stroke.source != source || pending.stroke.target != Some(repair)
+            pending.stroke.source != source || pending.stroke.target() != Some(repair)
         });
     }
 
@@ -1891,13 +1904,6 @@ impl DustTool {
         support: SupportMask,
         cx: &UiContext<'_, Editor>,
     ) {
-        let stroke = Rc::new(PendingStroke {
-            released: std::time::Instant::now(),
-            source,
-            target: previous.as_ref().map(|repair| repair.id),
-            support: support.clone(),
-            select: Cell::new(true),
-        });
         log::info!(pixels = support.selected_points().count(), width = support.size()[0], height = support.size()[1]; "dust_stroke_released");
         let source_context = match editor.capture_source_context() {
             Ok(input) => input,
@@ -1917,6 +1923,14 @@ impl DustTool {
                 return;
             }
         };
+        let stroke = Rc::new(PendingStroke {
+            released: std::time::Instant::now(),
+            source,
+            previous: previous.clone(),
+            neutral: recipe.neutral.clone(),
+            support: support.clone(),
+            select: Cell::new(true),
+        });
         let services = editor.source_services.clone();
         #[cfg(test)]
         let worker = editor.document.dust.search_worker.clone();
@@ -1977,13 +1991,25 @@ impl Editor {
         select: bool,
     ) -> Result<RepairId, String> {
         let source = stroke.source;
+        let current = self
+            .document
+            .image_recipe(source)
+            .map_err(|error| error.to_string())?;
+        if current.neutral != stroke.neutral
+            || stroke
+                .previous
+                .as_ref()
+                .is_some_and(|previous| !self.dust_repair_current(source, previous))
+        {
+            return Err("source or repair changed during donor search".into());
+        }
         let mut transaction = self
             .edit_photo("Dust mask")
             .map_err(|error| error.to_string())?;
         let repair = transaction
             .update(|project| -> Result<RepairId, Error> {
                 let repairs = &mut project.source_mut(source)?.repairs;
-                match stroke.target {
+                match stroke.target() {
                     Some(target) => {
                         repairs.set_support(target, stroke.support.clone())?;
                         repairs.set_offset(target, offset)?;
@@ -2082,7 +2108,7 @@ mod tests {
             width: 40,
             height: 30,
         };
-        let mut draft = MaskDraft::new(None, None);
+        let mut draft = MaskDraft::new(None);
         assert!(
             brush_dab(&mut draft, [110., 208.], 6, false, active, &[])
                 .unwrap()
@@ -2112,7 +2138,7 @@ mod tests {
             width: 100,
             height: 100,
         };
-        let mut draft = MaskDraft::new(None, None);
+        let mut draft = MaskDraft::new(None);
         brush_stroke(&mut draft, [10.5, 10.5], 4, false, active, &[]).unwrap();
         brush_stroke(&mut draft, [30.5, 10.5], 4, false, active, &[]).unwrap();
         for x in 10..=30 {

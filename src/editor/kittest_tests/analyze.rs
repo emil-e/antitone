@@ -60,7 +60,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             &editor.canvas_frame.displayed.as_ref().unwrap().view
         ));
     });
-    if harness.read(|editor| editor.document.analysis_review().unwrap().replaces_photos) {
+    if harness.read(|editor| editor.analysis_replaces_photos()) {
         let warning = harness.get_by_label("Tool warning");
         let description = warning.accesskit_node().description().unwrap();
         assert!(description.contains("Photo layers"));
@@ -433,7 +433,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         });
         wait_opened_photo(&mut h);
         show_confirmation(&mut h);
-        h.read(|editor| assert!(!editor.document.analysis_review().unwrap().replaces_photos));
+        h.read(|editor| assert!(!editor.analysis_replaces_photos()));
         let before = h.read(|editor| editor.document.state.project.clone());
         let ids = before.order.clone();
         assert!(h.query_by_label("Tool warning").is_none());

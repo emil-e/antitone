@@ -1,4 +1,6 @@
 use super::*;
+
+mod history_tests;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 use crate::gpu::test_inputs::AuthoredPhotograph;
 
