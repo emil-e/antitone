@@ -40,6 +40,7 @@ impl Context {
                     "image materialization exceeds GPU storage limits",
                 ));
             }
+            scope.requested(image, layout.region);
             requests.push((
                 key,
                 Arc::new(layout),

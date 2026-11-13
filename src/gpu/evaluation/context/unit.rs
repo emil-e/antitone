@@ -62,6 +62,7 @@ impl Production<'_> {
             covered.push(overlap);
             let image = match unit {
                 Unit::Ready(image) => {
+                    self.scope.used(&image.image);
                     self.working.hold(image.image.clone());
                     image.image
                 }
@@ -132,6 +133,7 @@ impl Worker<'_> {
                     })
         {
             super::super::materialized::validate(node.domain(), *image.descriptor, &image.image)?;
+            self.scope.used(&image.image);
             self.working.hold(image.image.clone());
             return Ok(Some((image.descriptor.region, image.image)));
         }
@@ -172,6 +174,7 @@ impl Worker<'_> {
                 .find(|image| *image.descriptor == layout)
         {
             super::super::materialized::validate(node.domain(), layout, &image.image)?;
+            self.scope.used(&image.image);
             return Ok(image.image);
         }
         if Stored::find(Some(self.scope), &[], node, layout.region)?.is_none()

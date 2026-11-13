@@ -17,6 +17,7 @@ use wgpu::util::DeviceExt;
 
 mod phase_inputs;
 mod recorded_values;
+mod relevance;
 mod retention;
 
 fn buffer(device: &wgpu::Device, value: f32) -> wgpu::Buffer {
@@ -342,7 +343,7 @@ fn pressure_observation_does_not_keep_cache_ownership_alive() {
 }
 
 #[test]
-fn image_and_generated_value_lookups_update_the_common_recency_order() {
+fn selected_images_and_submitted_generated_values_update_the_common_recency_order() {
     let (device, _, _) = crate::gpu::test_support::render_context();
     for generated in [false, true] {
         let context = Context::new(
@@ -375,8 +376,12 @@ fn image_and_generated_value_lookups_update_the_common_recency_order() {
                 .generated_image(&device, &first, generated_layout(), true, false)
                 .unwrap();
             assert!(hit.ready());
+            hit.submitted();
+            values.used(hit.image());
         } else {
-            assert_eq!(values.ready::<u32>(&first).len(), 1);
+            let selected = values.ready::<u32>(&first);
+            assert_eq!(selected.len(), 1);
+            values.used(&selected[0].image);
         }
         drop(produce(&values, 3, buffer(&device, 3.)));
         let second = RetainedKey::new(2u32);

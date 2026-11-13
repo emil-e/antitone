@@ -123,6 +123,7 @@ impl Context {
                 "image has no lossless native camera-code representation",
             ));
         }
+        scope.requested(image, layout.region);
         if let Some(image) = scope.find_for::<ImageLayout>(
             &key,
             |stored| stored.supplies(layout),
