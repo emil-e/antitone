@@ -639,27 +639,16 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
 }
 
 #[test]
-fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
-    let (e, directory) = fixture();
+fn draft_tool_keeps_document_changing_commands_and_removal_guarded() {
+    let (e, _directory) = fixture();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
             let before = e.document.state.project.clone();
             e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
             e.request_removal(cx);
-            for action in [
-                FileAction::New,
-                FileAction::Save,
-                FileAction::Add,
-                FileAction::Remove,
-            ] {
+            for action in [FileAction::New, FileAction::Add, FileAction::Remove] {
                 e.file_action(action, cx);
             }
-            e.export(
-                directory.path().join("draft.exr"),
-                OutputFormat::Exr(ExrPrecision::Full),
-                Overwrite::Refuse,
-                cx,
-            );
             assert!(
                 e.document.crop_edit().is_none()
                     && e.test_pick().is_none()

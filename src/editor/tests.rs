@@ -1815,8 +1815,6 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.document.crop_edit_mut().unwrap().draft = draft;
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
-    editor.file_action(files::FileAction::Save, &UiContext::render_only());
-    assert!(!editor.document.write.pending());
     editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.photo_crop(), crop);

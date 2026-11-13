@@ -5,7 +5,7 @@ use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    project::AdjustmentLayerId,
+    project::{AdjustmentLayerId, AdjustmentLayers},
     viewport::CanvasLayout,
 };
 use glam::DVec2;
@@ -56,16 +56,10 @@ impl MaskDrag {
     }
 }
 
-/// Captured geometry and inputs shared by creation and existing-handle gestures.
+/// Photo-owned gesture geometry; preview and release use the current layer state.
 pub(super) struct MaskEdit {
-    loaded: u64,
-    source: Source,
-    roll: RollSettings,
-    input: InputSettings,
-    id: Option<AdjustmentLayerId>,
-    above: Option<AdjustmentLayerId>,
+    target: Option<(AdjustmentLayerId, AdjustmentLayerCoverage)>,
     mask: Option<AdjustmentLayerCoverage>,
-    preview: Option<Source>,
     kind: Kind,
     feather: f64,
     drag: Option<MaskDrag>,
@@ -93,7 +87,7 @@ impl MaskEdit {
     }
 
     pub(super) fn creating(&self) -> bool {
-        self.id.is_none()
+        self.target.is_none()
     }
 
     #[cfg(test)]
@@ -126,26 +120,29 @@ impl MaskEdit {
         });
     }
 
-    fn candidate(&self) -> Result<(Source, AdjustmentLayerId), Error> {
+    fn apply(
+        &self,
+        layers: &mut AdjustmentLayers,
+        above: Option<AdjustmentLayerId>,
+    ) -> Result<AdjustmentLayerId, Error> {
         let mask = self
             .mask
             .ok_or(Error::InvalidParameter("draw a gradient first"))?;
         mask.validate()?;
-        let mut source = self.source.clone();
-        let layers = source
-            .adjustment_layers
-            .get_or_insert_with(Default::default);
-        let id = if let Some(id) = self.id {
+        if let Some((id, original)) = self.target {
             let record = layers
                 .layers
                 .iter_mut()
                 .find(|record| record.id == id)
                 .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))?;
+            if record.adjustment.mask != original {
+                return Err(Error::InvalidParameter("mask geometry changed"));
+            }
             record.adjustment.mask = mask;
-            id
+            Ok(id)
         } else {
             layers.add_above(
-                self.above,
+                above,
                 format!(
                     "{} {}",
                     if self.kind == Kind::Linear {
@@ -162,9 +159,8 @@ impl MaskEdit {
                     invert: false,
                     strength: 1.,
                 },
-            )?
-        };
-        Ok((source, id))
+            )
+        }
     }
 }
 
@@ -389,10 +385,10 @@ impl Editor {
             }) {
                 return Err(Error::InvalidParameter("mask and tool differ"));
             }
-            Ok((source, mask))
+            Ok(mask)
         })();
         match result {
-            Ok((source, mask)) => {
+            Ok(mask) => {
                 if !(self.tab == 1) {
                     self.reveal_adjustment_layers();
                 }
@@ -400,17 +396,8 @@ impl Editor {
                     self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
                 }
                 let edit = MaskEdit {
-                    loaded: self.id,
-                    source,
-                    roll: self.document.project.roll,
-                    input: self.document.project.input,
-                    id,
-                    above: match self.adjustment_layer_target() {
-                        adjustment_layers::Target::Layer(id) => Some(id),
-                        adjustment_layers::Target::None => None,
-                    },
+                    target: id.zip(mask),
                     mask,
-                    preview: None,
                     kind,
                     feather: match mask {
                         Some(AdjustmentLayerCoverage::Radial { feather, .. }) => feather,
@@ -433,16 +420,6 @@ impl Editor {
         }
     }
 
-    fn mask_is_current(&self, edit: &MaskEdit) -> bool {
-        edit.loaded == self.id
-            && self.mask_source().ok().as_ref() == Some(&edit.source)
-            && self.document.project.roll == edit.roll
-            && self.document.project.input == edit.input
-            && edit.id.is_none_or(|id| {
-                self.adjustment_layer_target() == adjustment_layers::Target::Layer(id)
-            })
-    }
-
     pub(super) fn finish_mask(&mut self, accept: bool) {
         let Some(edit) = self.document.visit.masks.finish() else {
             return;
@@ -451,13 +428,7 @@ impl Editor {
             self.status = "Mask gesture cancelled".into();
             return;
         }
-        if !self.mask_is_current(&edit) {
-            self.status = "Mask gesture discarded: source or settings changed".into();
-            return;
-        }
-        let result = edit
-            .candidate()
-            .and_then(|candidate| self.accept_mask(candidate));
+        let result = self.accept_mask(&edit);
         match result {
             Ok(id) => {
                 self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
@@ -469,30 +440,34 @@ impl Editor {
         }
     }
 
-    fn accept_mask(
-        &mut self,
-        (candidate, id): (Source, AdjustmentLayerId),
-    ) -> Result<AdjustmentLayerId, Error> {
-        self.validate_source_candidate(&candidate)?;
+    fn accept_mask(&mut self, edit: &MaskEdit) -> Result<AdjustmentLayerId, Error> {
+        let above = match self.adjustment_layer_target() {
+            adjustment_layers::Target::Layer(id) => Some(id),
+            adjustment_layers::Target::None => None,
+        };
+        let mut accepted = None;
         self.edit_adjustment_layers(|layers| {
-            *layers = candidate
-                .adjustment_layers
-                .expect("candidate has local records");
+            accepted = Some(edit.apply(layers, above)?);
             Ok(())
         })?;
-        Ok(id)
+        Ok(accepted.expect("mask applied"))
     }
 
-    pub(super) fn mask_preview_source(&self) -> Option<&Source> {
+    pub(super) fn mask_preview_source(&self) -> Option<Source> {
         if self.fullscreen.is_some() || self.tab != 1 {
             return None;
         }
-        self.document
-            .visit
-            .masks
-            .gesture()
-            .filter(|edit| self.mask_is_current(edit))
-            .and_then(|edit| edit.preview.as_ref())
+        let edit = self.document.visit.masks.gesture()?;
+        let mut source = self.mask_source().ok()?;
+        edit.apply(
+            source
+                .adjustment_layers
+                .get_or_insert_with(Default::default),
+            None,
+        )
+        .ok()?;
+        self.validate_source_candidate(&source).ok()?;
+        Some(source)
     }
 
     pub(super) fn view_recipe(
@@ -503,7 +478,7 @@ impl Editor {
     ) -> Result<crate::image_recipe::ImageRecipe, Error> {
         let input = input.into();
         if let Some(source) = self.mask_preview_source() {
-            self.positive_recipe_for_source(input, roll, source, photo)
+            self.positive_recipe_for_source(input, roll, &source, photo)
         } else {
             self.positive_recipe(input, roll, photo)
         }
@@ -560,15 +535,6 @@ impl Editor {
             self.finish_mask(false);
             return;
         }
-        if self
-            .document
-            .visit
-            .masks
-            .gesture()
-            .is_some_and(|edit| !self.mask_is_current(edit))
-        {
-            self.finish_mask(false);
-        }
         if pressed
             && response.is_pointer_button_down_on()
             && !space
@@ -592,11 +558,8 @@ impl Editor {
         }
         if !panning
             && let Some(point) = point
-            && let Some(candidate) = self.document.visit.masks.update(point)
+            && self.document.visit.masks.update(point)
         {
-            let candidate = candidate
-                .and_then(|source| self.validate_source_candidate(&source).map(|_| source));
-            self.document.visit.masks.preview(candidate);
             ui.ctx().request_repaint();
         }
         if response.hovered()
@@ -794,15 +757,7 @@ impl MaskEditor {
         let Some(edit) = &self.gesture else {
             return selected;
         };
-        let id = edit.id?;
-        let mut adjustment = edit
-            .source
-            .adjustment_layers
-            .as_ref()?
-            .layers
-            .iter()
-            .find(|record| record.id == id)?
-            .adjustment;
+        let mut adjustment = selected?;
         adjustment.mask = edit.mask?;
         Some(adjustment)
     }
@@ -825,28 +780,20 @@ impl MaskEditor {
         }
     }
 
-    fn update(&mut self, point: egui::Pos2) -> Option<Result<Source, Error>> {
-        let edit = self.gesture.as_mut()?;
-        edit.mask = Some(edit.drag.as_ref()?.update(point));
-        if let Some(AdjustmentLayerCoverage::Radial { feather, .. }) = edit.mask {
+    fn update(&mut self, point: egui::Pos2) -> bool {
+        let Some(edit) = &mut self.gesture else {
+            return false;
+        };
+        let Some(drag) = &edit.drag else {
+            return false;
+        };
+        let mask = drag.update(point);
+        edit.mask = Some(mask);
+        if let AdjustmentLayerCoverage::Radial { feather, .. } = mask {
             edit.feather = feather;
         }
-        Some(edit.candidate().map(|(source, _)| source))
-    }
-
-    fn preview(&mut self, candidate: Result<Source, Error>) {
-        if let Some(edit) = &mut self.gesture {
-            match candidate {
-                Ok(source) => {
-                    edit.error = None;
-                    edit.preview = Some(source);
-                }
-                Err(error) => {
-                    edit.error = Some(error.to_string());
-                    edit.preview = None;
-                }
-            }
-        }
+        edit.error = mask.validate().err().map(|error| error.to_string());
+        true
     }
 
     fn paint(
@@ -902,16 +849,7 @@ impl CreationTool {
     }
 
     fn finish(&mut self, editor: &mut Editor) {
-        let (current, candidate) = {
-            let edit = self.edit.borrow();
-            (editor.mask_is_current(&edit), edit.candidate())
-        };
-        if !current {
-            editor.status = "Mask gesture discarded: source or settings changed".into();
-            editor.end_tool();
-            return;
-        }
-        let result = candidate.and_then(|candidate| editor.accept_mask(candidate));
+        let result = editor.accept_mask(&self.edit.borrow());
         match result {
             Ok(id) => {
                 editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
@@ -1361,5 +1299,7 @@ fn paint_radial(painter: &egui::Painter, layout: CanvasLayout, mask: AdjustmentL
 mod contextual_tests;
 #[cfg(test)]
 mod radial_tests;
+#[cfg(test)]
+mod save_tests;
 #[cfg(test)]
 mod tests;

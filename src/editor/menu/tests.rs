@@ -160,8 +160,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         Action::New,
         Action::Open,
         Action::AddScans,
-        Action::Save,
-        Action::Export,
+        Action::Close,
         Action::Quit,
     ] {
         assert!(!editor.application_menu_state().enabled(action));
@@ -171,6 +170,9 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.files.pending());
     }
     assert!(editor.cropping());
+    for action in [Action::Save, Action::SaveAs, Action::Export] {
+        assert!(editor.application_menu_state().enabled(action));
+    }
     editor.end_tool();
     editor.block_with_decision();
     host::App::menu_action(&mut editor, Action::Settings);

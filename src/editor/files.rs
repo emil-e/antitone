@@ -251,7 +251,7 @@ impl Editor {
         after: Option<Transition>,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.files.pending() || self.dust_search_pending() {
+        if self.files.pending() {
             return;
         }
         let id = self.id;
@@ -312,7 +312,7 @@ impl Editor {
     }
 
     fn save_dialog(&mut self, save_as: bool, cx: &UiContext<'_, Self>) {
-        if self.files.pending() {
+        if self.files.pending() || self.workspace_input.is_blocked() || self.editing() {
             return;
         }
         let Some(destination) = self.save_destination(save_as) else {
@@ -366,8 +366,19 @@ impl Editor {
         if self.files.pending() {
             return;
         }
+        match action {
+            FileAction::Save => {
+                self.save_dialog(false, cx);
+                return;
+            }
+            FileAction::SaveAs => {
+                self.save_dialog(true, cx);
+                return;
+            }
+            _ => {}
+        }
         if self.dust_search_pending() {
-            self.status = "Wait for donor selection before changing or saving the document".into();
+            self.status = "Wait for donor selection before changing the document".into();
             return;
         }
         if self.tool_interacting() || self.document.visit.masks.editing() {
@@ -398,8 +409,7 @@ impl Editor {
                 }
             }
             FileAction::Remove => self.request_removal(cx),
-            FileAction::Save => self.save_dialog(false, cx),
-            FileAction::SaveAs => self.save_dialog(true, cx),
+            FileAction::Save | FileAction::SaveAs => unreachable!(),
         }
     }
 }
@@ -479,7 +489,7 @@ async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) 
     }
     let response = cx
         .update(|editor| {
-            if editor.id != id || editor.dust_search_pending() {
+            if editor.id != id {
                 return None;
             }
 

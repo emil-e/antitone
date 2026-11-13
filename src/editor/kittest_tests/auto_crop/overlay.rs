@@ -154,29 +154,37 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 &format!("auto-crop-batch-{name}-offscreen"),
             );
             let saved = h.read(|editor| editor.document.path.clone().unwrap());
-            h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
-            h.step();
-            h.read(|editor| assert!(!editor.document.write.pending()));
+            save_existing_project(&mut h);
+            h.read(|editor| assert!(editor.document.auto_crop.reviewing()));
             let accepted = crate::project::Project::load(&saved).unwrap();
             assert_eq!(accepted, before);
 
             let output = directory.path().join("draft.tiff");
-            h.enter(|editor, cx| {
-                editor.export(
-                    output.clone(),
-                    OutputFormat::Tiff(OutputTarget::Srgb),
-                    Overwrite::Refuse,
-                    cx,
-                )
+            native_file_action(&mut h, crate::platform::menu::Action::Export);
+            let captured = h.update(|editor| {
+                let mut form = editor.document.export.form.take().unwrap();
+                form.draft.folder = directory.path().to_owned();
+                let captured = editor.capture_export(&form.draft).unwrap();
+                editor.document.export.form = Some(form);
+                captured
             });
+            for photo in &captured.photos {
+                assert_eq!(
+                    photo.recipe.composition.crop(),
+                    before
+                        .source(photo.recipe.neutral.source)
+                        .unwrap()
+                        .crop
+                        .unwrap_or_else(|| Crop::from_region(photo.recipe.composition.area())),
+                    "Export captures accepted framing, not the batch preview"
+                );
+            }
+            h.key_press(egui::Key::Escape);
             h.step();
             h.read(|editor| {
-                assert!(
-                    !output.exists()
-                        && editor.document.export.operation.is_none()
-                        && !editor.interaction_blocked(),
-                    "output commands cannot export a draft"
-                )
+                assert!(editor.document.export.form.is_none());
+                assert!(editor.document.auto_crop.reviewing());
+                assert!(!output.exists() && editor.document.export.operation.is_none());
             });
             for (index, key) in [
                 (2, None),
