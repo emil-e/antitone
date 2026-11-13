@@ -23,9 +23,9 @@ impl Editor {
         format: OutputFormat,
         overwrite: Overwrite,
     ) -> Result<Option<PhotoRequest>, Error> {
-        if self.dust_search_pending() {
+        if self.editing() {
             return Err(Error::InvalidParameter(
-                "wait for donor selection before exporting",
+                "finish or cancel the current edit before exporting",
             ));
         }
         let Some(ready) = &self.document.visit.canvas.ready else {
@@ -58,10 +58,6 @@ impl Editor {
         overwrite: Overwrite,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.tool_interacting() {
-            self.status = "Finish the active tool before exporting".into();
-            return;
-        }
         if self
             .document
             .path

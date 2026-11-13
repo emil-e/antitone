@@ -731,7 +731,7 @@ impl Editor {
     }
 
     pub(super) fn capture_export(&mut self, draft: &Draft) -> Result<Request, Error> {
-        if self.dust_search_pending() || self.editing() {
+        if self.editing() {
             return Err(Error::InvalidParameter(
                 "finish or cancel the current edit before exporting",
             ));
@@ -1011,12 +1011,8 @@ impl Editor {
         if self.workspace_input.is_blocked() {
             return;
         }
-        if self.tool_interacting() || self.document.visit.masks.editing() {
-            self.status = "Finish the active interaction before exporting".into();
-            return;
-        }
-        if self.dust_search_pending() {
-            self.status = "Wait for donor selection before exporting".into();
+        if self.editing() {
+            self.status = "Finish or cancel the current edit before exporting".into();
             return;
         }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();

@@ -82,8 +82,11 @@ impl Editor {
             && self.file_context_available()
     }
 
-    fn save_available(&self) -> bool {
-        self.file_available()
+    fn snapshot_available(&self) -> bool {
+        !self.workspace_input.is_blocked()
+            && self.document.look.is_none()
+            && !self.editing()
+            && !self.allow_close
     }
 
     fn file_context_available(&self) -> bool {
@@ -144,14 +147,14 @@ impl Editor {
         if !self.interaction_blocked() {
             state.enabled.extend([About, Settings, Help]);
         }
-        if self.save_available() {
+        if self.snapshot_available() {
             state.enabled.extend([Save, SaveAs]);
-        }
-        if self.file_available() {
-            state.enabled.extend([New, Open, AddScans, Close]);
             if self.document.project.input.ready() && self.selected_area().is_some() {
                 state.enabled.insert(Export);
             }
+        }
+        if self.file_available() {
+            state.enabled.extend([New, Open, AddScans, Close]);
         }
         if self.selected_area().is_some() && !self.interaction_blocked() && !self.mask_dragging() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);

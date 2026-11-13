@@ -1,6 +1,7 @@
 use super::*;
 mod history_tests;
 mod rapid;
+mod snapshot_tests;
 use crate::dust_repair::SearchOutcome;
 
 fn capture(e: &Editor) -> crate::image_recipe::ImageRecipe {
@@ -93,13 +94,6 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             assert!(!e.file_available());
             assert!(e.history_available());
             assert_eq!(e.history_label(history::Direction::Undo), None);
-            let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("pending.antitone");
-            e.save_project(path.clone(), crate::project::Save::New, None, cx);
-            assert!(!path.exists());
-            assert!(!e.document.write.pending());
-            e.open_export_dialog();
-            assert!(e.document.export.form.is_none());
             stroke
         });
         let call = gate.next(app);

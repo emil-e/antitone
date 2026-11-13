@@ -23,9 +23,6 @@ fn start(editor: &mut Editor) -> AdjustmentLayerId {
         start: SourcePoint([100., 70.]),
         end: SourcePoint([149., 99.]),
     });
-    let candidate = edit.candidate().unwrap().0;
-    editor.validate_source_candidate(&candidate).unwrap();
-    editor.document.visit.masks.gesture_mut().unwrap().preview = Some(candidate);
     assert!(editor.mask_preview_source().is_some());
     assert!(editor.document.visit.working_view.compare);
     assert!(!editor.comparing_original());
@@ -61,7 +58,7 @@ fn visit_retirement_and_layer_selection_discard_only_the_unfinished_refinement()
 }
 
 #[test]
-fn accepted_controls_survive_rejection_of_a_refinement_captured_before_them() {
+fn refinement_changes_only_geometry_and_preserves_later_accepted_controls() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = start(&mut editor);
@@ -96,12 +93,25 @@ fn accepted_controls_survive_rejection_of_a_refinement_captured_before_them() {
                 .exposure,
             0.75
         );
-        let history = editor.history_label(history::Direction::Undo);
-        assert!(editor.mask_preview_source().is_none());
+        let mut expected = graded.clone();
+        expected
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers
+            .iter_mut()
+            .find(|layer| layer.id == id)
+            .unwrap()
+            .adjustment
+            .mask = editor.document.visit.masks.gesture().unwrap().mask.unwrap();
+        assert!(editor.mask_preview_source().is_some());
         editor.finish_mask(true);
         assert!(!editor.document.visit.masks.editing());
+        assert_eq!(editor.document.state.project, expected);
+        editor.restore_history(history::Direction::Undo, &UiContext::render_only());
         assert_eq!(editor.document.state.project, graded);
-        assert_eq!(editor.history_label(history::Direction::Undo), history);
         assert!(editor.document.visit.working_view.compare);
         assert!(editor.comparing_original());
     });
@@ -128,7 +138,52 @@ fn document_admission_retires_the_gesture_before_preparation_is_polled() {
 }
 
 #[test]
-fn file_and_export_admission_wait_for_the_gesture_not_for_a_mask_mode() {
+fn removed_or_changed_mask_targets_cannot_be_overwritten_by_a_held_refinement() {
+    pollster::block_on(async {
+        for remove in [false, true] {
+            let (mut editor, _, _) = processing::tests::fixture().await;
+            let id = start(&mut editor);
+            editor
+                .edit_adjustment_layers(|layers| {
+                    if remove {
+                        layers.remove(id)?;
+                    } else {
+                        layers
+                            .layers
+                            .iter_mut()
+                            .find(|layer| layer.id == id)
+                            .unwrap()
+                            .adjustment
+                            .mask = AdjustmentLayerCoverage::Linear {
+                            start: SourcePoint([2., 3.]),
+                            end: SourcePoint([18., 22.]),
+                        };
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let accepted = editor.document.state.project.clone();
+            let history = editor
+                .history_label(history::Direction::Undo)
+                .map(str::to_owned);
+            assert!(editor.mask_preview_source().is_none());
+            editor.finish_mask(true);
+            assert_eq!(editor.document.state.project, accepted);
+            assert_eq!(
+                editor.history_label(history::Direction::Undo),
+                history.as_deref()
+            );
+            assert!(
+                editor.status.starts_with("Mask rejected:"),
+                "{}",
+                editor.status
+            );
+        }
+    });
+}
+
+#[test]
+fn save_and_export_are_independent_of_document_replacement_gesture_admission() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         assert!(
@@ -146,10 +201,14 @@ fn file_and_export_admission_wait_for_the_gesture_not_for_a_mask_mode() {
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(!editor.files.pending());
-                assert!(editor.document.export.form.is_none());
+                assert!(editor.document.export.form.is_some());
+                assert!(editor.document.visit.masks.editing());
                 assert_eq!(editor.document.state.project, before);
             });
-            app.update(|editor| editor.finish_mask(false));
+            app.update(|editor| {
+                editor.document.export.form = None;
+                editor.finish_mask(false);
+            });
             app.read(|editor| assert!(editor.file_available()));
             app.update(Editor::open_export_dialog);
             app.read(|editor| {

@@ -188,17 +188,6 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
                 start: SourcePoint([122., 75.]),
                 end: SourcePoint([140., 88.]),
             });
-        let candidate = editor
-            .document
-            .visit
-            .masks
-            .gesture()
-            .unwrap()
-            .candidate()
-            .unwrap()
-            .0;
-        editor.validate_source_candidate(&candidate).unwrap();
-        editor.document.visit.masks.gesture_mut().unwrap().preview = Some(candidate);
         assert!(editor.mask_preview_source().is_some());
         editor.finish_adjustment_layer_interaction();
         assert!(editor.document.visit.masks.gesture().is_none());
@@ -272,9 +261,7 @@ fn creation_draft_keeps_ids_navigation_and_comparison_until_accepted() {
             start: SourcePoint([121., 74.]),
             end: SourcePoint([141., 90.]),
         });
-        let (_, first) = draft.borrow().candidate().unwrap();
-        let (_, repeated) = draft.borrow().candidate().unwrap();
-        assert_eq!(first, repeated);
+        assert!(draft.borrow().valid());
         assert_eq!(editor.document.state.project, before);
         assert!(editor.document.visit.working_view.compare);
         editor.document.visit.canvas.viewport.zoom = Some(3.);
@@ -362,17 +349,29 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.begin_linear_mask(Some(id));
         assert!(editor.document.visit.working_view.compare);
         assert!(!editor.comparing_original());
+        let changed_mask = AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([100., 70.]),
+            end: SourcePoint([145., 95.]),
+        };
+        editor.document.visit.masks.gesture_mut().unwrap().mask = Some(changed_mask);
         editor.document.project.roll.exposure += 0.1;
-        let accepted = editor.document.project.clone();
+        let mut expected = editor.document.project.clone();
+        expected
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .mask = changed_mask;
+        assert!(editor.mask_preview_source().is_some());
         editor.finish_mask(true);
-        assert!(
-            editor.document.visit.masks.gesture().is_none(),
-            "changed processing cannot accept a stale mask draft"
-        );
+        assert!(editor.document.visit.masks.gesture().is_none());
         assert!(
             editor.document.visit.working_view.compare,
-            "stale rejection preserves the ordinary comparison preference"
+            "refinement preserves the ordinary comparison preference"
         );
-        assert_eq!(editor.document.state.project, accepted);
+        assert_eq!(editor.document.state.project, expected);
     });
 }

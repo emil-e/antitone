@@ -245,11 +245,11 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                         );
                     }
                     assert!(
-                        !e.application_menu_state()
+                        e.application_menu_state()
                             .enabled(crate::platform::menu::Action::Save)
                     );
                     assert!(
-                        !e.application_menu_state()
+                        e.application_menu_state()
                             .enabled(crate::platform::menu::Action::Export)
                     );
                 });

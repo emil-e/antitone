@@ -31,12 +31,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Option<futures_channel::oneshot::Receiver<bool>> {
         let (send, receive) = futures_channel::oneshot::channel();
-        if self.document.write.pending()
-            || self.dust_search_pending()
-            || self.editing()
-            || self.tool_interacting()
-            || self.document.visit.masks.editing()
-        {
+        if self.document.write.pending() || self.editing() {
             self.status = "Finish or cancel the current edit before saving".into();
             return None;
         }

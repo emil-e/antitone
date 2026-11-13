@@ -426,7 +426,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         let expected = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| {
             assert!(
-                !editor
+                editor
                     .application_menu_state()
                     .enabled(crate::platform::menu::Action::Save)
             )
