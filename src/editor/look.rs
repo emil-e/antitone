@@ -420,7 +420,7 @@ impl Editor {
             .look
             .loaded
             .iter_mut()
-            .find(|entry| entry.lut().id() == asset.lut().id())
+            .find(|entry| entry.id() == asset.id())
         {
             *existing = asset.clone();
         } else {
@@ -502,7 +502,7 @@ impl Editor {
                 self.look
                     .loaded
                     .iter()
-                    .position(|entry| entry.lut().id() == asset.lut().id())
+                    .position(|entry| entry.id() == asset.id())
                     .map_or_else(|| asset.name().to_owned(), |i| labels[i].clone())
             },
         );
@@ -528,15 +528,16 @@ impl Editor {
                             clear = true;
                         }
                         for (asset, label) in self.look.loaded.iter().zip(&labels) {
-                            let selected =
-                                self.document.look.is_none()
-                                    && self.document.project.output.lut.as_ref().is_some_and(
-                                        |current| current.lut().id() == asset.lut().id(),
-                                    );
+                            let selected = self.document.look.is_none()
+                                && self
+                                    .document
+                                    .project
+                                    .output
+                                    .lut
+                                    .as_ref()
+                                    .is_some_and(|current| current.id() == asset.id());
                             if ui
-                                .push_id(asset.lut().id(), |ui| {
-                                    ui.selectable_label(selected, label)
-                                })
+                                .push_id(asset.id(), |ui| ui.selectable_label(selected, label))
                                 .inner
                                 .clicked()
                                 && !selected

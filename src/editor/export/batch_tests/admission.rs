@@ -217,7 +217,9 @@ fn exr_bypasses_actual_lut_capacity_while_tiff_preserves_failed_destination_and_
         .get(&services.device, &services.queue)
         .unwrap();
     assert!(
-        renderer.look_resource(&services.device, &large).is_err(),
+        renderer
+            .look_resource(&services.device, large.lut())
+            .is_err(),
         "the LUT must actually exceed this device's resource capacity"
     );
     with_application(editor, |app| {

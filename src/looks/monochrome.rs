@@ -204,8 +204,13 @@ impl Model {
         Ok(encoded)
     }
     pub fn bake(&self, size: u32, cancel: &AtomicBool) -> Result<LookAsset, Error> {
-        let lut = super::sampling::bake(size, cancel, &|rgb| self.encoded(rgb))?;
-        LookAsset::new(self.selection.name(), self.selection.origin(), lut)
+        super::authoring::bake(
+            self.selection.name(),
+            self.selection.origin(),
+            size,
+            cancel,
+            &|rgb| self.encoded(rgb),
+        )
     }
 }
 #[cfg(test)]

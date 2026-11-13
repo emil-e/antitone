@@ -92,7 +92,7 @@ fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_
         // ownership, not admission of corrupt camera samples through the application.
         let rejection = rejected_sample(&device, &queue, &asset);
         let label = asset.name().to_owned();
-        let id = asset.lut().id();
+        let id = asset.id();
         h.update(|editor| editor.look.loaded.push(asset));
         choose(&mut h, &label);
         wait_for(&mut h, |editor| !editor.interaction_blocked());

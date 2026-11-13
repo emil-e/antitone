@@ -88,7 +88,7 @@ fn current_material_labels_do_not_rebake_a_saved_129_cube_with_a_retired_generat
         .bake(authoring::DEFAULT_GRID, &AtomicBool::new(false))
         .unwrap();
     assert_eq!(fresh.lut().size(), 65);
-    assert_ne!(fresh.lut().id(), saved.lut().id());
+    assert_ne!(fresh.id(), saved.id());
     let mut project = Project::default();
     project.output.film_and_paper = Some(saved.clone());
     let directory = tempfile::tempdir().unwrap();
@@ -121,7 +121,7 @@ fn saved_supra_samples_remain_authoritative_when_the_current_paper_generator_cha
         .bake(authoring::DEFAULT_GRID, &AtomicBool::new(false))
         .unwrap();
     assert_ne!(fresh.origin(), saved.origin());
-    assert_ne!(fresh.lut().id(), saved.lut().id());
+    assert_ne!(fresh.id(), saved.id());
     let mut project = Project::default();
     project.output.film_and_paper = Some(saved.clone());
     let directory = tempfile::tempdir().unwrap();
@@ -129,7 +129,7 @@ fn saved_supra_samples_remain_authoritative_when_the_current_paper_generator_cha
     project.save(&path, Save::New).unwrap();
     let reopened = Project::load(&path).unwrap().output.film_and_paper.unwrap();
     assert_eq!(reopened.origin(), saved.origin());
-    assert_eq!(reopened.lut().id(), saved.lut().id());
+    assert_eq!(reopened.id(), saved.id());
     assert_eq!(reopened.lut().nodes(), saved.lut().nodes());
     assert_eq!(reopened.lut().domain(), saved.lut().domain());
 }

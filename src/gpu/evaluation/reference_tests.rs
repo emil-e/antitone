@@ -5,6 +5,125 @@ use crate::{
 };
 use wgpu::util::DeviceExt;
 
+#[cfg(all(feature = "project", feature = "ocio-reference"))]
+#[test]
+fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
+    use crate::looks::{
+        LutChain,
+        frontier::{Selection, Variant},
+    };
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/frontier/density-controls.json"
+    ))
+    .unwrap();
+    let inputs = fixture["inputs"].as_array().unwrap();
+    let pixels: Vec<[f32; 4]> = inputs
+        .iter()
+        .map(|p| {
+            [
+                p[0].as_f64().unwrap() as f32,
+                p[1].as_f64().unwrap() as f32,
+                p[2].as_f64().unwrap() as f32,
+                8.,
+            ]
+        })
+        .collect();
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let input = buffer(&device, &pixels);
+    for (variant, name) in [(Variant::A, "A"), (Variant::B, "B")] {
+        let asset = Arc::new(
+            Selection { variant }
+                .prepare(&std::sync::atomic::AtomicBool::new(false))
+                .unwrap(),
+        );
+        let chain = LutChain {
+            lut: None,
+            film_and_paper: Some(asset.clone()),
+        };
+        let uploaded = renderer.look_uploads();
+        let scene =
+            Reference::capture(&device, &renderer, OutputReference::SceneReferred, &chain).unwrap();
+        assert!(scene.look_resources().is_empty());
+        assert_eq!(renderer.look_uploads(), uploaded);
+        let source = supplied(&input, [pixels.len() as u32, 1, 0, 0]);
+        assert!(
+            source.definition().same_capture(
+                &scene
+                    .compose(source.definition().clone(), &renderer)
+                    .unwrap()
+            )
+        );
+        for (target, key) in [
+            (OutputTarget::Srgb, "Srgb"),
+            (OutputTarget::DisplayP3, "DisplayP3"),
+        ] {
+            let output = texture(
+                &device,
+                [pixels.len() as u32, 1],
+                wgpu::TextureFormat::Rgba32Float,
+            );
+            let binding = renderer
+                .render_binding(
+                    &device,
+                    supplied(&input, [pixels.len() as u32, 1, 0, 0]),
+                    target,
+                    &chain,
+                    &output,
+                )
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let check = binding.encode(&device, &mut encoder).unwrap();
+            let submission = queue.submit([encoder.finish()]);
+            if let Some(check) = &check {
+                check.begin(|| {});
+            }
+            device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .unwrap();
+            if let Some(check) = check {
+                check.result().unwrap().unwrap();
+            }
+            let actual = read_texture(&device, &queue, &output);
+            let carrier: Vec<_> = pixels
+                .iter()
+                .map(|p| {
+                    asset
+                        .lut()
+                        .apply(glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
+                        .unwrap()
+                })
+                .collect();
+            let expected = crate::rendering::CpuRenderer::new(target)
+                .unwrap()
+                .render(&carrier)
+                .unwrap();
+            let expected: Vec<_> = expected.iter().map(|v| v.as_dvec3().to_array()).collect();
+            assert_eq!(expected.len(), inputs.len());
+            assert_eq!(actual.len(), inputs.len());
+            let mut maximum = 0f64;
+            for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                for c in 0..3 {
+                    let error = (actual[c] as f64 - expected[c]).abs();
+                    maximum = maximum.max(error);
+                    assert!(
+                        error < 2e-5,
+                        "{name}/{key} control {i} channel {c}: {actual:?} {expected:?}, error {error}"
+                    );
+                }
+            }
+            eprintln!(
+                "{name}/{key}: {} controls, max linear RGB error {maximum}",
+                actual.len()
+            );
+        }
+        let a = renderer.look_resource(&device, asset.lut()).unwrap();
+        let b = renderer.look_resource(&device, asset.lut()).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+}
 fn buffer(device: &wgpu::Device, pixels: &[[f32; 4]]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -63,7 +182,12 @@ fn asset() -> Arc<LookAsset> {
     Arc::new(
         LookAsset::new(
             "Tetrahedral hinges".into(),
-            LookOrigin::Imported,
+            LookOrigin::Renderer {
+                renderer: "unregistered_provider".into(),
+                revision: "a".repeat(64),
+                generator: "authored-hinges".into(),
+                attribution: "Synthetic nonseparable corner products".into(),
+            },
             Arc::new(Lut3D::new(2, [-0.5; 3], [1.; 3], nodes).unwrap()),
         )
         .unwrap(),
@@ -135,7 +259,7 @@ fn legacy(
     output: &wgpu::Texture,
 ) {
     let looked = look.map(|asset| {
-        let lut = renderer.look_resource(device, asset).unwrap();
+        let lut = renderer.look_resource(device, asset.lut()).unwrap();
         let kernel = pollster::block_on(crate::gpu::lut3d::Kernel::new(device)).unwrap();
         let pixels = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -374,13 +498,18 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
 
 #[test]
 fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite_samples() {
+    for look in admission_assets() {
+        compare_repeated_admission(look);
+    }
+}
+
+fn compare_repeated_admission(look: Arc<LookAsset>) {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let source = buffer(
         &device,
         &[[f32::NAN, 0.2, 0.3, 0.], [0.2, f32::INFINITY, 0.3, 8.]],
     );
     let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
-    let look = asset();
     let binding = renderer
         .render_binding(
             &device,
@@ -426,6 +555,30 @@ fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite
 
 #[test]
 fn display_and_look_values_preserve_sample_flags_and_ignore_uncovered_nonfinite_light() {
+    for look in admission_assets() {
+        compare_sample_flags(look);
+    }
+}
+
+fn admission_assets() -> Vec<Arc<LookAsset>> {
+    let assets = vec![asset()];
+    #[cfg(feature = "project")]
+    let assets = {
+        use crate::looks::frontier::{Selection, Variant};
+        let mut assets = assets;
+        for variant in Variant::all() {
+            assets.push(Arc::new(
+                Selection { variant }
+                    .prepare(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap(),
+            ));
+        }
+        assets
+    };
+    assets
+}
+
+fn compare_sample_flags(look: Arc<LookAsset>) {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let source = buffer(
         &device,
@@ -437,7 +590,6 @@ fn display_and_look_values_preserve_sample_flags_and_ignore_uncovered_nonfinite_
             [0.2, 0.3, 0.4, -1.],
         ],
     );
-    let look = asset();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         for policy in [Policy::Materialized, Policy::Composed] {
             for selected in [None, Some(&look)] {
@@ -604,7 +756,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         .unwrap();
         let looked = reference.looked(input.clone());
         assert_eq!(reference.look_id(), chain(&look).id());
-        assert_eq!(reference.lut_resources().len(), if paired { 2 } else { 1 });
+        assert_eq!(reference.look_resources().len(), if paired { 2 } else { 1 });
         if paired {
             let reversed = Reference::capture(
                 &device,
@@ -802,7 +954,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         &(Some(&asset())).cloned().into(),
     )
     .unwrap();
-    assert!(scene.lut_resources().is_empty());
+    assert!(scene.look_resources().is_empty());
     let input = borrowed_input(domain);
     assert!(input.same_capture(&scene.compose(input.clone(), &renderer).unwrap()));
 }
@@ -913,10 +1065,10 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
             }
         }
         if first && second {
-            let a = renderer.look_resource(&device, &swap).unwrap();
-            let b = renderer.look_resource(&device, &swap).unwrap();
+            let a = renderer.look_resource(&device, swap.lut()).unwrap();
+            let b = renderer.look_resource(&device, swap.lut()).unwrap();
             assert!(Arc::ptr_eq(&a, &b));
-            assert_ne!(chain.id(), Some(swap.lut().id()));
+            assert_ne!(chain.id(), Some(swap.id()));
             let reverse = LutChain {
                 lut: chain.film_and_paper.clone(),
                 film_and_paper: chain.lut.clone(),

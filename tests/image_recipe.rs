@@ -280,5 +280,5 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
     assert_eq!(looked, project.image_recipe(id).unwrap());
     project.output.lut = None;
     assert_eq!(none, project.image_recipe(id).unwrap());
-    assert_eq!(looked.luts.lut.as_ref().unwrap().lut().id(), lut.id());
+    assert_eq!(looked.luts.lut.as_ref().unwrap().id(), lut.id());
 }

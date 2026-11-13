@@ -47,7 +47,8 @@ void *antitone_ocio_create(uint32_t target, char *error, size_t error_size) {
     }
 }
 
-void *antitone_ocio_reference_create(const double *parameters, char *error, size_t error_size) {
+void *antitone_ocio_reference_create(const double *parameters, uint32_t inverse, char *error,
+                                     size_t error_size) {
     antitone::NativeLog diagnostic("ocio", "reference_create");
     try {
         if (std::string(antitone::OCIO::GetVersion()) != "2.6.0")
@@ -59,8 +60,14 @@ void *antitone_ocio_reference_create(const double *parameters, char *error, size
         group->appendTransform(antitone::OCIO::FixedFunctionTransform::Create(
             antitone::OCIO::FIXED_FUNCTION_ACES_OUTPUT_TRANSFORM_20, parameters, 9));
         auto renderer = std::make_unique<Renderer>();
+        if (inverse > 1)
+            throw std::invalid_argument("invalid reference direction");
+        auto processor = antitone::OCIO::Config::CreateRaw()->getProcessor(
+            group, inverse ? antitone::OCIO::TRANSFORM_DIR_INVERSE
+                           : antitone::OCIO::TRANSFORM_DIR_FORWARD);
         renderer->cpu =
-            antitone::OCIO::Config::CreateRaw()->getProcessor(group)->getDefaultCPUProcessor();
+            inverse ? processor->getOptimizedCPUProcessor(antitone::OCIO::OPTIMIZATION_LOSSLESS)
+                    : processor->getDefaultCPUProcessor();
         diagnostic.complete();
         return renderer.release();
     } catch (const std::exception &e) {

@@ -145,7 +145,7 @@ impl RenderBinding {
 
     pub(crate) fn reference_bytes(&self) -> u64 {
         self.reference
-            .lut_resources()
+            .look_resources()
             .iter()
             .map(|lut| lut.byte_len())
             .sum::<u64>()
@@ -153,8 +153,8 @@ impl RenderBinding {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
-        self.reference.lut_resources()
+    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+        self.reference.look_resources()
     }
 
     pub fn encode(
@@ -196,9 +196,7 @@ pub struct GpuRenderer {
     look_validation: Arc<crate::gpu::lut3d::Validation>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
-    look_cache: std::sync::Mutex<
-        std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::lut3d::Lut>>,
-    >,
+    look_cache: std::sync::Mutex<crate::gpu::lut3d::Cache>,
 }
 
 impl GpuRenderer {
@@ -258,7 +256,7 @@ impl GpuRenderer {
             look_validation,
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
-            look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            look_cache: Default::default(),
         });
         crate::gpu::evaluation::Reference::prewarm(&renderer.evaluation, &renderer)?;
         #[cfg(feature = "ui")]
@@ -273,31 +271,21 @@ impl GpuRenderer {
 
     #[cfg(test)]
     pub(crate) fn live_look_resources(&self) -> usize {
-        self.look_cache
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|value| value.strong_count() != 0)
-            .count()
+        self.look_cache.lock().unwrap().live()
     }
 
     /// A job can retain this lease independently of its size-dependent render bindings.
     pub(crate) fn look_resource(
         &self,
         device: &wgpu::Device,
-        asset: &Arc<crate::looks::LookAsset>,
+        lut: &crate::looks::Lut3D,
     ) -> Result<Arc<crate::gpu::lut3d::Lut>, Error> {
-        let mut cache = self.look_cache.lock().unwrap();
-        cache.retain(|_, value| value.strong_count() != 0);
-        let id = asset.lut().id();
-        if let Some(value) = cache.get(&id).and_then(std::sync::Weak::upgrade) {
-            return Ok(value);
-        }
-        let value = crate::gpu::lut3d::Lut::new(device, asset.lut())?;
+        let (value, _uploaded) = self.look_cache.lock().unwrap().get(device, lut)?;
         #[cfg(test)]
-        self.look_uploads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        cache.insert(id, Arc::downgrade(&value));
+        if _uploaded {
+            self.look_uploads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         Ok(value)
     }
 

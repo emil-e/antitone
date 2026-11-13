@@ -59,6 +59,46 @@ pub(crate) fn adapt(pinned: &str) -> Result<(String, Vec<f32>), Error> {
     Ok((generated, hues))
 }
 
+/// Transcode a generated/adapted ACES library without changing its arithmetic.
+#[cfg(feature = "render")]
+pub(crate) fn library(code: &str) -> Result<std::sync::Arc<str>, Error> {
+    let source = format!(
+        "#version 450\nlayout(set=0,binding=3) uniform sampler aces_sampler;\n{code}\nvoid main() {{}}"
+    );
+    let options = naga::front::glsl::Options::from(naga::ShaderStage::Compute);
+    let mut module = naga::front::glsl::Frontend::default()
+        .parse(&options, &source)
+        .map_err(|e| Error::Gpu(format!("ACES callable GLSL:{e:?}")))?;
+    module.entry_points.clear();
+    for (_, function) in module.functions.iter_mut() {
+        if function.name.as_deref() == Some("main") {
+            function.name = Some("aces_library_entry_stub".into());
+        }
+        // These immutable parameter textures have exactly one mip level.
+        for (_, expression) in function.expressions.iter_mut() {
+            if let naga::Expression::ImageSample { level, .. } = expression
+                && matches!(level, naga::SampleLevel::Auto)
+            {
+                *level = naga::SampleLevel::Zero;
+            }
+        }
+    }
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    let info = validator
+        .validate(&module)
+        .map_err(|e| Error::Gpu(format!("ACES callable validation:{e:?}")))?;
+    naga::back::wgsl::write_string(
+        &module,
+        &info,
+        naga::back::wgsl::WriterFlags::EXPLICIT_TYPES,
+    )
+    .map(std::sync::Arc::from)
+    .map_err(|e| Error::Gpu(format!("ACES callable WGSL:{e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

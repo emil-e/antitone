@@ -109,7 +109,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         0,
         "successful job must not leave an optional renderer-owned strong reference"
     );
-    let retained = renderer.look_resource(&device, &look).unwrap();
+    let retained = renderer.look_resource(&device, look.lut()).unwrap();
     let warm = renderer.look_uploads();
     capture(Some(look.clone()));
     assert_eq!(

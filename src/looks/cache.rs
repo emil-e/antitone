@@ -64,7 +64,7 @@ impl Cache {
             "cached LUT source/specification mismatch",
         )?;
         // Cache labels follow the current catalog; embedded project assets do not.
-        let asset = LookAsset::new(name.into(), asset.origin().clone(), asset.lut().clone())?;
+        let asset = asset.renamed(name);
         // Optional recency metadata; failure does not invalidate verified samples.
         if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
             let _ = file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));

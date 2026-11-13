@@ -9,6 +9,9 @@ use std::sync::{
 };
 use wgpu::util::DeviceExt;
 
+mod cache;
+pub(crate) use cache::Cache;
+
 #[cfg(test)]
 mod test_dispatch;
 #[cfg(test)]

@@ -158,10 +158,10 @@ impl Product {
             }
     }
 
-    fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+    fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
         self.positive.as_ref().map_or_else(
-            || self.image.lut_resources(),
-            |(_, view)| view.lut_resources(),
+            || self.image.look_resources(),
+            |(_, view)| view.look_resources(),
         )
     }
 
@@ -221,9 +221,9 @@ impl ImageKey {
                 bytes = bytes.checked_add(256 * 256 * 16)?;
             }
             for look in recipe.luts.assets() {
-                bytes = bytes.checked_add(256 * 256 * 16)?.checked_add(
-                    (look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>()) as u64,
-                )?;
+                bytes = bytes
+                    .checked_add(256 * 256 * 16)?
+                    .checked_add(look.gpu_bytes())?;
             }
             bytes = bytes.checked_add(
                 2 * (crate::gpu::grading::Grading::byte_len_for(&recipe.grade)
@@ -337,12 +337,12 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
     let mut bytes = 0;
     for (key, product) in entries {
         for asset in key.luts().assets() {
-            if cpu.insert(asset.lut().nodes().as_ptr()) {
-                bytes += asset.lut().byte_len();
+            if cpu.insert(asset.allocation()) {
+                bytes += asset.numeric_bytes();
             }
         }
         if let Ok(product) = product {
-            for lut in product.lut_resources() {
+            for lut in product.look_resources() {
                 if gpu.insert(Arc::as_ptr(&lut)) {
                     bytes += lut.byte_len() as usize;
                 }
@@ -404,13 +404,13 @@ impl Default for Thumbnails {
                     - key
                         .luts()
                         .assets()
-                        .map(|asset| asset.lut().byte_len())
+                        .map(|asset| asset.numeric_bytes())
                         .sum::<usize>()
                     + match value {
                         Ok(product) => {
                             product.byte_len()
                                 - product
-                                    .lut_resources()
+                                    .look_resources()
                                     .iter()
                                     .map(|lut| lut.byte_len() as usize)
                                     .sum::<usize>()
@@ -658,20 +658,20 @@ impl Thumbnails {
             if self.cache.entries.iter().any(|(old, _)| {
                 old.luts()
                     .assets()
-                    .any(|old| old.lut().nodes().as_ptr() == look.lut().nodes().as_ptr())
+                    .any(|old| old.allocation() == look.allocation())
             }) {
-                extra -= look.lut().byte_len();
+                extra -= look.numeric_bytes();
             }
             if self.cache.entries.iter().any(|(_, product)| {
                 product.as_ref().ok().is_some_and(|product| {
                     product
-                        .lut_resources()
+                        .look_resources()
                         .iter()
-                        .any(|old| old.id() == look.lut().id())
+                        .any(|old| old.id() == look.id())
                 })
             }) {
                 // The renderer reuses a live immutable GPU LUT by content identity.
-                extra -= look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>();
+                extra -= look.gpu_bytes() as usize;
             }
         }
         self.cache.can_retain(extra)

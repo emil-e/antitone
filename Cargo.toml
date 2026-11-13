@@ -111,6 +111,11 @@ path = "src/bin/gpu_probe.rs"
 required-features = ["gpu"]
 
 [[bin]]
+name = "antitone-frontier-bake"
+path = "src/bin/frontier_bake.rs"
+required-features = ["project", "ocio-reference"]
+
+[[bin]]
 name = "antitone-rendering-probe"
 path = "src/bin/rendering_probe.rs"
 required-features = ["ocio-reference"]

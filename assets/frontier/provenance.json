@@ -1,0 +1,132 @@
+{
+  "source": {
+    "file": "ColorData.dat",
+    "sha256": "63eb501f0626cf169a3c60c7f4ba91cfad1dccf0bf7e77bdfe671b87f5eddcf1",
+    "native_cube_offsets_hex": [
+      "0x3c000",
+      "0x84000"
+    ],
+    "native_cube_shape": [
+      32,
+      32,
+      32
+    ],
+    "numeric_order": "Original source RGB8 planar cubes and GRB shaper banks; only smoothed formed-code/AP1 response tables are current catalogue assets."
+  },
+  "default_contract": "acescct-ap1-d60-tetrahedral-v1",
+  "prepared_grid": 65,
+  "source_contract": "frontier-density65-ap1-d60-v1",
+  "rights": "Derived numeric inputs from Fujifilm Frontier350/370 parameter data. Source availability is not redistribution permission; public asset clearance remains separate from local application verification.",
+  "formation_calibration": {
+    "fit": "A only; B shares relative formation with a source-defined native origin",
+    "reference": "Antitone Fuji Crystal Archive TypeII, Negative None, main ddf70454a37c30dfcf38678fb756ad5b61d5ee02, no output-Y anchor",
+    "matrix_rows": [
+      [
+        1.2931615073725646,
+        -0.2443091742997006,
+        -0.048852333072864115
+      ],
+      [
+        -0.27344530677611845,
+        1.28732324207888,
+        -0.013877935302761787
+      ],
+      [
+        -0.044913617986590146,
+        -0.08435370450480469,
+        1.129267322491395
+      ]
+    ],
+    "encoding": {
+      "codes_per_stop": 67.75451223731619,
+      "black_code": 206.3977579662653,
+      "knee": 0.02665880423285846,
+      "toe": 2.5,
+      "channel_code_offsets": [
+        0,
+        15.816032029689438,
+        15.3959029772098
+      ]
+    },
+    "density_objective": "three aggregate neutral features: midtone L mean and L/EV slope [-2,+2], lower L/EV slope [-5,-2]; no zero/black endpoint target",
+    "target_features": [
+      0.4766475820132716,
+      0.1655705889116214,
+      0.012700452937018982
+    ],
+    "zero_or_black_endpoint_target": false,
+    "palette_training": 120,
+    "held_out_palette": 216,
+    "photographic_optimization": false,
+    "toe_shape_support": "Antitone generic C-41 forward family; archived Portra 400/Ektar 100 Status-M curve study at 3f397897, docs/research/film-response-model-study.md; not scanner-density calibration."
+  },
+  "mode_origins": {
+    "A": 450,
+    "B": 512,
+    "translation_before_upper_limit": 62,
+    "parameter_file": "ez171autoc-nega.dat",
+    "parameter_sha256": "86605d6cac570ad2414eebe4cda2824392f34769037af7300091906f294a0736",
+    "parameter_offsets_hex": [
+      "0x2a",
+      "0x2c"
+    ],
+    "source_functions": [
+      "_lut3_1set at 0x100260a0",
+      "_SetCrt10bitLut at 0x10001180",
+      "_SetCrt3dLut at 0x10001230"
+    ],
+    "interpretation": "Relative source-mode origin; not a B brightness/colour fit or complete factory auto-setup emulation"
+  },
+  "response_derivation": {
+    "input_domain_RGB": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1023,
+        1023,
+        1023
+      ]
+    ],
+    "input_allocation": "uniform formed native code; preparation evaluates formation before sampling this source volume",
+    "output": "AP1 D60 authored rendering carrier",
+    "source_shaper_interpretation": "Monotone run-centre Hermite curves, original grey-knot ordinate, rational bounds 32..960; authored interpretation of source quantization",
+    "source_shaper_knots_GRB": [
+      [
+        410.43065207185845,
+        422.6037663707722,
+        424.35454914309963
+      ],
+      [
+        475.5513132216693,
+        488.6933467623055,
+        485.5754511774941
+      ]
+    ],
+    "cube_coordinate_factor": "(33/32)*31",
+    "encoded_continuation_width": 0.0009765625,
+    "inverse_reference": "Pinned OCIO2.6.0 sRGB100nit ACES inverse to AP1 before response smoothing",
+    "dense_grid": 129,
+    "Gaussian": {
+      "sigma_dense_grid_steps": 0.5,
+      "radius_dense_grid_steps": 2,
+      "boundary": "constant edge extension",
+      "space": "AP1 volume over formed code coordinates"
+    },
+    "final_grid": 65,
+    "downsampling": "even nodes",
+    "preparation_interpolation": "trilinear",
+    "spatial_blur": false,
+    "generator": "antitone-frontier-bake; user-supplied ColorData.dat and ez171autoc-nega.dat",
+    "asset_sha256": {
+      "density-a.f32.z": "d153baedbf256745f4ac3dad08f06f8b97492c2f0410bafe810fd574e97d3453",
+      "density-b.f32.z": "c5c9f5aef48cc74c9115a46957204516999c7e1bcb490aff132ddbee6e29bab2"
+    },
+    "raw_samples_sha256": {
+      "a": "2f4e4c71ca3fdfa893d2e38d24f67e108659be84a366bb093cc8bd459b65905d",
+      "b": "3c5fb1c8ff46540a3df25b21e755d11bd06229ab354e297e3cc74e03ed151f17"
+    }
+  }
+}

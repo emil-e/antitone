@@ -62,7 +62,7 @@ pub(super) fn bake(
     )?))
 }
 
-#[cfg(all(test, feature = "gpu"))]
+#[cfg(test)]
 pub(super) fn assert_material_vertices(
     lut: &Lut3D,
     response: impl Fn(DVec3) -> Result<DVec3, Error>,

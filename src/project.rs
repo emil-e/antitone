@@ -758,6 +758,7 @@ impl Project {
                 matches!(
                     asset.origin(),
                     crate::looks::LookOrigin::Photochemical { .. }
+                        | crate::looks::LookOrigin::Renderer { .. }
                 )
             }),
             "Film & paper slot requires material provenance",

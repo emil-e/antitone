@@ -1,5 +1,5 @@
-//! Supported formation/printing combinations; execution is an ordinary LUT asset.
-use super::{LookAsset, LookOrigin, monochrome, spektrafilm};
+//! Supported negative/media combinations and their numeric treatment preparation.
+use super::{LookAsset, LookOrigin, frontier, monochrome, spektrafilm};
 use crate::Error;
 use std::sync::atomic::AtomicBool;
 
@@ -41,17 +41,20 @@ impl From<monochrome::Negative> for Negative {
 pub enum Paper {
     Colour(spektrafilm::Paper),
     Monochrome(monochrome::Paper),
+    Frontier(frontier::Variant),
 }
 impl Paper {
     pub fn all() -> impl Iterator<Item = Self> {
         spektrafilm::Paper::all()
             .map(Self::Colour)
             .chain(monochrome::Paper::all().map(Self::Monochrome))
+            .chain(frontier::Variant::all().map(Self::Frontier))
     }
     pub fn name(self) -> &'static str {
         match self {
             Self::Colour(v) => v.name(),
             Self::Monochrome(v) => v.name(),
+            Self::Frontier(v) => v.name(),
         }
     }
     /// Current provider support, not a judgment of photographic plausibility.
@@ -75,6 +78,7 @@ impl From<monochrome::Paper> for Paper {
 pub enum Selection {
     Colour(spektrafilm::Selection),
     Monochrome(monochrome::Selection),
+    Frontier(frontier::Selection),
 }
 impl From<spektrafilm::Selection> for Selection {
     fn from(value: spektrafilm::Selection) -> Self {
@@ -89,6 +93,10 @@ impl From<monochrome::Selection> for Selection {
 impl Selection {
     pub fn new(negative: Option<Negative>, paper: Paper) -> Option<Self> {
         match (negative, paper) {
+            (None, Paper::Frontier(variant)) => {
+                Some(Self::Frontier(frontier::Selection { variant }))
+            }
+            (Some(_), Paper::Frontier(_)) => None,
             (None, Paper::Colour(paper)) => Some(
                 spektrafilm::Selection {
                     negative: None,
@@ -118,35 +126,41 @@ impl Selection {
         spektrafilm::Selection::from_origin(origin)
             .map(Self::Colour)
             .or_else(|| monochrome::Selection::from_origin(origin).map(Self::Monochrome))
+            .or_else(|| frontier::Selection::from_origin(origin).map(Self::Frontier))
     }
     pub fn origin(self) -> LookOrigin {
         match self {
             Self::Colour(v) => v.origin(),
             Self::Monochrome(v) => v.origin(),
+            Self::Frontier(v) => v.origin(),
         }
     }
     pub fn name(self) -> String {
         match self {
             Self::Colour(v) => v.name(),
             Self::Monochrome(v) => v.name(),
+            Self::Frontier(v) => v.name(),
         }
     }
     pub fn negative(self) -> Option<Negative> {
         match self {
             Self::Colour(v) => v.negative.map(Negative::Colour),
             Self::Monochrome(v) => v.negative.map(Negative::Monochrome),
+            Self::Frontier(_) => None,
         }
     }
     pub fn paper(self) -> Paper {
         match self {
             Self::Colour(v) => Paper::Colour(v.paper),
             Self::Monochrome(v) => Paper::Monochrome(v.paper),
+            Self::Frontier(v) => Paper::Frontier(v.variant),
         }
     }
     pub fn bake(self, size: u32, cancel: &AtomicBool) -> Result<LookAsset, Error> {
         match self {
             Self::Colour(v) => spektrafilm::Model::new(v, cancel)?.bake(size, cancel),
             Self::Monochrome(v) => monochrome::Model::new(v).bake(size, cancel),
+            Self::Frontier(v) => frontier::Model::new(v)?.bake(size, cancel),
         }
     }
 }
