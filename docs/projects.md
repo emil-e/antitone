@@ -22,7 +22,7 @@ Coupled grain/image-MTF and independently enabled halation belong to project out
 
 ## Embed accepted colour assets
 
-The project has independent optional `lut` and `film_and_paper` assets, evaluated in that order. Each embeds resolved numeric samples, domain, dimension, contract and provenance—not a source pathname or instructions requiring regeneration. Film & paper retains negative/media IDs and upstream/generator revisions as provenance, including when those IDs are absent from the current catalogue. Reopening uses the embedded samples. Catalogue changes, deleted imported files and evicted derived caches cannot upgrade a saved appearance.
+The project has independent optional `lut` and `film_and_paper` assets, evaluated in that order. Each embeds its resolved LUT samples, domain, dimension, contract and provenance—not a source pathname or instructions requiring regeneration. Imported and provider-generated assets use the same numeric representation. Film & paper retains negative/media IDs and upstream/generator revisions as provenance, including when those IDs are absent from the current catalogue. Reopening executes the embedded numbers. Catalogue changes, deleted imported files and evicted derived caches cannot upgrade a saved appearance.
 
 Pending preparation, errors, the session loaded-LUT list and GPU caches are transient; Save embeds only accepted assets. Malformed or unsupported assets reject. The two slots validate their source roles rather than silently swapping imported and material-derived treatments.
 

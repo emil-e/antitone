@@ -1,0 +1,7 @@
+# Frontier source-model controls
+
+`density-controls.json` records independent scalar-trial results for the formed-code/AP1 source model: 151 float32-rounded graded AP1 inputs, expected AP1 and selected sRGB/Display P3 outputs. Inputs cover black, grey, signed/HDR light, neutral exposure, a moderate colour grid, 18 near-black ray samples and two-sided approaches to source shaper knots. Provenance identifies the trial binary and smoothed source-volume payloads; no photographs or original software files are included.
+
+[Source tests](../../../src/looks/frontier/tests.rs) compare the preparation model's AP1 values with that independent trial, check A/B code placement and source-volume addressing, and verify the connection to shared LUT sampling at vertices. These are not exact off-grid expectations for the final creative cube.
+
+[Composition tests](../../../src/gpu/evaluation/reference_tests.rs) compare the prepared LUT's GPU execution with its scalar interpolation plus OCIO output for both targets. Shared analytic LUT fixtures test interpolation independently, including an unregistered provider's numeric content. Other cases cover scene bypass, sample flags, covered failure admission and immutable resource leases. [Preparation](../../../src/looks/authoring.rs) and [storage](../../../src/looks/storage.rs) tests protect source-independent reopening and exact sample bits. Composed editor cases exercise nondefault grading, selection, history, TIFF export and reopening.

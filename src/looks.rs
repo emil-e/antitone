@@ -1,4 +1,4 @@
-//! Scene-referred creative LUTs. Source provenance does not change execution.
+//! Immutable numeric colour treatments; provenance is separate from execution.
 use crate::{Error, photographic};
 use glam::DVec3;
 use std::sync::Arc;
@@ -7,6 +7,8 @@ pub use chain::LutChain;
 
 #[cfg(feature = "project")]
 pub mod authoring;
+#[cfg(feature = "project")]
+pub mod frontier;
 #[cfg(feature = "project")]
 mod lookup;
 #[cfg(feature = "project")]
@@ -202,6 +204,12 @@ impl Lut3D {
 )]
 pub enum LookOrigin {
     Imported,
+    Renderer {
+        renderer: String,
+        revision: String,
+        generator: String,
+        attribution: String,
+    },
     Photochemical {
         negative: Option<String>,
         paper: String,
@@ -249,6 +257,34 @@ impl LookOrigin {
                 "invalid photochemical attribution",
             )?;
         }
+        if let Self::Renderer {
+            renderer,
+            revision,
+            generator,
+            attribution,
+        } = self
+        {
+            let id = |x: &str| {
+                !x.is_empty()
+                    && x.len() <= 128
+                    && x.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            };
+            require(id(renderer), "invalid renderer identity")?;
+            require(
+                revision.len() == 64 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid renderer revision",
+            )?;
+            require(
+                !generator.is_empty()
+                    && generator.len() <= 128
+                    && !generator.chars().any(char::is_control)
+                    && !attribution.trim().is_empty()
+                    && attribution.len() <= 2048
+                    && !attribution.chars().any(char::is_control),
+                "invalid renderer provenance",
+            )?;
+        }
         Ok(())
     }
 }
@@ -271,14 +307,25 @@ impl LookAsset {
         Ok(Self { name, origin, lut })
     }
 
-    /// Explicit asset payload, conservatively charging shared LUT samples without deduplication.
+    /// Explicit asset payload, conservatively charging shared numbers without deduplication.
     pub fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.name.capacity()
+            + self.numeric_bytes()
             + std::mem::size_of::<Lut3D>()
-            + self.lut.byte_len()
             + match &self.origin {
                 LookOrigin::Imported => 0,
+                LookOrigin::Renderer {
+                    renderer,
+                    revision,
+                    generator,
+                    attribution,
+                } => {
+                    renderer.capacity()
+                        + revision.capacity()
+                        + generator.capacity()
+                        + attribution.capacity()
+                }
                 LookOrigin::Photochemical {
                     negative,
                     paper,
@@ -305,6 +352,28 @@ impl LookAsset {
 
     pub fn lut(&self) -> &Arc<Lut3D> {
         &self.lut
+    }
+    pub fn id(&self) -> LookId {
+        self.lut.id()
+    }
+    pub fn numeric_bytes(&self) -> usize {
+        self.lut.byte_len()
+    }
+    #[cfg(feature = "editor")]
+    pub(crate) fn allocation(&self) -> *const () {
+        self.lut.nodes().as_ptr().cast()
+    }
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_bytes(&self) -> u64 {
+        (self.lut.nodes().len() * 16) as u64
+    }
+    #[cfg(feature = "project")]
+    pub(crate) fn renamed(&self, name: &str) -> Self {
+        Self {
+            name: name.into(),
+            origin: self.origin.clone(),
+            lut: self.lut.clone(),
+        }
     }
 
     /// `.cube` carries no reliable colour-space declaration. Import explicitly means CONTRACT.
@@ -576,7 +645,7 @@ mod tests {
         let asset =
             LookAsset::new("one".into(), LookOrigin::Imported, Arc::new(a.clone())).unwrap();
         let other = LookAsset::new("two".into(), LookOrigin::Imported, Arc::new(a)).unwrap();
-        assert_eq!(asset.lut().id(), other.lut().id());
+        assert_eq!(asset.id(), other.id());
         assert_ne!(asset, other);
     }
 }

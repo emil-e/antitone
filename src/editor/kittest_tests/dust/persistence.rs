@@ -480,7 +480,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .unwrap()
                 .clone()
         });
-        assert_eq!(view.processing().look_id(), Some(look.lut().id()));
+        assert_eq!(view.processing().look_id(), Some(look.id()));
         let scopes::ScopeInput { view: scope, .. } =
             h.read(|editor| editor.scope_request().unwrap());
         assert!(Arc::ptr_eq(&scope, &view));
@@ -511,7 +511,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .displayed
                 .as_ref()
                 .unwrap();
-            assert_eq!(reference.processing().look_id(), Some(look.lut().id()));
+            assert_eq!(reference.processing().look_id(), Some(look.id()));
             assert!(Arc::ptr_eq(
                 &reference.image,
                 &editor

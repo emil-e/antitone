@@ -14,6 +14,7 @@ unsafe extern "C" {
     fn antitone_ocio_create(target: u32, error: *mut c_char, size: usize) -> *mut c_void;
     fn antitone_ocio_reference_create(
         parameters: *const f64,
+        inverse: u32,
         error: *mut c_char,
         size: usize,
     ) -> *mut c_void;
@@ -176,18 +177,44 @@ impl CpuRenderer {
 
     /// Developer-only fixed-reference forward transform, without selected-output range clamps.
     pub fn new_reference(parameters: [f64; 9]) -> Result<Self, Error> {
+        Self::reference(parameters, false)
+    }
+
+    /// Developer-only inverse: linear reference RGB to AP1, not source-scan inversion.
+    /// Use `apply_unbounded`; its AP1 results are not limited display channels.
+    pub fn new_inverse_reference(parameters: [f64; 9]) -> Result<Self, Error> {
+        Self::reference(parameters, true)
+    }
+
+    fn reference(parameters: [f64; 9], inverse: bool) -> Result<Self, Error> {
         let mut error = [0; 512];
         // The native constructor reads exactly nine doubles during this call.
         let handle = unsafe {
-            antitone_ocio_reference_create(parameters.as_ptr(), error.as_mut_ptr(), error.len())
+            antitone_ocio_reference_create(
+                parameters.as_ptr(),
+                u32::from(inverse),
+                error.as_mut_ptr(),
+                error.len(),
+            )
         };
         Ok(Self {
             handle: NonNull::new(handle).ok_or_else(|| diagnostic(&error))?,
         })
     }
     pub fn render(&self, working_ap1: &[DVec3]) -> Result<Vec<Vec3>, Error> {
-        let mut pixels = Vec::with_capacity(working_ap1.len());
-        for input in working_ap1 {
+        let values = self.apply_unbounded(working_ap1)?;
+        for value in &values {
+            for channel in value.to_array() {
+                validate_channel(f64::from(channel))?;
+            }
+        }
+        Ok(values)
+    }
+
+    /// Apply a pinned diagnostic reference, preserving signed/HDR values but rejecting failures.
+    pub fn apply_unbounded(&self, input: &[DVec3]) -> Result<Vec<Vec3>, Error> {
+        let mut pixels = Vec::with_capacity(input.len());
+        for input in input {
             for (channel, value) in input.to_array().into_iter().enumerate() {
                 if !value.is_finite() {
                     return Err(Error::NonFinitePixel { channel });
@@ -214,8 +241,10 @@ impl CpuRenderer {
             return Err(diagnostic(&error));
         }
         for pixel in &pixels {
-            for value in pixel {
-                validate_channel(f64::from(*value))?;
+            for (channel, value) in pixel.iter().enumerate() {
+                if !value.is_finite() {
+                    return Err(Error::NonFinitePixel { channel });
+                }
             }
         }
         Ok(pixels.into_iter().map(Vec3::from_array).collect())

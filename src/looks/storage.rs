@@ -40,20 +40,21 @@ fn write_samples(output: impl Write, nodes: &[[f32; 3]]) -> std::io::Result<()> 
 
 impl Serialize for LookAsset {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let lut = self.lut();
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        write_samples(&mut encoder, self.lut.nodes()).map_err(serde::ser::Error::custom)?;
+        write_samples(&mut encoder, lut.nodes()).map_err(serde::ser::Error::custom)?;
         let bytes = encoder.finish().map_err(serde::ser::Error::custom)?;
-        let (domain_min, domain_max) = self.lut.domain();
+        let (domain_min, domain_max) = lut.domain();
         Embedded {
             contract: CONTRACT.into(),
             name: self.name.clone(),
             origin: self.origin.clone(),
-            size: self.lut.size(),
+            size: lut.size(),
             domain_min,
             domain_max,
             input_range: input_range(),
             encoding: ENCODING.into(),
-            content_id: self.lut.id().to_string(),
+            content_id: lut.id().to_string(),
             samples: STANDARD.encode(bytes),
         }
         .serialize(serializer)
@@ -145,21 +146,21 @@ mod tests {
         assert_eq!(restored, original);
         assert_eq!(
             restored
-                .lut
+                .lut()
                 .nodes()
                 .iter()
                 .flatten()
                 .map(|v| v.to_bits())
                 .collect::<Vec<_>>(),
             original
-                .lut
+                .lut()
                 .nodes()
                 .iter()
                 .flatten()
                 .map(|v| v.to_bits())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(restored.lut.id(), original.lut.id());
+        assert_eq!(restored.id(), original.id());
     }
 
     #[test]
@@ -221,17 +222,17 @@ mod tests {
             "stored format is exact RGB float32 little-endian, including the final partial buffer"
         );
         let restored: LookAsset = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(restored.lut.id(), original.lut.id());
+        assert_eq!(restored.id(), original.id());
         assert_eq!(
             restored
-                .lut
+                .lut()
                 .nodes()
                 .iter()
                 .flatten()
                 .map(|v| v.to_bits())
                 .collect::<Vec<_>>(),
             original
-                .lut
+                .lut()
                 .nodes()
                 .iter()
                 .flatten()
@@ -251,8 +252,8 @@ mod tests {
         let input = DVec3::new(-10., 0.4, 10.);
         let edge = DVec3::new(-0.5, 0.4, 1.);
         assert_eq!(
-            restored.lut.sample_encoded(input).unwrap(),
-            restored.lut.sample_encoded(edge).unwrap()
+            restored.lut().sample_encoded(input).unwrap(),
+            restored.lut().sample_encoded(edge).unwrap()
         );
     }
 

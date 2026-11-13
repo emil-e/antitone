@@ -393,10 +393,10 @@ impl RenderedView {
         self.capture.look_id()
     }
 
-    pub fn lut_resources(&self) -> Vec<Arc<super::lut3d::Lut>> {
+    pub fn look_resources(&self) -> Vec<Arc<super::lut3d::Lut>> {
         self.group
             .as_ref()
-            .map_or_else(Vec::new, |binding| binding.lut_resources())
+            .map_or_else(Vec::new, |binding| binding.look_resources())
     }
 
     /// Thumbnail payload beyond the target image, including shared parents and LUT storage.

@@ -1,5 +1,6 @@
 use super::*;
 use crate::looks::spektrafilm::{Negative, Paper, Selection};
+mod frontier;
 mod monochrome;
 mod supersession;
 

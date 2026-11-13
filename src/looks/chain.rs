@@ -16,12 +16,12 @@ impl LutChain {
     pub fn id(&self) -> Option<LookId> {
         match (&self.lut, &self.film_and_paper) {
             (None, None) => None,
-            (Some(asset), None) | (None, Some(asset)) => Some(asset.lut().id()),
+            (Some(asset), None) | (None, Some(asset)) => Some(asset.id()),
             (Some(first), Some(second)) => {
                 let mut hash = blake3::Hasher::new();
                 hash.update(b"ordered-lut-chain-v1");
-                hash.update(&first.lut().id().bytes());
-                hash.update(&second.lut().id().bytes());
+                hash.update(&first.id().bytes());
+                hash.update(&second.id().bytes());
                 Some(LookId(*hash.finalize().as_bytes()))
             }
         }

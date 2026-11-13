@@ -158,44 +158,7 @@ pub fn display_code(target: crate::rendering::OutputTarget) -> Result<Arc<str>, 
     cache
         .get_or_init(|| {
             let code = crate::renderer::target_function_glsl(target)?;
-            // Transcode the same adapted pinned functions, not a hand-written ACES approximation.
-            let source = format!(
-                "#version 450\n{}\n{code}\nvoid main() {{}}",
-                "layout(set=0,binding=3) uniform sampler aces_sampler;"
-            );
-            let options = naga::front::glsl::Options::from(naga::ShaderStage::Compute);
-            let mut module = naga::front::glsl::Frontend::default()
-                .parse(&options, &source)
-                .map_err(|e| Error::Gpu(format!("ACES callable GLSL: {e:?}")))?;
-            module.entry_points.clear();
-            for (_, function) in module.functions.iter_mut() {
-                if function.name.as_deref() == Some("main") {
-                    function.name = Some("aces_library_entry_stub".into());
-                }
-                // The pinned table textures have one mip level. Explicit level zero gives the
-                // same lookup in compute without fragment-only implicit derivatives.
-                for (_, expression) in function.expressions.iter_mut() {
-                    if let naga::Expression::ImageSample { level, .. } = expression
-                        && matches!(level, naga::SampleLevel::Auto)
-                    {
-                        *level = naga::SampleLevel::Zero;
-                    }
-                }
-            }
-            let mut validator = naga::valid::Validator::new(
-                naga::valid::ValidationFlags::all(),
-                naga::valid::Capabilities::all(),
-            );
-            let info = validator
-                .validate(&module)
-                .map_err(|e| Error::Gpu(format!("ACES callable validation: {e:?}")))?;
-            naga::back::wgsl::write_string(
-                &module,
-                &info,
-                naga::back::wgsl::WriterFlags::EXPLICIT_TYPES,
-            )
-            .map(Arc::from)
-            .map_err(|e| Error::Gpu(format!("ACES callable WGSL: {e}")))
+            crate::gpu::aces::library(&code)
         })
         .clone()
 }

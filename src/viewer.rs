@@ -258,7 +258,7 @@ impl GpuImage {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
         self.processing
             .as_ref()
             .map_or_else(Vec::new, |processing| {
@@ -267,7 +267,7 @@ impl GpuImage {
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .map_or_else(Vec::new, |binding| binding.lut_resources())
+                    .map_or_else(Vec::new, |binding| binding.look_resources())
             })
     }
 

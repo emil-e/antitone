@@ -16,7 +16,7 @@ impl Reference {
         let mut image = Some(image);
         while let Some(node) = image {
             if let Some(lut) =
-                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<LutOperation>()
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<LookOperation>()
             {
                 bytes += lut.look.byte_len();
             }
@@ -63,7 +63,7 @@ impl Reference {
         let luts = if target.is_some() {
             assets
                 .assets()
-                .map(|asset| renderer.look_resource(device, asset))
+                .map(|asset| renderer.look_resource(device, asset.lut()))
                 .collect::<Result<_, _>>()?
         } else {
             Vec::new()
@@ -79,7 +79,7 @@ impl Reference {
         self.id
     }
 
-    pub fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
         self.luts.clone()
     }
 
@@ -99,18 +99,18 @@ impl Reference {
             image = Value::from_operation(
                 image.domain,
                 Some(image.clone()),
-                LutOperation { look: lut.clone() },
+                LookOperation { look: lut.clone() },
             );
         }
         image
     }
 }
 
-struct LutOperation {
+struct LookOperation {
     look: Arc<crate::gpu::lut3d::Lut>,
 }
 
-impl Operation for LutOperation {
+impl Operation for LookOperation {
     fn key(&self) -> Option<RetainedKey> {
         {
             #[derive(Debug, PartialEq)]
