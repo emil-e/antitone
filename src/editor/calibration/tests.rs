@@ -99,7 +99,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
 }
 
 #[test]
-fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer_wb() {
+fn gamma_picker_survives_history_and_captures_the_restored_stage_at_apply() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/raw/illuminated-patches.dng");
     let mut editor = setup(path.to_str().unwrap());
@@ -149,11 +149,37 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     assert!((expected.tint - reference.tint).abs() < 1e-6);
     let before = (editor.document.project.roll, editor.photo_settings());
     assert_ne!(expected, editor.balance());
+    let mut edit = editor.edit_project("Dmin").unwrap();
+    let changed = input.calibration().unwrap().dmin * DVec3::new(1.1, 0.9, 1.);
+    edit.update(|project| project.set_dmin(Some(changed.to_array())));
+    editor.commit_project(edit).unwrap();
+    let stale = query::gamma(
+        editor.source_services.as_ref().unwrap(),
+        &mut measurement::capture_scan(&editor).unwrap(),
+        region,
+        editor
+            .positive_recipe(
+                editor.input(),
+                editor.document.project.roll,
+                editor.photo_settings(),
+            )
+            .unwrap(),
+        &|| false,
+    )
+    .unwrap();
+    assert_ne!(
+        stale, expected,
+        "the two capture times must fit different inputs"
+    );
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor.set_test_pick_region(Some(region));
+            editor.restore_history(Direction::Undo, cx);
+            assert_eq!(editor.input(), input);
+            assert_eq!(editor.test_pick(), Some(crate::editor::calibration::GAMMA));
+            assert_eq!(editor.test_pick_region(), Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| {

@@ -128,6 +128,47 @@ fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
 }
 
 #[test]
+fn history_updates_the_retained_reviews_photo_reset_consequence() {
+    let editor = ready_state();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            let source = editor.document.visit.current_source.unwrap();
+            let mut edit = editor.edit_photo("Photo grade").unwrap();
+            edit.update(|project| {
+                project
+                    .source_mut(source)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_mut()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo
+                    .exposure = 0.75;
+            });
+            editor.commit_project(edit).unwrap();
+            review_tests::prepared(editor, cx);
+            assert!(editor.analysis_replaces_photos());
+            editor.restore_history(crate::editor::history::Direction::Undo, cx);
+            assert!(editor.document.analysis_review().is_some());
+            assert!(!editor.analysis_replaces_photos());
+            editor.restore_history(crate::editor::history::Direction::Redo, cx);
+            assert!(editor.document.analysis_review().is_some());
+            assert!(editor.analysis_replaces_photos());
+            assert!(
+                editor
+                    .current_tool()
+                    .unwrap()
+                    .presentation()
+                    .warning
+                    .is_some()
+            );
+            editor.end_analysis_review(cx);
+        });
+    });
+}
+
+#[test]
 fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
     for index in 0..3 {
         let editor = ready_state();
@@ -145,10 +186,7 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
 
                 let before = editor.document.state.project.clone();
                 review_tests::prepared(editor, cx);
-                assert!(
-                    editor.document.analysis_review().unwrap().replaces_photos,
-                    "record {index}"
-                );
+                assert!(editor.analysis_replaces_photos(), "record {index}");
                 let ctx = egui::Context::default();
                 super::super::super::tests::app_frame(editor, &ctx, vec![]);
                 let labels = super::super::super::tests::app_frame(editor, &ctx, vec![]);
@@ -182,7 +220,7 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
             editor.document.state.project.sources[0].adjustment_layers = Some(empty);
             let before = editor.document.state.project.clone();
             review_tests::prepared(editor, cx);
-            assert!(!editor.document.analysis_review().unwrap().replaces_photos);
+            assert!(!editor.analysis_replaces_photos());
             editor.end_analysis_review(cx);
             assert_eq!(editor.document.state.project, before);
         });

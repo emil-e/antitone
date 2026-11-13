@@ -13,14 +13,23 @@ fn open(app: &mut TestApplication<'_, Editor>) {
 }
 
 #[test]
-fn confirmation_freezes_reviewed_areas_and_keeps_numerical_capture_out_of_the_review() {
+fn confirmation_after_history_freezes_reviewed_areas_and_captures_the_restored_document() {
     let sources = source_loading::SourceLoader::new();
-    let editor = fixture(sources.clone());
+    let mut editor = fixture(sources.clone());
     let before = editor.document.project.clone();
+    let mut edit = editor.edit_project("Grain").unwrap();
+    edit.update(|project| project.output.grain.amount = 0.12);
+    editor.commit_project(edit).unwrap();
     with_application(editor, |app| {
         open(app);
         let (reviewed, mut reply) = app.enter(|editor, cx| {
             let reviewed = editor.document.analysis_review().unwrap().approved.clone();
+            editor.restore_history(Direction::Undo, cx);
+            assert_eq!(editor.document.project, before);
+            assert_eq!(
+                editor.document.analysis_review().unwrap().approved.entries,
+                reviewed.entries
+            );
             let reply = testing::fitting(editor);
             editor.confirm_analysis_review(cx);
             assert!(editor.analysis_fitting(), "{}", editor.status);

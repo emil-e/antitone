@@ -1,4 +1,5 @@
 use super::*;
+mod history_tests;
 mod latency;
 use crate::{dust_repair::RepairId, editor::history::Direction};
 

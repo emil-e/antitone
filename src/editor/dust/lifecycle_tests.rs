@@ -71,7 +71,7 @@ fn viewer_recipes_freeze_effective_dust_drafts_without_changing_accepted_or_othe
     {
         let session = e.dust_session().unwrap();
         session.edit.borrow_mut().donor_draft = Some(DonorDraft {
-            repair: RepairId(1),
+            previous: e.dust_repairs(source).unwrap().repairs()[0].clone(),
             offset: [64, 0],
             drag: None,
         });

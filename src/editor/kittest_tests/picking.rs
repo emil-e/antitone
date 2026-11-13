@@ -1,5 +1,7 @@
 use super::*;
 
+mod history_tests;
+
 pub(super) fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
     let (tab, label) = match kind {
         PickerCase::Dmin => ("Roll", "Pick Dmin (film base)"),

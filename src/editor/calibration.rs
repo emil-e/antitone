@@ -63,12 +63,16 @@ pub(super) fn reference_control(
 }
 
 pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, DMIN, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, services) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -77,9 +81,6 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
         }
     };
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, DMIN).await else {
-        return;
-    };
     let Some(value) = measurement::run(&cx, DMIN.label, async move {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
@@ -100,12 +101,16 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
 }
 
 pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, DMAX, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, services) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -114,9 +119,6 @@ pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
         }
     };
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, DMAX).await else {
-        return;
-    };
     let Some(value) = measurement::run(&cx, DMAX.label, async move {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
@@ -137,7 +139,7 @@ pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
 }
 
 pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, GAMMA, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
@@ -149,7 +151,11 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
                 )
                 .map_err(|error| error.to_string())?,
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, services, input) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -158,9 +164,6 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
         }
     };
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, GAMMA).await else {
-        return;
-    };
     let Some(value) = measurement::run(&cx, GAMMA.label, async move {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {

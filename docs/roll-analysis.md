@@ -97,7 +97,7 @@ The shared baseline still depends on the roll's scenes and consistent scanning e
 
 ## Review uses finished detection
 
-The document-placed [Analyze tool](../src/editor/analysis.rs) owns its unfinished task, source-keyed sampling edits, gestures and temporary view. Its task awaits shared detection and review confirmation before fitting. Confirmation snapshots the areas and displayed source; fitting remains provisional until validated installation. Browsing replaces the photo visit while the tool's drafts survive ([architecture](architecture.md#scopes-nested-disposable-ui-state) owns that model). Reusable original sampling inputs belong to the document; active fitting retains its own input snapshot.
+The document-placed [Analyze tool](../src/editor/analysis.rs) owns its unfinished task, source-keyed sampling edits, gestures and temporary view. Its task awaits shared detection and review confirmation before fitting. Confirmation snapshots the accepted document, areas and displayed source; fitting remains provisional until validated installation. Browsing replaces the photo visit while the tool's drafts survive ([architecture](architecture.md#scopes-nested-disposable-ui-state) owns that model). Reusable original sampling inputs belong to the document; active fitting retains its own input snapshot.
 
 Shared preparation captures the camera raster while each original is available, then releases its lease. Document-owned rasters are keyed by source development, independent of reviewed regions, flat-field choices and the optional full-image LRU. Closing the document or removing a source releases them. Payload is at most 12 MiB per source, excluding ownership overhead; reported retained bytes are not process memory.
 

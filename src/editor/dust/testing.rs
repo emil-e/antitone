@@ -28,7 +28,12 @@ impl DocumentScope {
     }
 
     pub(in crate::editor) fn dust_donor_draft(&self) -> Option<DonorDraft> {
-        self.dust_fixture()?.interaction.edit.borrow().donor_draft
+        self.dust_fixture()?
+            .interaction
+            .edit
+            .borrow()
+            .donor_draft
+            .clone()
     }
 }
 

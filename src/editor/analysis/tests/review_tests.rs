@@ -271,10 +271,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
 
                 let before = editor.document.state.project.clone();
                 prepared(editor, cx);
-                assert!(
-                    editor.document.analysis_review().unwrap().replaces_photos,
-                    "field {field}"
-                );
+                assert!(editor.analysis_replaces_photos(), "field {field}");
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.state.project, before);
                 assert!(!editor.analysis_fitting() && editor.document.analysis_review().is_none());
@@ -366,7 +363,7 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
             editor.document.project.roll.exposure = 1.;
             editor.document.project.roll.wb.tint = 0.2;
             prepared(editor, cx);
-            assert!(!editor.document.analysis_review().unwrap().replaces_photos);
+            assert!(!editor.analysis_replaces_photos());
             assert!(!editor.analysis_fitting());
             editor.confirm_analysis_review(cx);
             assert_eq!(

@@ -242,7 +242,7 @@ impl Editor {
 }
 
 pub(super) async fn pick(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, DISPLAY, |editor| {
         let source = editor
             .document
             .visit
@@ -256,7 +256,11 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
                 .map_err(|error| error.to_string())?,
             editor.source_services.clone(),
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, source, recipe, services) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -266,9 +270,6 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
     };
     let captured = recipe.clone();
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, DISPLAY).await else {
-        return;
-    };
     let Some(evidence) = measurement::run(&cx, DISPLAY.label, async move {
         let image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {

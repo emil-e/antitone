@@ -114,13 +114,17 @@ impl LayerInput {
 }
 
 pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, ROLL, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
             roll_input(editor)?,
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, services, input) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -129,9 +133,6 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
         }
     };
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, ROLL).await else {
-        return;
-    };
     let Some(value) = measurement::run(&cx, ROLL.label, async move {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
@@ -154,7 +155,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
 }
 
 pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
-    let captured = cx.read(|editor| {
+    let Some((region, captured)) = picking::pick_with(&cx, LAYER, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
             editor.source_services.clone(),
@@ -168,7 +169,11 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
                 editor.adjustment_layer_target(),
             ),
         ))
-    });
+    })
+    .await
+    else {
+        return;
+    };
     let (image, services, input, target) = match captured {
         Ok(input) => input,
         Err(error) => {
@@ -177,9 +182,6 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
         }
     };
     let worker_cx = cx.clone();
-    let Some(region) = picking::pick(&cx, LAYER).await else {
-        return;
-    };
     let Some(value) = measurement::run(&cx, LAYER.label, async move {
         let mut image = image.await?;
         measurement::query(&worker_cx, move |cancelled| {

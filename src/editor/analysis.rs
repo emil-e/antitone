@@ -322,6 +322,20 @@ impl Editor {
         });
     }
 
+    pub(super) fn analysis_replaces_photos(&self) -> bool {
+        self.document.project.order.iter().any(|id| {
+            self.document.project.source(*id).is_ok_and(|source| {
+                source.grade_snapshot().is_ok_and(|snapshot| {
+                    !snapshot.layers().is_empty()
+                        && snapshot.layers()
+                            != [crate::adjustment_layers::AdjustmentLayer::global(
+                                AdjustmentLayerSettings::default(),
+                            )]
+                })
+            })
+        })
+    }
+
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.interaction_blocked()
             || self.selected_area().is_none()
@@ -469,7 +483,7 @@ impl tool::Tool for AnalyzeTool {
                     if missing == 1 { "" } else { "s" }
                 ));
             }
-            if review.replaces_photos {
+            if editor.analysis_replaces_photos() {
                 let consequence =
                     "Analyze will replace Photo layers and remove any adjustment layers and masks.";
                 if let Some(warning) = &mut warning {
@@ -774,7 +788,6 @@ pub(super) struct Review {
     pub document: Document,
     pub approved: Approved,
     pub picture: bool,
-    pub replaces_photos: bool,
 }
 
 fn review_label(canvas: egui::Rect, q: [egui::Pos2; 4], picture: bool) -> egui::Rect {
@@ -889,22 +902,10 @@ impl AnalyzeTool {
     ) -> Option<futures_channel::oneshot::Receiver<Confirmation>> {
         match result {
             Ok(Some(approved)) => {
-                let replaces_photos = request.document.project.order.iter().any(|id| {
-                    request.document.project.source(*id).is_ok_and(|s| {
-                        s.grade_snapshot().is_ok_and(|snapshot| {
-                            !snapshot.layers().is_empty()
-                                && snapshot.layers()
-                                    != [crate::adjustment_layers::AdjustmentLayer::global(
-                                        AdjustmentLayerSettings::default(),
-                                    )]
-                        })
-                    })
-                });
                 self.review = Some(Review {
                     document: request.document.clone(),
                     approved,
                     picture: false,
-                    replaces_photos,
                 });
                 editor.tab = 0;
                 self.visit = Some(editor.document.visit.view);
@@ -996,7 +997,7 @@ impl AnalyzeTool {
         let Some(review) = &self.review.as_ref() else {
             return;
         };
-        if let Err(error) = verify_areas(&review.document, Some(&review.approved)) {
+        if let Err(error) = verify_areas(&editor.document.capture(), Some(&review.approved)) {
             editor.status = format!("Cannot analyze: {error}. Grade unchanged.");
             return;
         }
@@ -1386,6 +1387,7 @@ struct FitInput {
 }
 
 pub(super) struct Confirmation {
+    document: Document,
     selected: super::SourceId,
     areas: Approved,
     fit: FitInput,
@@ -1436,6 +1438,7 @@ async fn await_review(
     if let Some(decision) = decision
         && let Ok(confirmation) = decision.await
     {
+        request.document = confirmation.document;
         request.selected = confirmation.selected;
         request.areas = Some(confirmation.areas);
         fit_and_accept(request, confirmation.fit, cancelled, cx).await;
@@ -1659,6 +1662,7 @@ impl AnalyzeTool {
         };
         let decision = self.operation.decision.take().unwrap();
         let _ = decision.send(Confirmation {
+            document: editor.document.capture(),
             selected: editor.document.visit.current_source.expect("review source"),
             areas,
             fit,

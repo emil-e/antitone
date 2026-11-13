@@ -1,4 +1,5 @@
 use super::*;
+mod history_tests;
 mod rapid;
 use crate::dust_repair::SearchOutcome;
 
@@ -90,7 +91,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             assert!(e.dust_search_pending());
             assert!(e.dust_donor_regions().is_empty());
             assert!(!e.file_available());
-            assert!(!e.history_available());
+            assert!(e.history_available());
             assert_eq!(e.history_label(history::Direction::Undo), None);
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("pending.antitone");
@@ -497,7 +498,6 @@ fn retirement_drops_search_owner_without_borrowing_captured_edits() {
                         }
                         assert!(interaction.upgrade().is_none());
                         assert!(!e.dusting());
-                        assert!(!e.dust_history_draft());
                         assert!(!e.dust_search_pending());
                         assert!(e.pending_dust_strokes().is_empty());
                         assert_eq!(e.effective_dust_repairs(source), accepted);
@@ -822,14 +822,12 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
 }
 
 #[test]
-fn pending_search_blocks_undo_then_one_completed_stroke_round_trips_without_a_provisional_entry() {
+fn one_completed_stroke_round_trips_without_a_provisional_entry() {
     let e = coherent_editor();
     with_search(e, |app, gate| {
         let before = app.read(|e| e.document.state.project.clone());
         app.enter(|e, cx| {
             queue(e, [50, 50], cx);
-            e.restore_history(history::Direction::Undo, cx);
-            assert!(!e.document.write.pending());
             assert_eq!(e.document.state.project, before);
         });
         gate.next(app)
