@@ -154,6 +154,10 @@ impl RetainedBuffer {
             publication: std::sync::Mutex::new(None),
         }
     }
+    pub(super) fn image(&self) -> &Arc<super::ImageValue> {
+        &self.image
+    }
+
     pub fn ready(&self) -> bool {
         self.admitted && self.ready.load(Ordering::Acquire)
     }

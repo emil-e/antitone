@@ -19,6 +19,15 @@ impl Context {
         cancelled: impl Fn() -> bool,
         consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
+        if cancelled() {
+            return Ok(None);
+        }
+        evaluation
+            .job
+            .materializations()
+            .cloned()
+            .unwrap_or_else(|| self.materializations())
+            .requested(evaluation.job.image(), evaluation.job.region());
         self.read_in(
             (queue, gate),
             evaluation,

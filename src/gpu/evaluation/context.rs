@@ -189,7 +189,9 @@ impl Context {
                 "record-only execution requires one bounded tile",
             ));
         }
-        Executor::with_scope(self.programs.clone(), scope).prepare(&self.device, plan)
+        Ok(Executor::with_scope(self.programs.clone(), scope)
+            .prepare(&self.device, plan)?
+            .with_request(evaluation.job.image(), evaluation.job.region()))
     }
 
     #[cfg(feature = "render")]
@@ -243,7 +245,9 @@ impl Context {
             .with_supplied(supplied.into())
             .with_materializations(scope.clone());
         let plan = evaluation.job.texture_plan(texture)?;
-        Executor::with_scope(self.programs.clone(), scope).prepare(&self.device, plan)
+        Ok(Executor::with_scope(self.programs.clone(), scope)
+            .prepare(&self.device, plan)?
+            .with_request(evaluation.job.image(), evaluation.job.region()))
     }
 
     pub(crate) fn record_work(
@@ -329,7 +333,16 @@ impl Context {
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),
     {
-        let mut executor = self.executor();
+        if cancelled() {
+            return Ok(None);
+        }
+        let scope = evaluation
+            .job
+            .materializations()
+            .cloned()
+            .unwrap_or_else(|| self.materializations());
+        scope.requested(evaluation.job.image(), evaluation.job.region());
+        let mut executor = Executor::with_scope(self.programs.clone(), scope);
         let mut total = WorkCounts::default();
         let mut plans = evaluation.plans();
         loop {

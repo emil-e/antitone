@@ -233,6 +233,7 @@ pub struct Executor {
     programs: Arc<Programs>,
     pool: Vec<Option<Allocation>>,
     retained: Vec<Arc<RetainedBuffer>>,
+    used_images: Vec<Arc<ImageValue>>,
     scope: Materializations,
     pub(super) working: HostWorkingSet,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
@@ -269,6 +270,7 @@ impl Executor {
             programs,
             pool: Vec::new(),
             retained: Vec::new(),
+            used_images: Vec::new(),
             scope,
             working: HostWorkingSet::default(),
             #[cfg(all(test, target_os = "macos", feature = "export"))]
@@ -955,6 +957,11 @@ impl Executor {
         for value in &self.retained {
             value.submitted();
         }
+        self.scope.used_many(
+            self.used_images
+                .iter()
+                .chain(self.retained.iter().map(|value| value.image())),
+        );
     }
 
     pub fn prepare(mut self, device: &wgpu::Device, plan: Plan) -> Result<Recorded, Error> {
@@ -988,6 +995,7 @@ impl Executor {
             executor: self,
             plan,
             preparation,
+            relevance: None,
         })
     }
 
@@ -1018,6 +1026,21 @@ impl Executor {
         self.pool.resize_with(tile.slots.len(), || None);
 
         self.retained.clear();
+        self.used_images.clear();
+        for storage in &tile.slots {
+            if let Storage::ResidentBuffer(image) = storage {
+                self.used_images.push(image.clone());
+            }
+        }
+        for work in &tile.fragment.work {
+            if let Work::Compute { bindings, .. } | Work::Render { bindings, .. } = work {
+                for (_, binding) in bindings {
+                    if let Binding::Shared(Shared::Image { image, .. }) = binding {
+                        self.used_images.push(image.clone());
+                    }
+                }
+            }
+        }
         for (index, storage) in tile.slots.iter().enumerate() {
             if self.pool[index]
                 .as_ref()
@@ -1169,9 +1192,15 @@ pub(crate) struct Recorded {
     executor: Executor,
     plan: Plan,
     pub(super) preparation: WorkCounts,
+    relevance: Option<super::materializations::Relevance>,
 }
 
 impl Recorded {
+    pub(super) fn with_request(mut self, value: &value::Value, region: CellRegion) -> Self {
+        self.relevance = Some(super::materializations::Relevance::new(value, region));
+        self
+    }
+
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn scratch_bytes(&self) -> u64 {
         self.plan.peak_scratch_bytes
@@ -1337,6 +1366,9 @@ impl Recorded {
     }
 
     pub fn submitted(&self) {
+        if let Some(relevance) = &self.relevance {
+            self.executor.scope.refresh(relevance);
+        }
         self.executor.submitted();
     }
 

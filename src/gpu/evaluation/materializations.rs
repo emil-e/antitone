@@ -13,6 +13,8 @@ use std::{
     task::{Context as TaskContext, Poll},
 };
 
+mod relevance;
+pub(super) use relevance::Relevance;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
@@ -582,30 +584,20 @@ impl Materializations {
     pub(super) fn ready<D: Any + Send + Sync>(&self, key: &RetainedKey) -> Vec<Image<D>> {
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
-        let found: Vec<_> = entries
+        entries
             .iter()
-            .enumerate()
-            .filter_map(|(index, entry)| {
+            .rev()
+            .filter_map(|entry| {
                 if entry.key != *key {
                     return None;
                 }
-                Some((
-                    index,
-                    Image {
-                        identity: entry.key.clone(),
-                        descriptor: entry.descriptor.clone().downcast::<D>().ok()?,
-                        image: entry.value.image()?,
-                    },
-                ))
+                Some(Image {
+                    identity: entry.key.clone(),
+                    descriptor: entry.descriptor.clone().downcast::<D>().ok()?,
+                    image: entry.value.image()?,
+                })
             })
-            .collect();
-        let recent: Vec<_> = found
-            .iter()
-            .rev()
-            .map(|(index, _)| entries.remove(*index).unwrap())
-            .collect();
-        entries.extend(recent.into_iter().rev());
-        found.into_iter().rev().map(|(_, image)| image).collect()
+            .collect()
     }
 
     #[cfg(feature = "editor")]
@@ -614,9 +606,12 @@ impl Materializations {
         key: &RetainedKey,
         can_supply: impl Fn(&D) -> bool,
     ) -> Option<Image<D>> {
-        self.ready::<D>(key)
+        let image = self
+            .ready::<D>(key)
             .into_iter()
-            .find(|image| can_supply(image.descriptor.as_ref()))
+            .find(|image| can_supply(image.descriptor.as_ref()))?;
+        self.used(&image.image);
+        Some(image)
     }
     #[cfg(feature = "editor")]
     pub(super) fn release_optional(&self, key: &RetainedKey) {
@@ -979,7 +974,7 @@ impl Materializations {
             if let Some(resource) = &resource {
                 entry.initializer = Some(Arc::downgrade(resource));
             }
-            entries.push_back(entry);
+            entries.insert(index, entry);
             if resource.is_some() {
                 return resource;
             }
