@@ -377,13 +377,22 @@ impl Editor {
             }
             _ => {}
         }
-        if self.dust_search_pending() {
-            self.status = "Wait for donor selection before changing the document".into();
-            return;
-        }
-        if self.tool_interacting() || self.document.visit.masks.editing() {
-            self.status = "Finish the active interaction before a file action".into();
-            return;
+        if matches!(
+            action,
+            FileAction::New | FileAction::Open | FileAction::Close
+        ) {
+            if !self.document_command_available() {
+                return;
+            }
+        } else {
+            if self.dust_search_pending() {
+                self.status = "Wait for donor selection before changing the document".into();
+                return;
+            }
+            if self.tool_interacting() || self.document.visit.masks.editing() {
+                self.status = "Finish the active interaction before a file action".into();
+                return;
+            }
         }
         match action {
             FileAction::New => self.guard_transition(Transition::New, cx),

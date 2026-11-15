@@ -144,16 +144,13 @@ fn a_clean_system_quit_approves_without_saving_again() {
 }
 
 #[test]
-fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
+fn blocked_system_quit_preserves_live_edits_and_existing_decisions() {
     for gate in 0..4 {
         let (mut editor, context) = initialized();
+        let edit = (gate == 1).then(|| editor.edit_project("Held edit").unwrap());
         match gate {
             0 => editor.set_test_busy(true),
-            1 => {
-                super::super::tests::add_ready_fixture(&mut editor);
-                editor.begin_crop();
-                assert!(editor.cropping());
-            }
+            1 => {}
             2 => editor.block_with_decision(),
             3 => editor.report_failure(FailureCase::Save, "fixture failure".into()),
             _ => unreachable!(),
@@ -167,7 +164,8 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         );
         assert!(!editor.allow_close && editor.menus.pending.is_empty());
         assert_eq!(editor.document.state.project, before);
-        assert_eq!(editor.cropping(), gate == 1);
+        assert_eq!(editor.editing(), gate == 1);
+        drop(edit);
         assert_eq!(editor.dialogs.is_open(), gate == 2 || gate == 3);
         assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
     }

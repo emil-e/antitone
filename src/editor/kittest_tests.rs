@@ -11,6 +11,7 @@ mod analyze;
 mod auto_crop;
 mod correction;
 mod crop;
+mod departure;
 mod dust;
 mod export;
 #[cfg(feature = "ocio-reference")]

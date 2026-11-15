@@ -1,4 +1,5 @@
 use super::*;
+mod departure;
 mod history_tests;
 mod rapid;
 mod snapshot_tests;

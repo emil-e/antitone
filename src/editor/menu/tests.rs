@@ -149,28 +149,28 @@ fn native_quit_and_close_wait_for_the_document_decision() {
 }
 
 #[test]
-fn queued_native_actions_revalidate_tool_and_modal_availability() {
+fn queued_native_import_revalidates_tool_and_modal_availability() {
     let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     super::super::tests::add_ready_fixture(&mut editor);
     editor.begin_crop();
     assert!(editor.cropping());
+    assert!(!editor.application_menu_state().enabled(Action::AddScans));
+    host::App::menu_action(&mut editor, Action::AddScans);
+    frame(&mut editor, &context);
+    assert!(editor.document.export.operation.is_none());
+    assert!(!editor.files.pending());
+    assert!(editor.cropping());
     for action in [
         Action::New,
         Action::Open,
-        Action::AddScans,
         Action::Close,
         Action::Quit,
+        Action::Save,
+        Action::SaveAs,
+        Action::Export,
     ] {
-        assert!(!editor.application_menu_state().enabled(action));
-        host::App::menu_action(&mut editor, action);
-        frame(&mut editor, &context);
-        assert!(editor.document.export.operation.is_none());
-        assert!(!editor.files.pending());
-    }
-    assert!(editor.cropping());
-    for action in [Action::Save, Action::SaveAs, Action::Export] {
         assert!(editor.application_menu_state().enabled(action));
     }
     editor.end_tool();

@@ -183,7 +183,36 @@ fn removed_or_changed_mask_targets_cannot_be_overwritten_by_a_held_refinement() 
 }
 
 #[test]
-fn save_and_export_are_independent_of_document_replacement_gesture_admission() {
+fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
+    pollster::block_on(async {
+        let (mut editor, _, _) = processing::tests::fixture().await;
+        start(&mut editor);
+        let before = editor.document.state.project.clone();
+        crate::application::test_support::with_application(editor, |app| {
+            app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+            app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
+            app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
+            app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+            app.read(|editor| {
+                assert!(editor.document.visit.masks.editing());
+                assert_eq!(editor.document.state.project, before);
+            });
+            app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+            app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
+            app.update(|editor| editor.dialogs.answer_for_test("Discard changes"));
+            app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+            app.update(|editor| editor.finish_mask(true));
+            app.read(|editor| {
+                assert!(!editor.document.visit.masks.editing());
+                assert!(editor.document.project.sources.is_empty());
+                assert_eq!(editor.history_label(history::Direction::Undo), None);
+            });
+        });
+    });
+}
+
+#[test]
+fn snapshots_and_departure_remain_available_while_refinement_blocks_import_and_removal() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         assert!(
@@ -196,8 +225,20 @@ fn save_and_export_are_independent_of_document_replacement_gesture_admission() {
             app.read(|editor| {
                 assert!(!editor.tool_interacting());
                 assert!(!editor.file_available());
+                for action in [
+                    crate::platform::menu::Action::New,
+                    crate::platform::menu::Action::Open,
+                    crate::platform::menu::Action::Close,
+                    crate::platform::menu::Action::Quit,
+                ] {
+                    assert!(editor.application_menu_state().enabled(action));
+                }
             });
-            app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+            app.enter(|editor, cx| {
+                for action in [FileAction::Add, FileAction::Remove] {
+                    editor.file_action(action, cx);
+                }
+            });
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(!editor.files.pending());

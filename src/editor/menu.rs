@@ -80,7 +80,7 @@ impl Editor {
         !self.workspace_input.is_blocked() && self.file_context_available()
     }
 
-    fn snapshot_available(&self) -> bool {
+    pub(super) fn document_command_available(&self) -> bool {
         !self.workspace_input.is_blocked() && !self.editing() && !self.allow_close
     }
 
@@ -116,7 +116,7 @@ impl Editor {
         if let Some(panel) = &self.menus.panel {
             if !self.allow_close && !panel.workspace.is_covered() {
                 state.enabled.insert(Close);
-                if self.file_context_available() {
+                if !self.editing() {
                     state.enabled.insert(Quit);
                 }
             }
@@ -124,9 +124,6 @@ impl Editor {
         }
         if self.allow_close || self.workspace_input.is_blocked() {
             return state;
-        }
-        if self.file_available() {
-            state.enabled.insert(Quit);
         }
         if !self.menus.text_focused
             && self.history_available()
@@ -142,14 +139,14 @@ impl Editor {
         if !self.interaction_blocked() {
             state.enabled.extend([About, Settings, Help]);
         }
-        if self.snapshot_available() {
-            state.enabled.extend([Save, SaveAs]);
+        if self.document_command_available() {
+            state.enabled.extend([New, Open, Close, Quit, Save, SaveAs]);
             if self.document.project.input.ready() && self.selected_area().is_some() {
                 state.enabled.insert(Export);
             }
         }
         if self.file_available() {
-            state.enabled.extend([New, Open, AddScans, Close]);
+            state.enabled.insert(AddScans);
         }
         if self.selected_area().is_some() && !self.interaction_blocked() && !self.mask_dragging() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);

@@ -2,6 +2,7 @@ use super::*;
 use crate::application::test_support::with_application;
 use crate::project::Development;
 
+mod departure;
 mod import;
 mod open;
 
