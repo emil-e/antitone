@@ -30,11 +30,15 @@ pub struct Region {
     pub grid: Grid,
 }
 
-#[cfg(feature = "editor")]
+#[cfg(all(test, feature = "editor"))]
 mod batch;
 #[cfg(feature = "editor")]
 mod batch_units;
 mod materialize;
+#[cfg(feature = "editor")]
+mod prepared;
+#[cfg(feature = "editor")]
+pub(crate) use prepared::{Preparation, RecordedImage};
 
 #[derive(Clone)]
 pub struct Context {

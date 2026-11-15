@@ -54,7 +54,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .unwrap()
         );
         let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
-        assert!(view.spec.is_inspection());
+        assert!(view.capture.is_inspection());
         assert!(Arc::ptr_eq(
             &view,
             &editor.canvas_frame.displayed.as_ref().unwrap().view
@@ -694,7 +694,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         });
         harness.read(|editor| {
             let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
-            assert!(view.spec.is_inspection());
+            assert!(view.capture.is_inspection());
         });
         harness.read(|editor| {
             assert!(

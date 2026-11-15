@@ -335,6 +335,7 @@ impl AcquiredViewRaster {
         .await
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub async fn materialize_many(
         queue: &wgpu::Queue,

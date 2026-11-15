@@ -415,7 +415,7 @@ fn cold_open_preserves_metadata_and_valid_extreme_normalized_layers_render() {
             )
             .unwrap();
             let displayed = editor.canvas_frame.displayed.as_ref().unwrap();
-            assert!(!displayed.view.spec.is_inspection());
+            assert!(!displayed.view.capture.is_inspection());
             let recipe = editor
                 .positive_recipe(
                     editor.input(),
@@ -487,7 +487,7 @@ fn cold_open_preserves_metadata_and_valid_extreme_normalized_layers_render() {
                     .as_ref()
                     .unwrap()
                     .view
-                    .spec
+                    .capture
                     .is_inspection(),
                 "the same resolved source can display the edited positive"
             );

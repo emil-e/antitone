@@ -342,8 +342,8 @@ fn preparation_survives_view_change(retire_view: bool) {
                     .as_ref()
                     .unwrap()
                     .request
-                    .spec
-                    == latest
+                    .frame
+                    == latest.frame()
             );
         });
         let after = scope

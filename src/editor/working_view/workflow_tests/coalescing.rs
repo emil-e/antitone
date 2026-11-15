@@ -41,14 +41,15 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                 pixels.source.identity(),
             ));
         Demand {
-            spec,
+            rendering: OnceLock::new(),
+            frame: spec.frame(),
             pixels: pixels.clone(),
             capture: PhotographRequest::Fixture(processing),
         }
     };
     let first = capture(0.02, 0.15);
     let last = capture(-0.03, -0.2);
-    assert!(first.spec.same_source(&last.spec));
+    assert!(first.same_source(&last));
     assert!(!first.same_calculation(&last));
     assert!(
         first.processing(&Default::default()).unwrap()
@@ -80,7 +81,10 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
         });
         app.read(|e| {
             assert!(
-                previous_native.same_pixels_as(e.document.visit.working_view.source().unwrap()),
+                shares_inputs(
+                    &previous_native,
+                    e.document.visit.working_view.source().unwrap()
+                ),
                 "a downstream WB calculation must reuse its native value"
             )
         });
@@ -196,7 +200,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                 frame
                     .source
                     .definition
-                    .same_definition(&first.calculation(&frame.source).unwrap().native)
+                    .same_definition(&requested_image(&first, &frame.source).unwrap())
             );
             assert!(rendered.uses_processed(&frame.processed[0]));
             assert!(rendered.processing() != last.processing(&Default::default()).unwrap());
@@ -234,7 +238,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                 frame
                     .source
                     .definition
-                    .same_definition(&last.calculation(&frame.source).unwrap().native)
+                    .same_definition(&requested_image(&last, &frame.source).unwrap())
             );
             assert!(
                 working.rendered.as_ref().unwrap().processing()

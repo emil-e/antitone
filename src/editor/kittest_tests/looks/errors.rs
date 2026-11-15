@@ -113,7 +113,7 @@ fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_
                 .canvas_frame
                 .displayed
                 .as_ref()
-                .is_some_and(|painted| painted.view.spec.is_inspection())
+                .is_some_and(|painted| painted.view.capture.is_inspection())
         });
         h.read(|editor| {
             assert!(editor.document.flat_edit().is_some());
@@ -180,7 +180,7 @@ fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_
                 .canvas_frame
                 .displayed
                 .as_ref()
-                .is_some_and(|painted| painted.view.spec.is_inspection())
+                .is_some_and(|painted| painted.view.capture.is_inspection())
         });
         h.read(|editor| {
             assert!(

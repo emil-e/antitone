@@ -79,6 +79,8 @@ pub struct ImageValue {
     pub(super) storage: ImageStorage,
     // The charge follows physical image owners, including recorded consumers, not UI retention.
     admission: std::sync::OnceLock<Arc<cache::Lease>>,
+    // Cached outputs can discover a live consumer's inputs without retaining them themselves.
+    inputs: Mutex<Weak<Vec<Arc<ImageValue>>>>,
 }
 impl std::fmt::Debug for ImageValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -99,6 +101,7 @@ impl ImageValue {
         Arc::new(Self {
             storage,
             admission: Default::default(),
+            inputs: Default::default(),
         })
     }
     pub fn texture(texture: wgpu::Texture) -> Arc<Self> {
@@ -109,6 +112,10 @@ impl ImageValue {
     }
     pub(super) fn admitted(&self) -> bool {
         self.admission.get().is_some()
+    }
+
+    pub(super) fn reusable_inputs(&self) -> Arc<Vec<Arc<ImageValue>>> {
+        self.inputs.lock().unwrap().upgrade().unwrap_or_default()
     }
 
     pub fn host(pixels: Vec<[f32; 4]>) -> Arc<Self> {
@@ -177,13 +184,42 @@ impl ImageValue {
         }
     }
 }
-type ImageResult = Result<Arc<ImageValue>, Arc<Error>>;
+/// Consumer-owned reusable inputs; optional retention owns only the output allocation.
+#[derive(Clone)]
+pub(super) struct ProducedImage {
+    pub image: Arc<ImageValue>,
+    pub inputs: Arc<Vec<Arc<ImageValue>>>,
+}
+impl ProducedImage {
+    pub(super) fn new(image: Arc<ImageValue>, inputs: Vec<Arc<ImageValue>>) -> Self {
+        let mut unique = Vec::new();
+        for input in inputs {
+            if !input.admitted()
+                && !Arc::ptr_eq(&image, &input)
+                && !unique.iter().any(|prior| Arc::ptr_eq(prior, &input))
+            {
+                unique.push(input);
+            }
+        }
+        let inputs = Arc::new(unique);
+        *image.inputs.lock().unwrap() = Arc::downgrade(&inputs);
+        Self { image, inputs }
+    }
+}
+impl From<Arc<ImageValue>> for ProducedImage {
+    fn from(image: Arc<ImageValue>) -> Self {
+        let inputs = image.reusable_inputs();
+        Self { image, inputs }
+    }
+}
+type ImageResult = Result<ProducedImage, Arc<Error>>;
 type SharedResult = Shared<BoxFuture<'static, ImageResult>>;
 
 pub struct Image<D> {
     pub identity: RetainedKey,
     pub descriptor: Arc<D>,
     pub image: Arc<ImageValue>,
+    pub(crate) inputs: Arc<Vec<Arc<ImageValue>>>,
 }
 impl<D> Clone for Image<D> {
     fn clone(&self) -> Self {
@@ -191,6 +227,7 @@ impl<D> Clone for Image<D> {
             identity: self.identity.clone(),
             descriptor: self.descriptor.clone(),
             image: self.image.clone(),
+            inputs: self.inputs.clone(),
         }
     }
 }
@@ -229,6 +266,7 @@ impl BufferImage {
             identity: identity.clone(),
             descriptor: Arc::new(layout),
             image,
+            inputs: Default::default(),
         }))
     }
 
@@ -308,7 +346,11 @@ impl InlineProducer {
         true
     }
     pub(super) fn complete(mut self, result: Result<Arc<ImageValue>, Error>) {
-        let _ = self.send.take().unwrap().send(result.map_err(Arc::new));
+        let _ = self
+            .send
+            .take()
+            .unwrap()
+            .send(result.map(ProducedImage::from).map_err(Arc::new));
     }
 }
 impl Drop for InlineProducer {
@@ -340,7 +382,8 @@ impl<D> Future for ImageFuture<D> {
             result.map(|image| Image {
                 identity: self.identity.clone(),
                 descriptor: self.descriptor.clone(),
-                image,
+                image: image.image,
+                inputs: image.inputs,
             })
         })
     }
@@ -389,7 +432,7 @@ impl EntryState {
             Self::Recording { .. } => None,
             Self::Producing { result, .. } => result.upgrade(),
             Self::Complete(weak) => Some(
-                futures_util::future::ready(Ok(weak.upgrade()?))
+                futures_util::future::ready(Ok(ProducedImage::from(weak.upgrade()?)))
                     .boxed()
                     .shared(),
             ),
@@ -581,7 +624,7 @@ impl Materializations {
     ) -> Option<ImageFuture<D>> {
         self.find_entry(&mut self.0.entries.lock().unwrap(), key, can_supply, policy)
     }
-    pub(super) fn ready<D: Any + Send + Sync>(&self, key: &RetainedKey) -> Vec<Image<D>> {
+    pub(crate) fn ready<D: Any + Send + Sync>(&self, key: &RetainedKey) -> Vec<Image<D>> {
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
         entries
@@ -594,6 +637,7 @@ impl Materializations {
                 Some(Image {
                     identity: entry.key.clone(),
                     descriptor: entry.descriptor.clone().downcast::<D>().ok()?,
+                    inputs: entry.value.image()?.reusable_inputs(),
                     image: entry.value.image()?,
                 })
             })
@@ -740,6 +784,24 @@ impl Materializations {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<Arc<ImageValue>, Error>> + Send + 'static,
     {
+        self.obtain_owned(key, descriptor, bytes, policy, move || async move {
+            produce().await.map(ProducedImage::from)
+        })
+    }
+
+    pub(super) fn obtain_owned<D, F, Fut>(
+        &self,
+        key: RetainedKey,
+        descriptor: Arc<D>,
+        bytes: u64,
+        policy: RequestPolicy,
+        produce: F,
+    ) -> ImageFuture<D>
+    where
+        D: Any + Send + Sync + PartialEq,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<ProducedImage, Error>> + Send + 'static,
+    {
         let mut entries = self.0.entries.lock().unwrap();
         if let Some(image) =
             self.find_entry::<D>(&mut entries, &key, |d| d == descriptor.as_ref(), policy)
@@ -820,7 +882,7 @@ impl Materializations {
         let scope = Arc::downgrade(&self.0);
         let result = async move {
             let result = produce.await.and_then(|image| {
-                if image.bytes() != Some(bytes) {
+                if image.image.bytes() != Some(bytes) {
                     return Err(Arc::new(Error::InvalidParameter(
                         "materialization differs from admitted storage",
                     )));
@@ -836,7 +898,7 @@ impl Materializations {
                 {
                     let entry = entries.remove(index).unwrap();
                     if let Ok(image) = &result {
-                        scope.completed(&mut entries, entry, image, bytes);
+                        scope.completed(&mut entries, entry, &image.image, bytes);
                     }
                 }
             }
@@ -906,7 +968,24 @@ impl Materializations {
         F: FnOnce(Vec<usize>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Vec<Arc<ImageValue>>, Error>> + Send + 'static,
     {
-        type Batch = Shared<BoxFuture<'static, Result<Vec<Arc<ImageValue>>, Arc<Error>>>>;
+        self.obtain_many_owned(requests, move |missing| async move {
+            produce(missing)
+                .await
+                .map(|images| images.into_iter().map(ProducedImage::from).collect())
+        })
+    }
+
+    pub(super) fn obtain_many_owned<D, F, Fut>(
+        &self,
+        requests: Vec<(RetainedKey, Arc<D>, u64, RequestPolicy)>,
+        produce: F,
+    ) -> Vec<ImageFuture<D>>
+    where
+        D: Any + Send + Sync + PartialEq,
+        F: FnOnce(Vec<usize>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Vec<ProducedImage>, Error>> + Send + 'static,
+    {
+        type Batch = Shared<BoxFuture<'static, Result<Vec<ProducedImage>, Arc<Error>>>>;
         let batch = Arc::new(std::sync::OnceLock::<Batch>::new());
         let mut entries = self.0.entries.lock().unwrap();
         let mut missing = Vec::new();
@@ -1055,7 +1134,7 @@ pub(super) struct Publication {
 impl Publication {
     pub fn submitted(mut self, image: &Arc<ImageValue>) {
         if let Some(sender) = self.sender.take() {
-            let _ = sender.send(Ok(image.clone()));
+            let _ = sender.send(Ok(ProducedImage::from(image.clone())));
         }
         let _ = self.result.clone().now_or_never();
         if let Some(scope) = self.scope.upgrade() {

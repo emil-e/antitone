@@ -26,6 +26,7 @@ use wgpu::util::DeviceExt;
 pub mod acquisition;
 mod composite;
 pub mod processing;
+pub(crate) mod rendering;
 pub mod request;
 mod storage;
 
@@ -64,6 +65,10 @@ impl std::ops::Deref for ViewSource {
 }
 
 impl ViewSource {
+    pub(crate) fn kernels(&self) -> &Arc<ViewKernels> {
+        &self.kernels
+    }
+
     pub fn acquired(&self) -> Arc<crate::gpu::view::acquisition::AcquiredViewRaster> {
         self.data.clone()
     }
@@ -252,37 +257,6 @@ impl ViewSource {
         .map(|sources| sources.map(|mut sources| sources.remove(0)))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn acquire_images(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        specs: Vec<SourceRequest>,
-        requests: Vec<crate::gpu::evaluation::Evaluation>,
-        scope: &crate::gpu::evaluation::Materializations,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
-        renderer.evaluation.require_device(device)?;
-        let sources = crate::gpu::view::acquisition::AcquiredViewRaster::materialize_many(
-            queue,
-            submissions,
-            renderer,
-            specs,
-            requests,
-            scope,
-            cancelled,
-        )
-        .await?;
-        Ok(sources.map(|sources| {
-            sources
-                .into_iter()
-                .map(|source| Self::from_acquired(kernels.clone(), source))
-                .collect()
-        }))
-    }
-
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn acquire_many(
@@ -405,11 +379,13 @@ impl RenderedView {
             .as_ref()
             .map_or(0, |binding| binding.reference_bytes())
             + self.graded.as_ref().map_or(0, |graded| {
-                graded.source.pixels.size()
-                    + crate::gpu::photograph::PhotographGraph::resident_camera_bytes(
-                        &graded.source.definition,
-                    )
-                    + graded.pixels.size()
+                (if graded.source.pixels == graded.pixels {
+                    0
+                } else {
+                    graded.source.pixels.size()
+                }) + crate::gpu::photograph::PhotographGraph::resident_camera_bytes(
+                    &graded.source.definition,
+                ) + graded.pixels.size()
                     + graded.stages.as_ref().map_or(0, |stages| stages.byte_len())
                     + crate::gpu::grading::Grading::captured_bytes(&graded.definition)
             })
@@ -636,14 +612,77 @@ impl RenderedView {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub fn same_source_as(&self, other: &Self) -> bool {
+        use crate::gpu::evaluation::{BufferImage, ImageLayout, ImageValue};
+        if !self.same_source_definition_as(other) {
+            return false;
+        }
+        let Some((a, b)) = self.graded.as_ref().zip(other.graded.as_ref()) else {
+            return false;
+        };
+        if a.source.pixels == b.source.pixels {
+            return true;
+        }
+        let inputs = |view: &processing::ProcessedView| -> Vec<Arc<ImageValue>> {
+            let BufferImage::Produced(pixels) = &view.pixels else {
+                return Vec::new();
+            };
+            let scope = view.source.renderer.evaluation.materializations();
+            view.definition
+                .ancestors()
+                .filter(|node| {
+                    // A common generated field alone cannot establish source reuse.
+                    node.ancestors().any(|input| input.source().is_some())
+                })
+                .filter_map(|node| {
+                    node.output(node.domain().bounds.unwrap_or(pixels.descriptor.region))
+                        .ok()
+                })
+                .filter_map(|output| output.identity().cloned())
+                .flat_map(|key| scope.ready::<ImageLayout>(&key))
+                .filter(|stored| {
+                    pixels
+                        .inputs
+                        .iter()
+                        .any(|input| Arc::ptr_eq(input, &stored.image))
+                })
+                .map(|stored| stored.image)
+                .collect()
+        };
+        let a = inputs(a);
+        let b = inputs(b);
+        a.iter()
+            .any(|left| b.iter().any(|right| Arc::ptr_eq(left, right)))
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub fn same_source_definition_as(&self, other: &Self) -> bool {
         self.graded
             .as_ref()
             .zip(other.graded.as_ref())
             .is_some_and(|(a, b)| {
-                // Recreated metadata wrappers can retain the same calculated raster.
-                *a.source.pixels == *b.source.pixels
-                    && a.source.spec.same_acquisition(&b.source.spec)
-                    && a.source.definition.same_definition(&b.source.definition)
+                if !a.source.spec.same_acquisition(&b.source.spec) {
+                    return false;
+                }
+                if a.pixels == b.pixels && a.definition.same_definition(&b.definition) {
+                    return true;
+                }
+                let neutral = |view: &processing::ProcessedView| {
+                    view.definition
+                        .ancestors()
+                        .find(|node| {
+                            node.domain().meaning == crate::gpu::evaluation::Meaning::Neutral
+                        })
+                        .cloned()
+                };
+                if let (Some(left), Some(right)) = (neutral(a), neutral(b)) {
+                    return left.same_definition(&right);
+                }
+                a.definition.ancestors().any(|left| {
+                    left.domain().meaning == crate::gpu::evaluation::Meaning::Inspection
+                        && b.definition
+                            .ancestors()
+                            .any(|right| left.same_definition(right))
+                })
             })
     }
 

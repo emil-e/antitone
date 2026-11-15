@@ -105,6 +105,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             let mut working = WorkingView::default();
             let mailbox = working.mailbox.clone();
             mailbox.0.lock().unwrap().completed = Some(Arc::new(Frame {
+                sequence: 0,
                 source: underlay.clone(),
                 underlay: Some(underlay),
                 request: Arc::new(Demand::fixture(first.clone(), input.clone())),
@@ -163,16 +164,8 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             if matches!(retirement, "basis" | "support") {
                 let frame = working.frame.as_ref().unwrap();
                 assert!(
-                    !mailbox
-                        .0
-                        .lock()
-                        .unwrap()
-                        .demand
-                        .as_ref()
-                        .unwrap()
-                        .can_use(&frame.source)
-                        .unwrap_or(false),
-                    "old support must not be treated as input for the new calculation"
+                    !working.support_ready(),
+                    "old products must not claim the new image is ready"
                 );
                 assert!(
                     frame.processing(&Default::default()).unwrap() == first.processing_fixture(),
@@ -248,8 +241,8 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
             .unwrap()
             .demand
             .as_ref()
-            .map(|demand| &demand.spec)
-            == Some(&last)
+            .map(|demand| demand.frame)
+            == Some(last.frame())
     );
 
     working.acquired(Completion {
@@ -394,7 +387,7 @@ fn repeated_view_capture_does_not_wake_a_blocked_acquisition_or_repaint_loop() {
         std::task::Poll::Ready(())
     }));
     let mut next = demand;
-    next.spec = next.spec.with_frame(spec(10.).frame()).unwrap();
+    next.frame = spec(10.).frame();
     working.request(next);
     pollster::block_on(changed);
 }

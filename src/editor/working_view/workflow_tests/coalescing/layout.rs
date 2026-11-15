@@ -98,8 +98,8 @@ fn superseded_layouts_retire_without_restarting_photo_owned_camera_preparation()
                         .demand
                         .as_ref()
                         .unwrap()
-                        .spec
-                        == first
+                        .frame
+                        == first.frame()
                 )
             });
             app.enter(|e, cx| request_working(e, latest.clone(), pixels.clone(), cx));
@@ -132,8 +132,8 @@ fn superseded_layouts_retire_without_restarting_photo_owned_camera_preparation()
                         .as_ref()
                         .unwrap()
                         .request
-                        .spec
-                        == latest
+                        .frame
+                        == latest.frame()
                 )
             });
             assert_eq!(renderer.evaluation().active_input_bytes(), bytes);

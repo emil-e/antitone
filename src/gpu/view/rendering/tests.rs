@@ -1,0 +1,173 @@
+use super::*;
+use crate::gpu::evaluation as e;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct Coordinates(Arc<AtomicUsize>);
+impl e::Source for Coordinates {
+    fn domain(&self) -> e::Domain {
+        e::Domain {
+            bounds: Some([0, 0, 8, 4].into()),
+            grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: e::Meaning::Neutral,
+        }
+    }
+
+    fn identity(&self) -> Option<e::RetainedKey> {
+        Some(e::RetainedKey::new("described view coordinates"))
+    }
+
+    fn read(&self, region: e::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok((region.y..region.bottom())
+            .flat_map(|y| (region.x..region.right()).map(move |x| [x as f32, y as f32, -2., 8.]))
+            .collect())
+    }
+}
+
+fn endpoint(input: e::Value, delta: f32) -> e::Value {
+    e::value::pointwise(
+        input,
+        e::Meaning::Graded,
+        e::value::Operation::new(
+            "selected view stage", delta,
+            "struct Parameters { delta:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f { return vec4f(a.rgb+v.delta.xyz,a.w); }",
+            "pixel", e::value::Access::Pointwise,
+        ).with_uniform("Parameters", &[delta, 0., 0., 0.]),
+    ).unwrap()
+}
+
+#[cfg(feature = "ui-tests")]
+#[test]
+fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let input = e::source(Arc::new(Coordinates(reads.clone())));
+    let frame = FrameRaster::full(
+        crate::geometry::Composition::new(
+            [0, 0, 8, 4].into(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let spec = SourceRequest::for_frame(frame).unwrap();
+    let make = |renderer: Arc<crate::renderer::GpuRenderer>, delta| {
+        renderer
+            .evaluation()
+            .materializations()
+            .set_retention_enabled(false);
+        let request = Request::new(
+            Preparation::new(
+                renderer.clone(),
+                kernels.clone(),
+                vec![ImageRequest::new(endpoint(input.clone(), delta), spec.clone()).unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let product = pollster::block_on(request.produce(&queue, &renderer.submissions, || false))
+            .unwrap()
+            .unwrap()
+            .remove(0);
+        crate::gpu::view::RenderedView::from_processed(
+            &device,
+            product.source,
+            crate::gpu::photograph::request::PhotographRequest::inspection(
+                crate::gpu::parameters::ProcessingParameters::source(),
+            )
+            .unwrap(),
+            crate::rendering::OutputTarget::Srgb,
+            product.processed,
+            None,
+        )
+        .unwrap()
+    };
+    let first = make(renderer.clone(), 3.);
+    let independent =
+        pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let recomputed = make(independent, 3.);
+    assert!(first.same_source_definition_as(&recomputed));
+    assert!(!first.same_source_as(&recomputed));
+    let edited = make(renderer, 5.);
+    assert!(edited.same_source_definition_as(&first));
+    assert!(edited.same_source_as(&first));
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
+    let scope = renderer.evaluation().materializations();
+    scope.set_retention_enabled(false);
+    let count = Arc::new(AtomicUsize::new(0));
+    let input = e::source(Arc::new(Coordinates(count.clone())));
+    let frame = FrameRaster::full(
+        crate::geometry::Composition::new(
+            [0, 0, 8, 4].into(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let prepare = |definition| {
+        Preparation::new(
+            renderer.clone(),
+            kernels.clone(),
+            vec![ImageRequest::new(definition, SourceRequest::for_frame(frame).unwrap()).unwrap()],
+        )
+        .unwrap()
+    };
+
+    let cold = Request::new(prepare(endpoint(input.clone(), 3.))).unwrap();
+    assert!(cold.ready().is_none());
+    let first = pollster::block_on(cold.produce(&queue, &renderer.submissions, || false))
+        .unwrap()
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        e::read_buffer(&device, &queue, &first.processed.pixels)[0],
+        [3., 0., -2., 8.]
+    );
+    assert_eq!(count.load(Ordering::Relaxed), 1);
+
+    let selected = endpoint(input, 5.);
+    let identity = selected
+        .output(selected.domain().finite().unwrap())
+        .unwrap()
+        .identity()
+        .unwrap()
+        .clone();
+    let hot = Request::new(prepare(selected.clone())).unwrap();
+    let next = hot.ready().unwrap().remove(0);
+    assert!(next.processed.definition.same_definition(&selected));
+    assert!(
+        scope
+            .find_ready::<e::ImageLayout>(&identity, |_| true)
+            .is_none(),
+        "abandoned preparation cannot publish pixels"
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    next.processed.encode(&device, &mut encoder);
+    renderer.submissions.submit(&queue, [encoder.finish()]);
+    next.processed.stages.as_ref().unwrap().submitted();
+    next.processed.pixels.submitted(&scope);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let pixels = e::read_buffer(&device, &queue, &next.processed.pixels);
+    assert_eq!(pixels[0], [5., 0., -2., 8.]);
+    assert_eq!(pixels[31], [12., 3., -2., 8.]);
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "a different endpoint uses the live input without another source read"
+    );
+    assert_eq!(renderer.evaluation().retained_bytes(), 0);
+    assert!(
+        scope
+            .find_ready::<e::ImageLayout>(&identity, |_| true)
+            .is_some()
+    );
+}

@@ -90,6 +90,17 @@ impl Job {
         self
     }
 
+    #[cfg(feature = "editor")]
+    pub(super) fn with_budget(mut self, budget: Budget) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    #[cfg(feature = "editor")]
+    pub(super) fn supplied(&self) -> &[SuppliedImage] {
+        &self.supplied
+    }
+
     pub(super) fn with_supplied(mut self, supplied: Arc<[SuppliedImage]>) -> Self {
         self.supplied = supplied;
         self

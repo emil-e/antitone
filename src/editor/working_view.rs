@@ -1,4 +1,4 @@
-//! Selected-view ownership: one neutral acquisition, latest-request coalescing, immutable frames.
+//! Selected image demand, latest-request coalescing, and coherent presentation.
 use super::*;
 use crate::frame_raster::FrameRaster;
 #[cfg(test)]
@@ -17,20 +17,50 @@ mod workflow_tests;
 use crate::gpu::photograph::request::PhotographRequest;
 
 /// One captured view request and the immutable pixels needed to produce it.
-#[derive(Clone)]
 pub(super) struct Demand {
-    pub spec: SourceRequest,
+    pub frame: FrameRaster,
     pub pixels: source::Context,
     pub capture: PhotographRequest,
+    rendering: OnceLock<Result<Arc<crate::gpu::view::rendering::Request>, String>>,
 }
-
-pub(super) struct Calculation {
-    pub image: crate::gpu::evaluation::Value,
-    pub native: crate::gpu::evaluation::Value,
-    pub plan: crate::acquisition::Plan,
+impl Clone for Demand {
+    fn clone(&self) -> Self {
+        Self {
+            frame: self.frame,
+            pixels: self.pixels.clone(),
+            capture: self.capture.clone(),
+            rendering: OnceLock::new(),
+        }
+    }
 }
 
 impl Demand {
+    fn rendering(
+        &self,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        previous: Option<&SourceRequest>,
+    ) -> Result<Arc<crate::gpu::view::rendering::Request>, String> {
+        self.rendering
+            .get_or_init(|| {
+                crate::gpu::view::rendering::Request::photograph(
+                    renderer,
+                    kernels,
+                    &self.pixels.scan().map_err(|error| error.to_string())?,
+                    self.pixels
+                        .correction
+                        .as_ref()
+                        .map(|field| field.gpu.clone()),
+                    &self.capture,
+                    self.frame,
+                    previous,
+                )
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+            })
+            .clone()
+    }
+
     #[cfg(test)]
     pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.capture.processing(limits)
@@ -39,7 +69,7 @@ impl Demand {
     pub(super) fn same_calculation(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
             || self.pixels == other.pixels
-                && self.spec == other.spec
+                && self.frame == other.frame
                 && self.capture == other.capture
     }
 
@@ -47,9 +77,10 @@ impl Demand {
     pub(super) fn fixture(spec: SourceRequest, pixels: source::Context) -> Self {
         let processing = spec.processing_fixture();
         Self {
-            spec,
+            frame: spec.frame(),
             pixels,
             capture: PhotographRequest::Fixture(processing),
+            rendering: OnceLock::new(),
         }
     }
 
@@ -57,121 +88,51 @@ impl Demand {
         self.pixels.source.identity() == other.pixels.source.identity()
             && self.capture.is_inspection() == other.capture.is_inspection()
     }
-
-    pub(super) fn calculation(&self, source: &ViewSource) -> Result<Calculation, Error> {
-        let limits = source.renderer.evaluation().device().limits();
-        let scan = self.pixels.scan()?;
-        let field = self
-            .pixels
-            .correction
-            .as_ref()
-            .map(|field| field.gpu.clone());
-        if let Some(recipe) = self.capture.recipe() {
-            let (photo, plan) = crate::gpu::photograph::PhotographGraph::preview(
-                &limits,
-                &scan,
-                field,
-                recipe,
-                source.spec.frame(),
-                Some(source.spec.plan.output()),
-            )?;
-            return Ok(Calculation {
-                image: photo.processed,
-                native: photo.neutral,
-                plan,
-            });
-        }
-        let spec = source.spec.clone();
-        let native = self
-            .capture
-            .source_graphs(&scan, field, std::slice::from_ref(&spec))?
-            .remove(0);
-        let (image, plan) = self.capture.filtered(&limits, &spec, native.clone())?;
-        Ok(Calculation {
-            image,
-            native,
-            plan,
-        })
-    }
-
-    pub(super) fn can_use(&self, source: &ViewSource) -> Result<bool, Error> {
-        let Calculation { image, native, .. } = self.calculation(source)?;
-        let Some(region) = image.region_for(&native, image.domain().finite()?)? else {
-            return Ok(false);
-        };
-        Ok(source.supplied()?.covers(&native, region))
-    }
 }
 
-/// Related supplied values, their complete processed calculations and captured provenance.
+/// A captured request's detail and navigation image products.
 pub(super) struct Frame {
+    sequence: u64,
     pub source: Arc<ViewSource>,
     pub underlay: Option<Arc<ViewSource>>,
     pub request: Arc<Demand>,
     pub processed: Vec<Arc<crate::gpu::view::processing::ProcessedView>>,
 }
 impl Frame {
+    fn from_images(
+        request: Arc<Demand>,
+        sequence: u64,
+        images: Vec<crate::gpu::view::rendering::ViewImage>,
+    ) -> Self {
+        let processed = images.iter().map(|image| image.processed.clone()).collect();
+        let mut sources = images
+            .into_iter()
+            .map(|image| image.source)
+            .collect::<Vec<_>>();
+        let underlay = sources.pop();
+        let source = sources.pop().expect("detail and underlay image products");
+        Self {
+            sequence,
+            request,
+            source,
+            underlay,
+            processed,
+        }
+    }
+
     pub(super) fn satisfies(&self, wanted: &Demand) -> bool {
-        self.request.same_calculation(wanted) && self.source.spec.frame() == wanted.spec.frame()
+        self.request.same_calculation(wanted) && self.source.spec.frame() == wanted.frame
     }
 
     #[cfg(test)]
     pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.request.processing(limits)
     }
-
-    pub(super) fn regrade(&self, request: Arc<Demand>) -> Result<Option<Self>, Error> {
-        let sources: Vec<_> = std::iter::once(&self.source)
-            .chain(self.underlay.as_ref())
-            .collect();
-        let calculations = sources
-            .iter()
-            .map(|source| request.calculation(source))
-            .collect::<Result<Vec<_>, _>>()?;
-        for (source, calculation) in sources.iter().zip(&calculations) {
-            let region = calculation
-                .image
-                .region_for(&calculation.native, calculation.image.domain().finite()?)?
-                .ok_or(Error::InvalidParameter("preview has no neutral dependency"))?;
-            if !source.supplied()?.covers(&calculation.native, region) {
-                return Ok(None);
-            }
-        }
-        let device = self.source.renderer.evaluation().device();
-        let processed = sources
-            .into_iter()
-            .zip(calculations)
-            .enumerate()
-            .map(|(index, (source, calculation))| {
-                crate::gpu::view::processing::ProcessedView::prepare_calculation(
-                    device,
-                    source.acquired(),
-                    calculation.image,
-                    calculation.plan,
-                    self.processed.get(index),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(Self {
-            source: self.source.clone(),
-            underlay: self.underlay.clone(),
-            request,
-            processed,
-        }))
-    }
-
-    pub(super) fn supports(&self, wanted: &Demand) -> bool {
-        if self.request.same_calculation(wanted) {
-            return true;
-        }
-        std::iter::once(&self.source)
-            .chain(self.underlay.as_ref())
-            .all(|source| wanted.can_use(source).unwrap_or(false))
-    }
 }
 
 #[derive(Default)]
 struct MailboxState {
+    sequence: u64,
     demand: Option<Arc<Demand>>,
     completed: Option<Arc<Frame>>,
 }
@@ -196,7 +157,8 @@ impl Completion {
             .as_ref()
             .expect("fixture has a captured request"))
         .clone();
-        demand.spec = spec;
+        demand.frame = spec.frame();
+        demand.capture = PhotographRequest::Fixture(spec.processing_fixture());
         Arc::new(demand)
     }
 }
@@ -314,12 +276,16 @@ impl WorkingView {
         compare: bool,
     ) -> Option<Arc<RenderedView>> {
         self.displayed = self.wanted.as_ref().and_then(|wanted| {
-            self.present(wanted.spec.frame(), self.displayed.as_ref(), compare)
+            self.present(wanted.frame, self.displayed.as_ref(), compare)
                 .ok()
                 .flatten()
                 .or_else(|| self.rendered.clone())
                 .filter(|rendered| {
-                    rendered.spec.identity == wanted.spec.identity && rendered.target == target
+                    rendered.spec.identity
+                        == crate::gpu::source::identity::Identity::camera(
+                            wanted.pixels.source.identity(),
+                        )
+                        && rendered.target == target
                 })
         });
         self.updating = true;
@@ -357,26 +323,6 @@ impl WorkingView {
         self.rendered.as_ref()
     }
 
-    #[cfg(test)]
-    pub(super) fn neutral_source(&self) -> Option<Arc<ViewSource>> {
-        let source = self.source()?;
-        let state = self.mailbox.0.lock().unwrap();
-        ViewSource::cached_neutral(
-            &source.renderer.evaluation().materializations(),
-            source.renderer.clone(),
-            self.kernels.get()?.clone(),
-            &source.spec,
-            &state.demand.as_ref()?.pixels.scan().ok()?,
-            state
-                .demand
-                .as_ref()?
-                .pixels
-                .correction
-                .as_ref()
-                .map(|c| c.gpu.clone()),
-        )
-    }
-
     pub(super) fn completed_capture(&self) -> Option<&PhotographRequest> {
         self.frame
             .as_ref()
@@ -404,15 +350,10 @@ impl WorkingView {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn current_frame(&self) -> Option<FrameRaster> {
-        self.wanted.as_ref().map(|wanted| wanted.spec.frame())
+        self.wanted.as_ref().map(|wanted| wanted.frame)
     }
 
-    pub(super) fn request(&mut self, mut demand: Demand) {
-        demand.spec = demand
-            .spec
-            .with_identity(crate::gpu::source::identity::Identity::camera(
-                demand.pixels.source.identity(),
-            ));
+    pub(super) fn request(&mut self, demand: Demand) {
         if self
             .wanted
             .as_ref()
@@ -444,9 +385,10 @@ impl WorkingView {
             .recipe()
             .filter(|recipe| !recipe.repairs.is_empty())
         {
-            log::info!(repairs = recipe.repairs.len(), width = demand.spec.frame().output[0], height = demand.spec.frame().output[1]; "working_view_requested");
+            log::info!(repairs = recipe.repairs.len(), width = demand.frame.output[0], height = demand.frame.output[1]; "working_view_requested");
         }
         self.wanted = Some(demand.clone());
+        state.sequence += 1;
         state.demand = Some(demand);
         drop(state);
         self.refresh_support();
@@ -543,8 +485,8 @@ impl WorkingView {
             phase = phase,
             disposition = disposition,
             error = error,
-            request_frame:? = request.map(|demand| demand.spec.frame()),
-            wanted_frame:? = self.wanted.as_ref().map(|demand| demand.spec.frame()),
+            request_frame:? = request.map(|demand| demand.frame),
+            wanted_frame:? = self.wanted.as_ref().map(|demand| demand.frame),
             request_repairs:? = request.and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
             wanted_repairs:? = self.wanted.as_ref().and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
             inspection:? = request.map(|demand| demand.capture.is_inspection()),
@@ -560,47 +502,35 @@ impl WorkingView {
     }
 
     pub(super) fn refresh_support(&mut self) {
-        let (frame, wanted) = {
+        let (frame, wanted, sequence) = {
             let state = self.mailbox.0.lock().unwrap();
             let (Some(frame), Some(wanted)) = (&state.completed, &state.demand) else {
                 return;
             };
-            (frame.clone(), wanted.clone())
-        };
-        if frame.source.spec.identity != wanted.spec.identity
-            || frame.request.capture.is_inspection() != wanted.capture.is_inspection()
-            || frame.source.spec.frame().composition != wanted.spec.frame().composition
-        {
-            return;
-        }
-        let updated = if frame.request.same_calculation(&wanted) || !frame.supports(&wanted) {
-            frame.clone()
-        } else {
-            match frame.regrade(wanted.clone()) {
-                Ok(Some(updated)) => Arc::new(updated),
-                Ok(None) => frame.clone(),
-                Err(error) => {
-                    let error = error.to_string();
-                    if self.error.as_deref() != Some(error.as_str()) {
-                        self.log_failure("regrade", "current", Some(&wanted), &error);
-                    }
-                    self.error = Some(error);
-                    frame.clone()
-                }
-            }
-        };
-        let mut state = self.mailbox.0.lock().unwrap();
-        if state
-            .completed
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &frame))
-            && state
-                .demand
+            let frame = self
+                .frame
                 .as_ref()
-                .is_some_and(|current| current.same_calculation(&wanted))
-        {
-            state.completed = Some(updated.clone());
-            self.frame = Some(updated);
+                .filter(|current| current.sequence > frame.sequence)
+                .unwrap_or(frame);
+            (frame.clone(), wanted.clone(), state.sequence)
+        };
+        let rendering = wanted.rendering(
+            frame.source.renderer.clone(),
+            frame.source.kernels().clone(),
+            Some(&frame.source.spec),
+        );
+        match rendering {
+            Ok(rendering) => {
+                self.frame = Some(match rendering.ready() {
+                    Some(images) => Arc::new(Frame::from_images(wanted, sequence, images)),
+                    None => frame,
+                });
+            }
+            Err(error) => {
+                self.log_failure("rendering", "current", Some(&wanted), &error);
+                self.failed = Some(wanted);
+                self.error = Some(error);
+            }
         }
     }
 
@@ -627,7 +557,7 @@ impl WorkingView {
 
     fn render_capture(
         &mut self,
-        capture: &PhotographRequest,
+        _capture: &PhotographRequest,
         target: OutputTarget,
         context: &egui::Context,
     ) -> Result<(), Error> {
@@ -645,30 +575,18 @@ impl WorkingView {
             .as_ref()
             .expect("requested physical view")
             .clone();
-        let Some(mut frame) = self.frame.clone() else {
+        if self
+            .failed
+            .as_ref()
+            .is_some_and(|failed| failed.same_calculation(&wanted))
+            && let Some(error) = &self.error
+        {
+            return Err(Error::Gpu(error.clone()));
+        }
+        let Some(frame) = self.frame.clone() else {
             self.updating = true;
             return Ok(());
         };
-        if wanted.capture.is_inspection()
-            && self.mailbox.0.lock().unwrap().demand.is_none()
-            && frame.request.capture != *capture
-        {
-            let mut request = (*frame.request).clone();
-            request.capture = capture.clone();
-            if let Some(updated) = frame.regrade(Arc::new(request))? {
-                frame = Arc::new(updated);
-                self.frame = Some(frame.clone());
-            }
-        }
-        if frame.processed.len() != 1 + usize::from(frame.underlay.is_some()) {
-            let updated = frame
-                .regrade(frame.request.clone())?
-                .ok_or(Error::InvalidParameter(
-                    "frame does not supply its captured calculation",
-                ))?;
-            frame = Arc::new(updated);
-            self.frame = Some(frame.clone());
-        }
         let capture = &frame.request.capture;
         let matches = |rendered: &RenderedView, index: usize| {
             let source = if index == 0 {
@@ -748,7 +666,8 @@ impl WorkingView {
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
-                wanted.spec.identity == rendered.spec.identity
+                crate::gpu::source::identity::Identity::camera(wanted.pixels.source.identity())
+                    == rendered.spec.identity
                     && wanted.capture.is_inspection() == rendered.capture.is_inspection()
             })
         };
@@ -804,13 +723,15 @@ pub(super) async fn acquire_images(
     mailbox: &Arc<Mailbox>,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
-    device: &wgpu::Device,
     queue: &wgpu::Queue,
     submissions: &crate::gpu::submission::SubmissionGate,
 ) -> Option<Completion> {
     loop {
-        let demand = mailbox.0.lock().unwrap().demand.clone()?;
-        let spec = &demand.spec;
+        let (demand, sequence) = {
+            let state = mailbox.0.lock().unwrap();
+            (state.demand.clone()?, state.sequence)
+        };
+        let frame = demand.frame;
         let started = std::time::Instant::now();
         let trace = |phase: &str| {
             if let Some(recipe) = demand
@@ -818,7 +739,7 @@ pub(super) async fn acquire_images(
                 .recipe()
                 .filter(|recipe| !recipe.repairs.is_empty())
             {
-                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = spec.frame().output[0], height = spec.frame().output[1], active_input_bytes = renderer.evaluation().active_input_bytes(), retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
+                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = frame.output[0], height = frame.output[1], active_input_bytes = renderer.evaluation().active_input_bytes(), retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
             }
         };
         trace("acquisition_started");
@@ -829,173 +750,32 @@ pub(super) async fn acquire_images(
                 .unwrap()
                 .demand
                 .as_ref()
-                .is_none_or(|latest| !demand.same_source(latest) || latest.spec != *spec)
+                .is_none_or(|latest| !demand.same_source(latest) || latest.frame != frame)
         };
         if cancelled() {
             return None;
         }
         let result = async {
-            let scan = demand.pixels.scan()?;
-            let specs = vec![spec.clone(), spec.underlay()?];
-            let correction = demand
-                .pixels
-                .correction
-                .as_ref()
-                .map(|field| field.gpu.clone());
-            let neutral_specs = specs.clone();
-            let native_request =
-                |root: crate::gpu::evaluation::Value,
-                 region: crate::gpu::evaluation::CellRegion| {
-                    let grid = root.domain().grid;
-                    renderer.evaluation().request(
-                        root,
-                        crate::gpu::evaluation::Region {
-                            bounds: region,
-                            grid,
-                        },
-                        crate::gpu::evaluation::Budget {
-                            tile: [region.width, region.height],
-                            scratch_bytes: 512 << 20,
-                        },
-                    )
-                };
-            let (calculations, native_requests) = match &demand.capture {
-                PhotographRequest::Recipe(recipe) | PhotographRequest::BeforeLooks(recipe) => specs
-                    .iter()
-                    .map(|spec| {
-                        let (photograph, plan) = crate::gpu::photograph::PhotographGraph::preview(
-                            &device.limits(),
-                            &scan,
-                            correction.clone(),
-                            recipe,
-                            spec.frame(),
-                            None,
-                        )?;
-                        let region = photograph
-                            .processed
-                            .region_for(
-                                &photograph.neutral,
-                                photograph.processed.domain().finite()?,
-                            )?
-                            .ok_or(Error::InvalidParameter("preview has no neutral dependency"))?;
-                        let native = photograph.neutral;
-                        Ok((
-                            (photograph.processed, plan),
-                            native_request(native, region)?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?
-                    .into_iter()
-                    .unzip(),
-                _ => {
-                    let native_roots =
-                        demand
-                            .capture
-                            .source_graphs(&scan, correction.clone(), &specs)?;
-                    let calculations = native_roots
-                        .into_iter()
-                        .zip(&specs)
-                        .map(|(native, spec)| {
-                            demand.capture.filtered(&device.limits(), spec, native)
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?;
-                    let requests = demand
-                        .capture
-                        .source_graphs(&scan, correction.clone(), &neutral_specs)?
-                        .into_iter()
-                        .zip(&neutral_specs)
-                        .map(|(root, spec)| native_request(root, spec.input_region()?))
-                        .collect::<Result<Vec<_>, Error>>()?;
-                    (calculations, requests)
-                }
-            };
-            trace("graph_described");
-            if demand.capture.recipe().is_some_and(|recipe| !recipe.repairs.is_empty()) {
-                for (index, request) in native_requests.iter().enumerate() {
-                    let bounds = request.region().bounds;
-                    log::info!(index = index, width = bounds.width, height = bounds.height; "working_neutral_demand");
-                }
-            }
-            let cache = renderer.evaluation().materializations();
-            trace("input_prepared");
-            if mailbox
+            let previous = mailbox
                 .0
                 .lock()
                 .unwrap()
-                .demand
+                .completed
                 .as_ref()
-                .is_none_or(|latest| latest.spec != *spec)
-            {
+                .map(|frame| frame.source.spec.clone());
+            let rendering = demand
+                .rendering(renderer.clone(), kernels.clone(), previous.as_ref())
+                .map_err(Error::Gpu)?;
+            trace("graph_described");
+            let Some(images) = rendering.produce(queue, submissions, &cancelled).await? else {
                 return Ok(None);
-            }
-            let Some(neutral) = ViewSource::acquire_images(
-                device,
-                queue,
-                submissions,
-                renderer.clone(),
-                kernels.clone(),
-                neutral_specs,
-                native_requests,
-                &cache,
-                &cancelled,
-            )
-            .await?
-            else {
-                return Ok(None);
-            };
-            trace("neutral_ready");
-            let mut sources = neutral;
-            let requests = calculations
-                .iter()
-                .map(|(root, _)| {
-                    crate::gpu::view::processing::ProcessedView::request(
-                        renderer.evaluation(),
-                        root.clone(),
-                    )
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-            let futures =
-                renderer
-                    .evaluation()
-                    .materialize_many(queue, submissions, &cache, requests)?;
-            let mut pending = Box::pin(futures_util::future::try_join_all(futures));
-            let values = futures_util::future::poll_fn(|cx| {
-                if cancelled() {
-                    return std::task::Poll::Ready(None);
-                }
-                std::future::Future::poll(pending.as_mut(), cx).map(Some)
-            })
-            .await;
-            let Some(values) = values else {
-                return Ok(None);
-            };
-            let values = match values {
-                Ok(values) => values,
-                Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
-                Err(error) => return Err(Error::Gpu(error.to_string())),
             };
             trace("processed_ready");
-            let processed = sources
-                .iter()
-                .zip(calculations)
-                .zip(values)
-                .map(|((source, (root, plan)), value)| {
-                    crate::gpu::view::processing::ProcessedView::produced(
-                        source.acquired(),
-                        root,
-                        plan,
-                        value,
-                    )
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-            let underlay = sources.pop();
-            let source = sources.pop().expect("detail and underlay");
-            Ok(Some(Arc::new(Frame {
-                source,
-                underlay,
-                request: demand.clone(),
-                processed,
-            })))
+            Ok(Some(Arc::new(Frame::from_images(
+                demand.clone(),
+                sequence,
+                images,
+            ))))
         }
         .await
         .map_err(|error: Error| error.to_string());
@@ -1004,11 +784,16 @@ pub(super) async fn acquire_images(
             return None;
         }
         let mut state = mailbox.0.lock().unwrap();
-        if let Ok(Some(frame)) = &result {
+        if let Ok(Some(frame)) = &result
+            && state
+                .completed
+                .as_ref()
+                .is_none_or(|current| current.sequence <= sequence)
+        {
             state.completed = Some(frame.clone());
         }
         let latest = state.demand.as_ref()?;
-        if latest.spec == *spec {
+        if latest.frame == frame {
             drop(state);
             return match result {
                 Ok(Some(frame)) => Some(Completion {
@@ -1096,7 +881,10 @@ impl Editor {
         }
 
         if self.interaction_blocked() && !image.is_sample() && !self.cropping() {
-            if inspection && self.document.visit.working_view.wanted.is_some() {
+            if inspection && let Some(wanted) = self.document.visit.working_view.wanted.clone() {
+                let mut demand = (*wanted).clone();
+                demand.capture = capture.clone();
+                self.request_working(demand, cx);
                 self.document
                     .visit
                     .working_view
@@ -1142,12 +930,12 @@ impl Editor {
 
         let source_input = self.source_context().expect("ready working source");
         if inspection {
-            let spec = SourceRequest::for_frame(frame)?;
             self.request_working(
                 Demand {
-                    spec,
+                    frame,
                     pixels: source_input,
                     capture: capture.clone(),
+                    rendering: OnceLock::new(),
                 },
                 cx,
             );
@@ -1176,18 +964,23 @@ impl Editor {
                         .wanted
                         .as_ref()
                         .is_none_or(|wanted| {
-                            !rendered.matches_capture(&wanted.spec, capture, self.document.target())
+                            !(rendered.spec.frame() == wanted.frame
+                                && rendered.matches_capture(
+                                    &rendered.spec,
+                                    capture,
+                                    self.document.target(),
+                                ))
                         })
                 });
             return Ok(self.document.visit.working_view.displayed.clone());
         }
 
-        let spec = capture.source_request(frame)?;
         self.request_working(
             Demand {
-                spec,
+                frame,
                 pixels: source_input,
                 capture: capture.clone(),
+                rendering: OnceLock::new(),
             },
             cx,
         );
@@ -1219,7 +1012,12 @@ impl Editor {
                     .wanted
                     .as_ref()
                     .is_none_or(|wanted| {
-                        !rendered.matches_capture(&wanted.spec, capture, self.document.target())
+                        !(rendered.spec.frame() == wanted.frame
+                            && rendered.matches_capture(
+                                &rendered.spec,
+                                capture,
+                                self.document.target(),
+                            ))
                     })
             });
         if self.document.visit.working_view.displayed.is_none()
@@ -1267,7 +1065,6 @@ impl Acquisition {
             &self.mailbox,
             &renderer,
             &kernels,
-            &services.device,
             &services.queue,
             &submissions,
         )
@@ -1289,9 +1086,9 @@ impl Editor {
         if self.allow_close {
             return;
         }
-        let Some(request) = self.document.visit.working_view.acquisition() else {
+        if self.document.visit.working_view.wanted.is_none() {
             return;
-        };
+        }
         let Some(services) = self.source_services.clone() else {
             self.document
                 .visit
@@ -1319,6 +1116,9 @@ impl Editor {
                 self.document.visit.working_view.acquisition_failed(error);
                 return;
             }
+        };
+        let Some(request) = self.document.visit.working_view.acquisition() else {
+            return;
         };
         if self.document.visit.working_view.task.is_some() {
             return;

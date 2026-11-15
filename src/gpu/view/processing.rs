@@ -37,7 +37,7 @@ impl ProcessedView {
         };
         debug_assert_eq!(stages.raster.size(), self.plan.input().size());
         stages
-            .encode_from(device, encoder, &self.source.pixels, &self.pixels)
+            .encode_result(device, encoder, &self.pixels)
             .expect("validated photographic composition");
     }
 
@@ -63,13 +63,33 @@ impl ProcessedView {
 
     #[cfg(test)]
     pub fn matches(&self, limits: &wgpu::Limits, input: &AuthoredPhotograph) -> bool {
-        Self::definition(
-            limits,
-            &self.source.spec,
-            self.source.definition.clone(),
-            input,
-        )
-        .is_ok_and(|(root, _)| self.supplies(&root, &self.source))
+        let definition = if self.source.definition.same_definition(&self.definition) {
+            self.definition
+                .ancestors()
+                .skip(1)
+                .find(|node| {
+                    matches!(
+                        node.domain().meaning,
+                        crate::gpu::evaluation::Meaning::Neutral
+                            | crate::gpu::evaluation::Meaning::Inspection
+                    )
+                })
+                .cloned()
+                .unwrap_or_else(|| self.source.definition.clone())
+        } else {
+            self.source.definition.clone()
+        };
+        let spec = if input.is_positive() {
+            SourceRequest::for_processing(self.source.spec.frame(), input)
+        } else {
+            SourceRequest::for_frame(self.source.spec.frame())
+        };
+        let Ok(mut spec) = spec else {
+            return false;
+        };
+        spec.plan = self.source.spec.plan.clone();
+        Self::definition(limits, &spec, definition, input)
+            .is_ok_and(|(root, _)| self.supplies(&root, &self.source))
     }
 
     #[cfg(test)]

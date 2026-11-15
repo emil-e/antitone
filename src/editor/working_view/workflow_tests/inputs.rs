@@ -78,6 +78,11 @@ fn gamma_edits_reuse_active_camera_storage_and_pressure_retires_it_without_losin
         app.enter(|e, cx| request_working(e, spec(0.03), input.clone(), cx));
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
+                && e.document
+                    .visit
+                    .camera
+                    .ready()
+                    .is_some_and(|ready| ready.finished())
         });
         assert_eq!(renderer.evaluation().active_input_bytes(), bytes);
         app.update(|e| e.replace_photo_scope(8));

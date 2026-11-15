@@ -438,7 +438,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| {
             let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
-            assert!(view.spec.is_inspection());
+            assert!(view.capture.is_inspection());
             assert!(Arc::ptr_eq(
                 &view,
                 &editor.canvas_frame.displayed.as_ref().unwrap().view

@@ -43,7 +43,8 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
         let mut frame = FrameRaster::full(recipe.composition).unwrap();
         frame.output = [384, 256];
         let demand = Demand {
-            spec: SourceRequest::for_recipe(frame, &recipe).unwrap(),
+            rendering: OnceLock::new(),
+            frame,
             pixels: editor.source_context().unwrap(),
             capture: PhotographRequest::Recipe(recipe),
         };

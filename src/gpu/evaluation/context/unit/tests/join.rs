@@ -915,6 +915,7 @@ fn bounded_run_ownership_uses_common_discovery_without_optional_retention() {
     let publish = |identity: RetainedKey, value: f32| {
         let image = ImageValue::host(vec![[value; 4]; 2]);
         scope.submitted_image(&Image {
+            inputs: Default::default(),
             identity,
             descriptor: Arc::new(layout),
             image: image.clone(),
