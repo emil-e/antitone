@@ -61,7 +61,7 @@ impl Editor {
                 menu = Some(MenuAction::Close);
             } else if !self.files.pending() {
                 self.status =
-                    "Finish the current operation or cancel the pick before closing".into();
+                    "Finish or cancel the current edit or modal operation before closing".into();
             }
         }
         // Text input must reach its focused control before a later menu command

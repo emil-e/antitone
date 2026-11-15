@@ -639,14 +639,47 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
 }
 
 #[test]
-fn draft_tool_keeps_document_changing_commands_and_removal_guarded() {
+fn cancelling_new_preserves_batch_proposals_and_discarding_retires_them_without_applying() {
+    let (editor, _directory) = fixture();
+    crate::application::test_support::with_application(editor, |app| {
+        let (before, review) = app.enter(|editor, _| {
+            editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
+            editor.adjust_auto_crop_margin(4.);
+            assert!(!editor.editing());
+            let state = editor.document.auto_crop.current().unwrap();
+            (editor.document.state.project.clone(), Rc::downgrade(&state))
+        });
+        app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+        app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
+        assert!(review.upgrade().is_some());
+        app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
+        app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+        app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing());
+            assert_eq!(editor.document.state.project, before);
+        });
+        app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
+        app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
+        app.update(|editor| editor.dialogs.answer_for_test("Discard changes"));
+        app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+        assert!(review.upgrade().is_none());
+        app.read(|editor| {
+            assert!(!editor.has_hosted_tool());
+            assert!(editor.document.project.sources.is_empty());
+            assert_eq!(editor.history_label(history::Direction::Undo), None);
+        });
+    });
+}
+
+#[test]
+fn draft_tool_keeps_import_and_removal_guarded() {
     let (e, _directory) = fixture();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
             let before = e.document.state.project.clone();
             e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
             e.request_removal(cx);
-            for action in [FileAction::New, FileAction::Add, FileAction::Remove] {
+            for action in [FileAction::Add, FileAction::Remove] {
                 e.file_action(action, cx);
             }
             assert!(
