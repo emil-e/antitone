@@ -77,16 +77,11 @@ impl Editor {
     }
 
     pub(super) fn file_available(&self) -> bool {
-        !self.workspace_input.is_blocked()
-            && self.document.look.is_none()
-            && self.file_context_available()
+        !self.workspace_input.is_blocked() && self.file_context_available()
     }
 
     fn snapshot_available(&self) -> bool {
-        !self.workspace_input.is_blocked()
-            && self.document.look.is_none()
-            && !self.editing()
-            && !self.allow_close
+        !self.workspace_input.is_blocked() && !self.editing() && !self.allow_close
     }
 
     fn file_context_available(&self) -> bool {
@@ -121,7 +116,7 @@ impl Editor {
         if let Some(panel) = &self.menus.panel {
             if !self.allow_close && !panel.workspace.is_covered() {
                 state.enabled.insert(Close);
-                if self.document.look.is_none() && self.file_context_available() {
+                if self.file_context_available() {
                     state.enabled.insert(Quit);
                 }
             }

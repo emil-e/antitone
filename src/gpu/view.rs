@@ -652,7 +652,10 @@ impl RenderedView {
         self.graded
             .as_ref()
             .zip(other.graded.as_ref())
-            .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            .is_some_and(|(a, b)| {
+                // A cached raster can be returned through a fresh metadata wrapper.
+                a.pixels == b.pixels && a.definition.same_definition(&b.definition)
+            })
     }
 
     pub fn in_flight(&self) -> bool {

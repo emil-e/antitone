@@ -69,7 +69,9 @@ fn captured_choice_accepts_without_paint_and_records_only_accepted_content() {
         app.enter(|e, access| {
             e.select_look(Source::Loaded(selected.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         expected.output.lut = Some(selected.clone());
         app.read(|e| {
             assert_eq!(e.document.state.project, expected);
@@ -100,7 +102,9 @@ fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selectio
     with_application(e, |app| {
         for chosen in [&first, &second, &renamed] {
             app.enter(|e, cx| e.select_look(Source::Loaded(chosen.clone()), cx));
-            app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+            app.run_until(Duration::from_secs(15), |e| {
+                e.document.lut.pending.is_none()
+            });
             app.read(|e| assert_eq!(e.document.state.project.output.lut.as_ref(), Some(chosen)));
         }
         let list = vec![renamed.clone(), second];
@@ -145,7 +149,7 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
         with_application(e, |app| {
             let activity = app.enter(|e, cx| {
                 e.select_look(Source::Loaded(selected.clone()), cx);
-                e.document.look.as_ref().unwrap().activity.clone()
+                e.document.lut.pending.as_ref().unwrap().activity.clone()
             });
             app.pump();
             let (valid, stop) = ready.recv_timeout(Duration::from_secs(15)).unwrap();
@@ -155,8 +159,9 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
                 app.pump();
             }
             app.read(|e| {
-                assert_eq!(e.document.look.is_none(), cancelled);
-                assert_eq!(e.interaction_blocked(), !cancelled);
+                assert_eq!(e.document.lut.pending.is_none(), cancelled);
+                assert!(!e.interaction_blocked());
+                assert!(!e.workspace_input.is_blocked());
                 assert_eq!(e.document.state.project, before);
             });
             if cancelled {
@@ -165,7 +170,9 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
             }
             release.send(()).unwrap();
             done.recv_timeout(Duration::from_secs(15)).unwrap();
-            app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+            app.run_until(Duration::from_secs(15), |e| {
+                e.document.lut.pending.is_none()
+            });
             app.read(|e| {
                 assert!(!e.interaction_blocked() && e.activities.view().is_none());
                 if cancelled {
@@ -218,7 +225,9 @@ fn device_preflight_rejects_an_unsupported_asset_without_remembering_or_recordin
     );
     with_application(e, |app| {
         app.enter(|e, cx| e.select_look(Source::Loaded(unsupported), cx));
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.look.loaded, vec![accepted.clone()]);
@@ -234,7 +243,9 @@ fn device_preflight_rejects_an_unsupported_asset_without_remembering_or_recordin
         app.update(|e| e.dialogs.answer_for_test("OK"));
         let supported = asset(0.7);
         app.enter(|e, cx| e.select_look(Source::Loaded(supported.clone()), cx));
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(e.document.state.project.output.lut, Some(supported));
             assert!(!e.dialogs.is_open());
@@ -257,7 +268,9 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.enter(|e, access| {
             e.select_look(Source::Imported(path.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         let accepted = app.read(|e| {
             e.document
                 .state
@@ -272,7 +285,9 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.enter(|e, access| {
             e.select_look(Source::Imported(path.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.look.loaded, vec![accepted.clone()]);
@@ -286,7 +301,9 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.enter(|e, access| {
             e.select_look(Source::Imported(path.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(
                 e.dialogs.message().unwrap().title,
@@ -302,7 +319,9 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
             e.clear_look();
             e.select_look(Source::Loaded(accepted.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(
                 e.document.state.project.output.lut.as_ref().unwrap(),
@@ -323,7 +342,7 @@ fn a_completed_look_rejects_overlap_without_waiting_or_changing_its_owner() {
         let before = app.read(|editor| editor.document.project.clone());
         app.enter(|editor, cx| editor.select_look(Source::Loaded(asset(0.7)), cx));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.look.is_none()
+            editor.document.lut.pending.is_none()
         });
         app.read(|editor| {
             assert!(editor.activities.view().is_none());
@@ -348,7 +367,7 @@ fn user_cancel_retires_queued_work_without_changing_the_accepted_look() {
     with_application(e, |app| {
         let activity = app.enter(|e, cx| {
             e.select_look(Source::Loaded(asset(0.7)), cx);
-            e.document.look.as_ref().unwrap().activity.clone()
+            e.document.lut.pending.as_ref().unwrap().activity.clone()
         });
         app.pump();
         app.update(|_| activity.request_cancel());
@@ -356,7 +375,7 @@ fn user_cancel_retires_queued_work_without_changing_the_accepted_look() {
         app.read(|e| {
             assert!(
                 !e.interaction_blocked()
-                    && e.document.look.is_none()
+                    && e.document.lut.pending.is_none()
                     && e.activities.view().is_none()
             );
             assert_eq!(e.document.state.project, before);
@@ -387,9 +406,11 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         });
         app.pump();
         assert!(weak.upgrade().is_none());
-        app.read(|e| assert!(e.interaction_blocked() && e.document.look.is_some()));
+        app.read(|e| assert!(!e.interaction_blocked() && e.document.lut.pending.is_some()));
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.lut.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(e.document.state.project.output.lut, Some(chosen.clone()));
             assert_eq!(e.look.loaded, vec![chosen]);
@@ -485,13 +506,15 @@ fn retired_running_preparation_keeps_its_owner_until_cleanup_without_blocking_a_
         starts.recv_timeout(Duration::from_secs(15)).unwrap();
         let selected = asset(0.6);
         app.enter(|e, cx| {
-            e.retire_look_selection();
+            e.document.lut.pending = None;
             e.look.services = Some(Services::new(
                 e.source_services.as_ref().unwrap().device.limits(),
             ));
             e.select_look(Source::Loaded(selected.clone()), cx);
         });
-        app.run_until(Duration::from_secs(20), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(20), |e| {
+            e.document.lut.pending.is_none()
+        });
         assert!(cache.upgrade().is_some() && directory.exists());
         app.read(|e| assert_eq!(e.document.project.output.lut, Some(selected.clone())));
         release.send(()).unwrap();
@@ -519,9 +542,9 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
     with_application(e, |app| {
         app.enter(|e, access| {
             e.select_look(Source::Loaded(asset(0.4)), access);
-            assert!(e.interaction_blocked() && e.document.look.as_ref().unwrap().task.is_some());
+            assert!(!e.interaction_blocked() && e.document.lut.pending.is_some());
         });
-        app.run_until(Duration::from_secs(5), |e| !e.interaction_blocked());
+        app.run_until(Duration::from_secs(5), |e| e.document.lut.pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
@@ -645,13 +668,13 @@ fn completing_preparation_preserves_a_notice_reported_while_it_was_running() {
             });
             let message = app.read(|editor| editor.dialogs.message().unwrap());
             app.read(|editor| {
-                assert!(editor.document.look.is_some());
+                assert!(editor.document.lut.pending.is_some());
                 assert_eq!(editor.dialogs.message().unwrap().details, message.details);
                 assert_eq!(editor.document.project, before);
             });
             release.send(()).unwrap();
             app.run_until(Duration::from_secs(15), |editor| {
-                editor.document.look.is_none()
+                editor.document.lut.pending.is_none()
             });
             app.read(|editor| {
                 assert_eq!(editor.document.project.output.lut, Some(selected.clone()));

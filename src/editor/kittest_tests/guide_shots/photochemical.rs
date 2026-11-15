@@ -59,7 +59,7 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
             ),
         });
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
-            !e.interaction_blocked()
+            e.document.film_and_paper.pending.is_none()
         });
         settle_view(harness);
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
@@ -162,7 +162,7 @@ fn supplied_digital_photograph_renders_and_saves_the_same_component_routes() {
             )
         });
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.interaction_blocked()
+            e.document.film_and_paper.pending.is_none()
         });
         settle_view(&mut harness);
         harness.read(|e| {

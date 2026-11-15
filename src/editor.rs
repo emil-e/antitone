@@ -276,7 +276,7 @@ pub struct Editor {
 
 impl Editor {
     fn interaction_blocked(&self) -> bool {
-        self.document.look.is_some() || self.activities.has_modal()
+        self.activities.has_modal()
     }
 
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {

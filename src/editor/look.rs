@@ -15,16 +15,30 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+pub(super) mod film_and_paper;
+pub(super) mod lut;
+
+#[cfg(test)]
+use lut::loaded_lut_labels;
+
 #[cfg(test)]
 mod photochemical_tests;
 #[cfg(test)]
 mod resolver_tests;
 #[cfg(test)]
+mod snapshot_tests;
+#[cfg(test)]
 mod switch_tests;
+#[cfg(test)]
+pub(super) mod testing;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod transition_tests;
+#[cfg(test)]
 mod ui_tests;
+#[cfg(test)]
+mod workflow_tests;
 
 #[derive(Clone)]
 pub(super) enum Source {
@@ -59,6 +73,13 @@ impl Slot {
             Self::FilmAndPaper => project.output.film_and_paper = asset,
         }
     }
+    fn operation_mut(self, document: &mut DocumentScope) -> &mut Option<Operation> {
+        match self {
+            Self::Lut => &mut document.lut.pending,
+            Self::FilmAndPaper => &mut document.film_and_paper.pending,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Lut => "LUT",
@@ -77,16 +98,7 @@ pub(super) struct Operation {
     #[cfg(test)]
     pub activity: ActivityReporter,
     pub selection: Option<MaterialSelection>,
-    task: Option<async_executor::Task<()>>,
-}
-impl Operation {
-    fn slot(&self) -> Slot {
-        if self.selection.is_some() {
-            Slot::FilmAndPaper
-        } else {
-            Slot::Lut
-        }
-    }
+    _task: async_executor::Task<()>,
 }
 
 struct CacheOwner {
@@ -221,111 +233,48 @@ pub(super) fn prepare_asset(
 }
 
 impl Editor {
-    fn material_selection(&self) -> Option<MaterialSelection> {
-        self.document
-            .look
-            .as_ref()
-            .and_then(|op| op.selection)
-            .or_else(|| {
-                self.document
-                    .state
-                    .project
-                    .output
-                    .film_and_paper
-                    .as_ref()
-                    .and_then(|asset| MaterialSelection::from_origin(asset.origin()))
-            })
+    fn look_request_allowed(&self) -> bool {
+        !self.workspace_input.is_blocked()
     }
-    fn look_request_allowed(&self, slot: Slot) -> bool {
-        !self.dialogs.is_open()
-            && (!self.interaction_blocked()
-                || self
-                    .document
-                    .look
-                    .as_ref()
-                    .is_some_and(|op| op.slot() == slot))
+
+    fn lut_controls_allowed(&self) -> bool {
+        self.look_request_allowed() && !self.tool_interacting()
     }
-    fn select_negative(&mut self, negative: Option<material::Negative>, cx: &UiContext<'_, Self>) {
-        if !self.look_request_allowed(Slot::FilmAndPaper) {
-            return;
-        }
-        let current = self.material_selection();
-        let paper = current
-            .map(MaterialSelection::paper)
-            .or_else(|| negative.map(material::Negative::default_paper));
-        if let Some(selection) = paper.and_then(|paper| MaterialSelection::new(negative, paper)) {
-            self.select_look(Source::Photochemical(selection), cx);
-        } else if let (Some(previous), Some(negative)) = (current, negative) {
-            self.request_material_switch(
-                previous,
-                MaterialSelection::new(Some(negative), negative.default_paper())
-                    .expect("negative's default paper is supported"),
-                cx,
-            );
-        }
-    }
-    #[cfg(test)]
-    fn photochemical_selection(&self) -> Option<Selection> {
-        match self.material_selection() {
-            Some(MaterialSelection::Colour(selection)) => Some(selection),
-            _ => None,
-        }
-    }
-    fn select_paper(&mut self, paper: Option<material::Paper>, cx: &UiContext<'_, Self>) {
-        if !self.look_request_allowed(Slot::FilmAndPaper) {
-            return;
-        }
-        let current = self.material_selection();
-        let negative = current.and_then(MaterialSelection::negative);
-        match paper {
-            Some(paper) => {
-                if let Some(selection) = MaterialSelection::new(negative, paper) {
-                    self.select_look(Source::Photochemical(selection), cx);
-                } else if let Some(previous) = current {
-                    self.request_material_switch(
-                        previous,
-                        MaterialSelection::new(None, paper)
-                            .expect("paper-only treatment is supported"),
-                        cx,
-                    );
-                }
-            }
-            None if current.is_some() && negative.is_none() => self.clear_slot(Slot::FilmAndPaper),
-            _ => {}
-        }
+
+    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.imported_lut_controls(ui, cx);
+        self.film_and_paper_controls(ui, cx);
     }
 
     pub(super) fn select_look(&mut self, source: Source, cx: &UiContext<'_, Self>) {
-        let slot = source.slot();
-        // One preparation owns the busy interaction; the other stage keeps its accepted asset.
-        if !self.look_request_allowed(slot) {
-            return;
+        if self.look_request_allowed() {
+            self.prepare_look(source, cx);
         }
-        self.prepare_look(source, cx);
     }
 
     fn prepare_look(&mut self, source: Source, cx: &UiContext<'_, Self>) {
         let slot = source.slot();
-        self.retire_look_selection();
-        let cancelled = crate::cancellation::Cancellation::default();
-        let activity = self
-            .activities
-            .start(ActivityOptions::new("Preparing look…").cancellable(
-                "Cancel look preparation",
-                "Cancelling look preparation…",
-                cancelled,
-            ));
+        *slot.operation_mut(&mut self.document) = None;
+        let (cancel_label, cancel_status) = match slot {
+            Slot::Lut => ("Cancel LUT preparation", "Cancelling LUT preparation…"),
+            Slot::FilmAndPaper => (
+                "Cancel Film & paper preparation",
+                "Cancelling Film & paper preparation…",
+            ),
+        };
+        let activity = self.activities.start(
+            ActivityOptions::new(format!("Preparing {}…", slot.label())).cancellable(
+                cancel_label,
+                cancel_status,
+                crate::cancellation::Cancellation::default(),
+            ),
+        );
         let selection = match &source {
-            Source::Photochemical(s) => Some(*s),
+            Source::Photochemical(selection) => Some(*selection),
             _ => None,
         };
-        self.document.look = Some(Operation {
-            #[cfg(test)]
-            activity: activity.reporter(),
-            selection,
-            task: None,
-        });
-
+        #[cfg(test)]
+        let reporter = activity.reporter();
         let services = self.look.services.clone();
         let task = cx.spawn(move |cx| async move {
             let work = async {
@@ -342,13 +291,13 @@ impl Editor {
             let result = futures_lite::future::or(cancel, work).await;
             drop(activity);
             cx.update(|editor| {
-                editor.retire_look_selection();
+                *slot.operation_mut(&mut editor.document) = None;
                 match result {
                     Ok(Some(asset)) => {
                         let result = (|| -> Result<(), Error> {
-                            let mut draft = editor.edit_project(slot.label())?;
-                            draft.update(|project| slot.set(project, Some(asset)));
-                            editor.commit_project(draft)
+                            let mut edit = editor.edit_project(slot.label())?;
+                            edit.update(|project| slot.set(project, Some(asset)));
+                            editor.commit_project(edit)
                         })();
                         if let Err(error) = result {
                             editor.look_failed(error.to_string());
@@ -357,39 +306,33 @@ impl Editor {
                             editor.invalidate_original();
                         }
                     }
-                    Ok(None) => editor.status = "LUT preparation cancelled".into(),
+                    Ok(None) => editor.status = format!("{} preparation cancelled", slot.label()),
                     Err(message) => editor.look_failed(message),
                 }
             });
         });
         if let Some(task) = task {
-            self.document.look.as_mut().unwrap().task = Some(task);
+            *slot.operation_mut(&mut self.document) = Some(Operation {
+                #[cfg(test)]
+                activity: reporter,
+                selection,
+                _task: task,
+            });
         } else {
-            self.retire_look_selection();
             self.look_failed("Application stopped".into());
         }
     }
 
-    pub(super) fn retire_look_selection(&mut self) {
-        self.document.look = None;
-    }
     fn clear_slot(&mut self, slot: Slot) {
         if self.dialogs.is_open() {
             return;
         }
-        if self
-            .document
-            .look
-            .as_ref()
-            .is_some_and(|op| op.slot() == slot)
-        {
-            self.retire_look_selection();
-        }
+        *slot.operation_mut(&mut self.document) = None;
         if slot.asset(&self.document.state.project).is_some() {
             let result = (|| -> Result<(), Error> {
-                let mut draft = self.edit_project(slot.label())?;
-                draft.update(|project| slot.set(project, None));
-                self.commit_project(draft)
+                let mut edit = self.edit_project(slot.label())?;
+                edit.update(|project| slot.set(project, None));
+                self.commit_project(edit)
             })();
             if let Err(error) = result {
                 self.look_failed(error.to_string());
@@ -398,301 +341,14 @@ impl Editor {
             }
         }
     }
+
     pub(super) fn clear_film_and_paper(&mut self) {
         self.clear_slot(Slot::FilmAndPaper);
     }
 
-    pub(super) fn clear_look(&mut self) {
-        self.clear_slot(Slot::Lut);
-    }
-    pub(super) fn remember_imported_look(&mut self) {
-        let Some(asset) = self
-            .document
-            .project
-            .output
-            .lut
-            .as_ref()
-            .filter(|asset| matches!(asset.origin(), LookOrigin::Imported))
-        else {
-            return;
-        };
-        if let Some(existing) = self
-            .look
-            .loaded
-            .iter_mut()
-            .find(|entry| entry.id() == asset.id())
-        {
-            *existing = asset.clone();
-        } else {
-            self.look.loaded.push(asset.clone());
-        }
-    }
-}
-
-fn loaded_lut_labels(assets: &[Arc<LookAsset>]) -> Vec<String> {
-    let mut used: HashSet<String> = ["None".into(), "Load LUT…".into()].into_iter().collect();
-    assets
-        .iter()
-        .map(|asset| {
-            let mut name = asset.name().to_owned();
-            let mut suffix = 2;
-            while !used.insert(name.clone()) {
-                name = format!("{} ({suffix})", asset.name());
-                suffix += 1;
-            }
-            name
-        })
-        .collect()
-}
-
-impl Editor {
-    fn request_material_switch(
-        &mut self,
-        previous: MaterialSelection,
-        selection: MaterialSelection,
-        cx: &UiContext<'_, Self>,
-    ) {
-        let explanation = if let Some(negative) = selection.negative() {
-            format!(
-                "{} with {} is not supported. Switch the paper to {}?",
-                negative.name(),
-                previous.paper().name(),
-                selection.paper().name()
-            )
-        } else {
-            format!(
-                "{} with {} is not supported. Set Negative to None to use this paper?",
-                previous
-                    .negative()
-                    .expect("switch clears a selected negative")
-                    .name(),
-                selection.paper().name()
-            )
-        };
-        let response = self.dialogs.show(move |context, id, escape| {
-            ui::DecisionDialog::new("Switch Film & paper?", &explanation, "Switch materials")
-                .show(context, id, escape)
-        });
-        self.document.dialog_action = cx.spawn(move |cx| async move {
-            if response.await == Ok(ui::DialogChoice::Confirm) {
-                cx.update(|editor| editor.prepare_look(Source::Photochemical(selection), &cx));
-            }
-        });
-    }
     pub(super) fn look_rendering_error(&self) -> Option<Error> {
         let view = &self.canvas_frame.displayed.as_ref()?.view;
         view.image.look_failure(view.look_id()?)
-    }
-
-    fn lut_controls_allowed(&self, slot: Slot) -> bool {
-        self.look_request_allowed(slot) && !self.tool_interacting()
-    }
-
-    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.imported_lut_controls(ui, cx);
-        self.film_and_paper_controls(ui, cx);
-    }
-
-    fn imported_lut_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let labels = loaded_lut_labels(&self.look.loaded);
-        let accepted = self.document.project.output.lut.as_ref();
-        let name = accepted.map_or_else(
-            || "None".to_owned(),
-            |asset| {
-                self.look
-                    .loaded
-                    .iter()
-                    .position(|entry| entry.id() == asset.id())
-                    .map_or_else(|| asset.name().to_owned(), |i| labels[i].clone())
-            },
-        );
-        let changed = accepted.is_some();
-        let mut choice = None;
-        let mut clear = false;
-        let mut import = false;
-        ui.add_enabled_ui(self.lut_controls_allowed(Slot::Lut), |ui| {
-            let (_, action) = ui::section(
-                ui,
-                "rendering-lut",
-                "LUT",
-                ui::SectionHeader {
-                    summary: &name,
-                    changed,
-                    reset: Some(changed),
-                    tool: None,
-                    default_open: Some(true),
-                },
-                |ui| {
-                    ui::inspector_dropdown(ui, "creative-lut", "LUT", &name, |ui| {
-                        if ui.selectable_label(!changed, "None").clicked() && changed {
-                            clear = true;
-                        }
-                        for (asset, label) in self.look.loaded.iter().zip(&labels) {
-                            let selected = self.document.look.is_none()
-                                && self
-                                    .document
-                                    .project
-                                    .output
-                                    .lut
-                                    .as_ref()
-                                    .is_some_and(|current| current.id() == asset.id());
-                            if ui
-                                .push_id(asset.id(), |ui| ui.selectable_label(selected, label))
-                                .inner
-                                .clicked()
-                                && !selected
-                            {
-                                choice = Some(Source::Loaded(asset.clone()));
-                            }
-                        }
-                        ui.separator();
-                        ui.small("ACEScct / AP1 (D60) input and output");
-                        ui.small("Applied before Film & paper");
-                        if ui.selectable_label(false, "Load LUT…").clicked() {
-                            import = true;
-                            ui.close();
-                        }
-                    });
-                },
-            );
-            clear |= action.reset;
-        });
-        if clear {
-            self.clear_look();
-        }
-        if import
-            && let Some(path) = crate::platform::menu::with_native_dialog(|| {
-                rfd::FileDialog::new()
-                    .set_title("Load ACEScct / AP1 LUT")
-                    .add_filter("3D LUT", &["cube"])
-                    .pick_file()
-            })
-        {
-            choice = Some(Source::Imported(path));
-        }
-        if let Some(source) = choice {
-            self.select_look(source, cx);
-        }
-    }
-
-    fn film_and_paper_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let selection = self.material_selection();
-        let negative = selection.and_then(MaterialSelection::negative);
-        let paper = selection.map(MaterialSelection::paper);
-        let current_definition = self
-            .document
-            .look
-            .as_ref()
-            .is_some_and(|op| op.selection.is_some())
-            || selection.is_some_and(|s| {
-                self.document
-                    .project
-                    .output
-                    .film_and_paper
-                    .as_ref()
-                    .is_some_and(|asset| asset.origin() == &s.origin())
-            });
-        let name = self
-            .document
-            .project
-            .output
-            .film_and_paper
-            .as_ref()
-            .map_or("None", |asset| asset.name())
-            .to_owned();
-        let changed = self.document.project.output.film_and_paper.is_some();
-        let mut negative_choice = None;
-        let mut paper_choice = None;
-        let mut clear = false;
-        ui.add_enabled_ui(self.lut_controls_allowed(Slot::FilmAndPaper), |ui| {
-            let (_, action) = ui::section(
-                ui,
-                "film-and-paper",
-                "Film & paper",
-                ui::SectionHeader {
-                    summary: &name,
-                    changed,
-                    reset: Some(changed),
-                    tool: None,
-                    default_open: Some(true),
-                },
-                |ui| {
-                    ui::labelled_inspector_dropdown(
-                        ui,
-                        "negative-stock",
-                        "Negative",
-                        negative.map_or("None", |stock| stock.name()),
-                        |ui| {
-                            if ui.selectable_label(negative.is_none(), "None").clicked()
-                                && negative.is_some()
-                            {
-                                negative_choice = Some(None);
-                            }
-                            for stock in material::Negative::all() {
-                                let selected = negative == Some(stock) && current_definition;
-                                let response = ui.selectable_label(selected, stock.name());
-                                let response = if paper.is_some_and(|p| !p.supports_negative(stock))
-                                {
-                                    response.on_hover_text(
-                                        "Select this negative to review the required paper change.",
-                                    )
-                                } else {
-                                    response
-                                };
-                                if response.clicked() && !selected {
-                                    negative_choice = Some(Some(stock));
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
-                    ui::labelled_inspector_dropdown(
-                        ui,
-                        "print-paper",
-                        "Paper",
-                        paper.map_or("None", |medium| medium.name()),
-                        |ui| {
-                            let none = ui
-                                .add_enabled_ui(negative.is_none(), |ui| {
-                                    ui.selectable_label(paper.is_none(), "None")
-                                })
-                                .inner;
-                            if none
-                                .on_disabled_hover_text("Choose no negative to bypass the paper.")
-                                .clicked()
-                                && paper.is_some()
-                            {
-                                paper_choice = Some(None);
-                            }
-                            for medium in material::Paper::all() {
-                                let selected = paper == Some(medium) && current_definition;
-                                let response = ui.selectable_label(selected, medium.name());
-                                let response =
-                                    if negative.is_some_and(|n| !medium.supports_negative(n)) {
-                                        response.on_hover_text(
-                                            "Select this paper to review setting Negative to None.",
-                                        )
-                                    } else {
-                                        response
-                                    };
-                                if response.clicked() && !selected {
-                                    paper_choice = Some(Some(medium));
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
-                },
-            );
-            clear = action.reset;
-        });
-        if clear {
-            self.clear_film_and_paper();
-        } else if let Some(negative) = negative_choice {
-            self.select_negative(negative, cx);
-        } else if let Some(paper) = paper_choice {
-            self.select_paper(paper, cx);
-        }
     }
 }
 

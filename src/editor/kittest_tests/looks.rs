@@ -16,6 +16,7 @@ fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
 }
 
 mod errors;
+mod ownership;
 mod photochemical;
 fn tiff_codes(path: &std::path::Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
@@ -47,6 +48,8 @@ fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool
 }
 fn positive_ready(editor: &Editor) -> bool {
     !editor.interaction_blocked()
+        && editor.document.lut.pending.is_none()
+        && editor.document.film_and_paper.pending.is_none()
         && editor
             .document
             .visit
@@ -95,11 +98,22 @@ fn fixture_editor_gpu<R>(
     })
 }
 
+fn settle_controls(harness: &mut Harness<'_, Editor>) {
+    if harness.read(|editor| {
+        editor.document.lut.pending.is_some() || editor.document.film_and_paper.pending.is_some()
+    }) {
+        // Held work keeps its spinner repainting; control discovery only needs layout passes.
+        harness.run_steps(3);
+    } else {
+        harness.try_run_realtime().unwrap();
+    }
+}
+
 fn open_lut(harness: &mut Harness<'_, Editor>) {
     harness
         .get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
         .scroll_to_me();
-    harness.try_run_realtime().unwrap();
+    settle_controls(harness);
     harness
         .get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
         .click();
@@ -110,7 +124,7 @@ fn open_lut(harness: &mut Harness<'_, Editor>) {
 fn choose(harness: &mut Harness<'_, Editor>, name: &str) {
     open_lut(harness);
     harness.get_by_label(name).scroll_to_me();
-    harness.try_run_realtime().unwrap();
+    settle_controls(harness);
     harness.get_by_label(name).click();
     harness.step();
 }
@@ -237,7 +251,7 @@ fn lut_browsing_exposes_import_without_accepting_a_change() {
             });
             harness.run();
             assert!(!egui::Popup::is_any_open(&harness.ctx));
-            harness.read(|editor| assert!(editor.document.look.is_none()));
+            harness.read(|editor| assert!(editor.document.lut.pending.is_none()));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
         }
     });
@@ -263,14 +277,15 @@ fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_clea
         harness
             .enter(|editor, cx| editor.select_look(look::Source::Loaded(constant_asset(0.6)), cx));
         harness.step();
-        harness
-            .read(|editor| assert!(editor.interaction_blocked() && editor.document.look.is_some()));
-        harness.get_by_label("Cancel look preparation").click();
+        harness.read(|editor| {
+            assert!(!editor.interaction_blocked() && editor.document.lut.pending.is_some())
+        });
+        harness.get_by_label("Cancel LUT preparation").click();
         harness.step();
-        wait_for(&mut harness, |editor| editor.document.look.is_none());
+        wait_for(&mut harness, |editor| editor.document.lut.pending.is_none());
         harness.read(|editor| {
             assert!(!editor.interaction_blocked());
-            assert!(editor.document.look.is_none());
+            assert!(editor.document.lut.pending.is_none());
             assert!(editor.activities.view().is_none());
             assert_eq!(
                 editor
@@ -363,7 +378,8 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
                         .displayed
                         .as_ref()
                         .unwrap()
-                        .same_grade_as(&original)
+                        .same_grade_as(&original),
+                    "colour selections should reuse unchanged grading pixels"
                 )
             });
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
@@ -949,7 +965,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 });
                 reopened.read(|editor| assert!(!editor.dialogs.is_open()));
                 reopened.read(|editor| assert_eq!(editor.document.project.output.luts(), asset));
-                reopened.read(|editor| assert!(editor.document.look.is_none()));
+                reopened.read(|editor| assert!(editor.document.lut.pending.is_none()));
                 reopened.read(|editor| assert!(!editor.document.dirty()));
                 if reopened.read(|editor| editor.document.source) {
                     reopened.get_by_label("View source").click();
@@ -1005,7 +1021,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         }
         std::fs::write(&path, cube).unwrap();
         harness.enter(|editor, cx| editor.select_look(look::Source::Imported(path.clone()), cx));
-        wait_for(&mut harness, |editor| !editor.interaction_blocked());
+        wait_for(&mut harness, |editor| editor.document.lut.pending.is_none());
         std::fs::remove_file(path).unwrap();
         let accepted = harness.read(|editor| {
             editor
