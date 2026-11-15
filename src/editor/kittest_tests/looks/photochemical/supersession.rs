@@ -6,13 +6,14 @@ use std::sync::{
 };
 
 #[test]
-fn pending_material_preparation_preserves_the_independent_lut_and_cancel_keeps_both_accepted_slots()
-{
+fn pending_material_preparation_allows_lut_acceptance_and_cancel_only_retires_materials() {
     fixture_editor(|mut h, _| {
         let accepted = constant_asset(0.4);
         h.enter(|e, cx| e.select_look(look::Source::Loaded(accepted.clone()), cx));
         paint_until(&mut h, positive_ready);
         let before = h.read(|e| e.document.project.clone());
+        let selected = constant_asset(0.7);
+        h.update(|e| e.look.loaded.push(selected.clone()));
         let (send, receive) = mpsc::channel();
         let (finished, done) = mpsc::channel();
         let fired = Arc::new(AtomicBool::new(false));
@@ -62,25 +63,42 @@ fn pending_material_preparation_preserves_the_independent_lut_and_cancel_keeps_b
             .scroll_to_me();
         h.run_steps(12);
         assert!(
-            h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
+            !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
                 .accesskit_node()
                 .is_disabled()
         );
-        let request = h.read(|e| e.document.look.as_ref().unwrap().activity.clone());
-        h.enter(|e, cx| e.select_look(look::Source::Loaded(constant_asset(0.7)), cx));
-        h.read(|e| {
-            assert_eq!(e.document.look.as_ref().unwrap().activity, request);
-            assert_eq!(e.document.project, before);
+        let request = h.read(|e| {
+            e.document
+                .film_and_paper
+                .pending
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone()
         });
-        h.get_by_label("Cancel look preparation").click();
+        choose(&mut h, selected.name());
+        wait_for(&mut h, |e| {
+            e.document.lut.pending.is_none()
+                && e.document.project.output.lut.as_ref() == Some(&selected)
+        });
+        let mut expected = before.clone();
+        expected.output.lut = Some(selected.clone());
+        h.read(|e| {
+            assert_eq!(
+                e.document.film_and_paper.pending.as_ref().unwrap().activity,
+                request
+            );
+            assert_eq!(e.document.project, expected);
+        });
+        h.get_by_label("Cancel Film & paper preparation").click();
         h.step();
         paint_until(&mut h, positive_ready);
         assert!(stop.is_cancelled());
         done.recv_timeout(Duration::from_secs(5)).unwrap();
-        h.read(|e| assert_eq!(e.document.project, before));
+        h.read(|e| assert_eq!(e.document.project, expected));
         choose_component(&mut h, "Paper", Paper::default().name());
         h.read(|e| {
-            assert_eq!(e.document.project.output.lut.as_ref(), Some(&accepted));
+            assert_eq!(e.document.project.output.lut.as_ref(), Some(&selected));
             assert!(e.document.project.output.film_and_paper.is_some());
         });
         choose(&mut h, "None");

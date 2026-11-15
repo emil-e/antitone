@@ -30,7 +30,7 @@ fn negative_family_switch_confirms_default_paper_as_one_undoable_edit_and_cancel
         choose_component(&mut h, "Negative", "Kodak Portra 400");
         h.read(|e| {
             assert!(e.dialogs.is_open());
-            assert!(e.document.look.is_none());
+            assert!(e.document.film_and_paper.pending.is_none());
             assert_eq!(e.document.project.output, before);
             assert!(!e.history_available());
             assert!(!e.tool_start_available());
@@ -56,7 +56,7 @@ fn negative_family_switch_confirms_default_paper_as_one_undoable_edit_and_cancel
         h.key_press(egui::Key::Escape);
         h.step();
         h.read(|e| {
-            assert!(!e.dialogs.is_open() && e.document.look.is_none());
+            assert!(!e.dialogs.is_open() && e.document.film_and_paper.pending.is_none());
             assert_eq!(e.document.project.output, before);
         });
         choose_component(&mut h, "Negative", "Kodak Portra 400");

@@ -636,7 +636,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
         );
         let original = h.read(|editor| editor.document.state.project.clone());
         h.enter(|editor, cx| editor.select_look(look::Source::Loaded(chosen.clone()), cx));
-        wait_for(&mut h, |e| !e.interaction_blocked());
+        wait_for(&mut h, |e| e.document.lut.pending.is_none());
         h.read(|editor| assert!(!editor.dialogs.is_open(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         assert!(Arc::ptr_eq(

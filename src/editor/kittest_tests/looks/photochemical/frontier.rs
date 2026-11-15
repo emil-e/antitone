@@ -82,7 +82,7 @@ fn frontier_density_choices_render_export_and_reopen_without_regrading() {
         });
         choose_component(&mut h, "Negative", "Kodak Portra 400");
         h.read(|e| {
-            assert!(e.dialogs.is_open() && e.document.look.is_none());
+            assert!(e.dialogs.is_open() && e.document.film_and_paper.pending.is_none());
             assert_eq!(
                 e.document.project.output.film_and_paper,
                 Some(assets[1].clone())

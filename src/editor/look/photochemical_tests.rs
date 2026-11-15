@@ -30,7 +30,9 @@ fn pending_component_edits_capture_one_pair_and_reject_paper_bypass_with_a_negat
             );
             assert!(e.document.project.output.film_and_paper.is_none());
         });
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         let before = app.read(|e| e.document.state.project.clone());
         app.read(|e| {
             assert_eq!(
@@ -44,10 +46,12 @@ fn pending_component_edits_capture_one_pair_and_reject_paper_bypass_with_a_negat
         app.enter(|e, cx| e.select_paper(None, cx));
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.look.is_none());
+            assert!(e.document.film_and_paper.pending.is_none());
         });
         app.enter(|e, cx| e.select_negative(None, cx));
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(
                 e.photochemical_selection(),
@@ -70,29 +74,58 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
     with_application(e, |app| {
         let imported = super::tests::asset(0.4);
         app.enter(|e, cx| e.select_look(Source::Loaded(imported.clone()), cx));
-        app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(30), |e| {
+            e.document.lut.pending.is_none()
+        });
         let paper = monochrome::Paper::default();
         app.enter(|e, cx| {
             e.select_paper(Some(material::Paper::Monochrome(paper)), cx);
-            let pending = e.document.look.as_ref().unwrap().activity.clone();
+            let pending = e
+                .document
+                .film_and_paper
+                .pending
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone();
             assert_eq!(
                 e.material_selection(),
                 Some(MaterialSelection::Monochrome(paper.into()))
             );
             assert_eq!(e.photochemical_selection(), None);
             e.select_negative(Negative::from_id("kodak_portra_400").map(Into::into), cx);
-            assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
+            assert_eq!(
+                e.document
+                    .film_and_paper
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .activity
+                    .clone(),
+                pending
+            );
             assert!(e.dialogs.is_open());
             e.dialogs.answer_for_test("Cancel");
-            assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
+            assert_eq!(
+                e.document
+                    .film_and_paper
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .activity
+                    .clone(),
+                pending
+            );
         });
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         let accepted = app.read(|e| e.document.project.clone());
         app.enter(|e, cx| {
             e.select_negative(Negative::from_id("kodak_portra_400").map(Into::into), cx)
         });
         app.read(|e| {
-            assert!(e.document.look.is_none());
+            assert!(e.document.film_and_paper.pending.is_none());
             assert_eq!(e.document.project, accepted);
             assert_eq!(e.document.project.output.lut.as_ref(), Some(&imported));
             assert!(e.dialogs.is_open());
@@ -100,15 +133,19 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
         app.update(|e| e.dialogs.answer_for_test("Cancel"));
         app.pump();
         app.enter(|e, cx| e.select_paper(Some(Paper::default().into()), cx));
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         app.enter(|e, cx| {
             e.select_negative(Negative::from_id("kodak_portra_400").map(Into::into), cx)
         });
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         let colour = app.read(|e| e.document.project.clone());
         app.enter(|e, cx| e.select_paper(Some(material::Paper::Monochrome(paper)), cx));
         app.read(|e| {
-            assert!(e.document.look.is_none());
+            assert!(e.document.film_and_paper.pending.is_none());
             assert_eq!(e.document.project, colour);
             assert!(e.dialogs.is_open());
         });

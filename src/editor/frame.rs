@@ -153,7 +153,6 @@ impl Editor {
         text_was_focused: bool,
     ) {
         if !self.workspace_input.is_blocked()
-            && self.document.look.is_none()
             && self.fullscreen.is_none()
             && !fullscreen_was_active
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))

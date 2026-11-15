@@ -131,7 +131,8 @@ pub(super) struct DocumentScope {
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
-    pub look: Option<super::look::Operation>,
+    pub lut: super::look::lut::State,
+    pub film_and_paper: super::look::film_and_paper::State,
     pub dialog_action: Option<async_executor::Task<()>>,
     pub dust: super::dust::State,
     #[cfg(test)]
@@ -367,7 +368,8 @@ impl From<Document> for DocumentScope {
             embedded_preview: None,
             thumbnail_work: Default::default(),
             write: super::save::State::default(),
-            look: None,
+            lut: Default::default(),
+            film_and_paper: Default::default(),
             dialog_action: None,
             dust: super::dust::State::default(),
             #[cfg(test)]

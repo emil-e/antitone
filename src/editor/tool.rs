@@ -173,9 +173,7 @@ impl Editor {
     }
 
     pub(super) fn tool_start_available(&self) -> bool {
-        !self.workspace_input.is_blocked()
-            && self.document.look.is_none()
-            && !self.controls_pending()
+        !self.workspace_input.is_blocked() && !self.controls_pending()
     }
 
     pub(super) fn prepare_tool(&mut self) -> bool {

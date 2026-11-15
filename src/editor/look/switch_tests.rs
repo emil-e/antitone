@@ -22,16 +22,34 @@ fn declining_a_switch_keeps_earlier_preparation_alive_even_if_it_completes_under
         let paper = crate::looks::monochrome::Paper::default();
         let activity = app.enter(|e, cx| {
             e.select_paper(Some(paper.into()), cx);
-            let activity = e.document.look.as_ref().unwrap().activity.clone();
+            let activity = e
+                .document
+                .film_and_paper
+                .pending
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone();
             e.select_negative(
                 spektrafilm::Negative::from_id("kodak_portra_400").map(Into::into),
                 cx,
             );
             assert!(e.dialogs.is_open());
-            assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), activity);
+            assert_eq!(
+                e.document
+                    .film_and_paper
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .activity
+                    .clone(),
+                activity
+            );
             activity
         });
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         let accepted = app.read(|e| {
             assert!(e.dialogs.is_open());
             assert!(e.dialogs.is_open() && !e.interaction_blocked());
@@ -73,19 +91,29 @@ fn confirmed_switch_failure_or_worker_cancel_never_replaces_either_accepted_slot
                     cx,
                 );
                 assert!(e.dialogs.is_open());
-                assert!(e.document.look.is_none());
+                assert!(e.document.film_and_paper.pending.is_none());
                 e.dialogs.answer_for_test("Switch materials");
                 assert!(!e.dialogs.is_open());
                 assert_eq!(e.document.state.project, before);
             });
             app.pump();
             if cancel {
-                let activity = app.read(|e| e.document.look.as_ref().unwrap().activity.clone());
+                let activity = app.read(|e| {
+                    e.document
+                        .film_and_paper
+                        .pending
+                        .as_ref()
+                        .unwrap()
+                        .activity
+                        .clone()
+                });
                 app.update(|_| activity.request_cancel());
                 app.pump();
                 drop(hold);
             }
-            app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+            app.run_until(Duration::from_secs(90), |e| {
+                e.document.film_and_paper.pending.is_none()
+            });
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
                 assert!(!e.interaction_blocked());
@@ -115,14 +143,17 @@ fn document_replacement_retires_the_continuation_but_not_the_unanswered_dialog()
         });
         app.run_until(Duration::from_secs(30), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert!(e.document.dialog_action.is_none() && e.document.look.is_none());
+            assert!(
+                e.document.film_and_paper.confirmation.is_none()
+                    && e.document.film_and_paper.pending.is_none()
+            );
             assert!(e.document.project.output.film_and_paper.is_none());
             assert!(e.dialogs.is_open());
         });
         app.update(|e| e.dialogs.answer_for_test("Switch materials"));
         app.pump();
         app.read(|e| {
-            assert!(!e.dialogs.is_open() && e.document.look.is_none());
+            assert!(!e.dialogs.is_open() && e.document.film_and_paper.pending.is_none());
             assert!(e.document.project.output.film_and_paper.is_none());
         });
     });
@@ -152,13 +183,13 @@ fn confirming_after_earlier_preparation_fails_keeps_the_notice_and_starts_the_ca
         app.enter(|editor, cx| {
             editor.select_paper(Some(crate::looks::monochrome::Paper::default().into()), cx);
             editor.select_negative(Some(negative.into()), cx);
-            assert!(editor.dialogs.is_open() && editor.document.look.is_some());
+            assert!(editor.dialogs.is_open() && editor.document.film_and_paper.pending.is_some());
         });
         app.pump();
         assert!(!ready.recv_timeout(Duration::from_secs(90)).unwrap());
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(90), |editor| {
-            editor.document.look.is_none()
+            editor.document.film_and_paper.pending.is_none()
         });
         app.read(|editor| {
             assert!(
@@ -172,7 +203,8 @@ fn confirming_after_earlier_preparation_fails_keeps_the_notice_and_starts_the_ca
         app.read(|editor| {
             let operation = editor
                 .document
-                .look
+                .film_and_paper
+                .pending
                 .as_ref()
                 .expect("confirmation must start its continuation");
             assert_eq!(
@@ -188,7 +220,7 @@ fn confirming_after_earlier_preparation_fails_keeps_the_notice_and_starts_the_ca
         app.update(|editor| editor.dialogs.answer_for_test("OK"));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(90), |editor| {
-            editor.document.look.is_none()
+            editor.document.film_and_paper.pending.is_none()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before);

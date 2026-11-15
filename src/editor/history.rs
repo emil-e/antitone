@@ -159,10 +159,7 @@ impl Editor {
     }
 
     pub(super) fn history_available(&self) -> bool {
-        !self.workspace_input.is_blocked()
-            && !self.editing()
-            && self.document.look.is_none()
-            && !self.allow_close
+        !self.workspace_input.is_blocked() && !self.editing() && !self.allow_close
     }
 
     pub(super) fn restore_history(&mut self, direction: Direction, cx: &UiContext<'_, Self>) {
