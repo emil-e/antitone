@@ -996,6 +996,8 @@ impl Executor {
             plan,
             preparation,
             relevance: None,
+            #[cfg(feature = "editor")]
+            prerequisites: Vec::new(),
         })
     }
 
@@ -1193,9 +1195,20 @@ pub(crate) struct Recorded {
     plan: Plan,
     pub(super) preparation: WorkCounts,
     relevance: Option<super::materializations::Relevance>,
+    #[cfg(feature = "editor")]
+    prerequisites: Vec<super::context::RecordedImage>,
 }
 
 impl Recorded {
+    #[cfg(feature = "editor")]
+    pub(super) fn with_prerequisites(
+        mut self,
+        prerequisites: Vec<super::context::RecordedImage>,
+    ) -> Self {
+        self.prerequisites = prerequisites;
+        self
+    }
+
     pub(super) fn with_request(mut self, value: &value::Value, region: CellRegion) -> Self {
         self.relevance = Some(super::materializations::Relevance::new(value, region));
         self
@@ -1216,6 +1229,7 @@ impl Recorded {
         self.encode_into(device, encoder, input, input)
     }
 
+    #[cfg(test)]
     pub fn encode_into(
         &self,
         device: &wgpu::Device,
@@ -1309,6 +1323,16 @@ impl Recorded {
             &mut stats,
             Materialization::Record,
         )?;
+        #[cfg(feature = "editor")]
+        for prerequisite in &self.prerequisites {
+            if let Some(commands) = &prerequisite.commands {
+                stats.include(commands.encode_result_counts(
+                    device,
+                    encoder,
+                    &prerequisite.pixels,
+                )?);
+            }
+        }
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(device, None, encoder, tile, &mut stats, &inputs)?;
         let output = match execution.pool[output_slot].as_ref().unwrap() {
@@ -1366,14 +1390,47 @@ impl Recorded {
     }
 
     pub fn submitted(&self) {
+        #[cfg(feature = "editor")]
+        for prerequisite in &self.prerequisites {
+            if let Some(commands) = &prerequisite.commands {
+                commands.submitted();
+            }
+            prerequisite.pixels.submitted(&self.executor.scope);
+        }
         if let Some(relevance) = &self.relevance {
             self.executor.scope.refresh(relevance);
         }
         self.executor.submitted();
     }
 
+    pub(super) fn reusable_inputs(&self) -> Vec<Arc<ImageValue>> {
+        let mut images = Vec::new();
+        for image in self
+            .executor
+            .used_images
+            .iter()
+            .chain(self.executor.retained.iter().map(|value| value.image()))
+        {
+            for input in std::iter::once(image).chain(image.reusable_inputs().iter()) {
+                if !input.admitted() && !images.iter().any(|prior| Arc::ptr_eq(prior, input)) {
+                    images.push(input.clone());
+                }
+            }
+        }
+        images
+    }
+
     pub fn byte_len(&self) -> u64 {
-        self.executor.pool_bytes()
+        let bytes = self.executor.pool_bytes();
+        #[cfg(feature = "editor")]
+        let bytes = bytes
+            + self
+                .prerequisites
+                .iter()
+                .filter_map(|work| work.commands.as_ref())
+                .map(Recorded::byte_len)
+                .sum::<u64>();
+        bytes
     }
 }
 

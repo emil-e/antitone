@@ -1,6 +1,25 @@
 use super::*;
 mod history_tests;
 mod latency;
+
+fn camera_image(
+    editor: &Editor,
+) -> crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout> {
+    let scan = editor.source_context().unwrap().scan().unwrap();
+    let camera = crate::gpu::evaluation::camera_source(&scan).unwrap();
+    let services = editor.source_services.as_ref().unwrap();
+    let renderer = services
+        .renderers
+        .get(&services.device, &services.queue)
+        .unwrap();
+    renderer
+        .evaluation()
+        .materializations()
+        .find_ready::<crate::gpu::evaluation::ImageLayout>(camera.identity().unwrap(), |layout| {
+            layout.backing == crate::gpu::evaluation::ImageBacking::Texture
+        })
+        .expect("settled photo-owned camera input")
+}
 use crate::{dust_repair::RepairId, editor::history::Direction};
 
 mod persistence;
@@ -75,7 +94,7 @@ fn key(h: &mut Harness<'_, Editor>, key: egui::Key) {
 }
 
 #[test]
-fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_navigation() {
+fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigation() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
@@ -118,9 +137,8 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         }
         h.read(|editor| assert!(editor.document.visit.dust.brush_size > diameter));
         wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
-        // This live consumer protects reuse independently of optional window retention.
-        let initial_neutral =
-            h.read(|editor| editor.document.visit.working_view.neutral_source().unwrap());
+        // This live consumer protects unchanged camera pixels independently of optional retention.
+        let initial_camera = h.read(camera_image);
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         let sig = h.read(|editor| editor.dust_signature().unwrap());
@@ -135,10 +153,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                 .clone()
         });
         h.read(|editor| {
-            assert!(
-                initial_neutral
-                    .same_pixels_as(&editor.document.visit.working_view.neutral_source().unwrap())
-            )
+            assert!(Arc::ptr_eq(
+                &initial_camera.image,
+                &camera_image(editor).image
+            ))
         });
         let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let target = layout.screen_point(egui::pos2(96., 32.));
@@ -309,10 +327,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         ready(&mut h, 2);
         h.read(|editor| assert!(same.same_definition(&editor.dust_images()[0])));
         h.read(|editor| {
-            assert!(
-                initial_neutral
-                    .same_pixels_as(&editor.document.visit.working_view.neutral_source().unwrap())
-            )
+            assert!(Arc::ptr_eq(
+                &initial_camera.image,
+                &camera_image(editor).image
+            ))
         });
         h.read(|editor| {
             assert!(
@@ -451,7 +469,7 @@ fn source_view_keeps_dust_identity_and_done_available_without_applying_repairs()
                 .canvas_frame
                 .displayed
                 .as_ref()
-                .is_some_and(|painted| painted.view.spec.is_inspection())
+                .is_some_and(|painted| painted.view.capture.is_inspection())
         });
         h.read(|editor| assert!(editor.dusting()));
         let identity = h.get_by_label("Active tool: Dust cleanup").rect();

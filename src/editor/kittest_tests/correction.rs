@@ -90,7 +90,7 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
                     .as_ref()
                     .unwrap()
                     .view
-                    .spec
+                    .capture
                     .is_inspection()
             )
         });
@@ -116,7 +116,7 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
                     .as_ref()
                     .unwrap()
                     .view
-                    .spec
+                    .capture
                     .is_inspection()
             );
             let source = editor
@@ -257,7 +257,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
                     .as_ref()
                     .unwrap()
                     .view
-                    .spec
+                    .capture
                     .is_inspection()
             );
         });

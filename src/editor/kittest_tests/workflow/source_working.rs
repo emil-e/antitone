@@ -112,7 +112,7 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
                     .working_view
                     .displayed
                     .as_ref()
-                    .is_some_and(|v| v.spec.is_inspection())
+                    .is_some_and(|v| v.capture.is_inspection())
         });
         h.render().unwrap();
         h.read(|editor| {
@@ -550,7 +550,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                 .unwrap()
                 .clone()
         });
-        assert!(original.spec.is_inspection());
+        assert!(original.capture.is_inspection());
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
             .click();
         h.step();
@@ -587,7 +587,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                         .working_view
                         .displayed
                         .as_ref()
-                        .is_some_and(|v| v.spec.is_inspection() == source)
+                        .is_some_and(|v| v.capture.is_inspection() == source)
             });
             h.render().unwrap();
             h.read(|editor| assert_eq!(editor.document.source, source));
@@ -645,7 +645,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 .unwrap()
                 .clone()
         });
-        assert!(retained.spec.is_inspection());
+        assert!(retained.capture.is_inspection());
         let mut project = harness.read(|editor| editor.document.state.project.clone());
         // A remembered positive comparison must neither replace source working detail on idle nor
         // force an optional reference past the zero budget while its control is hidden.
@@ -714,13 +714,13 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                         .displayed
                         .as_ref()
                         .unwrap()
-                        .spec
+                        .capture
                         .is_inspection()
                 )
             });
             harness.read(|editor| {
                 let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
-                assert!(scope.spec.is_inspection());
+                assert!(scope.capture.is_inspection());
                 assert!(Arc::ptr_eq(
                     &scope,
                     &editor.canvas_frame.displayed.as_ref().unwrap().view

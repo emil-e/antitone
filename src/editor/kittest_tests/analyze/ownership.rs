@@ -137,7 +137,7 @@ fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_na
                     .displayed
                     .as_ref()
                     .expect("fullscreen source painted");
-                assert!(painted.view.spec.is_inspection());
+                assert!(painted.view.capture.is_inspection());
                 assert!(painted.view.look_id().is_none());
             });
             assert!(harness.query_by_label("Analyze roll").is_none());

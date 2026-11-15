@@ -31,6 +31,8 @@ pub use working::HostWorkingSet;
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
 pub use context::{CachePolicy, Context, Evaluation, Production, Region, Worker};
+#[cfg(feature = "editor")]
+pub(crate) use context::{Preparation, RecordedImage};
 pub use execute::{Sink, WorkCounts};
 pub use plan::Budget;
 

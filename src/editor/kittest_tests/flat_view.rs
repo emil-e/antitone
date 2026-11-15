@@ -57,7 +57,7 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
                     )
                     .unwrap();
                 assert_eq!(view.processing(), AuthoredPhotograph::from(expected));
-                assert!(view.spec.is_inspection());
+                assert!(view.capture.is_inspection());
                 assert_eq!(editor.document.project, before);
             });
             let timing =

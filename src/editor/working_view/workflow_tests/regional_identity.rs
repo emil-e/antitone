@@ -91,11 +91,8 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
         with_application(editor, |app| {
             for frame in [full, left, right, left, full] {
                 let demand = Demand {
-                    spec: SourceRequest::for_recipe(frame, &recipe)
-                        .unwrap()
-                        .with_identity(crate::gpu::source::identity::Identity::camera(
-                            pixels.source.identity(),
-                        )),
+                    rendering: OnceLock::new(),
+                    frame,
                     pixels: pixels.clone(),
                     capture: PhotographRequest::Recipe(recipe.clone()),
                 };
@@ -119,7 +116,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
                         .unwrap()
                         .clone()
                 });
-                assert_eq!(acquired.request.spec.frame(), frame);
+                assert_eq!(acquired.request.frame, frame);
                 assert!(acquired.request.same_calculation(&demand));
                 let produced = &acquired.processed[0];
                 assert_eq!(

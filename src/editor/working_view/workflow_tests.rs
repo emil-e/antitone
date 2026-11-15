@@ -13,6 +13,42 @@ mod inputs;
 mod regional_identity;
 mod retention;
 
+fn requested_image(
+    demand: &Demand,
+    source: &ViewSource,
+) -> Result<crate::gpu::evaluation::Value, Error> {
+    crate::gpu::view::rendering::photograph(
+        &source.renderer.evaluation().device().limits(),
+        &demand.pixels.scan()?,
+        demand
+            .pixels
+            .correction
+            .as_ref()
+            .map(|field| field.gpu.clone()),
+        &demand.capture,
+        source.spec.clone(),
+    )
+    .map(|image| image.definition)
+}
+
+fn image_matches(demand: &Demand, source: &ViewSource) -> bool {
+    requested_image(demand, source).is_ok_and(|image| source.definition.same_definition(&image))
+}
+
+fn shares_inputs(before: &ViewSource, after: &ViewSource) -> bool {
+    let (
+        crate::gpu::evaluation::BufferImage::Produced(before),
+        crate::gpu::evaluation::BufferImage::Produced(after),
+    ) = (&before.pixels, &after.pixels)
+    else {
+        return false;
+    };
+    before
+        .inputs
+        .iter()
+        .any(|input| after.inputs.iter().any(|other| Arc::ptr_eq(input, other)))
+}
+
 fn request_working(
     e: &mut Editor,
     spec: SourceRequest,
@@ -128,9 +164,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
             assert!(!e.document.visit.working_view.support_ready());
             let underlay = e.document.visit.working_view.underlay().unwrap();
             assert!(
-                !Demand::fixture(latest.clone(), input.clone())
-                    .can_use(underlay)
-                    .unwrap_or(false),
+                !image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay),
                 "retained old pixels cannot supply the new neighbourhood"
             );
             assert!(
@@ -151,6 +185,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                 owner: Arc::downgrade(&working.mailbox),
                 demand: Completion::fixture_demand(working, queued.clone()),
                 result: Ok(Arc::new(Frame {
+                    sequence: 0,
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
@@ -167,6 +202,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                 owner: Arc::downgrade(&working.mailbox),
                 demand: Completion::fixture_demand(working, latest.clone()),
                 result: Ok(Arc::new(Frame {
+                    sequence: 0,
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
@@ -184,7 +220,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
-        let acquired = app.read(|e| {
+        app.read(|e| {
             assert!(e.document.visit.working_view.error.is_none());
             assert!(
                 e.document
@@ -195,26 +231,16 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     .unwrap()
                     .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
-            assert!(
-                e.document
-                    .visit
-                    .working_view
-                    .underlay()
-                    .is_some_and(|underlay| Demand::fixture(latest.clone(), input.clone())
-                        .can_use(underlay)
-                        .unwrap())
-            );
-            e.document.visit.working_view.source().unwrap().clone()
+            assert!(e.document.visit.working_view.underlay().is_some_and(
+                |underlay| image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay)
+            ));
         });
         app.enter(|e, access| request_working(e, small.clone(), input, access));
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working_view.task.is_none()
-        });
         app.read(|e| {
             assert!(e.document.visit.working_view.support_ready());
             assert!(
-                acquired.same_pixels_as(e.document.visit.working_view.source().unwrap()),
-                "the new downstream calculation must reuse the sufficient native value"
+                e.document.visit.working_view.task.is_none(),
+                "the smaller neighbourhood must use available inputs without reacquisition"
             );
         });
     });
@@ -259,7 +285,9 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
         gate.observe_submissions(Arc::new(move || {
             observed.fetch_add(1, Ordering::Relaxed);
         }));
-        let scope = renderer.evaluation().test_materializations(false);
+        let scope = renderer.evaluation().materializations();
+        scope.set_retention_enabled(false);
+        scope.clear();
         let active = pollster::block_on(renderer.evaluation().prepare_input(
             &services.queue,
             &gate,
@@ -270,44 +298,20 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
         .unwrap()
         .unwrap();
         let input_submissions = count.load(Ordering::Relaxed);
-        let images = pollster::block_on(ViewSource::acquire_originals_fixture(
-            &services.device,
-            &services.queue,
-            &gate,
+        let prepared = crate::gpu::view::rendering::Preparation::photograph(
             renderer.clone(),
             kernels.clone(),
             &scan,
             None,
-            vec![spec.clone(), spec.underlay().unwrap()],
-            &scope,
-            || false,
-        ))
-        .unwrap()
+            &PhotographRequest::Fixture(spec.processing_fixture()),
+            spec.clone(),
+        )
         .unwrap();
-        let processing = spec.processing_fixture();
-        let requests = images
-            .iter()
-            .map(|image| {
-                let (root, _) = crate::gpu::view::processing::ProcessedView::definition(
-                    &services.device.limits(),
-                    &image.spec,
-                    image.definition.clone(),
-                    &processing,
-                )
-                .unwrap();
-                crate::gpu::view::processing::ProcessedView::request(renderer.evaluation(), root)
-                    .unwrap()
-            })
-            .collect();
-        let processed = pollster::block_on(futures_util::future::try_join_all(
-            renderer
-                .evaluation()
-                .materialize_many(&services.queue, &gate, &scope, requests)
-                .unwrap(),
-        ))
-        .unwrap();
+        let processed = pollster::block_on(prepared.produce(&services.queue, &gate, || false))
+            .unwrap()
+            .unwrap();
         let total = count.load(Ordering::Relaxed);
-        drop((processed, images, active));
+        drop((processed, active));
         scope.clear();
         (input_submissions, total - input_submissions)
     };
@@ -375,15 +379,9 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
                     .unwrap()
                     .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
-            assert!(
-                e.document
-                    .visit
-                    .working_view
-                    .underlay()
-                    .is_some_and(|underlay| Demand::fixture(latest.clone(), input.clone())
-                        .can_use(underlay)
-                        .unwrap())
-            );
+            assert!(e.document.visit.working_view.underlay().is_some_and(
+                |underlay| image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay)
+            ));
             assert!(e.document.visit.working_view.task.is_none());
         });
     });
@@ -518,9 +516,9 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     let input = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
-    let spec = SourceRequest::for_processing(frame, &input).unwrap();
     let demand = Demand {
-        spec,
+        rendering: OnceLock::new(),
+        frame,
         pixels,
         capture: PhotographRequest::Recipe(recipe.clone()),
     };
@@ -712,7 +710,8 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let initial = Demand {
-        spec: SourceRequest::for_recipe(frame, &recipe).unwrap(),
+        rendering: OnceLock::new(),
+        frame,
         pixels,
         capture: PhotographRequest::Recipe(recipe),
     };
@@ -740,8 +739,8 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
         );
         assert!(!old.satisfies(&changed));
         assert!(
-            !old.supports(&changed),
-            "an old repaired raster cannot supply a changed donor calculation"
+            !image_matches(&changed, &old.source),
+            "an old repaired raster cannot represent a changed donor calculation"
         );
         app.enter(|e, cx| e.request_working(changed.clone(), cx));
         app.read(|e| assert!(!e.document.visit.working_view.support_ready()));
@@ -752,8 +751,7 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
             let ready = e.document.visit.working_view.frame.as_ref().unwrap();
             assert!(ready.request.same_calculation(&changed));
             for source in std::iter::once(&ready.source).chain(ready.underlay.as_ref()) {
-                let calculation = changed.calculation(source).unwrap();
-                assert!(source.definition.same_definition(&calculation.native));
+                assert!(image_matches(&changed, source));
             }
         });
     });
@@ -782,24 +780,22 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
-        let (neutral, before) = app.read(|e| {
+        let before = app.read(|e| {
             assert!(e.document.visit.working_view.source().unwrap().spec == spec);
-            (
-                e.document.visit.working_view.neutral_source().unwrap(),
-                e.document
-                    .visit
-                    .working_view
-                    .frame
-                    .as_ref()
-                    .unwrap()
-                    .clone(),
-            )
+            e.document
+                .visit
+                .working_view
+                .frame
+                .as_ref()
+                .unwrap()
+                .clone()
         });
         let processing = AuthoredPhotograph::from(
             crate::gpu::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
         );
         let edited = Demand {
-            spec: spec.clone(),
+            rendering: OnceLock::new(),
+            frame: spec.frame(),
             pixels: input,
             capture: PhotographRequest::Fixture(processing.clone()),
         };
@@ -826,8 +822,8 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             );
             let target = e.document.target();
             let working = &mut e.document.visit.working_view;
-            assert!(neutral.same_pixels_as(&working.neutral_source().unwrap()));
             let frame = working.frame.as_ref().unwrap();
+            assert!(shares_inputs(&before.source, &frame.source));
             assert!(frame.request.same_calculation(&edited));
             assert_eq!(before.processed.len(), frame.processed.len());
             for (old, new) in before.processed.iter().zip(&frame.processed) {

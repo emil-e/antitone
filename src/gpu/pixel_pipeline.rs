@@ -13,6 +13,13 @@ pub(crate) struct Prepared {
 }
 
 impl Prepared {
+    pub(crate) fn recorded(raster: Raster, execution: evaluation::Recorded) -> Self {
+        Self {
+            raster,
+            execution: Some(execution),
+        }
+    }
+
     #[cfg(test)]
     pub fn new(
         device: &wgpu::Device,
@@ -134,6 +141,7 @@ impl Prepared {
             .cached_image(evaluation::Meaning::Arguments)
     }
 
+    #[cfg(test)]
     pub fn encode_from(
         &self,
         device: &wgpu::Device,
