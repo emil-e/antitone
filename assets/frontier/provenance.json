@@ -18,47 +18,118 @@
   "source_contract": "frontier-density65-ap1-d60-v1",
   "rights": "Derived numeric inputs from Fujifilm Frontier350/370 parameter data. Source availability is not redistribution permission; public asset clearance remains separate from local application verification.",
   "formation_calibration": {
-    "fit": "A only; B shares relative formation with a source-defined native origin",
-    "reference": "Antitone Fuji Crystal Archive TypeII, Negative None, main ddf70454a37c30dfcf38678fb756ad5b61d5ee02, no output-Y anchor",
+    "fit": "A only; four neutral parameters frozen before neutral-preserving colour fit; B shares parameters with source-defined +62 codes",
+    "reference": "Antitone Fuji Crystal Archive TypeII/None at e3f1f5c8; per-channel black alignment (F-Fblack)/(1-Fblack) in linear sRGB preserves display white1; calibration targets only",
     "matrix_rows": [
       [
-        1.2931615073725646,
-        -0.2443091742997006,
-        -0.048852333072864115
+        1.282289562775313,
+        -0.24594354514113376,
+        -0.03634601763417918
       ],
       [
-        -0.27344530677611845,
-        1.28732324207888,
-        -0.013877935302761787
+        -0.2653420950705695,
+        1.2556186905489233,
+        0.009723404521646214
       ],
       [
-        -0.044913617986590146,
-        -0.08435370450480469,
-        1.129267322491395
+        -0.07093156157153224,
+        -0.07084708062746652,
+        1.1417786421989988
       ]
     ],
     "encoding": {
-      "codes_per_stop": 67.75451223731619,
-      "black_code": 206.3977579662653,
-      "knee": 0.02665880423285846,
+      "codes_per_stop": 73.78531879357067,
+      "black_code_A": 0,
+      "knee": 0.0044459647893383926,
       "toe": 2.5,
-      "channel_code_offsets": [
+      "channel_gains_RGB": [
+        1.0328716504309126,
+        1,
+        1.0760157025406742
+      ],
+      "additive_channel_code_offsets_RGB": [
         0,
-        15.816032029689438,
-        15.3959029772098
+        0,
+        0
       ]
     },
-    "density_objective": "three aggregate neutral features: midtone L mean and L/EV slope [-2,+2], lower L/EV slope [-5,-2]; no zero/black endpoint target",
-    "target_features": [
-      0.4766475820132716,
-      0.1655705889116214,
-      0.012700452937018982
-    ],
-    "zero_or_black_endpoint_target": false,
+    "order": "row-sum-one matrix -> local gamut/nonnegative proxy -> RGB gains -> formation -> fixed response",
+    "density_objective": "33 equally spaced neutral exposures EV[-5,+3], pointwise OKLab; fit code scale, knee/exposure, R/G and B/G gains",
+    "black_constraint": "A input code0 fixed, no fitted black translation; source response endpoint preserved",
+    "colour_objective": "120 moderate relative-neutral OKLab ab controls; neutral parameters frozen",
+    "diagnostics": {
+      "feature_order": [
+        "midtones_mean_L",
+        "midtones_L_per_EV",
+        "shadows_L_per_EV"
+      ],
+      "actual": [
+        0.4666709309381354,
+        0.1737211048482328,
+        0.062047335465289004
+      ],
+      "reference": [
+        0.46598299135322674,
+        0.1738748258260303,
+        0.04228707966783954
+      ]
+    },
     "palette_training": 120,
     "held_out_palette": 216,
     "photographic_optimization": false,
     "toe_shape_support": "Antitone generic C-41 forward family; archived Portra 400/Ektar 100 Status-M curve study at 3f397897, docs/research/film-response-model-study.md; not scanner-density calibration."
+  },
+  "colour_negative_calibration": {
+    "source_model": "src/looks/frontier/negative.rs; shared src/looks/spektrafilm/negative.rs formation",
+    "negative_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+    "reference": "Fuji Crystal Archive TypeII + Kodak Portra 400 at the same scene exposure",
+    "fit": "Portra400/A characterization shared across colour stocks; B receives source-mode +62 codes before continuation; no per-stock equalization",
+    "input_exposure_gain": 1,
+    "HD_compensation": false,
+    "density_units": "-log10(base-relative spectral transmission)",
+    "grey_setup": "mean(Dgrey)/Dgrey_j at scene grey0.18; preserve basezero and each stock mean grey OD",
+    "black_code_A": 0,
+    "codes_per_optical_density": 515,
+    "channel_gains_RGB": [1.0389265051082284, 1, 1.0318751992283606],
+    "matrix_rows": [
+      [
+        0.9749188050172526,
+        0.03164970403459537,
+        -0.006568509051847915
+      ],
+      [
+        -0.10026808253832398,
+        1.0523759610528092,
+        0.04789212148551488
+      ],
+      [
+        0.14823225898420794,
+        0.016360899739573016,
+        0.835406841276219
+      ]
+    ],
+    "code_offsets_RGB": [0, 0, 0],
+    "continuation": "lower clamp at code0; above1015, 1023-64/(q-1007)",
+    "tone_characterization": "Shared515code/OD scale chosen as a brightness/contrast compromise; fixed stock formation/exposure and no fitted black pedestal",
+    "colour_objective": "120 Portra400/A relative-own-neutral OKLab ab controls against FujiTypeII+samePortra; six row-sum-one matrix coefficients, identity-biased; coloured lightness unconstrained",
+    "rendering_gamma": {
+      "exponent": 0.9514395916432657,
+      "domain": "linear sRGB-reference RGB; signed componentwise power, fixed points0and1; no clipping",
+      "white_anchor": "normalized rendering reference white1, not scene AP1=1 or nativecode1023",
+      "fit": "one Portra400/A middle-grey OKLab L to None/A, with density calibration frozen; None supplies tone reference, not colour target",
+      "B_floor_fixed": false,
+      "authoring": "native65 AP1 response -> forward sRGB reference -> gamma -> inverse reference -> float32 AP1 at the same65code nodes; no additional smoothing",
+      "response_assets": {
+        "A": "density-negative-a.f32.z",
+        "B": "density-negative-b.f32.z"
+      }
+    },
+    "palette_training": 120,
+    "held_out_palette": 216,
+    "B_or_photographic_optimization": false,
+    "sensor_file": "sensor.json",
+    "sensor_sha256": "320246fe85e6d653434ed3d762db689bf1035e85fca4b77ba6ef021ec53903ef",
+    "sensor_status": "Approximate digitization of attributed SP3000 illumination, original measurement provenance unverified; detector/optics treated constant within each band"
   },
   "mode_origins": {
     "A": 450,
@@ -92,7 +163,7 @@
     ],
     "input_allocation": "uniform formed native code; preparation evaluates formation before sampling this source volume",
     "output": "AP1 D60 authored rendering carrier",
-    "source_shaper_interpretation": "Monotone run-centre Hermite curves, original grey-knot ordinate, rational bounds 32..960; authored interpretation of source quantization",
+    "source_shaper_interpretation": "Exact first constant source interval, C1 monotone Hermite joins and original grey ordinate; rational upper continuation toward960; authored interpretation of source quantization",
     "source_shaper_knots_GRB": [
       [
         410.43065207185845,
@@ -106,13 +177,14 @@
       ]
     ],
     "cube_coordinate_factor": "(33/32)*31",
-    "encoded_continuation_width": 0.0009765625,
+    "upper_encoded_continuation_width": 0.0009765625,
+    "lower_encoded_landing": "identity, including exact black",
     "inverse_reference": "Pinned OCIO2.6.0 sRGB100nit ACES inverse to AP1 before response smoothing",
     "dense_grid": 129,
     "Gaussian": {
       "sigma_dense_grid_steps": 0.5,
       "radius_dense_grid_steps": 2,
-      "boundary": "constant edge extension",
+      "boundary": "difference-form odd reflection at lower code boundaries, constant upper extension",
       "space": "AP1 volume over formed code coordinates"
     },
     "final_grid": 65,
@@ -121,12 +193,16 @@
     "spatial_blur": false,
     "generator": "antitone-frontier-bake; user-supplied ColorData.dat and ez171autoc-nega.dat",
     "asset_sha256": {
-      "density-a.f32.z": "d153baedbf256745f4ac3dad08f06f8b97492c2f0410bafe810fd574e97d3453",
-      "density-b.f32.z": "c5c9f5aef48cc74c9115a46957204516999c7e1bcb490aff132ddbee6e29bab2"
+      "density-a.f32.z": "4b9f02cd22ad3ab902c3b125c36f5a12843a89431beb4bb6e40b8f80988340ac",
+      "density-b.f32.z": "419941d72f1482e410c30dc616a5778bea965944c7baf6d3c0d9e444ccf4c0a5",
+      "density-negative-a.f32.z": "f33e1f6a703d7d29d808f6fc1ac2afa018e2d65bbc66e37beb4dbd1a5e7a1ebe",
+      "density-negative-b.f32.z": "9f304d7eeeacd0ba6cfc6b1f494ab43892034a187b6735727a4e9a6c479ee370"
     },
     "raw_samples_sha256": {
-      "a": "2f4e4c71ca3fdfa893d2e38d24f67e108659be84a366bb093cc8bd459b65905d",
-      "b": "3c5fb1c8ff46540a3df25b21e755d11bd06229ab354e297e3cc74e03ed151f17"
+      "a": "e5da8e73f8bd17e78b4ba964e6bf415052ae6528ce68af390ad3254ea4f74d56",
+      "b": "8584c0243743e0ab6c310150ed726f80290b27a4f2184cf2f9b6258e2304ae10",
+      "negative_a": "531468f536436931f96bd0cb03fb1e77adeac9c54d5aa182ef366f6a1c176469",
+      "negative_b": "3f755867901dce94f8a0f7feb4519a7d93449a28c538074b1a2f7dd1b8573ed4"
     }
   }
 }

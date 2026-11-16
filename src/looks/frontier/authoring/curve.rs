@@ -1,8 +1,11 @@
 use super::require;
 use crate::Error;
 
+#[cfg(test)]
+mod tests;
+
 /// Monotone C1 run-centre interpretation of the quantized source shapers.
-/// The grey knot retains its original source ordinate; bounds use rational tails.
+/// The first source plateau and grey ordinate are retained; only the upper tail is rational.
 #[derive(Clone, Debug)]
 pub(crate) struct Curve {
     pub knots: Vec<[f64; 3]>,
@@ -22,11 +25,13 @@ impl Curve {
                 && (0.0..1023.0).contains(&anchor),
             "invalid source shaper",
         )?;
-        let mut nodes = Vec::new();
+        let first_value = values[0];
+        let first_end = values.partition_point(|&v| v == first_value) - 1;
+        let mut nodes = vec![[first_end as f64, first_value, 0.0]];
         let mut start = 0;
         for end in 1..=values.len() {
             if end == values.len() || values[end] != values[start] {
-                if values[start] > 32.0 && values[start] < 960.0 {
+                if values[start] > first_value && values[start] < 960.0 {
                     nodes.push([(start + end - 1) as f64 / 2.0, values[start], 0.0]);
                 }
                 start = end;
@@ -34,6 +39,7 @@ impl Curve {
         }
         let i = anchor as usize;
         let y = values[i] + (values[i + 1] - values[i]) * (anchor - i as f64);
+        require(first_value < y && y < 960.0, "invalid shaper grey anchor")?;
         nodes.retain(|p| p[1] != y);
         nodes.push([anchor, y, 0.0]);
         nodes.sort_by(|a, b| a[0].total_cmp(&b[0]));
@@ -53,7 +59,7 @@ impl Curve {
             .zip(&h)
             .map(|(w, h)| (w[1][1] - w[0][1]) / h)
             .collect::<Vec<_>>();
-        nodes[0][2] = d[0];
+        nodes[0][2] = 0.0;
         for i in 1..nodes.len() - 1 {
             let a = 2.0 * h[i] + h[i - 1];
             let b = h[i] + 2.0 * h[i - 1];
@@ -63,7 +69,7 @@ impl Curve {
         nodes[last][2] = d[last - 1];
         let curve = Self {
             knots: nodes,
-            low: 32.0,
+            low: first_value,
             high: 960.0,
         };
         curve.validate()?;
@@ -80,14 +86,17 @@ impl Curve {
             "invalid shaper bounds",
         )?;
         require(
-            self.knots.iter().all(|p| {
+            self.knots[0][1] == self.low && self.knots[0][2] == 0.0,
+            "invalid shaper source endpoint",
+        )?;
+        require(
+            self.knots.iter().enumerate().all(|(i, p)| {
                 p.iter().all(|x| x.is_finite() && (*x as f32).is_finite())
                     && (0.0..=1023.0).contains(&p[0])
-                    && p[2] > 0.0
-                    && (p[2] as f32) > 0.0
-                    && self.low < p[1]
+                    && (i == 0 || (p[2] > 0.0 && (p[2] as f32) > 0.0))
+                    && self.low <= p[1]
                     && p[1] < self.high
-                    && (self.low as f32) < p[1] as f32
+                    && (self.low as f32) <= p[1] as f32
                     && (p[1] as f32) < self.high as f32
             }),
             "invalid shaper coefficients",
@@ -123,8 +132,7 @@ impl Curve {
         let first = self.knots[0];
         let last = self.knots[self.knots.len() - 1];
         if x < first[0] {
-            let gap = first[1] - self.low;
-            return self.low + gap / (1.0 + first[2] * (first[0] - x) / gap);
+            return first[1];
         }
         if x >= last[0] {
             let gap = self.high - last[1];

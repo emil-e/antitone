@@ -135,6 +135,61 @@ fn saved_supra_samples_remain_authoritative_when_the_current_paper_generator_cha
 }
 
 #[test]
+fn saved_frontier_samples_survive_catalogue_recalibration() {
+    use antitone::looks::frontier::{Selection, Variant};
+    use std::sync::atomic::AtomicBool;
+    let portra = antitone::looks::spektrafilm::Negative::from_id("kodak_portra_400");
+    for (negative, variant, text) in [
+        (
+            None,
+            Variant::A,
+            include_str!("fixtures/frontier/legacy-none-a.json"),
+        ),
+        (
+            None,
+            Variant::B,
+            include_str!("fixtures/frontier/legacy-none-b.json"),
+        ),
+        (
+            portra,
+            Variant::A,
+            include_str!("fixtures/frontier/legacy-portra-a.json"),
+        ),
+        (
+            portra,
+            Variant::B,
+            include_str!("fixtures/frontier/legacy-portra-b.json"),
+        ),
+    ] {
+        let saved: Arc<LookAsset> = Arc::new(serde_json::from_str(text).unwrap());
+        let selection = Selection { negative, variant };
+        assert_eq!(Selection::from_origin(saved.origin()), Some(selection));
+        let fresh = antitone::looks::material::Selection::Frontier(selection)
+            .bake(3, &AtomicBool::new(false))
+            .unwrap();
+        assert_ne!(fresh.id(), saved.id());
+        assert_ne!(fresh.origin(), saved.origin());
+        let mut project = Project::default();
+        project.output.film_and_paper = Some(saved.clone());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("accepted-frontier.antitone");
+        project.save(&path, Save::New).unwrap();
+        let reopened = Project::load(&path).unwrap().output.film_and_paper.unwrap();
+        assert_eq!(reopened, saved);
+        for input in [
+            glam::DVec3::ZERO,
+            glam::DVec3::splat(0.18),
+            glam::DVec3::new(0.7, 0.2, -0.01),
+        ] {
+            assert_eq!(
+                reopened.lut().apply(input).unwrap(),
+                saved.lut().apply(input).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
 fn malformed_embedded_assets_in_either_slot_are_rejected_at_their_actual_fields() {
     let mut project = Project::default();
     project.output.lut = Some(lut(LookOrigin::Imported));

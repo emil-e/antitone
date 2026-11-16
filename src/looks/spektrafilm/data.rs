@@ -37,7 +37,7 @@ pub(super) fn labels() -> &'static Labels {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(serde::Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Film {
     pub id: String,

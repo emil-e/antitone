@@ -6,6 +6,55 @@ use crate::{
 use std::time::{Duration, Instant};
 
 #[test]
+fn pending_frontier_component_edits_keep_the_last_colour_stock_and_variant() {
+    use crate::looks::frontier::{Selection as FrontierSelection, Variant};
+    let (editor, scheduler) = super::tests::editor();
+    with_application(editor, |app| {
+        let before = app.read(|e| e.document.state.project.clone());
+        let portra = Negative::from_id("kodak_portra_400").unwrap();
+        let ektar = Negative::from_id("kodak_ektar_100").unwrap();
+        let expected = FrontierSelection {
+            negative: Some(ektar),
+            variant: Variant::B,
+        };
+        app.enter(|e, cx| {
+            e.select_paper(Some(material::Paper::Frontier(Variant::A)), cx);
+            e.select_negative(Some(portra.into()), cx);
+            e.select_paper(Some(material::Paper::Frontier(Variant::B)), cx);
+            e.select_negative(Some(ektar.into()), cx);
+            assert!(!e.dialogs.is_open());
+            assert_eq!(
+                e.material_selection(),
+                Some(MaterialSelection::Frontier(expected))
+            );
+            assert!(e.document.project.output.film_and_paper.is_none());
+        });
+        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.read(|e| {
+            assert_eq!(
+                e.material_selection(),
+                Some(MaterialSelection::Frontier(expected))
+            );
+            assert_eq!(
+                e.document
+                    .project
+                    .output
+                    .film_and_paper
+                    .as_ref()
+                    .unwrap()
+                    .origin(),
+                &expected.origin()
+            );
+            assert_eq!(e.document.project.roll, before.roll);
+            assert_eq!(e.document.project.sources, before.sources);
+            assert_eq!(e.document.project.output.lut, before.output.lut);
+            assert!(!e.dialogs.is_open());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn pending_component_edits_capture_one_pair_and_reject_paper_bypass_with_a_negative() {
     let (e, scheduler) = super::tests::editor();
     with_application(e, |app| {

@@ -1,0 +1,26 @@
+{
+  "contract": "acescct-ap1-d60-tetrahedral-v1",
+  "name": "Frontier A",
+  "origin": {
+    "kind": "renderer",
+    "renderer": "frontier_a",
+    "revision": "473a3953a8804bd7153484ba2dcb9c3c161b89a95b0907b3b8fe1bb40b9a0fdc",
+    "generator": "e94bd5ebe7c14582e404a6f0aed46e50363977a382f93bf2caafc03d6c31f411",
+    "attribution": "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. Antitone forward density toe; A calibrated against Fuji TypeII, shared relative formation with source-mode code origins. Not a factory scanner or physical-print calibration."
+  },
+  "size": 3,
+  "domain_min": [
+    -0.5,
+    -0.5,
+    -0.5
+  ],
+  "domain_max": [
+    1.0386752,
+    1.0386752,
+    1.0386752
+  ],
+  "input_range": "clip",
+  "encoding": "zlib-rgb32le-base64-v1",
+  "content_id": "3a9f2d1da69bcceae1f725200810131d5fd7c485ed7cd62d47cc3f01b1f5feeb",
+  "samples": "eJwVzb1LAnEcx3GswUBaoz+gQl16WIoevp8hTzu5upPzbqk2CwqhIWgQSzvJJCHQcoiSzJBIaBCrtVKKKBwCIZeGooampIS0ovq5vYc3vGo1H+UvPDTCu2hav0Xx2RBls/PkPHdAq1rRWrZjqFkj41yEPDMB8g6uUacQJot5gYScA4vfVhyyJ/kkItSrolzkwb2IAOs0a15R0bWuwP1nQeHHT1aDn9ynQQruRam/skK3+gCNMSvDrM13O7odAdI1RCj6Gqbi3SqlP0M02qaRjVlHzOr4sGPqUcRwn4rlEo+mZxFfzBpgPa6qiDGroOPwkJNxk5FAJgXJSxktrBuNCs72JezucNhOifDlZdhOJCTMCrgrGRvHElzsf0tJ4BMc2g9EaF4BlXsFalzF75KAyZKCWL17JmC6dqJqcOIfcKmIjQ=="
+}
