@@ -72,7 +72,7 @@ fn with_locals() -> (Project, SourceId) {
                 invert: true,
                 photo: AdjustmentLayerSettings {
                     saturation: 0.6,
-                    saturation_density: 0.4,
+                    vibrance: 0.4,
                     ..AdjustmentLayerSettings::default()
                 },
                 ..adjustment()

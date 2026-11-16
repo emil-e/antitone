@@ -59,7 +59,8 @@ fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3
         }
         let da = weight * colour_adjustment_layer_delta(stage, 3u, 0u, 1.0);
         let ds = weight * colour_adjustment_layer_delta(stage, 3u, 3u, 1.0);
-        if da == 0.0 && ds == 0.0 {
+        let vibrance = weight * colour_adjustment_layer(stage, 4u, 0u);
+        if da == 0.0 && ds == 0.0 && vibrance == 0.0 {
             continue;
         }
         rgb = colour_apply(
@@ -68,7 +69,7 @@ fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3
                 colour_adjustment_layer(stage, 3u, 1u),
                 colour_adjustment_layer(stage, 3u, 2u),
                 ds,
-                colour_adjustment_layer(stage, 4u, 0u),
+                vibrance,
             );
     }
     return rgb;

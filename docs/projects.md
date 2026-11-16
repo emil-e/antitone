@@ -44,7 +44,7 @@ Calibration makes sense only in the camera basis and development in which it was
 
 Switching stages accepts intent without reading RAWs or waiting for GPU resources. It clears stage-specific scan setup and correction; discarding Negative settings or an accepted correction requires confirmation. Shared grades, crops and repairs remain accepted. Each consumer acquires its captured photograph and interpretation; missing, corrupt or incompatible sources fail individually without rolling back the stage. A new Negative basis is established lazily and checked at consumption. New projects start in Negative; Import can select Digital for an unconfigured batch when a newly inspected source is incompatible. Partial anchors, nondefault interpretation settings or an accepted correction prevent that automatic choice.
 
-The current format is **schema 20 with processing model 7**. This unreleased format has no migrations; unsupported schemas/models and unknown fields reject.
+The current format is **schema 21 with processing model 8**. This unreleased format has no migrations; unsupported schemas/models and unknown fields reject.
 
 Reproducibility is best effort. Development stores recorded `white_balance`, an explicit LibRaw/DNG SDK backend and diagnostic pixel-producer provenance, including the decoder release and development revision. Source records also describe geometry and camera conversion. Open restores these records unchanged. Acquisition uses the current decoder and checks compatibility when a photo is needed; diagnostic release differences alone do not reject it. Decoder fixes and upgrades can change pixels, and runtime cache identity distinguishes current pixel producers.
 

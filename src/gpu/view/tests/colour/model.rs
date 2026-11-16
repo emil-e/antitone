@@ -177,7 +177,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                                 },
                                 contrast: 1.1,
                                 saturation: 0.8,
-                                saturation_density: 0.4,
+                                vibrance: 0.4,
                                 ..Default::default()
                             }
                         } else {

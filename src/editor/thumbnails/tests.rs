@@ -690,7 +690,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         pivot: 0.25,
         contrast_colour_mix: 0.75,
         saturation: 1.3,
-        saturation_density: 0.25,
+        vibrance: 0.25,
         ..Default::default()
     };
     editor.photo_control(

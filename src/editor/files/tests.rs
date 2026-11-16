@@ -832,7 +832,7 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
                 pivot: 0.25,
                 contrast_colour_mix: 0.75,
                 saturation: 1.3,
-                saturation_density: 0.25,
+                vibrance: 0.25,
                 ..AdjustmentLayerSettings::default()
             };
             editor.document.project.orientation.horizontal = true;
@@ -873,7 +873,7 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
                 contrast: 1.6,
                 saturation: 0.7,
                 contrast_colour_mix: 0.25,
-                saturation_density: 0.75,
+                vibrance: 0.75,
                 ..AdjustmentLayerSettings::default()
             };
             let other_photo = other.adjustment_layers.as_ref().unwrap().layers[0]
@@ -996,7 +996,7 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
         pivot: 0.25,
         contrast_colour_mix: 0.75,
         saturation: 1.3,
-        saturation_density: 0.25,
+        vibrance: 0.25,
         ..AdjustmentLayerSettings::default()
     };
     editor.document.project.roll.exposure = -0.23456789012345678;

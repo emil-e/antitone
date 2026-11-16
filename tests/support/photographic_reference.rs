@@ -10,10 +10,6 @@ const FOOT: f64 = 1. / 32768.;
 const ZERO: f64 = (9.72 - 16.) / 17.52;
 const SLOPE: f64 = 32768. / (17.52 * std::f64::consts::LN_2);
 
-pub fn y(rgb: DVec3) -> f64 {
-    (AP1_TO_XYZ * rgb).y
-}
-
 // Published ACEScc positive branches, extended by their tangent below zero.
 // https://docs.acescentral.com/encodings/acescc/
 pub fn encode(x: f64) -> f64 {
@@ -148,24 +144,25 @@ pub fn contrast_mix(rgb: DVec3, amount: f64, pivot: f64, preserve: f64) -> Resul
     )))
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Saturation {
-    ConstantY,
-    Maximum,
-}
-
-pub fn saturation(rgb: DVec3, amount: f64, model: Saturation) -> Result<DVec3> {
+pub fn saturation(rgb: DVec3, amount: f64, vibrance: f64) -> Result<DVec3> {
     finite(rgb)?;
     parameter(amount, 0., 2.)?;
-    if amount == 1. || rgb.x == rgb.y && rgb.y == rgb.z {
+    parameter(vibrance, -1., 1.)?;
+    if amount == 1. && vibrance == 0. || rgb.x == rgb.y && rgb.y == rgb.z {
         return Ok(rgb);
     }
-    let anchor = match model {
-        Saturation::ConstantY => y(rgb),
-        Saturation::Maximum => rgb.max_element(),
+    let mut lab = to_oklab(rgb);
+    let relative = lab.x * lab.x / 16.;
+    let denominator = relative + lab.y * lab.y + lab.z * lab.z;
+    let weight = if denominator == 0. {
+        0.
+    } else {
+        relative / denominator
     };
-    let grey = DVec3::splat(anchor);
-    finite(grey + amount * (rgb - grey))
+    let gain = amount * (1. + vibrance * weight);
+    lab.y *= gain;
+    lab.z *= gain;
+    finite(from_oklab(lab))
 }
 
 pub fn blend(a: DVec3, b: DVec3, t: f64) -> Result<DVec3> {
@@ -215,74 +212,34 @@ mod tests {
                     .unwrap(),
                     rgb
                 );
-                assert_eq!(
-                    blend(
-                        saturation(rgb, 1., Saturation::ConstantY).unwrap(),
-                        saturation(rgb, 1., Saturation::Maximum).unwrap(),
-                        t
-                    )
-                    .unwrap(),
-                    rgb
-                );
+                assert_eq!(saturation(rgb, 1., 0.).unwrap(), rgb);
             }
         }
     }
 
     #[test]
-    fn saturation_invariants_and_signed_continuity() {
+    fn saturation_reference_preserves_oklab_lightness_and_hue() {
         for rgb in inputs() {
-            for amount in [0.25, 0.7, 1.3, 2.] {
-                let cy = saturation(rgb, amount, Saturation::ConstantY).unwrap();
-                assert!((y(cy) - y(rgb)).abs() < 2e-12 * (1. + rgb.abs().max_element()));
-                let mx = saturation(rgb, amount, Saturation::Maximum).unwrap();
-                let scale = rgb.abs().max_element().max(1.);
+            let before = to_oklab(rgb);
+            for amount in [0., 0.7, 1.3, 2.] {
+                let after = to_oklab(saturation(rgb, amount, 0.).unwrap());
                 near(
-                    (mx - DVec3::splat(y(mx))) / scale,
-                    amount * (rgb - DVec3::splat(y(rgb))) / scale,
+                    after,
+                    DVec3::new(before.x, amount * before.y, amount * before.z),
                 );
             }
         }
-        for model in [Saturation::ConstantY, Saturation::Maximum] {
-            for x in [0., 0.2, -0.2] {
-                let a = saturation(DVec3::new(x - 1e-10, 0.2, -0.2), 0.7, model).unwrap();
-                let b = saturation(DVec3::new(x + 1e-10, 0.2, -0.2), 0.7, model).unwrap();
-                assert!((a - b).abs().max_element() < 1e-6);
-            }
-        }
-    }
-
-    #[test]
-    fn blends_are_independent_endpoint_output_interpolation() {
-        let rgb = DVec3::new(0.22, 0.18, 0.14);
-        for t in [0., 0.25, 0.5, 0.75, 1.] {
-            let a = saturation(rgb, 1.3, Saturation::ConstantY).unwrap();
-            let b = saturation(rgb, 1.3, Saturation::Maximum).unwrap();
-            near(blend(a, b, t).unwrap(), (1. - t) * a + t * b);
-        }
-    }
-
-    #[test]
-    fn desaturation_uses_each_endpoint_anchor() {
-        let rgb = DVec3::new(0.3, 0.18, 0.08);
-        near(
-            saturation(rgb, 0., Saturation::ConstantY).unwrap(),
-            DVec3::splat(y(rgb)),
-        );
-        near(
-            saturation(rgb, 0., Saturation::Maximum).unwrap(),
-            DVec3::splat(rgb.max_element()),
-        );
     }
 
     #[test]
     fn invalid_values_and_overflow_reject_without_clamps() {
         for amount in [f64::NAN, f64::INFINITY, -1., 3.] {
             assert!(contrast(DVec3::ONE, amount, 0.18, Contrast::Rgb).is_err());
-            assert!(saturation(DVec3::ONE, amount, Saturation::Maximum).is_err());
+            assert!(saturation(DVec3::ONE, amount, 0.).is_err());
             assert!(blend(DVec3::ZERO, DVec3::ONE, amount).is_err());
         }
         assert!(contrast(DVec3::splat(f64::MAX), 1.5, 0.18, Contrast::Rgb).is_err());
-        assert!(saturation(DVec3::splat(f64::NAN), 1., Saturation::ConstantY).is_err());
+        assert!(saturation(DVec3::splat(f64::NAN), 1., 0.).is_err());
     }
 
     #[test]
@@ -324,17 +281,6 @@ mod tests {
                     contrast(rgb, amount, 0.18, Contrast::Oklab).unwrap()
                 );
             }
-        }
-    }
-
-    #[test]
-    fn saturation_endpoints_preserve_their_linear_anchors() {
-        let rgb = DVec3::new(0.3, -0.02, 1.4);
-        for amount in [0., 0.7, 1., 2.] {
-            let cy = saturation(rgb, amount, Saturation::ConstantY).unwrap();
-            assert!((y(cy) - y(rgb)).abs() < 1e-14);
-            let mx = saturation(rgb, amount, Saturation::Maximum).unwrap();
-            assert!((mx.max_element() - rgb.max_element()).abs() < 1e-14);
         }
     }
 }

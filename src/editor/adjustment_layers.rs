@@ -633,15 +633,15 @@ impl Editor {
                 );
             }
             let changed = photo.saturation != defaults.saturation
-                || photo.saturation_density != defaults.saturation_density;
+                || photo.vibrance != defaults.vibrance;
             let (_, action) = ui::section(
                 ui,
                 "photo-saturation",
                 "Saturation",
                 ui::SectionHeader {
                     summary: &format!(
-                        "{:.2} · Density {:.2}",
-                        photo.saturation, photo.saturation_density
+                        "{:.2} · Vibrance {:+.2}",
+                        photo.saturation, photo.vibrance
                     ),
                     changed,
                     reset: Some(changed),
@@ -651,19 +651,19 @@ impl Editor {
                 |ui| {
                     let response = ui::ParameterRow::new("saturation", "Saturation", 0.0..=2.0)
                         .default_value(defaults.saturation)
-                        .help("0 makes the image grey; 1 leaves saturation unchanged.")
+                        .help("0 makes the image grey; 1 leaves overall colour strength unchanged.")
                         .show(ui, &mut photo.saturation)
                         .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.saturation = photo.saturation
                     });
-                    let response = ui::ParameterRow::new("density", "Density", 0.0..=1.0)
-                        .default_value(defaults.saturation_density)
-                        .help("Higher values darken colours more as saturation increases.")
-                        .show(ui, &mut photo.saturation_density)
+                    let response = ui::ParameterRow::new("vibrance", "Vibrance", -1.0..=1.0)
+                        .default_value(defaults.vibrance)
+                        .help("Boost or mute weaker colours more than already-strong colours.")
+                        .show(ui, &mut photo.vibrance)
                         .edit;
                     self.photo_control(response, |adjustment| {
-                        adjustment.photo.saturation_density = photo.saturation_density
+                        adjustment.photo.vibrance = photo.vibrance
                     });
                 },
             );
@@ -675,7 +675,7 @@ impl Editor {
                     ),
                     |adjustment| {
                         adjustment.photo.saturation = defaults.saturation;
-                        adjustment.photo.saturation_density = defaults.saturation_density;
+                        adjustment.photo.vibrance = defaults.vibrance;
                     },
                 );
             }

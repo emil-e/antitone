@@ -200,7 +200,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                                 contrast,
                                 saturation: 1.3,
                                 contrast_colour_mix: 0.5,
-                                saturation_density: 0.5,
+                                vibrance: 0.5,
                                 ..AdjustmentLayerSettings::default()
                             };
                         }

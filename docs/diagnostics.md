@@ -310,7 +310,9 @@ ANTITONE_PHOTO_OUTPUT="$PWD/.cache/photographic-FRESH" \
   --test photographic_samples -- --ignored --nocapture
 ```
 
-It develops the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`) in Negative's unity-WB basis, writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction, ordered adjustment layers and their blend endpoints/interiors. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
+The `paired/` output develops the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`) in Negative's unity-WB basis, writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction, ordered adjustment layers and colour controls. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
+
+The `colourfulness/` output isolates Saturation, positive/negative Vibrance and their combination on a 1024×768 train crop, with Film & paper bypassed and with colour paper enabled. Compare muted and vivid regions, neutral transitions and shadow noise; these are rendered examples rather than a colour-appearance oracle. Filter by `saturation_vibrance_with_film_paper_samples` to generate only that set.
 
 ## View sampling quality oracles
 

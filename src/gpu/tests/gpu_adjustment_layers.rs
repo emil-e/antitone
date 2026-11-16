@@ -207,12 +207,7 @@ fn local_reference(mut rgb: DVec3, layers: &[AdjustmentLayer], point: [f64; 2]) 
         let c = 1. + w * (a.photo.contrast - 1.);
         rgb = reference::contrast_mix(rgb, c, a.photo.pivot, a.photo.contrast_colour_mix).unwrap();
         let s = 1. + w * (a.photo.saturation - 1.);
-        rgb = reference::blend(
-            reference::saturation(rgb, s, reference::Saturation::ConstantY).unwrap(),
-            reference::saturation(rgb, s, reference::Saturation::Maximum).unwrap(),
-            a.photo.saturation_density,
-        )
-        .unwrap();
+        rgb = reference::saturation(rgb, s, w * a.photo.vibrance).unwrap();
     }
     rgb
 }
@@ -309,7 +304,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 pivot: [0.01, 0.18, 1.][case / 6 % 3],
                 contrast_colour_mix: [0., 0.432156, 1.][case % 3],
                 saturation: [0., 0.71234567, 2.][case % 3],
-                saturation_density: [1., 0.21345678, 0.][case / 3 % 3],
+                vibrance: [-1., 0.21345678, 1.][case / 3 % 3],
             };
             let mut local = adjustment(mask, photo);
             local.invert = case % 4 == 0;
@@ -498,7 +493,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
                     contrast: 1.01,
                     contrast_colour_mix: 0.25,
                     saturation: 1.02,
-                    saturation_density: 0.4,
+                    vibrance: 0.4,
                     ..Default::default()
                 },
                 enabled: true,
@@ -763,7 +758,6 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
                 a.photo = AdjustmentLayerSettings {
                     pivot: 1.,
                     contrast_colour_mix: 1.,
-                    saturation_density: 1.,
                     ..Default::default()
                 }
             }
@@ -990,6 +984,34 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
     let roll = RollSettings::default();
     let camera_matrix = matrix();
     let (source, pixels) = source(&device, area, [8, 8], camera_matrix);
+    let empty = AdjustmentLayerSnapshot::new(vec![]).unwrap();
+    let upstream = AuthoredPhotograph::new(
+        &device.limits(),
+        input,
+        roll,
+        empty.clone(),
+        camera_matrix,
+        area,
+    )
+    .unwrap();
+    let baseline = read(
+        &device,
+        &queue,
+        &kernel,
+        &source,
+        pixels.len(),
+        &upstream,
+        None,
+    );
+    let raster = SourceRaster::new(area, [8, 8]).unwrap();
+    assert_reference(
+        &baseline,
+        &pixels,
+        raster,
+        &empty,
+        Pipeline::new(input, roll, camera_matrix).unwrap(),
+        None,
+    );
     for exposure in [-2., 0., 2.] {
         for contrast in [0.4, 1., 1.6] {
             let photo = AdjustmentLayerSettings {
@@ -998,7 +1020,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 pivot: 0.03,
                 contrast_colour_mix: 1.,
                 saturation: 1.73,
-                saturation_density: 0.43,
+                vibrance: 0.43,
                 ..Default::default()
             };
             let snapshot = AdjustmentLayerSnapshot::new(vec![
@@ -1026,14 +1048,24 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 &prepared,
                 None,
             );
-            assert_reference(
-                &actual,
-                &pixels,
-                SourceRaster::new(area, [8, 8]).unwrap(),
-                &snapshot,
-                Pipeline::new(input, roll, camera_matrix).unwrap(),
-                None,
-            );
+            // Film-base inversion rounding is amplified by nonlinear grading.
+            // Check inversion independently above, then grade its actual f32 samples.
+            for (i, (actual, baseline)) in actual.iter().zip(&baseline).enumerate() {
+                let point = raster
+                    .source_pixel([i as u32 % 8, i as u32 / 8])
+                    .unwrap()
+                    .map(|v| f64::from(v) + 0.5);
+                let rgb = DVec3::new(baseline[0] as f64, baseline[1] as f64, baseline[2] as f64);
+                let expected = local_reference(rgb, snapshot.layers(), point);
+                let allowed = 2e-5 + 2e-4 * expected.abs().max_element();
+                assert_eq!(actual[3], baseline[3]);
+                for c in 0..3 {
+                    assert!(
+                        actual[c].is_finite() && (actual[c] as f64 - expected[c]).abs() <= allowed,
+                        "pixel={i} {photo:?}: {actual:?} vs {expected:?}"
+                    );
+                }
+            }
         }
     }
 }

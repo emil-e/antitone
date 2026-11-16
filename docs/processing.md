@@ -146,13 +146,13 @@ Contrast scales an ACEScc coordinate around a pivot. Nonnegative inputs use the 
 
 Preserve blends contrasted OKLab a/b toward the original a/b while retaining contrasted L. AP1/D60 is Bradford-adapted to D65 for OKLab, with signed cube roots and no gamut clipping. Zero selects per-channel contrast; one restores original OKLab hue/chroma, not necessarily perceived saturation. Neutral greys retain the same contrast curve throughout.
 
-Saturation blends between preserving AP1 luminance and anchoring the largest RGB channel, which gives Density its darkening character. Neither endpoint is a physical dye or print simulation.
+Saturation scales OKLab a/b uniformly, retaining L and hue. Vibrance adds a selective chroma gain, strongest in muted colours: `gain = saturation * (1 + vibrance * w)`, with `w = (L/4)² / ((L/4)² + a² + b²)`. This smooth, exposure-independent weighting is half-strength at `C/|L| = 1/4`; black remains unchanged. Vibrance spans −1 to +1, with zero as identity. Exact neutrals stay neutral, and zero Saturation stays grey at every Vibrance setting. Neither control clips the working gamut or applies skin-tone protection. Preserved OKLab lightness is not constant AP1 luminance; downstream colour treatments and ACES can change the displayed relationship.
 
 ### Adjustment layers change controls, not rendered pixels
 
-Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
+Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure and Bradford WB in AP1, then contrast and OKLab saturation/Vibrance before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
 
-Coverage, inversion and strength produce a weight between zero and one: exposure and WB scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. Grading consumes immutable snapshots. Control domains, packed constants and GPU resource sizes are validated before execution; extreme pixel arithmetic is bounded locally.
+Coverage, inversion and strength produce a weight between zero and one: exposure, WB and Vibrance scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. Grading consumes immutable snapshots. Control domains, packed constants and GPU resource sizes are validated before execution; extreme pixel arithmetic is bounded locally.
 
 ### Film texture
 
@@ -194,7 +194,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **7**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **8**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

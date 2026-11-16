@@ -976,7 +976,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_out_of_range_controls() 
         pivot: 0.25,
         contrast_colour_mix: 0.75,
         saturation: 1.3,
-        saturation_density: 0.25,
+        vibrance: 0.25,
     };
     editor.document.project.roll.exposure = -0.5;
     let photo = editor.photo_settings();
@@ -3230,7 +3230,7 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
         pivot: 0.25,
         contrast_colour_mix: 1.,
         saturation: 1.3,
-        saturation_density: 1.,
+        vibrance: 1.,
     };
     let photo = editor.photo_settings();
     let roll = editor.document.project.roll;

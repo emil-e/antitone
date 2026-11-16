@@ -193,7 +193,7 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
         pivot: 0.11,
         contrast_colour_mix: 0.7,
         saturation: 0.,
-        saturation_density: 0.3,
+        vibrance: 0.3,
     };
     assert_eq!(weighted_settings(photo, 1.).unwrap(), photo);
     let half = weighted_settings(photo, 0.5).unwrap();
@@ -209,13 +209,12 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
     assert_eq!(half.saturation, 0.5);
     assert_eq!(half.pivot, photo.pivot);
     assert_eq!(half.contrast_colour_mix, photo.contrast_colour_mix);
-    assert_eq!(half.saturation_density, photo.saturation_density);
+    assert_eq!(half.vibrance, 0.5 * photo.vibrance);
     assert_eq!(
         weighted_settings(photo, 0.).unwrap(),
         AdjustmentLayerSettings {
             pivot: photo.pivot,
             contrast_colour_mix: photo.contrast_colour_mix,
-            saturation_density: photo.saturation_density,
             ..AdjustmentLayerSettings::default()
         }
     );
@@ -290,7 +289,6 @@ fn empty_disabled_zero_strength_zero_coverage_and_identity_stages_bypass_exactly
     let identity = adjustment(AdjustmentLayerSettings {
         pivot: 1.,
         contrast_colour_mix: 1.,
-        saturation_density: 1.,
         ..AdjustmentLayerSettings::default()
     });
     let point = SourcePoint([14., 20.]);
@@ -338,7 +336,7 @@ fn full_weight_matches_existing_photographic_operators() {
         pivot: 0.11,
         contrast_colour_mix: 0.7,
         saturation: 1.3,
-        saturation_density: 0.6,
+        vibrance: 0.6,
     };
     let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
     let matrix = wb_matrix(photo.wb).unwrap() * photo.exposure.exp2();
@@ -368,7 +366,7 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                     pivot: 0.11,
                     contrast_colour_mix: blend,
                     saturation,
-                    saturation_density: blend,
+                    vibrance: blend,
                 };
                 let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
                 for (x, w) in [
@@ -387,14 +385,8 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                         let a = 1. + w * (contrast - 1.);
                         let contrasted = reference::contrast_mix(balanced, a, 0.11, blend).unwrap();
                         let s = 1. + w * (saturation - 1.);
-                        let expected = reference::blend(
-                            reference::saturation(contrasted, s, reference::Saturation::ConstantY)
-                                .unwrap(),
-                            reference::saturation(contrasted, s, reference::Saturation::Maximum)
-                                .unwrap(),
-                            blend,
-                        )
-                        .unwrap();
+                        let expected =
+                            reference::saturation(contrasted, s, w * photo.vibrance).unwrap();
                         let output = grade.apply(pixel(rgb), SourcePoint([x, 20.])).unwrap();
                         near_rgb(output.rgb, expected);
                         assert_eq!(output.floored, [true, false, true]);

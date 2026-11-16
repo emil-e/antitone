@@ -7,7 +7,7 @@
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
-    color::{AP1_TO_XYZ, ap1_to_ap0},
+    color::ap1_to_ap0,
     crop::Crop,
     export::{self, ExrPrecision, Overwrite},
     frame_raster::FrameRaster,
@@ -23,6 +23,8 @@ use antitone::{
 use exr::prelude::*;
 use glam::{DMat3, DVec3};
 use tiff::decoder::{Decoder, DecodingResult};
+#[path = "support/photographic_reference.rs"]
+mod reference;
 
 #[test]
 fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
@@ -75,7 +77,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
                 },
                 photo: AdjustmentLayerSettings {
                     saturation: 2.,
-                    saturation_density: 0.4,
+                    vibrance: 0.4,
                     ..AdjustmentLayerSettings::default()
                 },
                 enabled: true,
@@ -152,7 +154,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
         DVec3::new(
             0.3 + f64::from(x - 10) * 0.01,
             0.02 + f64::from(y - 20) * 0.02,
-            0.001,
+            0.001 + f64::from(x - 10) * 0.025,
         )
     };
     // Independent coverage/exposure/saturation oracle, not the local evaluator.
@@ -164,10 +166,8 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
         let rx = (f64::from(x) + 0.5 - 13.) / 4.;
         let ry = (f64::from(y) + 0.5 - 23.) / 2.;
         let t = (1. - (rx * rx + ry * ry).sqrt()).clamp(0., 1.);
-        let saturation = 1. + t * t * (3. - 2. * t);
-        let grey = DVec3::splat((AP1_TO_XYZ * rgb).y);
-        let maximum = DVec3::splat(rgb.max_element());
-        0.6 * (grey + saturation * (rgb - grey)) + 0.4 * (maximum + saturation * (rgb - maximum))
+        let weight = t * t * (3. - 2. * t);
+        reference::saturation(rgb, 1. + weight, 0.4 * weight).unwrap()
     };
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {

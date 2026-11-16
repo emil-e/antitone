@@ -154,7 +154,7 @@ fn photographic_rows_keep_their_ranges_and_reset_only_the_edited_value() {
         ("Pivot", [0.01, 1.], 0.18, |p, v| p.pivot = v),
         ("Preserve", [0., 1.], 0., |p, v| p.contrast_colour_mix = v),
         ("Saturation", [0., 2.], 1., |p, v| p.saturation = v),
-        ("Density", [0., 1.], 0., |p, v| p.saturation_density = v),
+        ("Vibrance", [-1., 1.], 0., |p, v| p.vibrance = v),
     ];
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         show_layers(&mut harness);
@@ -182,6 +182,9 @@ fn photographic_rows_keep_their_ranges_and_reset_only_the_edited_value() {
             harness.step();
             harness.read(|editor| assert_eq!(editor.photo_settings(), expected));
         }
+        harness.event(egui::Event::PointerGone);
+        workflow::wait_settled(&mut harness);
+        save_capture(&harness.render().unwrap(), "photo-colourfulness");
     });
 }
 

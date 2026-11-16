@@ -70,6 +70,7 @@ pub(super) fn layer(
             };
             selected.photo.contrast = 1.;
             selected.photo.saturation = 1.;
+            selected.photo.vibrance = 0.;
 
             let mut layers = recipe.grade.layers()[..input.index].to_vec();
             layers.push(selected);

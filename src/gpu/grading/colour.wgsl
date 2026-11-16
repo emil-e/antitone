@@ -55,42 +55,17 @@ fn colour_tone(x: f32, da: f32, pivot: f32) -> f32 {
     return colour_decode(z);
 }
 
-fn colour_mix(a: f32, b: f32, t: f32) -> f32 {
-    if t == 0.0 || a == b {
-        return a;
-    }
-    if t == 1.0 {
-        return b;
-    }
-    return fma(t, b - a, a);
-}
-
-fn colour_luminance(rgb: array<f32, 3>) -> f32 {
-    return dot(vec3f(0.2722287168, 0.6740817658, 0.0536895174), vec3f(rgb[0], rgb[1], rgb[2]));
-}
-
 fn colour_oklab_roots(rgb: array<f32, 3>) -> vec3f {
     let cones = matrix_product(adjustment_layer_context.oklab_cones.columns, rgb);
     let lms = vec3f(cones[0], cones[1], cones[2]);
     return sign(lms) * pow(abs(lms), vec3f(1.0 / 3.0));
 }
 
-fn colour_preserve(
-    original: array<f32, 3>,
-    contrasted: array<f32, 3>,
-    amount: f32,
-) -> array<f32, 3> {
-    let before = colour_oklab_roots(original);
-    let after = colour_oklab_roots(contrasted);
-    let difference = before - after;
+fn colour_preserve(original: array<f32, 3>, after: vec3f, amount: f32) -> vec3f {
+    let difference = colour_oklab_roots(original) - after;
     // Inverse OKLab's L column is (1,1,1): subtract only that component of the difference.
     let lightness = dot(adjustment_layer_context.oklab_lightness.xyz, difference);
-    let roots = fma(vec3f(amount), difference - vec3f(lightness), after);
-    var cubes: array<f32, 3>;
-    for(var c = 0u; c < 3u; c++) {
-        cubes[c] = photographic_finite(roots[c] * roots[c] * roots[c]);
-    }
-    return matrix_product(adjustment_layer_context.oklab_inverse.columns, cubes);
+    return fma(vec3f(amount), difference - vec3f(lightness), after);
 }
 
 fn colour_apply(
@@ -99,33 +74,47 @@ fn colour_apply(
     pivot: f32,
     colour: f32,
     ds: f32,
-    density: f32,
+    vibrance: f32,
 ) -> array<f32, 3> {
     var rgb = input;
     if da != 0.0 {
         for(var c = 0u; c < 3u; c++) {
             rgb[c] = colour_tone(rgb[c], da, pivot);
         }
-        if colour != 0.0 && !(input[0] == input[1] && input[1] == input[2]) {
-            rgb = colour_preserve(input, rgb, colour);
-        }
     }
-    if ds == 0.0 || (rgb[0] == rgb[1] && rgb[1] == rgb[2]) {
+    let preserve = da != 0.0 && colour != 0.0;
+    if (!preserve && ds == 0.0 && vibrance == 0.0)
+        || (input[0] == input[1] && input[1] == input[2]) {
         return rgb;
     }
-    var grey = 0.0;
-    if density != 1.0 {
-        grey = colour_luminance(rgb);
+    // Keep colour preservation and chroma adjustment in the same roots, without
+    // an ill-conditioned RGB round trip near zero cone responses.
+    var roots = colour_oklab_roots(rgb);
+    if preserve {
+        roots = colour_preserve(input, roots, colour);
     }
-    if density != 0.0 {
-        grey = colour_mix(grey, max(rgb[0], max(rgb[1], rgb[2])), density);
-    }
-    for(var c = 0u; c < 3u; c++) {
-        if abs(ds) < 0.5 {
-            rgb[c] = photographic_finite(fma(ds, rgb[c] - grey, rgb[c]));
-        } else {
-            rgb[c] = photographic_finite(fma(1.0 + ds, rgb[c] - grey, grey));
+    var adjusted = roots;
+    if ds != 0.0 || vibrance != 0.0 {
+        let lightness = dot(adjustment_layer_context.oklab_lightness.xyz, roots);
+        var gain = 1.0 + ds;
+        if vibrance != 0.0 {
+            let a = dot(vec3f(1.977998539071675, -2.4285922502018127, 0.4505937111301374), roots);
+            let b = dot(
+                    vec3f(0.025904030547901084, 0.7827717270900503, -0.8086757576379514),
+                    roots,
+                );
+            // Half response at C/|L| = 1/4, independent of exposure and smooth at neutral.
+            let muted = (0.25 * lightness) * (0.25 * lightness);
+            let total = muted + a * a + b * b;
+            if total != 0.0 {
+                gain *= 1.0 + vibrance * muted / total;
+            }
         }
+        adjusted = fma(vec3f(gain), roots - vec3f(lightness), vec3f(lightness));
     }
-    return rgb;
+    var cubes: array<f32, 3>;
+    for(var c = 0u; c < 3u; c++) {
+        cubes[c] = photographic_finite(adjusted[c] * adjusted[c] * adjusted[c]);
+    }
+    return matrix_product(adjustment_layer_context.oklab_inverse.columns, cubes);
 }

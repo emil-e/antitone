@@ -293,7 +293,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                         other.adjustment_layers.as_mut().unwrap().layers[0]
                             .adjustment
                             .photo
-                            .saturation_density = 0.4
+                            .vibrance = 0.4
                     }
                 }
                 editor.document.state.project.add_source(other).unwrap();
