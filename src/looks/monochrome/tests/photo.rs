@@ -3,6 +3,7 @@
 //! pixel-exact oracle for the composed GPU photograph; local grades/texture omit.
 use super::*;
 use crate::gpu::submission::SubmissionGate;
+use crate::photographic;
 
 #[test]
 #[ignore = "requires an explicitly supplied private project and fresh report path"]

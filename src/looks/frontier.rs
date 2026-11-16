@@ -74,6 +74,8 @@ impl Selection {
             for source in [
                 include_bytes!("frontier.rs").as_slice(),
                 include_bytes!("frontier/formation.rs").as_slice(),
+                include_bytes!("characteristic.rs").as_slice(),
+                super::characteristic::DEFINITION,
                 include_bytes!("frontier/density.rs").as_slice(),
                 include_bytes!("authoring.rs").as_slice(),
                 include_bytes!("sampling.rs").as_slice(),

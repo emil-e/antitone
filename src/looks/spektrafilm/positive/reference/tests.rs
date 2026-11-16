@@ -18,6 +18,22 @@ fn diagonal() -> Reference {
 }
 
 #[test]
+fn catalogue_reference_places_gray_at_the_academy_density_anchor() {
+    let curve = crate::looks::characteristic::reference();
+    for paper in &crate::looks::spektrafilm::data::catalog().paper {
+        let reference = &paper.positive_driver.reference;
+        let records = reference.project(DVec3::splat(curve.gray), curve.gray);
+        let cid = matrix(CDD_TO_CID) * (reference.target(records) * GAIN);
+        // The published exposure matrix is rounded to five decimal places.
+        assert!(
+            (cid - DVec3::splat(0.7)).abs().max_element() < 4e-6,
+            "{}: {cid}",
+            paper.id
+        );
+    }
+}
+
+#[test]
 fn separate_measuring_bands_fix_the_unique_spectrum_and_receiver_flux() {
     let r = diagonal();
     r.validate(DVec3::new(0.2, 0.7, 0.1)).unwrap();
@@ -35,25 +51,29 @@ fn separate_measuring_bands_fix_the_unique_spectrum_and_receiver_flux() {
         }
     }
     for records in [DVec3::new(0.2, 0.7, 0.3), DVec3::new(40., 0.08, 0.3)] {
-        let target = r.target(records).0;
+        let target = r.target(records);
         let expected = DVec3::new(2., 3., 4.).map(f64::log10) - target;
         assert!((r.field(records).unwrap() - expected).abs().max_element() < 1e-12);
     }
 }
 
 #[test]
-fn low_positive_receiver_tangent_retains_displacement_in_one_and_multiple_records() {
+fn black_and_low_positive_records_use_the_curve_without_a_query_floor() {
     let r = diagonal();
-    for records in [DVec3::new(0., 0.2, 0.4), DVec3::new(0.003, 0., 0.02)] {
-        let anchor = records.max(DVec3::splat(BREAK));
-        let (target, slope) = r.target(anchor);
-        let expected = DVec3::new(2., 3., 4.).map(f64::log10)
-            - target
-            - (matrix(CDD_TO_CID).inverse() * (slope * (records - anchor))) / GAIN;
-        let observed = r.field(records).unwrap();
-        assert!((observed - expected).abs().max_element() < 1e-12);
-        assert!((observed - r.field(anchor).unwrap()).abs().max_element() > 0.01);
+    for records in [
+        DVec3::ZERO,
+        DVec3::new(0., 0.002, 0.004),
+        DVec3::new(0.003, 0., 0.02),
+    ] {
+        let expected = DVec3::new(2., 3., 4.).map(f64::log10) - r.target(records);
+        assert!((r.field(records).unwrap() - expected).abs().max_element() < 1e-12);
     }
+    assert!(
+        (r.field(DVec3::splat(0.003)).unwrap() - r.field(DVec3::ZERO).unwrap())
+            .abs()
+            .max_element()
+            > 0.01
+    );
 }
 
 #[test]
@@ -86,12 +106,12 @@ fn reference_record_projection_preserves_linear_y_and_neutral_ray_inside_identit
     let input = DVec3::new(0.3, 0.1, 0.05);
     assert_eq!(r.project(input, w.dot(input)), input);
     assert_eq!(
-        r.colour_difference(DVec3::new(1., -0.5, 0.), 0.).unwrap(),
-        DVec3::ZERO
+        r.expose(DVec3::new(1., -0.5, 0.), 0.).unwrap(),
+        r.field(DVec3::ZERO).unwrap()
     );
     assert_eq!(
-        r.colour_difference(DVec3::new(1., -0.5, 0.), -0.1).unwrap(),
-        DVec3::ZERO
+        r.expose(DVec3::new(1., -0.5, 0.), -0.1).unwrap(),
+        r.field(DVec3::ZERO).unwrap()
     );
 }
 

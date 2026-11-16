@@ -150,6 +150,23 @@ fn spectral_negatives_remain_scalar_exposures_and_supported_pairings_are_structu
 }
 
 #[test]
+fn paper_only_gray_calibration_and_neutral_negative_attenuation_share_the_reference_curve() {
+    let curve = crate::looks::characteristic::reference();
+    for paper in Paper::all() {
+        let model = Model::new(paper);
+        let gray = model.exposure(DVec3::splat(curve.gray));
+        assert!((gray - model.paper.positive.gray_log_h).abs() < 1e-15);
+        let black = model.exposure(DVec3::ZERO);
+        assert!((black - gray - curve.density(curve.gray)).abs() < 1e-15);
+        // In the straight-line region, a decade of positive exposure increases
+        // neutral negative density by gamma and reduces paper log exposure by it.
+        let a = model.exposure(DVec3::splat(curve.knee * 1e6));
+        let b = model.exposure(DVec3::splat(curve.knee * 1e7));
+        assert!((a - b - curve.gamma).abs() < 2e-15);
+    }
+}
+
+#[test]
 fn paper_black_density_follows_each_published_curve_without_common_endpoint_adjustment() {
     for (id, published_max) in [
         ("ilford_multigrade_rc_deluxe_filter_2", 2.1),

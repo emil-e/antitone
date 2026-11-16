@@ -1,6 +1,6 @@
 use super::*;
 use crate::looks::spektrafilm::{Model, Paper, Selection, develop_print_morph};
-use crate::photographic;
+use crate::{looks::spektrafilm::data, photographic};
 use std::sync::atomic::AtomicBool;
 
 fn model(paper: Paper) -> Model {
@@ -18,59 +18,79 @@ fn models() -> impl Iterator<Item = Model> {
 }
 
 #[test]
-fn neutral_tone_reference_retains_signed_tangent_and_extreme_inputs_remain_finite() {
+fn fixed_printing_calibration_preserves_gray_and_all_inputs_take_the_same_reference_path() {
     for m in models() {
-        let mapping = &data::catalog().paper_mapping;
-        let reference = |x| neutral_exposure(m.paper, x, mapping);
-        assert!(reference(-0.02).min_element() > reference(0.).max_element());
-        let break_point = 0.0078125;
-        for x in [-0.054, -0.02, 0., 0.003, break_point] {
-            let expected_difference = -mapping.exposure_compression * (x - break_point)
-                / (break_point * std::f64::consts::LN_10);
-            let observed = reference(x) - reference(break_point);
+        let driver = &m.paper.positive_driver;
+        let gray = crate::looks::characteristic::reference().gray;
+        assert!(
+            (m.paper_exposure(DVec3::splat(gray)).unwrap() - m.paper.positive_gray_log_h)
+                .abs()
+                .max_element()
+                < 2e-12
+        );
+        for rgb in [
+            DVec3::ZERO,
+            DVec3::splat(-0.02),
+            DVec3::splat(0.003),
+            DVec3::splat(gray),
+            DVec3::splat(4.),
+            DVec3::new(0.3, 0.1, 0.02),
+        ] {
+            let reference = driver
+                .reference
+                .expose(rgb, driver.input_luminance.dot(rgb))
+                .unwrap();
             assert!(
-                (observed - DVec3::splat(expected_difference))
+                (m.paper_exposure(rgb).unwrap() - reference - driver.print_log_h)
                     .abs()
                     .max_element()
                     < 1e-12
             );
         }
-        for x in [
+        // Equal scalar density increments do not force equal receiver log-exposure
+        // increments: the retained density basis and paper spectra remain active.
+        let low = m.paper_exposure(DVec3::splat(0.03)).unwrap();
+        let high = m.paper_exposure(DVec3::splat(0.3)).unwrap();
+        let change = high - low;
+        assert!((change - DVec3::splat(change.x)).abs().max_element() > 1e-4);
+        for rgb in [
             DVec3::new(-0.0212899204, 0.0399119705, -0.0189858880),
             DVec3::new(-100., 1., 1024.),
             DVec3::new(1e100, -1e100, 0.),
             DVec3::new(1e-100, -2e-100, 3e-100),
         ] {
-            assert!(m.paper_exposure(x).unwrap().is_finite(), "{}", m.paper.id);
+            assert!(m.paper_exposure(rgb).unwrap().is_finite(), "{}", m.paper.id);
         }
     }
 }
 
 #[test]
-fn complete_neutral_trajectory_includes_allocation_toe_and_extrapolation() {
-    let p = &data::catalog().paper_mapping;
+fn complete_neutral_trajectory_is_finite_monotone_and_continuous_at_black() {
     let mut values: Vec<_> = (0..=4096)
         .map(|i| photographic::decode(-0.5 + 1.6 * i as f64 / 4096.))
         .collect();
     values.extend([-100., -1., 0., 0.0078125, 0.18, 1024., 1e6]);
+    values.sort_by(f64::total_cmp);
     for m in models() {
-        for &x in &values {
-            let expected = m.paper.positive_gray_log_h
-                - DVec3::splat(
-                    p.exposure_compression
-                        * 17.52
-                        * (photographic::encode(x) - photographic::encode(p.gray_ap1))
-                        * std::f64::consts::LOG10_2,
-                );
+        let exposures: Vec<_> = values
+            .iter()
+            .map(|&x| m.paper_exposure(DVec3::splat(x)).unwrap())
+            .collect();
+        assert!(exposures.iter().all(|x| x.is_finite()));
+        for pair in exposures.windows(2) {
             assert!(
-                (m.paper_exposure(DVec3::splat(x)).unwrap() - expected)
-                    .abs()
-                    .max_element()
-                    < 1e-12,
+                pair[1].cmple(pair[0] + DVec3::splat(1e-12)).all(),
                 "{}",
                 m.paper.id
             );
         }
+        let black = m.paper_exposure(DVec3::ZERO).unwrap();
+        assert!(
+            (m.paper_exposure(DVec3::splat(1e-10)).unwrap() - black)
+                .abs()
+                .max_element()
+                < 1e-12
+        );
     }
 }
 
@@ -102,7 +122,7 @@ fn signed_and_hdr_colours_remain_finite_without_disabling_colour() {
 }
 
 #[test]
-fn nonpositive_input_y_uses_neutral_tone_and_former_fold_queries_remain_defined() {
+fn nonpositive_input_y_uses_black_endpoint_and_former_fold_queries_remain_defined() {
     for m in models() {
         let c = &m.paper.positive_driver;
         for input in [DVec3::new(0.01, -0.05, 0.02), DVec3::new(-1., -0.2, 0.5)] {
@@ -110,7 +130,7 @@ fn nonpositive_input_y_uses_neutral_tone_and_former_fold_queries_remain_defined(
             assert!(y < 0.);
             assert_eq!(
                 m.paper_exposure(input).unwrap(),
-                neutral_exposure(m.paper, y, &data::catalog().paper_mapping)
+                m.paper_exposure(DVec3::ZERO).unwrap()
             );
         }
         for input in [

@@ -11,10 +11,19 @@ struct Fixtures {
     density: Vec<f64>,
 }
 fn fixtures() -> Fixtures {
-    serde_json::from_slice(include_bytes!(
-        "../../../tests/fixtures/papers/ilford-multigrade-rc-deluxe-filter-2.json"
-    ))
-    .unwrap()
+    let source = catalogue::fixtures();
+    let case = source
+        .cases
+        .into_iter()
+        .find(|case| case.selection() == Selection::from(Paper::default()))
+        .unwrap();
+    Fixtures {
+        inputs: source.inputs,
+        encoded: case.encoded,
+        reference_rgb: case.reference_rgb,
+        log_h: case.log_h,
+        density: case.density,
+    }
 }
 fn model() -> Model {
     Model::new(Paper::default())

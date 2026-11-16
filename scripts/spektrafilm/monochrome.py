@@ -22,12 +22,14 @@ import zlib
 
 if __package__:
     from . import build
+    from .characteristic import DEFINITION, PARAMETERS, density as reference_density
 else:
     spec = importlib.util.spec_from_file_location(
         "paper_generation_build", Path(__file__).with_name("build.py")
     )
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
+    from characteristic import DEFINITION, PARAMETERS, density as reference_density
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets/monochrome"
@@ -39,6 +41,8 @@ PRODUCERS = [
     Path(__file__).resolve(),
     Path(build.__file__).resolve(),
     build.LOCK,
+    Path(__file__).with_name("characteristic.py"),
+    DEFINITION,
     *SOURCES,
     ROOT / "native/spektrafilm/reference.cpp",
     ROOT / "native/rendering_transform.h",
@@ -356,7 +360,7 @@ def generate(upstream, output, scratch):
         rgb = gamut.compress_rgb(rgb, finishing, output_color_space="sRGB")
         return rgb.reshape(-1, 3) @ to_reference.T
 
-    gray = 0.18
+    gray = PARAMETERS["gray"]
     target = float(ocio([[gray] * 3], "forward")[0] @ ref_xyz[1])
     catalogue = {"paper": [], "negative": []}
     index = {"paper": [], "negative": []}
@@ -391,8 +395,6 @@ def generate(upstream, output, scratch):
             )
             component["positive"] = {
                 "gray_log_h": gray_h,
-                "gray_ap1": gray,
-                "exposure_compression": 0.6,
             }
             paper_models.append((component, density))
         else:
@@ -500,8 +502,10 @@ def generate(upstream, output, scratch):
         for film_model in [None, *film_models]:
             if film_model is None:
                 film_id, raw, film_h, film_d = None, None, None, None
-                h = paper["positive"]["gray_log_h"] - 17.52 * (cct(inputs @ ap1_y) - cct(gray)) * (
-                    0.6 * np.log10(2)
+                h = (
+                    paper["positive"]["gray_log_h"]
+                    + reference_density(gray)
+                    - np.array([reference_density(y) for y in inputs @ ap1_y])
                 )
             else:
                 film, film_density, response, raw_gray = film_model

@@ -17,6 +17,8 @@ def validate(folder, files=None):
         ("generator_sha256", ROOT / "scripts/spektrafilm/export.py"),
         ("positive_driver_sha256", ROOT / "scripts/spektrafilm/positive.py"),
         ("reference_driver_sha256", ROOT / "scripts/spektrafilm/reference.py"),
+        ("characteristic_sha256", ROOT / "scripts/spektrafilm/characteristic.py"),
+        ("characteristic_definition_sha256", ROOT / "assets/looks/reference-negative.json"),
         ("reference_helper_sha256", ROOT / "native/spektrafilm/reference.cpp"),
         ("environment_lock_sha256", ROOT / "scripts/spektrafilm/requirements.lock"),
         ("build_tool_sha256", ROOT / "scripts/spektrafilm/build.py"),
@@ -73,7 +75,7 @@ def validate(folder, files=None):
     for medium in catalog["paper"]:
         if medium["positive_driver"] != {
             key: provenance["positive_drivers"][medium["id"]][key]
-            for key in ["input_luminance", "reference"]
+            for key in ["input_luminance", "reference", "print_log_h"]
         }:
             raise ValueError("reference driver/provenance mismatch")
         values = zlib.decompress(files[medium["scanner_file"]])

@@ -8,6 +8,8 @@ pub use chain::LutChain;
 #[cfg(feature = "project")]
 pub mod authoring;
 #[cfg(feature = "project")]
+mod characteristic;
+#[cfg(feature = "project")]
 pub mod frontier;
 #[cfg(feature = "project")]
 mod lookup;

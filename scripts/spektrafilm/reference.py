@@ -1,13 +1,27 @@
-"""Historical Academy flux reference and a minimum-relative-entropy spectrum."""
+"""Academy density basis, shared negative curve and minimum-relative-entropy spectrum."""
 
 from bisect import bisect_right
 import csv
 import hashlib
+import math
 from pathlib import Path
 import struct
 
+if __package__:
+    from .characteristic import PARAMETERS, density
+else:
+    from characteristic import PARAMETERS, density
+
 NEGATIVE = "kodak_vision3_250d"
 APD_NUMERIC_SHA256 = "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f"
+GRAY_CID = 0.7
+
+
+def exposure_scale():
+    """Place shared neutral gray at the Academy unbuild's CID anchor."""
+    p = PARAMETERS
+    exponent = GRAY_CID * p["toe"] / p["gamma"] * math.log(10)
+    return p["knee"] / p["gray"] * math.expm1(exponent) ** (1 / p["toe"])
 
 
 def responsivities(path):
@@ -77,8 +91,9 @@ def prepare(paper, negative, path):
         [[0.72286, 0.12630, 0.15084], [0.11923, 0.76418, 0.11659], [0.01427, 0.08213, 0.90359]]
     )
     return {
-        "to_records": np.linalg.solve(
-            exposure, ap0.matrix_XYZ_to_RGB @ ap1.matrix_RGB_to_XYZ
+        "to_records": (
+            exposure_scale()
+            * np.linalg.solve(exposure, ap0.matrix_XYZ_to_RGB @ ap1.matrix_RGB_to_XYZ)
         ).tolist(),
         "flux0": (action * prior[:, None]).sum(axis=0).tolist(),
         "samples": [
@@ -94,6 +109,13 @@ def source(path):
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": APD_NUMERIC_SHA256,
         "input_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        "gray_calibration": {
+            "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+            "input_gray": PARAMETERS["gray"],
+            "CID": GRAY_CID,
+            "exposure_scale": exposure_scale(),
+            "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density.",
+        },
         "prior_and_Dmin": NEGATIVE + " base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -121,38 +143,14 @@ class Reference:
         self.gain = np.array([1.0, 0.92, 0.95])
 
     def target(self, records):
-        np = self.np
-        cid = np.array([-0.19, 0.01, 0.028, 0.054, 0.095, 0.145, 0.22, 0.3, 0.4, 0.5, 0.6])
-        loge = np.array(
-            [
-                -6.0,
-                -2.721718645,
-                -2.521718645,
-                -2.321718645,
-                -2.121718645,
-                -1.921718645,
-                -1.721718645,
-                -1.521718645,
-                -1.321718645,
-                -1.121718645,
-                -0.926545676714876,
-            ]
-        )
-        log = np.log10(records)
-        k = np.clip(np.searchsorted(loge, log, side="right") - 1, 0, 9)
-        slope = np.where(log > loge[-1], 0.55, (cid[k + 1] - cid[k]) / (loge[k + 1] - loge[k]))
-        value = np.where(
-            log > loge[-1], 0.55 * (log + 0.7 / 0.55 - np.log10(0.18)), np.interp(log, loge, cid)
-        )
-        return self.inverse_cdd @ value / self.gain, slope / (records * np.log(10))
+        return self.inverse_cdd @ self.np.array([density(x) for x in records]) / self.gain
 
     def field(self, records):
         from scipy.optimize import root
         from scipy.special import logsumexp
 
         np = self.np
-        anchor = np.maximum(records, 1 / 128)
-        target, slope = self.target(anchor)
+        target = self.target(records)
         log_flux = np.log(self.flux0) - np.log(10) * target
         log_total = logsumexp(log_flux)
         q = np.exp(log_flux - log_total)
@@ -178,22 +176,15 @@ class Reference:
         if not np.isfinite(p).all() or residual > 1e-11:
             raise ValueError(f"reference moment observation failed: {residual}")
         flux = self.receiver @ p
-        delta_log_flux = -np.log(10) * (self.inverse_cdd @ (slope * (records - anchor))) / self.gain
-        delta_total = q @ delta_log_flux
-        delta_q = q[kept] * (delta_log_flux[kept] - delta_total)
-        delta_theta = np.linalg.solve(covariance, delta_q)
-        receiver_mean = (self.receiver * p) @ features.T / flux[:, None]
-        return (
-            log_total + np.log(flux) + delta_total + (receiver_mean - mean) @ delta_theta
-        ) / np.log(10)
+        return (log_total + np.log(flux)) / np.log(10)
 
-    def difference(self, rgb, brightness):
+    def expose(self, rgb, brightness):
         np = self.np
         if brightness <= 0:
-            return np.zeros(3)
+            return self.field(np.zeros(3))
         r = self.matrix @ rgb
-        n = self.matrix @ np.full(3, brightness)
         if min(r) < 0:
+            n = self.matrix @ np.full(3, brightness)
             distance = np.max((n - r) / n)
-            r = n + (r - n) / distance
-        return self.field(r) - self.field(n)
+            r = np.maximum(n + (r - n) / distance, 0)
+        return self.field(r)

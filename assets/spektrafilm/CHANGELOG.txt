@@ -17,12 +17,12 @@ Antitone modifications:
   This is a rendering convention, not a photographic or stock-fidelity fit.
 - Sample each paper-density readout together with the pinned inverse
   authoring DRT, storing ACEScct/AP1 values.
-- Use the historical Academy universal reference and a convex APD-action
-  spectral selector for every colour medium's paper-only entry, with a supplied base prior,
-  constant-Y radial adapter boundary and low-positive receiver tangent.
-  Add reference receiver differences directly to calibrated neutral exposure,
-  retaining the neutral log-exposure law and tone-dependent tint. Coloured
-  luminance follows the spectral reference and medium response.
+- Use a shared forward reference-negative characteristic curve, historical Academy
+  exposure/density coordinates and a convex APD-action spectral selector for every
+  colour medium's paper-only entry. Calibrate reference exposure to the Academy
+  unbuild's gray CID anchor of 0.7. Retain the supplied base prior and constant-Y
+  radial adapter boundary. Fixed per-medium printing exposure/balance anchors gray;
+  reference formation and paper development determine the entire tone/tint trajectory.
   No output hue/saturation fit or selected-negative characteristic curves
   define this virtual reference. The separate historical APD input is canonically identified;
   its derived functional coefficients rely on the source's implementation

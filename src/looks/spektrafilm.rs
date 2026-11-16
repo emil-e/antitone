@@ -6,7 +6,7 @@
 //! CC BY-SA 4.0; see LICENSE-data.txt and CHANGELOG.txt in that directory.
 //! The positive-to-paper adapter and application/LUT plumbing are Antitone additions.
 use super::{LookAsset, LookOrigin, failure, require};
-use crate::{Error, photographic};
+use crate::Error;
 use glam::{DMat3, DVec3};
 use std::sync::{
     Arc, OnceLock,
@@ -109,6 +109,8 @@ fn fingerprint() -> &'static str {
         let mut hash = blake3::Hasher::new();
         for bytes in [
             include_bytes!("spektrafilm.rs").as_slice(),
+            include_bytes!("characteristic.rs").as_slice(),
+            super::characteristic::DEFINITION,
             include_bytes!("authoring.rs").as_slice(),
             include_bytes!("sampling.rs").as_slice(),
             include_bytes!("spektrafilm/data.rs").as_slice(),
@@ -218,14 +220,6 @@ fn film_cmy_to_print_log_raw(film: &data::Film, pair: &data::Pair, d: DVec3) -> 
         .map(f64::log10)
 }
 
-// Shared scalar tone convention, including the signed/low-light tangent.
-// Colour enters only through the spectral reference, not independent RGB stops.
-fn neutral_exposure(paper: &data::Paper, brightness: f64, mapping: &data::Mapping) -> DVec3 {
-    let stops = 17.52 * (photographic::encode(brightness) - photographic::encode(mapping.gray_ap1));
-    paper.positive_gray_log_h
-        - DVec3::splat(stops * mapping.exposure_compression * std::f64::consts::LOG10_2)
-}
-
 pub struct Model {
     selection: Selection,
     film: Option<Filming>,
@@ -248,11 +242,7 @@ impl Model {
     fn paper_exposure(&self, rgb: DVec3) -> Result<DVec3, Error> {
         match &self.film {
             Some(film) => Ok(film.printing.sample(film.formation.density(rgb))),
-            None => {
-                self.paper
-                    .positive_driver
-                    .expose(rgb, self.paper, &data::catalog().paper_mapping)
-            }
+            None => self.paper.positive_driver.expose(rgb),
         }
     }
     pub fn encoded(&self, rgb: DVec3) -> Result<DVec3, Error> {

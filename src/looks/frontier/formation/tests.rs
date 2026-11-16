@@ -31,7 +31,7 @@ fn exposure_and_channel_gain_changes_preserve_the_black_anchor() {
     for variant in Variant::all() {
         let mut entry = Entry::calibrated(variant);
         for gain in [0.1, 1., 10.] {
-            entry.knee *= gain;
+            entry.curve.knee *= gain;
             entry.channel_gains = [gain, 1., 1. / gain];
             assert_eq!(
                 entry.coordinates(DVec3::ZERO).unwrap(),
@@ -51,8 +51,8 @@ fn b_origin_translates_formed_codes_before_upper_continuation() {
     let b = Entry::calibrated(Variant::B);
     assert_eq!(a.matrix, b.matrix);
     assert_eq!(a.codes_per_stop, b.codes_per_stop);
-    assert_eq!(a.knee, b.knee);
-    assert_eq!(a.toe, b.toe);
+    assert_eq!(a.curve.knee, b.curve.knee);
+    assert_eq!(a.curve.toe, b.curve.toe);
     assert_eq!(a.channel_gains, b.channel_gains);
     for signal in [0., 1e-9, 0.01, 0.18, 1., 1e6] {
         let qa = a.raw_code(signal);

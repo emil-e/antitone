@@ -2,7 +2,7 @@
   "source": "https://github.com/andreavolpato/spektrafilm",
   "author": "Andrea Volpato",
   "revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
-  "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared convex reference-negative spectral entry with calibrated neutral exposure, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
+  "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared forward characteristic curve and convex reference-negative spectral entry with fixed printing calibration, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
   "source_code_sha256": {
     "src/spektrafilm/__init__.py": "c042866a99e58250654195a34fb60dfed397325b9e2515d7f0cf386d1026250d",
     "src/spektrafilm/config.py": "d090b6401431e44b8c9ea31c980728ceec6ed1f5468415fbfa8200454add7d0d",
@@ -97,9 +97,11 @@
     "colour-science": "0.4.7",
     "OpenColorIO": "2.6.0"
   },
-  "generator_sha256": "b9d3aa33a5b15e69bde38f5b66ac861bc4d98ab67e9dbb596d7ea6126a4ea57e",
-  "positive_driver_sha256": "0c4fe869b9d85260e7d9812aa19e47fe601d4ce414a13426a5bbb82a53ec5030",
-  "reference_driver_sha256": "b84e2bc7a6ed07dccbff00fed57e0513765cf68ea0352cbf736461ba5cf11f4e",
+  "generator_sha256": "55d1de27d746556227632b9a7411259258142e8a5b64a1cbd84b8462e21275f8",
+  "positive_driver_sha256": "3bad1e56bb8cb24af132f9f40da6905a4a85f4ef45b4213b452ea269dab22eb7",
+  "reference_driver_sha256": "2c7e3fbfaf8212ef5870116e1826ca240e15260b938d205fe2ed614c90c9fe04",
+  "characteristic_sha256": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
+  "characteristic_definition_sha256": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b",
   "positive_drivers": {
     "fujifilm_crystal_archive_typeii": {
       "input_luminance": [
@@ -110,19 +112,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -2244,13 +2246,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.10932616984987871,
+        -0.6512855490269811,
+        -0.6032000913845257
+      ]
     },
     "kodak_2383": {
       "input_luminance": [
@@ -2261,19 +2275,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -4395,13 +4409,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        0.19649762633613022,
+        -0.3041035534176321,
+        -0.293438493898754
+      ]
     },
     "kodak_2393": {
       "input_luminance": [
@@ -4412,19 +4438,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -6546,13 +6572,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        0.25191450037917484,
+        -0.354338065741074,
+        -0.37356025145911825
+      ]
     },
     "kodak_ektacolor_edge": {
       "input_luminance": [
@@ -6563,19 +6601,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -8697,13 +8735,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.24407447002301869,
+        -0.7048416481900339,
+        -0.6084303526959272
+      ]
     },
     "kodak_endura_premier": {
       "input_luminance": [
@@ -8714,19 +8764,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -10848,13 +10898,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.1916915174009921,
+        -0.7270406211991508,
+        -0.6162369274287822
+      ]
     },
     "kodak_portra_endura": {
       "input_luminance": [
@@ -10865,19 +10927,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -12999,13 +13061,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.28315643495887827,
+        -0.6792072889782537,
+        -0.5744416092200406
+      ]
     },
     "kodak_supra_endura": {
       "input_luminance": [
@@ -13016,19 +13090,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -15150,13 +15224,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.28476309764187563,
+        -0.6738219869689703,
+        -0.6025992107854257
+      ]
     },
     "kodak_ultra_endura": {
       "input_luminance": [
@@ -15167,19 +15253,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -17301,13 +17387,25 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
         "scale": "Canonical transmission may exceed one. Passive-filter/common-printer-exposure representation is an output-invariant gauge, not identical fixed-scale filter APD readings.",
         "distribution": "Derived functional coefficients rely on the historical specification's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt."
       },
-      "intent": "The historical Academy universal density reference supplies flux constraints for a minimum-relative-entropy spectrum with an explicit base prior. Adapter-only boundary projection and low-positive receiver continuation retain signed AP1 upstream. The scalar gray tone/tint is calibrated independently; coloured luminance follows the spectral reference and medium response, without a per-colour exposure correction or output hue/saturation fit."
+      "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
+      "print_log_h": [
+        -0.2234711558559146,
+        -0.7103950135622559,
+        -0.5917927094742625
+      ]
     }
   },
   "paper_output_validation": {
@@ -17369,12 +17467,12 @@
   "source_lut_sha256": "52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783",
   "files": {
     "catalog.json.z": {
-      "bytes": 722708,
-      "sha256": "05624076e838cd481173755128d18daf651e172fe3750eb562a0d32d1df92110"
+      "bytes": 723038,
+      "sha256": "8556c601a8df87679d61d375bb494d04d464f31e2030bb627420e40f1de27d39"
     },
     "conformance.json": {
-      "bytes": 394529,
-      "sha256": "2b1f8c3aa423acce3fe94709f8838408ffa4c8139bc2205f6c1f68f0a488e882"
+      "bytes": 394524,
+      "sha256": "3132a7b517d6282a709a74262c9fddd491c57fc702b31d895cd16a1546727d0c"
     },
     "fujifilm_crystal_archive_typeii-scan.cct.z": {
       "bytes": 2790285,
