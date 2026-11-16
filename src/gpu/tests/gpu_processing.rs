@@ -501,8 +501,10 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                         }
                         if contrast == 1. {
                             for (samples, results) in inputs[gradient_start..]
-                                .chunks_exact(3)
-                                .zip(actual[gradient_start..].chunks_exact(3))
+                                .as_chunks::<3>()
+                                .0
+                                .iter()
+                                .zip(actual[gradient_start..].as_chunks::<3>().0)
                             {
                                 let h = samples[1].x.abs() * 0.0005;
                                 let curvature = (results[0].truncate() + results[2].truncate()
