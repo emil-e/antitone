@@ -2,6 +2,7 @@ use super::*;
 use crate::gpu::evaluation as e;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{frame_raster::FrameRaster, geometry::Composition};
+use glam::DMat3;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct ConstantSamples {

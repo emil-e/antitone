@@ -349,13 +349,34 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                         editor.photo_settings(),
                     )
                     .unwrap();
-                assert!(selected.prepare(&device, &mut encoder, source));
+                let capture =
+                    crate::gpu::photograph::request::PhotographRequest::inspection(source).unwrap();
+                let calculation = selected.capture_calculation(&capture, None).unwrap();
+                assert!(
+                    selected
+                        .prepare_calculation(
+                            &device,
+                            &mut encoder,
+                            &calculation,
+                            &Default::default()
+                        )
+                        .unwrap()
+                );
                 assert!(
                     image
                         .prepare_processing(&device, &mut encoder, &positive)
                         .unwrap()
                 );
-                assert!(!selected.prepare(&device, &mut encoder, source));
+                assert!(
+                    !selected
+                        .prepare_calculation(
+                            &device,
+                            &mut encoder,
+                            &calculation,
+                            &Default::default()
+                        )
+                        .unwrap()
+                );
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
             });

@@ -255,8 +255,8 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
 fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physical_views() {
     use crate::frame_raster::FrameRaster;
     use crate::gpu::view::RenderedView;
+    use crate::gpu::view::ViewImage;
     use crate::gpu::view::ViewKernels;
-    use crate::gpu::view::ViewSource;
     use crate::gpu::view::request::SourceRequest;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
@@ -309,7 +309,7 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
             [value.x, value.y, value.z, 8.]
         })
         .collect();
-    let source = Arc::new(ViewSource::from_neutral_samples(
+    let source = Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer,
         kernels,
@@ -326,7 +326,7 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    let actual = read_buffer(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+    let actual = read_buffer(&device, &queue, &view.product.as_ref().unwrap().pixels);
     let expected: Vec<_> = (0..frame.output[1])
         .flat_map(|y| (0..frame.output[0]).map(move |x| [x, y]))
         .map(|[x, y]| {

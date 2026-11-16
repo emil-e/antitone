@@ -309,7 +309,7 @@ fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_clea
 }
 
 #[test]
-fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_without_regrading() {
+fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
     fixture_editor(|mut harness, _| {
         let before = harness.read(|editor| editor.document.state.project.clone());
         let original = harness.read(|editor| {
@@ -378,8 +378,8 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
                         .displayed
                         .as_ref()
                         .unwrap()
-                        .same_grade_as(&original),
-                    "colour selections should reuse unchanged grading pixels"
+                        .same_source_as(&original),
+                    "colour selections preserve physical source reuse"
                 )
             });
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
@@ -702,15 +702,14 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         harness.read(|editor| assert!(evaluated.same_definition(&editor.dust_images()[0])));
         harness.read(|editor| {
             assert!(
-                graded.same_grade_as(
-                    editor
-                        .document
-                        .visit
-                        .working_view
-                        .displayed
-                        .as_ref()
-                        .unwrap()
-                )
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .same_source_as(&graded)
             )
         });
 
@@ -1007,7 +1006,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
 }
 
 #[test]
-fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_it() {
+fn narrow_import_preserves_grade_controls_and_calibration_bypasses_it() {
     fixture_editor(|mut harness, _| {
         let baseline =
             harness.read(|editor| (editor.document.project.roll, editor.photo_settings()));

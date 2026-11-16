@@ -42,6 +42,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
             ));
         Demand {
             rendering: OnceLock::new(),
+            target: OutputTarget::Srgb,
             frame: spec.frame(),
             pixels: pixels.clone(),
             capture: PhotographRequest::Fixture(processing),
@@ -92,11 +93,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
             e.document
                 .visit
                 .working_view
-                .render(
-                    &baseline.processing(&Default::default()).unwrap(),
-                    OutputTarget::Srgb,
-                    &egui::Context::default(),
-                )
+                .render(&egui::Context::default())
                 .unwrap()
         });
         let baseline_signature = baseline.processing(&Default::default()).unwrap();
@@ -120,7 +117,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
             std::thread::yield_now();
         }
         app.update(|e| {
-            e.document.visit.working_view.render(&first.processing(&Default::default()).unwrap(),OutputTarget::Srgb,&egui::Context::default()).unwrap();
+            e.document.visit.working_view.render(&egui::Context::default()).unwrap();
             assert!(e.document.visit.working_view.rendered.as_ref().unwrap().processing()==baseline_signature,
                 "starting a new gamma calculation must not revert an already captured downstream WB edit");
         });
@@ -183,13 +180,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                     .unwrap()
                     == first.processing(&Default::default()).unwrap()
             );
-            working
-                .render(
-                    &last.processing(&Default::default()).unwrap(),
-                    OutputTarget::Srgb,
-                    &egui::Context::default(),
-                )
-                .unwrap();
+            working.render(&egui::Context::default()).unwrap();
             let rendered = working.rendered.as_ref().unwrap();
             assert!(
                 rendered.processing() == first.processing(&Default::default()).unwrap(),
@@ -202,7 +193,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
                     .definition
                     .same_definition(&requested_image(&first, &frame.source).unwrap())
             );
-            assert!(rendered.uses_processed(&frame.processed[0]));
+            assert!(rendered.uses_image(&frame.source));
             assert!(rendered.processing() != last.processing(&Default::default()).unwrap());
         });
         // The next capture is already submitted and parked. Colour rendering uses the same
@@ -225,13 +216,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
         });
         app.update(|e| {
             let working = &mut e.document.visit.working_view;
-            working
-                .render(
-                    &last.processing(&Default::default()).unwrap(),
-                    OutputTarget::Srgb,
-                    &egui::Context::default(),
-                )
-                .unwrap();
+            working.render(&egui::Context::default()).unwrap();
             let frame = working.frame.as_ref().unwrap();
             assert!(frame.request.same_calculation(&last));
             assert!(

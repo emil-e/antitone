@@ -15,7 +15,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             .materializations()
             .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let base = probe_view(&device, &queue, &renderer, &kernels, [1.8, 1.], true, 17);
-        let source = base.graded.as_ref().unwrap().source.clone();
+        let source = base.product.as_ref().unwrap().fixture_input();
         let layers = vec![
             AdjustmentLayer::global(AdjustmentLayerSettings {
                 exposure: 0.7,
@@ -63,12 +63,18 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let graded = view.graded.as_ref().unwrap();
+        let graded = view.product.as_ref().unwrap();
         let actual = read(&device, &queue, &graded.pixels);
         let field = read(
             &device,
             &queue,
-            &graded.stages.as_ref().unwrap().field().unwrap().pixels,
+            &graded
+                .commands
+                .as_ref()
+                .unwrap()
+                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                .unwrap()
+                .pixels,
         );
         assert_eq!(
             field.len(),

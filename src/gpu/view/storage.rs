@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::Error;
 use wgpu::util::DeviceExt;
 
@@ -9,6 +10,7 @@ pub fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     })
 }
 
+#[cfg(test)]
 pub fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
     let bytes = u64::from(size[0])
         .checked_mul(u64::from(size[1]))
@@ -26,6 +28,7 @@ pub fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
     Ok(bytes)
 }
 
+#[cfg(test)]
 pub fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, Error> {
     let bytes = view_bytes(device, size)?;
     Ok(device.create_buffer(&wgpu::BufferDescriptor {

@@ -278,7 +278,7 @@ impl Assembly {
         ))
     }
 
-    fn working(&self, native: Value) -> Result<Value, Error> {
+    pub(super) fn working(&self, native: Value) -> Result<Value, Error> {
         let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
             "working conversion lacks captured camera metadata",
         ))?;

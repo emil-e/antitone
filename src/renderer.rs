@@ -242,8 +242,6 @@ impl GpuRenderer {
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        #[cfg(feature = "editor")]
-        crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &evaluation)?;
         let renderer = Arc::new(Self {
             submissions,
             #[cfg(feature = "raw")]
@@ -258,7 +256,18 @@ impl GpuRenderer {
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: Default::default(),
         });
+        renderer
+            .evaluation
+            .prewarm_texture(crate::gpu::evaluation::borrowed_input(
+                crate::gpu::evaluation::Domain {
+                    bounds: Some([0, 0, 1, 1].into()),
+                    grid: crate::gpu::evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+                    meaning: crate::gpu::evaluation::Meaning::Display,
+                },
+            ))?;
         crate::gpu::evaluation::Reference::prewarm(&renderer.evaluation, &renderer)?;
+        #[cfg(feature = "editor")]
+        crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &renderer)?;
         #[cfg(feature = "ui")]
         crate::gpu::photograph::PhotographGraph::prewarm_resident(device, &renderer)?;
         Ok(renderer)
@@ -293,6 +302,7 @@ impl GpuRenderer {
         &self,
         device: &wgpu::Device,
         source: crate::gpu::evaluation::SuppliedImage,
+        image: crate::gpu::evaluation::Value,
         target: OutputTarget,
         luts: &crate::looks::LutChain,
         destination: &wgpu::Texture,
@@ -310,7 +320,11 @@ impl GpuRenderer {
             crate::rendering::OutputReference::DisplayReferred(target),
             luts,
         )?;
-        let image = reference.compose(source.definition().clone(), self)?;
+        if image.domain().meaning != crate::gpu::evaluation::Meaning::Display {
+            return Err(Error::InvalidParameter(
+                "target rendering requires a display endpoint",
+            ));
+        }
         let evaluation = self.evaluation.request(
             image,
             Region {

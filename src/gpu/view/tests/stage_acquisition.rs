@@ -35,7 +35,7 @@ fn capture(
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     input: &AuthoredPhotograph,
 ) -> Vec<[f32; 4]> {
     let view = RenderedView::new(device, source, input, OutputTarget::Srgb, None).unwrap();
@@ -45,7 +45,7 @@ fn render(
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    read(device, queue, &view.graded.as_ref().unwrap().pixels)
+    read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
         .unwrap()
         .with_pipeline(input.pixel_pipeline())
         .unwrap();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -174,7 +174,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 .unwrap()
                 .with_pipeline(input.pixel_pipeline())
                 .unwrap();
-            let source = ViewSource::acquire(
+            let source = ViewImage::prefix(
                 &device,
                 &queue,
                 &SubmissionGate::default(),
@@ -340,7 +340,7 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
             .with_pipeline(input.pixel_pipeline())
             .unwrap();
             let acquire = |spec| {
-                ViewSource::acquire(
+                ViewImage::prefix(
                     &device,
                     &queue,
                     &SubmissionGate::default(),

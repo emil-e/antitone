@@ -44,7 +44,7 @@ fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_di
             let mut frame = FrameRaster::full(composition).unwrap();
             frame.output = [1, 1];
             let spec = SourceRequest::new(frame, input, DMat3::IDENTITY, None).unwrap();
-            let image = ViewSource::from_processing(
+            let image = ViewImage::from_processing(
                 &device,
                 &queue,
                 &SubmissionGate::default(),
@@ -95,7 +95,7 @@ fn digital_source_marks_neutral_coverage() {
         .unwrap();
 
         let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None).unwrap();
-        let source = ViewSource::from_processing(
+        let source = ViewImage::from_processing(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -144,7 +144,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                     [rgb.x, rgb.y, rgb.z, 8.]
                 })
                 .collect();
-            let source = Arc::new(ViewSource::from_neutral_samples(
+            let source = Arc::new(ViewImage::from_neutral_samples(
                 SourceRequest::new(frame, settings, matrix, None).unwrap(),
                 renderer.clone(),
                 kernels.clone(),
@@ -199,7 +199,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                         settings,
                         roll,
                     );
-                    let actual = read(&device, &queue, &rendered.graded.as_ref().unwrap().pixels);
+                    let actual = read(&device, &queue, &rendered.product.as_ref().unwrap().pixels);
                     let cpu = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
                         crate::adjustment_layers::AdjustmentLayer::global(photo),
                     ])
@@ -256,7 +256,7 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
             let mut frame = FrameRaster::full(composition).unwrap();
             frame.output = size;
             let spec = SourceRequest::inspection_fixture(frame, DMat3::IDENTITY, None).unwrap();
-            let composed = ViewSource::from_processing(
+            let composed = ViewImage::from_processing(
                 &device,
                 &queue,
                 &SubmissionGate::default(),
@@ -326,7 +326,7 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
             .unwrap();
             let frame = FrameRaster::full(composition).unwrap();
             let spec = SourceRequest::inspection_fixture(frame, DMat3::IDENTITY, None).unwrap();
-            let composed = ViewSource::from_processing(
+            let composed = ViewImage::from_processing(
                 &device,
                 &queue,
                 &SubmissionGate::default(),

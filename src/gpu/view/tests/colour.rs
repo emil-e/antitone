@@ -17,14 +17,14 @@ pub(super) fn authored_source(
     kernels: Arc<ViewKernels>,
     values: &[[f32; 4]],
     frame: FrameRaster,
-) -> Arc<ViewSource> {
+) -> Arc<ViewImage> {
     let matrix = DMat3::from_cols(
         DVec3::new(0.6062, 0.0161, -0.0031),
         DVec3::new(0.3802, 1.1927, -0.1490),
         DVec3::new(0.0136, -0.2088, 1.1521),
     );
     let spec = SourceRequest::new(frame, negative(0.65), matrix, None).unwrap();
-    Arc::new(ViewSource::from_neutral_samples(
+    Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer,
         kernels,
@@ -39,7 +39,7 @@ pub(super) fn authored_source(
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
 ) -> Arc<RenderedView> {
@@ -57,7 +57,7 @@ fn render(
 fn render_with_basis(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
     input: impl Into<InputSettings>,

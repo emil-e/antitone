@@ -12,6 +12,11 @@ mod authoring_tests;
 #[cfg(all(test, feature = "editor"))]
 mod boundary_tests;
 
+#[cfg(feature = "editor")]
+mod allocations;
+#[cfg(feature = "editor")]
+pub(crate) use allocations::Allocations;
+
 mod cache;
 mod cell_region;
 pub use cell_region::CellRegion;

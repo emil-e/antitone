@@ -11,8 +11,8 @@ use crate::gpu::flat::GpuFlatField;
 use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
+use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::view::ViewSource;
 use crate::gpu::view::request::SourceRequest;
 use crate::gpu_export::authored::Request;
 use std::time::{Duration, Instant};
@@ -196,7 +196,7 @@ fn exercise(
             .phase(
                 &format!("acquire-detail-underlay-corrected-{corrected}"),
                 || {
-                    ViewSource::acquire_many(
+                    ViewImage::prefixes(
                         device,
                         queue,
                         &gate,

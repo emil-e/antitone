@@ -92,6 +92,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             for frame in [full, left, right, left, full] {
                 let demand = Demand {
                     rendering: OnceLock::new(),
+                    target: OutputTarget::Srgb,
                     frame,
                     pixels: pixels.clone(),
                     capture: PhotographRequest::Recipe(recipe.clone()),
@@ -118,7 +119,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
                 });
                 assert_eq!(acquired.request.frame, frame);
                 assert!(acquired.request.same_calculation(&demand));
-                let produced = &acquired.processed[0];
+                let produced = &acquired.source;
                 assert_eq!(
                     produced.definition.domain().finite().unwrap(),
                     CellRegion::new([0, 0], frame.output)

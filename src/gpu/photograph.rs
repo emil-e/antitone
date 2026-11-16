@@ -32,6 +32,8 @@ mod recipe;
 #[cfg(feature = "project")]
 #[cfg(feature = "project")]
 pub(crate) use recipe::RecipeGraph;
+#[cfg(feature = "editor")]
+mod preview;
 #[cfg(all(test, feature = "editor"))]
 mod provenance_tests;
 #[cfg(feature = "editor")]
@@ -49,10 +51,25 @@ pub mod test_support;
 
 use assembly::Assembly;
 
+#[cfg(feature = "render")]
+pub(crate) fn compose_output(
+    renderer: &crate::renderer::GpuRenderer,
+    image: Value,
+    reference: crate::rendering::OutputReference,
+    luts: &crate::looks::LutChain,
+) -> Result<Value, Error> {
+    crate::gpu::evaluation::Reference::capture(
+        renderer.evaluation().device(),
+        renderer,
+        reference,
+        luts,
+    )?
+    .compose(image, renderer)
+}
+
 /// Corrected camera light is available independently of positive calibration or grading.
 pub(crate) struct CameraGraph {
     pub codes: Value,
-    pub camera: Value,
     input: CameraInput,
 }
 
@@ -63,13 +80,12 @@ impl CameraGraph {
                 "camera graph requires camera codes",
             ));
         }
-        let capture = Captured::new(input.clone(), Interpretation::Unavailable)?;
-        let camera = Assembly::captured(capture).camera(codes.clone());
-        Ok(Self {
-            codes,
-            camera,
-            input,
-        })
+        Ok(Self { codes, input })
+    }
+
+    fn camera(&self) -> Result<Value, Error> {
+        let capture = Captured::new(self.input.clone(), Interpretation::Unavailable)?;
+        Ok(Assembly::captured(capture).camera(self.codes.clone()))
     }
 
     fn inspection(&self, view: crate::gpu::interpretation::InspectionView) -> Result<Value, Error> {
@@ -77,7 +93,7 @@ impl CameraGraph {
             self.input.clone(),
             Interpretation::Packed(view.parameters()?),
         )?)
-        .interpret_camera(self.codes.clone(), self.camera.clone())?
+        .interpret_camera(self.codes.clone(), self.camera()?)?
         .unrepaired)
     }
 }
@@ -104,8 +120,33 @@ impl PhotographGraph {
         Assembly::native(program).interpret(camera)
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn shares_resident_camera(a: &Value, b: &Value) -> bool {
+        let cameras = |image: &Value| {
+            image
+                .ancestors()
+                .filter_map(|node| {
+                    (node.operation().as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<ResidentCamera>()
+                        .map(|camera| camera.pixels.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let a = cameras(a);
+        let b = cameras(b);
+        !a.is_empty() && a.len() == b.len() && a.iter().all(|buffer| b.contains(buffer))
+    }
+
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn resident_camera_bytes(image: &Value) -> u64 {
+        Self::resident_camera_buffers(image)
+            .iter()
+            .map(wgpu::Buffer::size)
+            .sum()
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn resident_camera_buffers(image: &Value) -> Vec<wgpu::Buffer> {
         let mut buffers = Vec::new();
         for node in image.ancestors() {
             if let Some(camera) =
@@ -115,7 +156,7 @@ impl PhotographGraph {
                 buffers.push(&camera.pixels);
             }
         }
-        buffers.into_iter().map(wgpu::Buffer::size).sum()
+        buffers.into_iter().cloned().collect()
     }
 
     #[cfg(feature = "editor")]
@@ -647,7 +688,7 @@ impl NeutralInput {
                 mapping,
             },
         )?;
-        reconstruct(root, image.domain())
+        Ok(root)
     }
 
     fn compose(&self, source: Value, definition: CameraInput) -> Result<Value, Error> {

@@ -10,12 +10,12 @@ fn source(
     kernels: &Arc<ViewKernels>,
     spec: SourceRequest,
     pixels: &[[f32; 4]],
-) -> Arc<ViewSource> {
+) -> Arc<ViewImage> {
     assert_eq!(
         pixels.len(),
         (spec.input_frame().unwrap().output[0] * spec.input_frame().unwrap().output[1]) as usize
     );
-    Arc::new(ViewSource::from_neutral_samples(
+    Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer.clone(),
         kernels.clone(),
@@ -119,7 +119,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
             };
             underlay = underlay.with_frame(resized_frame).unwrap();
             let specs = vec![spec, underlay];
-            let paired = ViewSource::acquire_many(
+            let paired = ViewImage::prefixes(
                 &device,
                 &queue,
                 &gate,
@@ -133,7 +133,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
             .unwrap()
             .unwrap();
             for (spec, actual) in specs.into_iter().zip(&paired) {
-                let separate = ViewSource::acquire(
+                let separate = ViewImage::prefix(
                     &device,
                     &queue,
                     &gate,

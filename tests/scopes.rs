@@ -521,7 +521,9 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert!(
-            !image.prepare(&device, &mut encoder, parameters),
+            !image
+                .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
+                .unwrap(),
             "viewer must reuse scope preparation"
         );
         paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -546,7 +548,9 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(zoom).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         assert!(
-            !image.prepare(&device, &mut encoder, parameters),
+            !image
+                .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
+                .unwrap(),
             "scope zoom must not rerender ACES"
         );
         gpu.invalidate();
@@ -587,7 +591,11 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         );
         assert!(!Arc::ptr_eq(&previous_image, &image));
         let mut encoder = device.create_command_encoder(&Default::default());
-        assert!(image.prepare(&device, &mut encoder, parameters));
+        assert!(
+            image
+                .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
+                .unwrap()
+        );
         paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();

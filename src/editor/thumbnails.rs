@@ -123,10 +123,7 @@ struct ImageKey {
 
 struct Product {
     image: Arc<GpuImage>,
-    positive: Option<(
-        Arc<crate::gpu::view::ViewSource>,
-        Arc<crate::gpu::view::RenderedView>,
-    )>,
+    positive: Option<Arc<crate::gpu::view::RenderedView>>,
 }
 
 impl std::ops::Deref for Product {
@@ -150,7 +147,7 @@ impl Product {
             + std::mem::size_of::<GpuImage>()
             + 1024
             + if positive {
-                std::mem::size_of::<crate::gpu::view::ViewSource>()
+                std::mem::size_of::<crate::gpu::view::ViewImage>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
                     + 2 * std::mem::size_of::<crate::gpu::photograph::request::PhotographRequest>()
             } else {
@@ -159,10 +156,9 @@ impl Product {
     }
 
     fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
-        self.positive.as_ref().map_or_else(
-            || self.image.look_resources(),
-            |(_, view)| view.look_resources(),
-        )
+        self.positive
+            .as_ref()
+            .map_or_else(|| self.image.look_resources(), |view| view.look_resources())
     }
 
     fn byte_len(&self) -> usize {
@@ -172,7 +168,7 @@ impl Product {
         let positive = self
             .positive
             .as_ref()
-            .map_or(0, |(_, view)| view.photographic_bytes());
+            .map_or(0, |view| view.photographic_bytes());
         (source + working + image + positive) as usize + Self::overhead(self.positive.is_some())
     }
 }
@@ -909,7 +905,7 @@ impl Thumbnails {
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
     disk_hit: bool,
-    neutral_hit: bool,
+    camera_reused: bool,
     calculation_seconds: f64,
     disk_seconds: f64,
     development_seconds: f64,
@@ -1941,8 +1937,8 @@ impl Worker {
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
         use crate::gpu::view::RenderedView;
+        use crate::gpu::view::ViewImage;
         use crate::gpu::view::ViewKernels;
-        use crate::gpu::view::ViewSource;
         use crate::gpu::view::request::SourceRequest;
         if !self.active(job) {
             return Ok(None);
@@ -1958,8 +1954,22 @@ impl Worker {
             .previous
             .as_ref()
             .and_then(|product| product.positive.as_ref());
-        let (source, produced) = if let Some((source, _)) = previous {
-            (source.clone(), None)
+        let tick = std::time::Instant::now();
+        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
+        let view = if let Some(previous) = previous {
+            let source = previous.product().expect("photographic card product");
+            RenderedView::render_from_retained(
+                &self.device,
+                &self.queue,
+                submissions,
+                source.clone(),
+                capture,
+                job.correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                job.key.target,
+                &|| !self.active(job),
+            )?
         } else {
             let proxy =
                 proxy.ok_or_else(|| Error::Gpu("thumbnail requires a camera proxy".into()))?;
@@ -1977,7 +1987,7 @@ impl Worker {
                 .kernels
                 .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
                 .clone()?;
-            let (source, produced) = ViewSource::camera_preview(
+            let source = ViewImage::camera_preview(
                 &self.device,
                 &self.queue,
                 submissions,
@@ -1989,37 +1999,14 @@ impl Worker {
                     .map(|correction| correction.gpu.clone()),
                 spec,
                 &capture,
+                job.key.target,
+                &|| !self.active(job),
             )?;
             metrics.calculation_seconds = tick.elapsed().as_secs_f64();
-            (source, Some(produced))
+            RenderedView::from_image(&self.device, source, capture, job.key.target)?
         };
-        let tick = std::time::Instant::now();
-        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
-        let (source, view) = if let Some(produced) = produced {
-            let view = RenderedView::from_processed(
-                &self.device,
-                source.clone(),
-                capture,
-                job.key.target,
-                produced,
-                previous.map(|(_, view)| view),
-            )?;
-            (source, view)
-        } else {
-            RenderedView::render_from_retained(
-                &self.device,
-                &self.queue,
-                submissions,
-                source,
-                capture,
-                job.correction
-                    .as_ref()
-                    .map(|correction| correction.gpu.clone()),
-                job.key.target,
-                previous.map(|(_, view)| view),
-            )?
-        };
-        metrics.neutral_hit = previous.is_some_and(|(prior, _)| Arc::ptr_eq(prior, &source));
+        metrics.camera_reused = previous.is_some();
+        let source = view.product().expect("photographic card product");
         view.ensure_submitted(
             &self.device,
             &self.queue,
@@ -2065,7 +2052,7 @@ impl Worker {
         Ok(self.active(job).then(|| {
             Arc::new(Product {
                 image: view.image.clone(),
-                positive: Some((source, view)),
+                positive: Some(view),
             })
         }))
     }
@@ -2342,6 +2329,8 @@ impl Worker {
 mod clipping_tests;
 #[cfg(all(test, target_os = "macos"))]
 use crate::cache_observation as observation;
+#[cfg(test)]
+mod allocation_tests;
 #[cfg(test)]
 mod recipe_tests;
 #[cfg(test)]

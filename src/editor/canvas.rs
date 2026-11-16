@@ -622,7 +622,6 @@ impl Editor {
         };
         let paint = if let Some(rendered) = tool.or(rendered) {
             self.active_canvas_mut().preview_rendered = None;
-            proxy.release_output();
             let mapping = if source_outside_frame {
                 geometry.uv(draw, composition.area())
             } else {
@@ -686,7 +685,6 @@ impl Editor {
             return None;
         }
         let device = self.document.visit.working_view.device()?;
-        let queue = self.document.visit.working_view.queue()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
         let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
         let composition = frame.composition;
@@ -731,10 +729,8 @@ impl Editor {
             ));
         }
         let spec = capture.source_request(frame).ok()?;
-        let (source, processed) = proxy
+        let source = proxy
             .preview(
-                queue,
-                &self.submissions,
                 kernels,
                 &capture,
                 self.document
@@ -742,20 +738,14 @@ impl Editor {
                     .prepared()
                     .map(|correction| correction.gpu.clone()),
                 spec,
+                self.document.target(),
             )
             .ok()?;
-        let previous = self
-            .active_canvas()
-            .preview_rendered
-            .as_ref()
-            .map(|entry| &entry.2);
-        let rendered = crate::gpu::view::RenderedView::from_processed(
+        let rendered = crate::gpu::view::RenderedView::from_image(
             device,
             source,
             capture,
             self.document.target(),
-            processed,
-            previous,
         )
         .ok()?;
         let source = proxy.clone();
@@ -920,12 +910,6 @@ impl SourceView {
         else {
             return false;
         };
-        let Some(queue) = services
-            .map(|services| services.queue.clone())
-            .or_else(|| editor.document.visit.working_view.queue().cloned())
-        else {
-            return false;
-        };
         let ppp = canvas.ui.ctx().pixels_per_point();
         let composition = layout.composition;
         let view = ViewRequest {
@@ -963,7 +947,6 @@ impl SourceView {
         let draw = layout.image.intersect(layout.canvas);
         let paint = if let Some(rendered) = original {
             self.preview = None;
-            ready.proxy.release_output();
             let mapping = rendered.mapping(layout.frame_raster(ppp));
             Some(ImagePaint::rendered(
                 rendered,
@@ -993,17 +976,15 @@ impl SourceView {
             let rendered = reused.or_else(|| {
                 let kernels = editor.document.visit.working_view.kernels.get()?.clone();
                 let spec = crate::gpu::view::request::SourceRequest::for_frame(frame).ok()?;
-                let (source, processed) = ready
+                let source = ready
                     .proxy
-                    .preview(&queue, &editor.submissions, kernels, &capture, None, spec)
+                    .preview(kernels, &capture, None, spec, editor.document.target())
                     .ok()?;
-                let rendered = crate::gpu::view::RenderedView::from_processed(
+                let rendered = crate::gpu::view::RenderedView::from_image(
                     &device,
                     source,
                     capture,
                     editor.document.target(),
-                    processed,
-                    self.preview.as_ref().map(|entry| &entry.2),
                 )
                 .ok()?;
                 self.preview = Some((ready.proxy.clone(), frame, rendered.clone()));

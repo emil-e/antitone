@@ -71,18 +71,20 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
             .unwrap()
             .unwrap()
             .remove(0);
-        crate::gpu::view::RenderedView::from_processed(
-            &device,
-            product.source,
-            crate::gpu::photograph::request::PhotographRequest::inspection(
-                crate::gpu::parameters::ProcessingParameters::source(),
-            )
-            .unwrap(),
-            crate::rendering::OutputTarget::Srgb,
-            product.processed,
-            None,
+        let capture = crate::gpu::photograph::request::PhotographRequest::inspection(
+            crate::gpu::parameters::ProcessingParameters::source(),
         )
-        .unwrap()
+        .unwrap();
+        let target = crate::rendering::OutputTarget::Srgb;
+        let endpoint = capture
+            .output(
+                &renderer,
+                product.definition.clone(),
+                crate::rendering::OutputReference::DisplayReferred(target),
+            )
+            .unwrap();
+        crate::gpu::view::RenderedView::from_value(&device, product, capture, target, endpoint)
+            .unwrap()
     };
     let first = make(renderer.clone(), 3.);
     let independent =
@@ -90,6 +92,8 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
     let recomputed = make(independent, 3.);
     assert!(first.same_source_definition_as(&recomputed));
     assert!(!first.same_source_as(&recomputed));
+    let reused = make(renderer.clone(), 3.);
+    assert!(reused.same_source_as(&first));
     let edited = make(renderer, 5.);
     assert!(edited.same_source_definition_as(&first));
     assert!(edited.same_source_as(&first));
@@ -129,7 +133,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         .unwrap()
         .remove(0);
     assert_eq!(
-        e::read_buffer(&device, &queue, &first.processed.pixels)[0],
+        e::read_buffer(&device, &queue, &first.pixels)[0],
         [3., 0., -2., 8.]
     );
     assert_eq!(count.load(Ordering::Relaxed), 1);
@@ -143,7 +147,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         .clone();
     let hot = Request::new(prepare(selected.clone())).unwrap();
     let next = hot.ready().unwrap().remove(0);
-    assert!(next.processed.definition.same_definition(&selected));
+    assert!(next.definition.same_definition(&selected));
     assert!(
         scope
             .find_ready::<e::ImageLayout>(&identity, |_| true)
@@ -151,12 +155,12 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         "abandoned preparation cannot publish pixels"
     );
     let mut encoder = device.create_command_encoder(&Default::default());
-    next.processed.encode(&device, &mut encoder);
+    next.encode(&device, &mut encoder);
     renderer.submissions.submit(&queue, [encoder.finish()]);
-    next.processed.stages.as_ref().unwrap().submitted();
-    next.processed.pixels.submitted(&scope);
+    next.commands.as_ref().unwrap().submitted();
+    next.pixels.submitted(&scope);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let pixels = e::read_buffer(&device, &queue, &next.processed.pixels);
+    let pixels = e::read_buffer(&device, &queue, &next.pixels);
     assert_eq!(pixels[0], [5., 0., -2., 8.]);
     assert_eq!(pixels[31], [12., 3., -2., 8.]);
     assert_eq!(

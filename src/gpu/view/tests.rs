@@ -129,6 +129,22 @@ fn processing_input(
     .into()
 }
 
+fn independent_image(image: &Arc<ViewImage>) -> Arc<ViewImage> {
+    assert!(*image.submitted.lock().unwrap());
+    ViewImage::from_recorded(
+        image.renderer.clone(),
+        image.kernels().clone(),
+        image.spec.clone(),
+        image.definition.clone(),
+        image.region,
+        crate::gpu::evaluation::RecordedImage {
+            pixels: image.pixels.clone(),
+            commands: None,
+        },
+    )
+    .unwrap()
+}
+
 fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<[f32; 4]> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -173,7 +189,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
             )
             .unwrap();
             let spec = SourceRequest::for_processing(frame, &input).unwrap();
-            crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(scan, field, &[spec])
+            fixtures::prefix_definitions(scan, field, &[spec])
                 .unwrap()
                 .remove(0)
         };
@@ -260,7 +276,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             };
             let roll = RollSettings::default();
             let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field).unwrap();
-            let source = ViewSource::acquire(
+            let source = ViewImage::prefix(
                 &device,
                 &queue,
                 &gate,
@@ -289,7 +305,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let view = RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None)
                 .unwrap();
             assert!(!view.in_flight());
-            let buffer = view.graded.as_ref().unwrap().pixels.clone();
+            let buffer = view.product.as_ref().unwrap().pixels.clone();
             view.ensure_submitted(&device, &queue, &gate, &context);
             view.ensure_submitted(&device, &queue, &gate, &context);
             let actual = image(&device, &queue, &view.image);
@@ -333,7 +349,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 Some(&view),
             )
             .unwrap();
-            assert_eq!(buffer, p3.graded.as_ref().unwrap().pixels);
+            assert_eq!(buffer, p3.product.as_ref().unwrap().pixels);
             p3.ensure_submitted(&device, &queue, &gate, &context);
             image(&device, &queue, &p3.image);
             assert_eq!(original, read(&device, &queue, &source.pixels));
@@ -363,7 +379,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             // must neither count an unsupported pixel nor compose the already-rotated raster again.
             let mut partial = original.clone();
             partial.last_mut().unwrap()[3] = 0.;
-            let partial = Arc::new(ViewSource::from_neutral_samples(
+            let partial = Arc::new(ViewImage::from_neutral_samples(
                 source.spec.clone(),
                 renderer.clone(),
                 kernels.clone(),
@@ -428,7 +444,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             gate.observe_submissions(Arc::new(move || {
                 signal.store(true, std::sync::atomic::Ordering::SeqCst)
             }));
-            let cancelled = ViewSource::acquire(
+            let cancelled = ViewImage::prefix(
                 &device,
                 &queue,
                 &gate,

@@ -101,7 +101,7 @@ fn acquisition_execution_resources() {
             .unwrap();
         let start = Instant::now();
         peak.store(0, Ordering::Relaxed);
-        let mut sources = ViewSource::acquire_many(
+        let mut sources = ViewImage::prefixes(
             device,
             queue,
             &gate,
@@ -243,9 +243,9 @@ fn neutral_image_retention_resources() {
             peak.store(0,Ordering::Relaxed);
             let _=crate::gpu::test_support::take_evaluation_buffer_creations();
             let start=Instant::now();
-            let cached=ViewSource::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec,&scan,None);
+            let cached=ViewImage::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec,&scan,None);
             let hit=cached.is_some();
-            let source=if let Some(source)=cached{source}else{pollster::block_on(ViewSource::acquire_originals_fixture(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,vec![spec.clone()],&cache,||monitor.check().is_err())).unwrap().unwrap().remove(0)};
+            let source=if let Some(source)=cached{source}else{pollster::block_on(ViewImage::original_prefixes(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,vec![spec.clone()],&cache,||monitor.check().is_err())).unwrap().unwrap().remove(0)};
             let [creations,bytes]=crate::gpu::test_support::take_evaluation_buffer_creations();
             println!("neutral_retention run={run} hit={hit} seconds={:.9} retained_payload={} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",start.elapsed().as_secs_f64(),renderer.evaluation().retained_bytes(),crate::sys::allocated_resource_bytes(device).unwrap(),peak.load(Ordering::Relaxed));
             let pixels=read(device,queue,&source.pixels);

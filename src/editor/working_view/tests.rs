@@ -86,7 +86,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             ));
 
         for retirement in ["basis", "support", "clear", "drop"] {
-            let mut sources = ViewSource::acquire_many(
+            let mut sources = ViewImage::prefixes(
                 &device,
                 &queue,
                 &gate,
@@ -109,7 +109,6 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                 source: underlay.clone(),
                 underlay: Some(underlay),
                 request: Arc::new(Demand::fixture(first.clone(), input.clone())),
-                processed: Vec::new(),
             }));
             working.request(Demand::fixture(first.clone(), input.clone()));
             let mut navigated = first.clone();

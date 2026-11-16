@@ -645,6 +645,7 @@ impl Materializations {
     }
 
     #[cfg(feature = "editor")]
+    #[cfg(test)]
     pub(crate) fn find_ready<D: Any + Send + Sync>(
         &self,
         key: &RetainedKey,

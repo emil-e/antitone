@@ -3,11 +3,16 @@
 use crate::Error;
 use crate::gpu::evaluation::*;
 use crate::gpu::grading::Grading;
-use std::sync::Arc;
 
-struct Functions {
-    roll: Function,
-    layers: Function,
+fn grading_context(
+    parameters: &crate::gpu::parameters::ProcessingParameters,
+    coverage: u32,
+) -> [[u32; 4]; 2] {
+    // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
+    [
+        [parameters.anchor.w.exp().to_bits(), 0, 0, 0],
+        [coverage, 0, 0, 0],
+    ]
 }
 
 impl Grading {
@@ -38,22 +43,11 @@ impl Grading {
         bytes
     }
 
-    fn functions(&self) -> Functions {
-        // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
-        let context = [
-            [self.parameters.anchor.w.exp().to_bits(), 0, 0, 0],
-            [self.coverage, 0, 0, 0],
-        ];
-        let code: Arc<str> = Grading::shader().into();
-        Functions {
-            roll: Function::new(code.clone(), "evaluation_roll")
-                .with_uniform(2, &self.parameters)
-                .with_uniform(8, &context),
-            layers: Function::new(code, "evaluation_adjustments")
-                .with_storage(6, self.layers.clone())
-                .with_uniform(7, &self.context)
-                .with_uniform(8, &context),
-        }
+    fn layers_function(&self) -> Function {
+        Function::new(Grading::shader(), "evaluation_adjustments")
+            .with_storage(6, self.layers.clone())
+            .with_uniform(7, &self.context)
+            .with_uniform(8, &grading_context(&self.parameters, self.coverage))
     }
 }
 
@@ -137,17 +131,17 @@ impl Operation for Grade {
 
 impl Grading {
     #[cfg(feature = "editor")]
-    pub(crate) fn prewarm(
+    pub(crate) fn warmup_values(
         device: &wgpu::Device,
-        context: &Context,
         domain: Domain,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<Value>, Error> {
         let grade = Self::new(
             &device.limits(),
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
             [0, 0, 1, 1].into(),
         )?;
+        let mut images = Vec::new();
         for coordinates in [
             None,
             Some(crate::gpu::source::SourceGeometry::new(
@@ -160,16 +154,16 @@ impl Grading {
                     .for_grid(domain.grid.coverage)
                     .with_camera_coordinates(coordinates);
                 grading.active_layers = active_layers;
-                context.prewarm_image(grading.compose(borrowed_input(domain))?)?;
+                images.push(grading.compose(borrowed_input(domain))?);
                 if active_layers {
-                    context.prewarm_image(grading.layers(borrowed_input(Domain {
+                    images.push(grading.layers(borrowed_input(Domain {
                         meaning: Meaning::Graded,
                         ..domain
-                    }))?)?;
+                    }))?);
                 }
             }
         }
-        Ok(())
+        Ok(images)
     }
 
     pub(crate) fn shader() -> String {
@@ -195,10 +189,30 @@ impl Grading {
         self
     }
 
+    pub(crate) fn roll_image(
+        input: Value,
+        roll: crate::processing::RollSettings,
+    ) -> Result<Value, Error> {
+        let coverage = input.domain().grid.coverage;
+        Self::roll_at(input, roll, coverage)
+    }
+
     pub fn roll(&self, input: Value) -> Result<Value, Error> {
+        Self::roll_at(input, self.roll, self.coverage)
+    }
+
+    fn roll_at(
+        input: Value,
+        roll: crate::processing::RollSettings,
+        coverage: u32,
+    ) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Neutral {
             return Err(Error::InvalidParameter("Roll requires neutral AP1"));
         }
+        let parameters = crate::gpu::parameters::ProcessingParameters::photographic(roll)?;
+        let function = Function::new(Grading::shader(), "evaluation_roll")
+            .with_uniform(2, &parameters)
+            .with_uniform(8, &grading_context(&parameters, coverage));
         Ok(Value::from_operation(
             Domain {
                 meaning: Meaning::Graded,
@@ -206,8 +220,8 @@ impl Grading {
             },
             Some(input),
             Grade {
-                definition: GradeDefinition::Roll(self.roll, self.coverage),
-                function: self.functions().roll.clone(),
+                definition: GradeDefinition::Roll(roll, coverage),
+                function,
             },
         ))
     }
@@ -229,7 +243,7 @@ impl Grading {
                         coverage: self.coverage,
                         coordinates: self.coordinates,
                     },
-                    function: self.functions().layers.clone(),
+                    function: self.layers_function(),
                 },
             )
         } else {

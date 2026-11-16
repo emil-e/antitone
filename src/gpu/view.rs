@@ -23,9 +23,10 @@ use std::sync::{
 #[cfg(test)]
 use wgpu::util::DeviceExt;
 
-pub mod acquisition;
 mod composite;
-pub mod processing;
+#[cfg(test)]
+mod fixtures;
+mod image;
 pub(crate) mod rendering;
 pub mod request;
 mod storage;
@@ -52,286 +53,7 @@ impl ViewKernels {
     }
 }
 
-pub struct ViewSource {
-    kernels: Arc<ViewKernels>,
-    data: Arc<crate::gpu::view::acquisition::AcquiredViewRaster>,
-}
-
-impl std::ops::Deref for ViewSource {
-    type Target = crate::gpu::view::acquisition::AcquiredViewRaster;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl ViewSource {
-    pub(crate) fn kernels(&self) -> &Arc<ViewKernels> {
-        &self.kernels
-    }
-
-    pub fn acquired(&self) -> Arc<crate::gpu::view::acquisition::AcquiredViewRaster> {
-        self.data.clone()
-    }
-    /// Primitive fixtures declare already-neutral samples as their actual input boundary.
-    #[cfg(test)]
-    fn from_neutral_samples(
-        spec: SourceRequest,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        pixels: wgpu::Buffer,
-    ) -> Self {
-        let region = spec.input_region().expect("authored neutral-sample grid");
-        let definition = crate::gpu::evaluation::raster_input(crate::gpu::evaluation::Domain {
-            bounds: Some(region),
-            grid: crate::gpu::evaluation::Grid {
-                coverage: 8,
-                ..crate::gpu::evaluation::Grid::from_frame(spec.plan.output())
-            },
-            meaning: if spec.is_inspection() {
-                crate::gpu::evaluation::Meaning::Inspection
-            } else {
-                crate::gpu::evaluation::Meaning::Neutral
-            },
-        });
-        Self {
-            data: Arc::new(crate::gpu::view::acquisition::AcquiredViewRaster {
-                spec: spec.clone(),
-                renderer,
-                pixels: pixels.into(),
-                definition,
-            }),
-            kernels,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn cached_neutral(
-        cache: &crate::gpu::evaluation::Materializations,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        wanted: &SourceRequest,
-        scan: &Scan,
-        field: Option<Arc<GpuFlatField>>,
-    ) -> Option<Arc<Self>> {
-        use crate::gpu::evaluation as e;
-        if !cache.belongs_to(&renderer.evaluation)
-            || wanted.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
-        {
-            return None;
-        }
-        let roots = crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(
-            scan,
-            field,
-            std::slice::from_ref(wanted),
-        )
-        .ok()?;
-        let root = &roots[0];
-        let region = wanted.input_region().ok()?;
-        let found = cache.find_ready::<e::ImageLayout>(root.identity()?, |layout| {
-            layout.domain == root.domain() && layout.region == region
-        })?;
-        let data = Arc::new(crate::gpu::view::acquisition::AcquiredViewRaster {
-            spec: wanted.clone(),
-            renderer,
-            pixels: found.try_into().ok()?,
-            definition: root.clone(),
-        });
-        Some(Self::from_acquired(kernels, data))
-    }
-
-    #[cfg(test)]
-    pub fn same_pixels_as(&self, other: &Self) -> bool {
-        self.pixels == other.pixels
-    }
-
-    fn from_acquired(
-        kernels: Arc<ViewKernels>,
-        acquired: Arc<crate::gpu::view::acquisition::AcquiredViewRaster>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            kernels,
-            data: acquired,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn camera_preview(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        proxy: &crate::scan::CameraProxy,
-        field: Option<Arc<GpuFlatField>>,
-        spec: SourceRequest,
-        request: &PhotographRequest,
-    ) -> Result<(Arc<Self>, Arc<crate::gpu::view::processing::ProcessedView>), Error> {
-        let (acquired, processed) =
-            crate::gpu::view::acquisition::AcquiredViewRaster::camera_preview(
-                device,
-                queue,
-                submissions,
-                renderer,
-                proxy,
-                field,
-                spec,
-                request,
-            )?;
-        Ok((Self::from_acquired(kernels, acquired), processed))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[cfg(test)]
-    pub fn from_processing(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        source: Arc<ProcessingSource>,
-        input: &AuthoredPhotograph,
-        spec: SourceRequest,
-    ) -> Result<Arc<Self>, Error> {
-        let acquired = crate::gpu::view::acquisition::AcquiredViewRaster::from_processing(
-            device,
-            queue,
-            submissions,
-            renderer,
-            source,
-            input,
-            spec,
-        )?;
-        Ok(Self::from_acquired(kernels, acquired))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn processing_preview(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        source: Arc<ProcessingSource>,
-        request: &PhotographRequest,
-        field: Option<Arc<GpuFlatField>>,
-        spec: SourceRequest,
-    ) -> Result<(Arc<Self>, Arc<crate::gpu::view::processing::ProcessedView>), Error> {
-        let (acquired, processed) =
-            crate::gpu::view::acquisition::AcquiredViewRaster::processing_preview(
-                device,
-                queue,
-                submissions,
-                renderer,
-                source,
-                request,
-                field,
-                spec,
-            )?;
-        Ok((Self::from_acquired(kernels, acquired), processed))
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn acquire(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        scan: &Scan,
-        field: Option<Arc<GpuFlatField>>,
-        spec: SourceRequest,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Arc<Self>>, Error> {
-        Self::acquire_many(
-            device,
-            queue,
-            submissions,
-            renderer,
-            kernels,
-            scan,
-            field,
-            vec![spec],
-            cancelled,
-        )
-        .map(|sources| sources.map(|mut sources| sources.remove(0)))
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn acquire_many(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        scan: &Scan,
-        field: Option<Arc<GpuFlatField>>,
-        specs: Vec<SourceRequest>,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
-        let scope = renderer.evaluation.test_materializations(false);
-        pollster::block_on(Self::acquire_originals_fixture(
-            device,
-            queue,
-            submissions,
-            renderer,
-            kernels,
-            scan,
-            field,
-            specs,
-            &scope,
-            cancelled,
-        ))
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub async fn acquire_originals_fixture(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        scan: &Scan,
-        field: Option<Arc<GpuFlatField>>,
-        specs: Vec<SourceRequest>,
-        scope: &crate::gpu::evaluation::Materializations,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
-        let sources = crate::gpu::view::acquisition::AcquiredViewRaster::acquire_many(
-            device,
-            queue,
-            submissions,
-            renderer,
-            scan,
-            field,
-            specs,
-            scope,
-            cancelled,
-        )
-        .await?;
-        Ok(sources.map(|sources| {
-            sources
-                .into_iter()
-                .map(|source| Self::from_acquired(kernels.clone(), source))
-                .collect()
-        }))
-    }
-}
-
-struct GradedView {
-    source: Arc<ViewSource>,
-    data: Arc<crate::gpu::view::processing::ProcessedView>,
-}
-
-impl std::ops::Deref for GradedView {
-    type Target = crate::gpu::view::processing::ProcessedView;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
+pub use image::ViewImage;
 
 /// One immutable target-linear raster and its exact logical authority. Viewer/scopes share this.
 pub struct RenderedView {
@@ -339,7 +61,7 @@ pub struct RenderedView {
     pub spec: SourceRequest,
     pub capture: PhotographRequest,
     pub target: OutputTarget,
-    graded: Option<Arc<GradedView>>,
+    product: Option<Arc<ViewImage>>,
     group: Option<crate::renderer::RenderBinding>,
     composite: Option<composite::Composite>,
     submitted: Mutex<bool>,
@@ -348,11 +70,8 @@ pub struct RenderedView {
 
 impl RenderedView {
     pub fn has_correction(&self, field: Option<&Arc<GpuFlatField>>) -> bool {
-        self.graded.as_ref().is_some_and(|graded| {
-            crate::gpu::photograph::PhotographGraph::has_correction(
-                &graded.source.definition,
-                field,
-            )
+        self.product.as_ref().is_some_and(|graded| {
+            crate::gpu::photograph::PhotographGraph::has_correction(&graded.definition, field)
         })
     }
 
@@ -373,28 +92,20 @@ impl RenderedView {
             .map_or_else(Vec::new, |binding| binding.look_resources())
     }
 
-    /// Thumbnail payload beyond the target image, including shared parents and LUT storage.
+    /// Thumbnail payload beyond the target image and shared LUT storage.
     pub fn photographic_bytes(&self) -> u64 {
         self.group
             .as_ref()
             .map_or(0, |binding| binding.reference_bytes())
-            + self.graded.as_ref().map_or(0, |graded| {
-                (if graded.source.pixels == graded.pixels {
-                    0
-                } else {
-                    graded.source.pixels.size()
-                }) + crate::gpu::photograph::PhotographGraph::resident_camera_bytes(
-                    &graded.source.definition,
-                ) + graded.pixels.size()
-                    + graded.stages.as_ref().map_or(0, |stages| stages.byte_len())
-                    + crate::gpu::grading::Grading::captured_bytes(&graded.definition)
+            + self.product.as_ref().map_or(0, |image| {
+                image.byte_len() + crate::gpu::grading::Grading::captured_bytes(&image.definition)
             })
     }
 
     #[cfg(test)]
     pub fn new(
         device: &wgpu::Device,
-        source: Arc<ViewSource>,
+        source: Arc<ViewImage>,
         input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
@@ -415,7 +126,7 @@ impl RenderedView {
     #[cfg(test)]
     pub fn inspection(
         device: &wgpu::Device,
-        source: Arc<ViewSource>,
+        source: Arc<ViewImage>,
         input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
@@ -440,120 +151,96 @@ impl RenderedView {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
-        source: Arc<ViewSource>,
+        source: Arc<ViewImage>,
         capture: PhotographRequest,
         field: Option<Arc<GpuFlatField>>,
         target: OutputTarget,
-        previous: Option<&Arc<Self>>,
-    ) -> Result<(Arc<ViewSource>, Arc<Self>), Error> {
-        let graph =
-            capture.retained_graph(&device.limits(), &source.definition, field, &source.spec)?;
-        let prior = previous
-            .and_then(|view| view.graded.as_ref())
-            .map(|graded| &graded.data);
-        let (data, processed) = source.acquired().process_from_retained(
-            device,
-            queue,
-            submissions,
-            graph.baseline,
-            graph.processed,
-            graph.plan,
-            prior,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Arc<Self>, Error> {
+        let (definition, spec) = capture.retained_output(
+            &source.renderer,
+            &source.definition,
+            field,
+            &source.spec,
+            target,
         )?;
-        let source = if Arc::ptr_eq(&data, &source.data) {
-            source
-        } else {
-            ViewSource::from_acquired(source.kernels.clone(), data)
-        };
-        let rendered =
-            Self::from_processed(device, source.clone(), capture, target, processed, previous)?;
-        Ok((source, rendered))
+        let image = ViewImage::on_worker(
+            source.renderer.clone(),
+            source.kernels().clone(),
+            spec,
+            definition,
+            (queue, submissions),
+            cancelled,
+        )?;
+        Self::from_image(device, image, capture, target)
     }
 
     #[cfg(test)]
     fn prepare(
         device: &wgpu::Device,
-        source: Arc<ViewSource>,
+        source: Arc<ViewImage>,
         input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
         capture: PhotographRequest,
     ) -> Result<Arc<Self>, Error> {
-        let prior = previous.and_then(|p| p.graded.as_ref());
-        let data = crate::gpu::view::processing::ProcessedView::prepare(
-            device,
-            source.acquired(),
+        let product = ViewImage::filter_fixture(
+            &source,
             input,
-            prior.map(|g| &g.data),
+            previous.and_then(|view| view.product.as_ref()),
         )?;
-        let graded = match prior.filter(|p| Arc::ptr_eq(&p.data, &data)) {
-            Some(prior) => prior.clone(),
-            None => Arc::new(GradedView {
-                source: source.clone(),
-                data,
-            }),
-        };
-        Self::from_graded(device, source, capture, target, graded)
+        let endpoint = capture.output(
+            &product.renderer,
+            product.definition.clone(),
+            crate::rendering::OutputReference::DisplayReferred(target),
+        )?;
+        Self::from_value(device, product, capture, target, endpoint)
     }
 
-    fn from_graded(
+    pub fn from_image(
         device: &wgpu::Device,
-        source: Arc<ViewSource>,
+        product: Arc<ViewImage>,
         capture: PhotographRequest,
         target: OutputTarget,
-        graded: Arc<GradedView>,
     ) -> Result<Arc<Self>, Error> {
-        let [width, height] = source.spec.frame().output;
+        let endpoint = product.definition.clone();
+        Self::from_value(device, product, capture, target, endpoint)
+    }
+
+    fn from_value(
+        device: &wgpu::Device,
+        product: Arc<ViewImage>,
+        capture: PhotographRequest,
+        target: OutputTarget,
+        endpoint: crate::gpu::evaluation::Value,
+    ) -> Result<Arc<Self>, Error> {
+        let [width, height] = product.spec.frame().output;
         let image = Arc::new(pollster::block_on(GpuImage::new_rendered_shared(
-            &source.renderer,
+            &product.renderer,
             device,
             width,
             height,
             target,
         ))?);
-        let group = source.renderer.render_binding(
+        let group = product.renderer.render_binding(
             device,
-            crate::gpu::evaluation::SuppliedImage::from_buffer(
-                graded.definition.clone(),
-                graded.definition.domain().finite()?,
-                graded.pixels.clone(),
-            )?,
+            product.supplied()?,
+            endpoint,
             target,
             capture.luts(),
             &image.linear,
         )?;
         Ok(Arc::new(Self {
             image,
-            spec: source.spec.clone(),
+            spec: product.spec.clone(),
             capture,
             target,
-            graded: Some(graded),
+            product: Some(product),
             group: Some(group),
             composite: None,
             submitted: Mutex::new(false),
             complete: Arc::new(AtomicBool::new(false)),
         }))
-    }
-
-    pub fn from_processed(
-        device: &wgpu::Device,
-        source: Arc<ViewSource>,
-        capture: PhotographRequest,
-        target: OutputTarget,
-        data: Arc<crate::gpu::view::processing::ProcessedView>,
-        previous: Option<&Arc<Self>>,
-    ) -> Result<Arc<Self>, Error> {
-        let graded = previous
-            .and_then(|view| view.graded.as_ref())
-            .filter(|graded| Arc::ptr_eq(&graded.data, &data))
-            .cloned()
-            .unwrap_or_else(|| {
-                Arc::new(GradedView {
-                    source: source.clone(),
-                    data,
-                })
-            });
-        Self::from_graded(device, source, capture, target, graded)
     }
 
     pub fn reference(
@@ -567,7 +254,7 @@ impl RenderedView {
             spec,
             capture,
             target,
-            graded: None,
+            product: None,
             group: None,
             composite: None,
             submitted: Mutex::new(true),
@@ -591,23 +278,21 @@ impl RenderedView {
         processing: &AuthoredPhotograph,
         target: OutputTarget,
     ) -> bool {
-        self.spec == *spec
-            && self.target == target
-            && self.capture.look_id() == processing.look_id()
-            && if let Some(graded) = &self.graded {
-                graded.matches(
-                    &graded.source.renderer.evaluation().device().limits(),
-                    processing,
-                )
-            } else {
-                self.processing() == *processing
-            }
+        self.matches_capture(
+            spec,
+            &PhotographRequest::Fixture(processing.clone()),
+            target,
+        )
     }
 
-    pub fn uses_processed(&self, value: &Arc<crate::gpu::view::processing::ProcessedView>) -> bool {
-        self.graded
+    pub(crate) fn product(&self) -> Option<&Arc<ViewImage>> {
+        self.product.as_ref()
+    }
+
+    pub fn uses_image(&self, value: &Arc<ViewImage>) -> bool {
+        self.product
             .as_ref()
-            .is_some_and(|graded| Arc::ptr_eq(&graded.data, value))
+            .is_some_and(|image| Arc::ptr_eq(image, value))
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -616,17 +301,22 @@ impl RenderedView {
         if !self.same_source_definition_as(other) {
             return false;
         }
-        let Some((a, b)) = self.graded.as_ref().zip(other.graded.as_ref()) else {
+        let Some((a, b)) = self.product.as_ref().zip(other.product.as_ref()) else {
             return false;
         };
-        if a.source.pixels == b.source.pixels {
+        if a.pixels == b.pixels
+            || crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+                &a.definition,
+                &b.definition,
+            )
+        {
             return true;
         }
-        let inputs = |view: &processing::ProcessedView| -> Vec<Arc<ImageValue>> {
+        let inputs = |view: &ViewImage| -> Vec<Arc<ImageValue>> {
             let BufferImage::Produced(pixels) = &view.pixels else {
                 return Vec::new();
             };
-            let scope = view.source.renderer.evaluation.materializations();
+            let scope = view.renderer.evaluation.materializations();
             view.definition
                 .ancestors()
                 .filter(|node| {
@@ -656,17 +346,17 @@ impl RenderedView {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub fn same_source_definition_as(&self, other: &Self) -> bool {
-        self.graded
+        self.product
             .as_ref()
-            .zip(other.graded.as_ref())
+            .zip(other.product.as_ref())
             .is_some_and(|(a, b)| {
-                if !a.source.spec.same_acquisition(&b.source.spec) {
+                if !a.spec.same_acquisition(&b.spec) {
                     return false;
                 }
                 if a.pixels == b.pixels && a.definition.same_definition(&b.definition) {
                     return true;
                 }
-                let neutral = |view: &processing::ProcessedView| {
+                let neutral = |view: &ViewImage| {
                     view.definition
                         .ancestors()
                         .find(|node| {
@@ -683,17 +373,6 @@ impl RenderedView {
                             .ancestors()
                             .any(|right| left.same_definition(right))
                 })
-            })
-    }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub fn same_grade_as(&self, other: &Self) -> bool {
-        self.graded
-            .as_ref()
-            .zip(other.graded.as_ref())
-            .is_some_and(|(a, b)| {
-                // A cached raster can be returned through a fresh metadata wrapper.
-                a.pixels == b.pixels && a.definition.same_definition(&b.definition)
             })
     }
 
@@ -714,7 +393,7 @@ impl RenderedView {
         if *submitted {
             return;
         }
-        let mut initialized = self.graded.as_ref().map(|g| g.submitted.lock().unwrap());
+        let mut initialized = self.product.as_ref().map(|g| g.submitted.lock().unwrap());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, submissions, context);
@@ -724,9 +403,9 @@ impl RenderedView {
                     .set_look_check(Some(composite.check(device, &mut encoder, &self.image)));
             }
         } else {
-            let graded = self.graded.as_ref().expect("unsubmitted working view");
+            let graded = self.product.as_ref().expect("unsubmitted working view");
             if !**initialized.as_ref().unwrap() {
-                graded.data.encode(device, &mut encoder);
+                graded.encode(device, &mut encoder);
             }
             let binding = self.group.as_ref().unwrap();
             self.image.set_look_check(
@@ -758,13 +437,13 @@ impl RenderedView {
         if let Some(initialized) = initialized.as_mut() {
             **initialized = true;
         }
-        if let Some(graded) = &self.graded {
-            if let Some(stages) = &graded.stages {
+        if let Some(graded) = &self.product {
+            if let Some(stages) = &graded.commands {
                 stages.submitted();
             }
             graded
                 .pixels
-                .submitted(&graded.source.renderer.evaluation.materializations());
+                .submitted(&graded.renderer.evaluation.materializations());
         }
         *submitted = true;
     }

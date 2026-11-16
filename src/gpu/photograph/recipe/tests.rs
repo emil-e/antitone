@@ -6,6 +6,8 @@ use glam::{DMat3, DVec3};
 
 #[cfg(feature = "editor")]
 mod reuse;
+#[cfg(feature = "editor")]
+mod routing;
 
 #[derive(Clone, Debug, PartialEq)]
 struct CameraCodes;
@@ -99,6 +101,47 @@ fn a_gamma_question_is_an_independent_intent_evaluated_by_the_same_graph() {
     }
 }
 
+#[cfg(feature = "editor")]
+#[test]
+fn a_roll_prefix_does_not_admit_or_author_later_layers() {
+    use crate::adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    };
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (mut project, id) = project(crate::processing::InputSettings::Digital);
+    project.roll.exposure = 1.;
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.grade =
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 2.,
+            ..Default::default()
+        })])
+        .unwrap();
+    let pipeline = RecipeGraph::originals(evaluation::source(Arc::new(CameraCodes)), None, &recipe)
+        .unwrap()
+        .measurement();
+    let roll = pipeline.roll().unwrap();
+    let mut constrained = device.limits();
+    constrained.max_storage_buffer_binding_size = 16;
+    assert!(
+        pipeline.graded(&constrained).is_err(),
+        "the control must expose layer admission"
+    );
+    near(
+        &read(&renderer, &queue, roll.clone()),
+        DVec3::new(0.6, 0.8, 0.6),
+    );
+    let full = pipeline.photograph(&device.limits()).unwrap();
+    assert!(
+        roll.same_definition(&full.roll),
+        "standalone Roll retains its mathematical identity"
+    );
+    near(
+        &read(&renderer, &queue, full.graded),
+        DVec3::new(2.4, 3.2, 2.4),
+    );
+}
+
 fn recipe() -> ImageRecipe {
     let (project, id) = project(Default::default());
     project.image_recipe(id).unwrap()
@@ -180,6 +223,35 @@ fn near(pixels: &[[f32; 4]], expected: DVec3) {
 }
 
 #[test]
+fn camera_codes_do_not_require_resources_for_a_later_corrected_prefix() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (project, id) = project(crate::processing::InputSettings::Digital);
+    let correction = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [0, 0, 3, 1],
+            [2, 2],
+            vec![DVec3::new(2., 0.5, 1.25); 4],
+        )
+        .unwrap(),
+    );
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.correction = Some(correction.clone());
+    let codes = evaluation::source(Arc::new(CameraCodes));
+    let missing = RecipeGraph::originals(codes.clone(), None, &recipe).unwrap();
+    assert_eq!(
+        read(&renderer, &queue, missing.codes()),
+        vec![[16383.75, 32767.5, 49151.25, 0.]; 3]
+    );
+    assert!(missing.camera().is_err());
+    let field = Arc::new(GpuFlatField::new(&device, correction).unwrap());
+    let supplied = RecipeGraph::originals(codes, Some(field), &recipe).unwrap();
+    near(
+        &read(&renderer, &queue, supplied.camera().unwrap()),
+        DVec3::new(0.5, 0.25, 0.9375),
+    );
+}
+
+#[test]
 fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let recipe = recipe();
@@ -187,7 +259,7 @@ fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive(
     let source = evaluation::source(Arc::new(CameraCodes));
     let graph = RecipeGraph::originals(source, None, &recipe).unwrap();
     near(
-        &read(&renderer, &queue, graph.source.camera.clone()),
+        &read(&renderer, &queue, graph.camera().unwrap()),
         DVec3::new(0.25, 0.5, 0.75),
     );
     let inspection = graph
@@ -236,7 +308,7 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
     let field = Arc::new(GpuFlatField::new(&device, correction).unwrap());
     let source = evaluation::source(Arc::new(CameraCodes));
     let graph = RecipeGraph::originals(source.clone(), Some(field), &recipe).unwrap();
-    let camera = graph.source.camera.clone();
+    let camera = graph.camera().unwrap();
     let positive = graph.interpreted().unwrap().unrepaired;
     let inspection = graph
         .source
@@ -296,9 +368,9 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
             "view choices cannot redefine camera correction"
         );
     }
-    let missing_field = RecipeGraph::originals(source, None, &recipe);
+    let missing_field = RecipeGraph::originals(source, None, &recipe).unwrap();
     assert!(
-        missing_field.is_err(),
+        missing_field.neutral().is_err(),
         "an accepted correction cannot silently disappear"
     );
 }
@@ -504,6 +576,7 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
         })
         .unwrap();
     let request = super::super::request::PhotographRequest::Recipe(Arc::new(recipe.clone()));
+    let (_, baseline) = request.sampled_prefix(&camera, None, spec.clone()).unwrap();
     let graph = request
         .sampled_graph(&device.limits(), &camera, None, spec)
         .unwrap();
@@ -524,7 +597,10 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
     let clean = clean_request
         .sampled_graph(&device.limits(), &camera, None, graph.request.clone())
         .unwrap();
-    assert!(graph.baseline.same_definition(&clean.baseline));
+    let (_, clean_prefix) = clean_request
+        .sampled_prefix(&camera, None, clean.request.clone())
+        .unwrap();
+    assert!(baseline.same_definition(&clean_prefix));
     assert!(graph.processed.same_definition(&clean.processed));
     let scope = renderer.evaluation().test_materializations(false);
     let bounds = CellRegion::new([8, 8], [3, 1]);

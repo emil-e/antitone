@@ -31,8 +31,7 @@ pub(crate) fn write(
     check()?;
 
     let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
-    let photograph = crate::gpu::photograph::PhotographGraph::from_recipe(
-        &device.limits(),
+    let pipeline = crate::gpu::photograph::RecipeGraph::originals(
         crate::gpu::evaluation::camera_source(&scan)?,
         job.field,
         &recipe,
@@ -41,9 +40,7 @@ pub(crate) fn write(
         Format::Tiff(target) => crate::rendering::OutputReference::DisplayReferred(target),
         Format::Exr(_) => crate::rendering::OutputReference::SceneReferred,
     };
-    let definition =
-        crate::gpu::evaluation::Reference::capture(device, renderer, output, &recipe.luts)?
-            .compose(photograph.processed, renderer)?;
+    let definition = pipeline.output(renderer, output)?;
     super::area::write_calculation(
         renderer,
         device,

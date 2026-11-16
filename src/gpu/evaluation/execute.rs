@@ -1403,7 +1403,7 @@ impl Recorded {
         self.executor.submitted();
     }
 
-    pub(super) fn reusable_inputs(&self) -> Vec<Arc<ImageValue>> {
+    pub(crate) fn reusable_inputs(&self) -> Vec<Arc<ImageValue>> {
         let mut images = Vec::new();
         for image in self
             .executor
@@ -1418,6 +1418,28 @@ impl Recorded {
             }
         }
         images
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn allocations(&self, allocations: &mut Allocations) {
+        for value in self.executor.pool.iter().flatten() {
+            match value {
+                Allocation::Buffer { buffer, .. } => allocations.buffer(buffer),
+                Allocation::Retained(image) => allocations.buffer(&image.pixels),
+                Allocation::Resident(image) => allocations.image(image),
+                Allocation::Texture(texture, _) => allocations.texture(texture, value.bytes()),
+                Allocation::Input { .. } | Allocation::RenderTarget(..) => {}
+            }
+        }
+        for image in &self.executor.used_images {
+            allocations.image(image);
+        }
+        for prerequisite in &self.prerequisites {
+            allocations.buffered(&prerequisite.pixels);
+            if let Some(commands) = &prerequisite.commands {
+                commands.allocations(allocations);
+            }
+        }
     }
 
     pub fn byte_len(&self) -> u64 {

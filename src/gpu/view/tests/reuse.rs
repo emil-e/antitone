@@ -11,7 +11,7 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         let scan = scan();
         let spec =
             SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None).unwrap();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -28,7 +28,7 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         let first =
             RenderedView::inspection(&device, source.clone(), &input, OutputTarget::Srgb, None)
                 .unwrap();
-        let independent = ViewSource::from_acquired(source.kernels.clone(), source.acquired());
+        let independent = independent_image(&source);
         assert!(!Arc::ptr_eq(&source, &independent));
         assert!(source.spec == independent.spec);
         assert_eq!(source.pixels, independent.pixels);
@@ -43,8 +43,8 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         .unwrap();
         assert!(
             Arc::ptr_eq(
-                first.graded.as_ref().unwrap(),
-                next.graded.as_ref().unwrap()
+                first.product.as_ref().unwrap(),
+                next.product.as_ref().unwrap()
             ),
             "independent handles do not change the calculation"
         );
@@ -91,7 +91,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             .with_pipeline(input.pixel_pipeline())
             .unwrap();
         let gate = SubmissionGate::default();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &gate,
@@ -113,7 +113,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         assert!(pixels.iter().any(|p| p[..3].iter().any(|&c| c > 0.)));
         let next = RenderedView::new(
             &device,
-            ViewSource::from_acquired(source.kernels.clone(), source.acquired()),
+            independent_image(&source),
             &input,
             OutputTarget::Srgb,
             Some(&first),
@@ -121,8 +121,8 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         .unwrap();
         assert!(first.spec == next.spec);
         assert!(Arc::ptr_eq(
-            first.graded.as_ref().unwrap(),
-            next.graded.as_ref().unwrap()
+            first.product.as_ref().unwrap(),
+            next.product.as_ref().unwrap()
         ));
         assert!(first.matches(&next.spec, &input, OutputTarget::Srgb));
         next.ensure_submitted(&device, &queue, &gate, &context);
@@ -144,7 +144,7 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
         let spec = SourceRequest::new(frame(&scan), InputSettings::Digital, matrix, None).unwrap();
         let region = spec.input_region().unwrap();
         let source = |pixel: [f32; 4]| {
-            Arc::new(ViewSource::from_neutral_samples(
+            Arc::new(ViewImage::from_neutral_samples(
                 spec.clone(),
                 renderer.clone(),
                 kernels.clone(),
@@ -179,7 +179,7 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
             RenderedView::new(&device, a.clone(), &input, OutputTarget::Srgb, None).unwrap();
         let shared = RenderedView::new(
             &device,
-            ViewSource::from_acquired(a.kernels.clone(), a.acquired()),
+            independent_image(&a),
             &input,
             OutputTarget::Srgb,
             Some(&first),
@@ -187,8 +187,8 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
         .unwrap();
         assert!(
             Arc::ptr_eq(
-                first.graded.as_ref().unwrap(),
-                shared.graded.as_ref().unwrap()
+                first.product.as_ref().unwrap(),
+                shared.product.as_ref().unwrap()
             ),
             "the same anonymous argument and definition can reuse recorded work locally"
         );
@@ -200,7 +200,7 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
         other.ensure_submitted(&device, &queue, &gate, &ui);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         for (view, expected) in [(&first, [0.25, 0.5, 1.]), (&other, [0.75, 1., 1.5])] {
-            let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+            let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             assert_eq!(
                 pixels.len(),
                 (spec.frame().output[0] * spec.frame().output[1]) as usize
@@ -234,7 +234,7 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }));
         assert!(
-            ViewSource::acquire(
+            ViewImage::prefix(
                 &device,
                 &queue,
                 &gate,

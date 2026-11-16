@@ -291,6 +291,16 @@ fn temporary_inputs(plan: &Plan) -> bool {
 }
 
 impl Context {
+    #[cfg(test)]
+    pub(crate) fn prepare_supplied(
+        &self,
+        mut evaluation: Evaluation,
+        supplied: Vec<SuppliedImage>,
+    ) -> Result<Preparation, Error> {
+        evaluation.job = evaluation.job.with_supplied(supplied.into());
+        self.prepare_image(evaluation)
+    }
+
     pub(crate) fn prepare_image(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
         let root = evaluation.job.image();
         let region = evaluation.job.region();
@@ -379,6 +389,59 @@ impl Context {
             .into_iter()
             .map(|evaluation| self.prepare_image(evaluation))
             .collect()
+    }
+
+    /// Fulfil a captured preparation on an existing blocking worker, without queueing child work.
+    /// This submits and waits; presentation callbacks must use recording or async production.
+    pub(crate) fn produce_prepared(
+        &self,
+        queue: &wgpu::Queue,
+        gate: &crate::gpu::submission::SubmissionGate,
+        preparation: Preparation,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Image<ImageLayout>, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let evaluation = &preparation.evaluation;
+        let definition = evaluation.job.image();
+        let region = evaluation.job.region();
+        let identity =
+            definition
+                .output(region)?
+                .identity()
+                .cloned()
+                .ok_or(Error::InvalidParameter(
+                    "prepared image requires captured content",
+                ))?;
+        let layout = ImageLayout {
+            domain: definition.domain(),
+            region,
+            format: ImageFormat::Rgba32Float,
+            backing: ImageBacking::Buffer,
+        };
+        let retain = evaluation.retain;
+        let working = HostWorkingSet::default();
+        let scope = self.materializations();
+        let worker = Worker {
+            context: self,
+            queue,
+            gate,
+            scope: &scope,
+            budget: evaluation.job.budget(),
+            working: &working,
+            cancelled: &cancelled,
+            progress: &|| {},
+        };
+        let value = preparation.produce(&worker, layout)?;
+        let image = Image {
+            identity,
+            descriptor: Arc::new(layout),
+            image: value.image,
+            inputs: value.inputs,
+        };
+        scope.publish(&image, retain);
+        Ok(image)
     }
 
     pub(crate) fn produce_images(
