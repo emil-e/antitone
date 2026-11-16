@@ -29,7 +29,9 @@ fn pending_frontier_component_edits_keep_the_last_colour_stock_and_variant() {
             );
             assert!(e.document.project.output.film_and_paper.is_none());
         });
-        app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
+        app.run_until(Duration::from_secs(90), |e| {
+            e.document.film_and_paper.pending.is_none()
+        });
         app.read(|e| {
             assert_eq!(
                 e.material_selection(),

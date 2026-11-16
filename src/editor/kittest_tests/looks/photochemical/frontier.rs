@@ -284,7 +284,7 @@ fn frontier_colour_stock_controls_preserve_pairs_history_other_slots_and_saved_p
                 .name(),
         );
         h.read(|e| {
-            assert!(e.dialogs.is_open() && e.document.look.is_none());
+            assert!(e.dialogs.is_open() && e.document.film_and_paper.pending.is_none());
             assert_eq!(e.document.project.output.film_and_paper.as_ref(), Some(&b));
         });
         h.key_press(egui::Key::Escape);
@@ -337,7 +337,7 @@ fn frontier_colour_stock_controls_preserve_pairs_history_other_slots_and_saved_p
         h.read(|e| {
             assert_state(e, Some(portra), Variant::B);
             assert_eq!(e.document.project.output.film_and_paper.as_ref(), Some(&b));
-            assert!(e.document.look.is_none());
+            assert!(e.document.film_and_paper.pending.is_none());
         });
         assert_eq!(export(&mut h, "reopened.tif"), treated);
     });
