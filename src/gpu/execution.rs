@@ -17,5 +17,8 @@ pub(crate) mod raster;
 #[cfg(all(test, feature = "raw"))]
 pub(crate) mod test_support;
 
+#[cfg(all(test, feature = "raw", target_os = "macos"))]
+mod photographic_tests;
+
 #[cfg(feature = "editor")]
 pub(crate) mod regional;
