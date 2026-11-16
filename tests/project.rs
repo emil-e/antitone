@@ -713,6 +713,17 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
 }
 
 #[test]
+fn prior_processing_models_are_rejected_instead_of_reinterpreting_saved_grades() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, _, _) = fixture(dir.path());
+    project.processing_model = antitone::PROCESSING_MODEL_VERSION - 1;
+    let path = dir.path().join("prior-model.antitone");
+    std::fs::write(&path, serde_json::to_vec(&project).unwrap()).unwrap();
+    let error = Project::load(&path).unwrap_err().to_string();
+    assert!(error.contains("unsupported processing model"), "{error}");
+}
+
+#[test]
 fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
     let dir = tempfile::tempdir().unwrap();
     let (mut project, _, _) = fixture(dir.path());

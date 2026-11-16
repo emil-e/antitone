@@ -1,4 +1,5 @@
 #![cfg(feature = "gpu")]
+use super::photographic_reference as reference;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::test_support::CameraFixture;
@@ -24,8 +25,6 @@ use antitone::processing::Response;
 use antitone::processing::RollSettings;
 use glam::{DMat3, DVec2, DVec3};
 use std::sync::Arc;
-#[path = "../../../tests/support/photographic_reference.rs"]
-mod reference;
 
 fn context() -> (wgpu::Device, wgpu::Queue, CameraFixture) {
     pollster::block_on(async {
@@ -206,18 +205,7 @@ fn local_reference(mut rgb: DVec3, layers: &[AdjustmentLayer], point: [f64; 2]) 
             rgb = (cones.inverse() * DMat3::from_diagonal(gains) * cones) * rgb;
         }
         let c = 1. + w * (a.photo.contrast - 1.);
-        rgb = reference::blend(
-            reference::contrast(rgb, c, a.photo.pivot, reference::Contrast::Rgb).unwrap(),
-            reference::contrast(
-                rgb,
-                c,
-                a.photo.pivot,
-                reference::Contrast::BlackOffsetRatios,
-            )
-            .unwrap(),
-            a.photo.contrast_colour_mix,
-        )
-        .unwrap();
+        rgb = reference::contrast_mix(rgb, c, a.photo.pivot, a.photo.contrast_colour_mix).unwrap();
         let s = 1. + w * (a.photo.saturation - 1.);
         rgb = reference::blend(
             reference::saturation(rgb, s, reference::Saturation::ConstantY).unwrap(),
@@ -1141,32 +1129,52 @@ fn extreme_stacks_render_while_unrepresentable_masks_and_mismatched_camera_basis
             ..Default::default()
         },
     );
-    let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
-    let deep_grade = AuthoredPhotograph::new(
-        &device.limits(),
-        calibration(),
-        RollSettings::default(),
-        stack,
-        matrix(),
-        area,
-    )
-    .unwrap();
     let (deep_source, deep_pixels) = source(&device, area, [8, 8], matrix());
-    let actual = read(
-        &device,
-        &_queue,
-        &kernel,
-        &deep_source,
-        deep_pixels.len(),
-        &deep_grade,
-        None,
-    );
-    assert!(actual.iter().flatten().all(|value| value.is_finite()));
-    assert!(
-        actual
-            .iter()
-            .any(|pixel| pixel[..3].iter().any(|value| *value > 1.))
-    );
+    for preserve in [0., 0.5, 1.] {
+        let layer = AdjustmentLayer {
+            photo: AdjustmentLayerSettings {
+                contrast_colour_mix: preserve,
+                ..active.photo
+            },
+            ..active
+        };
+        let stack = AdjustmentLayerSnapshot::new(vec![layer; 16]).unwrap();
+        let deep_grade = AuthoredPhotograph::new(
+            &device.limits(),
+            calibration(),
+            RollSettings::default(),
+            stack,
+            matrix(),
+            area,
+        )
+        .unwrap();
+        let actual = read(
+            &device,
+            &_queue,
+            &kernel,
+            &deep_source,
+            deep_pixels.len(),
+            &deep_grade,
+            None,
+        );
+        assert!(actual.iter().flatten().all(|value| value.is_finite()));
+        assert!(
+            actual
+                .iter()
+                .any(|pixel| pixel[..3].iter().any(|value| *value > 1.))
+        );
+        assert!(
+            actual
+                .iter()
+                .any(|pixel| pixel[..3].iter().any(|value| *value < 0.))
+        );
+        assert!(
+            actual
+                .iter()
+                .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]),
+            "the extreme fixture must exercise preservation, not only its neutral bypass"
+        );
+    }
 
     let tiny = adjustment(
         AdjustmentLayerCoverage::Radial {

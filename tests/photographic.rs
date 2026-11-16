@@ -82,19 +82,7 @@ fn production_matches_signed_hdr_reference_for_both_blends() {
                         };
                         let grade = Grade::new(photo).unwrap();
                         for rgb in inputs() {
-                            let c = reference::blend(
-                                reference::contrast(rgb, contrast, pivot, reference::Contrast::Rgb)
-                                    .unwrap(),
-                                reference::contrast(
-                                    rgb,
-                                    contrast,
-                                    pivot,
-                                    reference::Contrast::BlackOffsetRatios,
-                                )
-                                .unwrap(),
-                                colour,
-                            )
-                            .unwrap();
+                            let c = reference::contrast_mix(rgb, contrast, pivot, colour).unwrap();
                             let expected = reference::blend(
                                 reference::saturation(
                                     c,
@@ -121,34 +109,104 @@ fn production_matches_signed_hdr_reference_for_both_blends() {
 }
 
 #[test]
-fn decode_toe_crossings_do_not_create_a_near_zero_y_gain_jump() {
-    let weights = antitone::color::AP1_TO_XYZ.row(1);
-    let plane = DVec3::new(0.25, -weights.x / weights.y * 0.25, 0.);
-    for contrast in [0.4_f64, 0.5, 0.8] {
-        let qp = (0.155251141552511 - contrast * 0.0729055341958355) / (1. - contrast);
-        let pivot = (qp * 17.52 - 9.72).exp2();
-        for dp in [-1e-15, 0., 1e-15] {
-            let grade = Grade::new(AdjustmentLayerSettings {
+fn preserve_interpolates_oklab_opponents_without_changing_contrasted_lightness() {
+    for rgb in [
+        DVec3::new(0.22, 0.18, 0.14),
+        DVec3::new(0.001, 0.03, 0.2),
+        DVec3::new(4., -0.02, 0.5),
+        DVec3::new(-0.2, -0.01, -0.4),
+    ] {
+        let original = reference::to_oklab(rgb);
+        for contrast in [0.4, 0.8, 1.2, 1.6] {
+            let contrasted = Grade::new(AdjustmentLayerSettings {
                 contrast,
-                pivot: pivot + dp,
-                contrast_colour_mix: 1.,
                 ..AdjustmentLayerSettings::default()
             })
+            .unwrap()
+            .apply(rgb)
             .unwrap();
-            let black = grade.apply(DVec3::ZERO).unwrap();
-            for dy in [-1e-16, 0., 1e-16] {
-                let rgb = plane + DVec3::Y * dy;
-                near(grade.apply(rgb).unwrap(), black + contrast * rgb);
+            let graded = reference::to_oklab(contrasted);
+            assert!((original - graded).abs().max_element() > 1e-3);
+            for preserve in [0., 0.25, 0.5, 0.75, 1.] {
+                let out = Grade::new(AdjustmentLayerSettings {
+                    contrast,
+                    contrast_colour_mix: preserve,
+                    ..AdjustmentLayerSettings::default()
+                })
+                .unwrap()
+                .apply(rgb)
+                .unwrap();
                 near(
-                    reference::contrast(
-                        rgb,
-                        contrast,
-                        pivot + dp,
-                        reference::Contrast::BlackOffsetRatios,
-                    )
-                    .unwrap(),
-                    black + contrast * rgb,
+                    reference::to_oklab(out),
+                    DVec3::new(
+                        graded.x,
+                        (1. - preserve) * graded.y + preserve * original.y,
+                        (1. - preserve) * graded.z + preserve * original.z,
+                    ),
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn acescc_log_branches_give_power_contrast_and_keep_the_pivot() {
+    for contrast in [0.4_f64, 0.8, 1.2, 1.6] {
+        let grade = Grade::new(AdjustmentLayerSettings {
+            contrast,
+            ..AdjustmentLayerSettings::default()
+        })
+        .unwrap();
+        for x in [0.01_f64, 0.18, 1., 16.] {
+            let expected = 0.18 * (x / 0.18).powf(contrast);
+            near(
+                grade.apply(DVec3::splat(x)).unwrap(),
+                DVec3::splat(expected),
+            );
+        }
+    }
+}
+
+#[test]
+fn signed_contrast_is_continuous_at_zero_and_the_acescc_foot() {
+    for contrast in [0.4, 0.8, 1.2, 1.6] {
+        let grade = Grade::new(AdjustmentLayerSettings {
+            contrast,
+            ..AdjustmentLayerSettings::default()
+        })
+        .unwrap();
+        for x in [0., 1. / 32768.] {
+            let a = grade.apply(DVec3::splat(x - 1e-12)).unwrap();
+            let b = grade.apply(DVec3::splat(x + 1e-12)).unwrap();
+            assert!((a - b).abs().max_element() < 2e-9);
+        }
+        let a = grade.apply(DVec3::splat(-0.02)).unwrap();
+        let b = grade.apply(DVec3::splat(-0.01)).unwrap();
+        assert!(a.x < b.x, "negative inputs must not collapse");
+    }
+}
+
+#[test]
+fn preserve_leaves_the_neutral_curve_unchanged() {
+    for contrast in [0.4, 0.8, 1.2, 1.6] {
+        for x in [-1., -1e-12, 0., 1e-12, 1. / 32768., 0.18, 1., 16.] {
+            let baseline = Grade::new(AdjustmentLayerSettings {
+                contrast,
+                ..AdjustmentLayerSettings::default()
+            })
+            .unwrap()
+            .apply(DVec3::splat(x))
+            .unwrap();
+            for preserve in [0.25, 0.5, 1.] {
+                let actual = Grade::new(AdjustmentLayerSettings {
+                    contrast,
+                    contrast_colour_mix: preserve,
+                    ..AdjustmentLayerSettings::default()
+                })
+                .unwrap()
+                .apply(DVec3::splat(x))
+                .unwrap();
+                assert_eq!(actual, baseline);
             }
         }
     }

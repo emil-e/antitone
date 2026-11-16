@@ -65,7 +65,7 @@ fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3
         rgb = colour_apply(
                 rgb,
                 da,
-                colour_adjustment_layer_delta(stage, 3u, 1u, COLOUR_OFFSET),
+                colour_adjustment_layer(stage, 3u, 1u),
                 colour_adjustment_layer(stage, 3u, 2u),
                 ds,
                 colour_adjustment_layer(stage, 4u, 0u),
