@@ -170,6 +170,18 @@ impl Editor {
         }
     }
 
+    pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
+        if context.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::A,
+            )
+        }) {
+            self.select_active_photo_only();
+            context.request_repaint();
+        }
+    }
+
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
         if let Some(tool) = self.current_tool() {
@@ -213,7 +225,7 @@ impl Editor {
         if !self.dusting()
             && !adjustment_delete
             && !self.document.visit.adjustment_layers.dragging()
-            && self.roll_edit_available()
+            && !self.editing()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -278,10 +290,12 @@ impl Editor {
                         .on_hover_text(&self.status);
                 }
             });
-        if self.current_tool().is_some() {
-            self.with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx));
-        } else {
-            self.filmstrip(ui, cx);
+        if self.fullscreen.is_none() {
+            if self.current_tool().is_some() {
+                self.with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx));
+            } else {
+                self.filmstrip(ui, cx);
+            }
         }
         if self.dialogs.is_open() {
             ui.disable();

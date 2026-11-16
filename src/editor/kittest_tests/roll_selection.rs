@@ -429,7 +429,16 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.key_press(egui::Key::Delete);
         harness.step();
-        harness.read(|editor| assert!(editor.document.crop_edit().is_some()));
+        harness.read(|editor| {
+            assert!(editor.document.crop_edit().is_some());
+            assert!(
+                editor.dialogs.is_open(),
+                "Delete requests photo removal during a private crop"
+            );
+        });
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        wait_for(&mut harness, |editor| !editor.dialogs.is_open());
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,

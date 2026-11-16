@@ -149,21 +149,24 @@ fn native_quit_and_close_wait_for_the_document_decision() {
 }
 
 #[test]
-fn queued_native_import_revalidates_tool_and_modal_availability() {
+fn queued_native_import_revalidates_modal_availability_without_requiring_tool_retirement() {
     let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
     super::super::tests::add_ready_fixture(&mut editor);
     editor.begin_crop();
     assert!(editor.cropping());
-    assert!(!editor.application_menu_state().enabled(Action::AddScans));
+    assert!(editor.application_menu_state().enabled(Action::AddScans));
+    let block = editor.workspace_input.block();
     host::App::menu_action(&mut editor, Action::AddScans);
     frame(&mut editor, &context);
     assert!(editor.document.export.operation.is_none());
     assert!(!editor.files.pending());
     assert!(editor.cropping());
+    drop(block);
     for action in [
         Action::New,
+        Action::AddScans,
         Action::Open,
         Action::Close,
         Action::Quit,

@@ -244,7 +244,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                         assert_eq!(e.document.path.as_ref(), Some(&written));
                         assert_eq!(e.document.state.project, captured);
                         assert!(!e.document.dirty() && store.upgrade().is_some());
-                        assert!(!e.file_available());
+                        assert!(!e.document_command_available());
                     }
                 }
             });

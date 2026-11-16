@@ -120,7 +120,7 @@ fn cancel_during_actual_camera_capture_keeps_feedback_until_the_worker_acknowled
         app.pump();
         app.read(|editor| {
             assert!(editor.analysis_fitting());
-            assert!(editor.interaction_blocked() && !editor.file_available());
+            assert!(editor.interaction_blocked() && !editor.document_command_available());
             assert!(editor.activities.view().unwrap().cancel.is_none());
         });
         assert!(!continued.get());
@@ -154,7 +154,7 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
             app.update(Editor::cancel_analysis);
             app.pump();
             app.read(|e| {
-                assert!(e.interaction_blocked() && !e.file_available());
+                assert!(e.interaction_blocked() && !e.document_command_available());
                 let activity = e.activities.view().unwrap();
                 assert!(activity.cancel.is_none() && activity.measured.is_none());
                 assert!(e.analysis_preparing() || e.analysis_fitting());

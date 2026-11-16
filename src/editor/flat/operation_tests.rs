@@ -44,6 +44,52 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     e
 }
 
+#[test]
+fn reference_draft_survives_import_and_photo_removal_and_applies_to_current_document() {
+    let scheduler = source_loading::SourceLoader::new();
+    let e = editor(scheduler.clone());
+    with_application(e, |app| {
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.read(|editor| assert!(editor.document.flat_edit().is_some()));
+        import(app);
+        let removed = app.read(|editor| editor.document.visit.current_source.unwrap());
+        app.enter(|editor, cx| editor.request_removal(cx));
+        app.read(|editor| assert!(editor.dialogs.is_open()));
+        app.update(|editor| editor.dialogs.answer_for_test("Remove photos"));
+        app.run_until(Duration::from_secs(20), |editor| {
+            editor.document.project.source(removed).is_err()
+        });
+        app.read(|editor| {
+            assert!(editor.document.flat_edit().is_some());
+            assert!(editor.document.project.sources.is_empty());
+        });
+        apply(app);
+        wait(app);
+        app.read(|editor| {
+            assert!(
+                editor.document.project.sources.is_empty(),
+                "reference acceptance must not resurrect removed photos"
+            );
+            assert!(
+                editor.document.project.active_flat_field().is_some(),
+                "{}",
+                editor.status
+            );
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            );
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
 fn begin(app: &TestApplication<'_, Editor>, name: &str) {
     let cx = app.access();
     app.update(|e| e.begin_flat_edit(path(name), None, &cx));

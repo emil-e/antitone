@@ -1172,10 +1172,8 @@ fn filmstrip_frame(
             ..Default::default()
         },
         |ui| {
-            let interactive = editor.roll_navigation_available();
-            if let Some((index, modifiers)) =
-                editor.filmstrip_with_budgets(ui, budgets, interactive, cx)
-            {
+            editor.disable_blocked_workspace(ui);
+            if let Some((index, modifiers)) = editor.filmstrip_with_budgets(ui, budgets, cx) {
                 editor.select_roll_photo(index, modifiers, cx);
             }
         },

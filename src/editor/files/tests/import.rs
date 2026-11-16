@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 
+mod interactions;
+
 fn copy_photo(directory: &Path, name: &str) -> PathBuf {
     let path = directory.join(name);
     std::fs::copy(

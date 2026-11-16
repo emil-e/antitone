@@ -51,7 +51,7 @@ fn save_as_during_a_real_search_writes_only_capture_and_preserves_publication_on
                 for action in [Action::Save, Action::SaveAs, Action::Export] {
                     assert!(editor.application_menu_state().enabled(action));
                 }
-                assert!(!editor.file_available());
+                assert!(editor.document_command_available());
                 let captured = editor
                     .document
                     .state

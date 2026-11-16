@@ -2,6 +2,7 @@ use super::*;
 mod departure;
 mod history_tests;
 mod rapid;
+mod roll_changes;
 mod snapshot_tests;
 use crate::dust_repair::SearchOutcome;
 
@@ -92,7 +93,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             assert_eq!(e.document.dirty(), before.1);
             assert!(e.dust_search_pending());
             assert!(e.dust_donor_regions().is_empty());
-            assert!(!e.file_available());
+            assert!(e.document_command_available());
             assert!(e.history_available());
             assert_eq!(e.history_label(history::Direction::Undo), None);
             stroke

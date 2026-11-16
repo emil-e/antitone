@@ -1112,9 +1112,7 @@ impl Editor {
         preview: Preview,
         cx: &UiContext<'_, Self>,
     ) {
-        let interactive = self.roll_navigation_available();
-        if let Some((index, modifiers)) = self.filmstrip_presentation(ui, preview, interactive, cx)
-        {
+        if let Some((index, modifiers)) = self.filmstrip_presentation(ui, preview, cx) {
             self.select_roll_photo(index, modifiers, cx);
         }
     }
@@ -1123,7 +1121,6 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         preview: Preview,
-        interactive: bool,
         cx: &UiContext<'_, Self>,
     ) -> Option<(usize, egui::Modifiers)> {
         self.document.thumbnails.preview = preview;
@@ -1136,14 +1133,13 @@ impl Editor {
                 Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
         self.document.thumbnails.update_memory();
-        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, interactive, cx)
+        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, cx)
     }
 
     fn filmstrip_with_budgets(
         &mut self,
         ui: &mut egui::Ui,
         budgets: memory::CacheBudgets,
-        interactive: bool,
         cx: &UiContext<'_, Self>,
     ) -> Option<(usize, egui::Modifiers)> {
         if self.document.visit.canvas.ready.is_none()
@@ -1168,7 +1164,6 @@ impl Editor {
         let mut visible = Vec::new();
         let mut select = None;
         let mut remove = false;
-        let selection_enabled = interactive;
         let height = self
             .preferences
             .filmstrip_height
@@ -1222,7 +1217,7 @@ impl Editor {
                         response_id,
                         selected,
                         active,
-                        selection_enabled,
+                        ui.is_enabled(),
                     );
                     let image_rect = card.image_rect;
                     let key = self.thumbnail_key(source, &path, true);
@@ -1432,27 +1427,32 @@ impl Editor {
                     if let Some(status) = status {
                         card.status(ui, &status);
                     }
-                    if card.response.clicked() && selection_enabled {
+                    if card.response.clicked() {
                         select = Some((index, ui.input(|input| input.modifiers)));
                     }
-                    if self.roll_edit_available() && card.response.secondary_clicked() && !selected
-                    {
+                    if card.response.secondary_clicked() && !selected {
                         select = Some((index, egui::Modifiers::NONE));
                     }
-                    if self.roll_edit_available()
-                        && card.response.enabled()
+                    if card.response.enabled()
                         && card.response.has_focus()
                         && !egui::Popup::is_any_open(ui.ctx())
                     {
                         self.select_active_shortcut(ui.ctx());
-                        if ui.input_mut(|input| {
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                                || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-                        }) {
+                        if !self.editing()
+                            && ui.input_mut(|input| {
+                                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                                    || input
+                                        .consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                            })
+                        {
                             remove = true;
                         }
                     }
                     card.response.context_menu(|ui| {
+                        // Popup UIs do not inherit the card's disabled parent.
+                        if !card.response.enabled() {
+                            ui.disable();
+                        }
                         if ui
                             .add_enabled(
                                 self.auto_crop_entry_available() && selected,
@@ -1474,7 +1474,7 @@ impl Editor {
                         }
                         if ui
                             .add_enabled(
-                                self.roll_edit_available() && !self.tool_interacting() && selected,
+                                !self.editing() && selected,
                                 egui::Button::new("Remove selected photos…"),
                             )
                             .clicked()

@@ -1,6 +1,8 @@
 use super::*;
 use crate::project::Development;
 
+mod interactions;
+
 fn fixture(index: usize) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     for index in 0..5 {
@@ -367,7 +369,8 @@ fn an_ordinary_picker_preserves_multiselection_and_anchor() {
             assert_eq!(editor.document.roll_selection.ids, selection);
             assert_eq!(editor.document.roll_selection.anchor, anchor);
             editor.request_removal(cx);
-            assert!(!editor.dialogs.is_open());
+            assert!(editor.dialogs.is_open());
+            editor.dialogs.answer_for_test("Cancel");
             editor.finish_pick(cx);
             settle(editor);
             assert_eq!(editor.document.visit.current_source, Some(active));
@@ -480,17 +483,47 @@ fn modal_work_and_decisions_reject_selection_and_removal() {
                     "removal" => editor.request_removal(cx),
                     _ => unreachable!(),
                 }
-                let before = editor.document.state.project.clone();
-                let selection = editor.document.roll_selection.ids.clone();
-                let pending = editor.dialogs.is_open();
-                editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
-                editor.select_active_photo_only();
-                editor.request_removal(cx);
-                assert_eq!(editor.document.state.project, before);
-                assert_eq!(editor.document.roll_selection.ids, selection);
-                assert_eq!(editor.dialogs.is_open(), pending);
-                assert!(!editor.document.visit.source.pending());
             });
+            let context = egui::Context::default();
+            crate::editor::tests::app_frame(app, &context, vec![]);
+            crate::editor::tests::app_frame(app, &context, vec![]);
+            let (before, selection, active, pending) = app.read(|editor| {
+                (
+                    editor.document.state.project.clone(),
+                    editor.document.roll_selection.ids.clone(),
+                    editor.document.visit.current_source,
+                    editor.dialogs.is_open(),
+                )
+            });
+            for (key, modifiers) in [
+                (egui::Key::ArrowLeft, egui::Modifiers::NONE),
+                (
+                    egui::Key::A,
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                ),
+                (egui::Key::Delete, egui::Modifiers::NONE),
+            ] {
+                for pressed in [true, false] {
+                    crate::editor::tests::app_frame(
+                        app,
+                        &context,
+                        vec![egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat: false,
+                            modifiers,
+                        }],
+                    );
+                }
+                app.read(|editor| {
+                    assert_eq!(editor.document.state.project, before);
+                    assert_eq!(editor.document.roll_selection.ids, selection);
+                    assert_eq!(editor.document.visit.current_source, active);
+                    assert_eq!(editor.dialogs.is_open(), pending);
+                    assert!(!editor.document.visit.source.pending());
+                });
+            }
         });
     }
 }

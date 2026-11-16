@@ -76,20 +76,8 @@ impl Editor {
         }
     }
 
-    pub(super) fn file_available(&self) -> bool {
-        !self.workspace_input.is_blocked() && self.file_context_available()
-    }
-
     pub(super) fn document_command_available(&self) -> bool {
         !self.workspace_input.is_blocked() && !self.editing() && !self.allow_close
-    }
-
-    fn file_context_available(&self) -> bool {
-        !self.dust_search_pending()
-            && !self.editing()
-            && !self.allow_close
-            && !self.tool_interacting()
-            && !self.document.visit.masks.editing()
     }
 
     pub(super) fn application_menu_state(&self) -> State {
@@ -140,13 +128,12 @@ impl Editor {
             state.enabled.extend([About, Settings, Help]);
         }
         if self.document_command_available() {
-            state.enabled.extend([New, Open, Close, Quit, Save, SaveAs]);
+            state
+                .enabled
+                .extend([New, Open, AddScans, Close, Quit, Save, SaveAs]);
             if self.document.project.input.ready() && self.selected_area().is_some() {
                 state.enabled.insert(Export);
             }
-        }
-        if self.file_available() {
-            state.enabled.insert(AddScans);
         }
         if self.selected_area().is_some() && !self.interaction_blocked() && !self.mask_dragging() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
