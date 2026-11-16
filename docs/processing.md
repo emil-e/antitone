@@ -142,7 +142,11 @@ Source reads follow contributing row spans with real-edge extension and packed-c
 
 ### Photo contrast and saturation
 
-Contrast scales a log-like ACEScct signal around a pivot; its Colour preservation blend reduces some contrast-driven colour changes without promising constant perceived saturation. Saturation blends between preserving AP1 luminance and anchoring the largest RGB channel, which gives the Density control its darkening character. Neither endpoint is a physical dye or print simulation.
+Contrast scales an ACEScc coordinate around a pivot. Nonnegative inputs use the published encoding; negative inputs follow its tangent at zero, with matching inverse decoding and no interchange ceiling. This signed extension retains negative working values; reducing contrast still lifts black.
+
+Preserve blends contrasted OKLab a/b toward the original a/b while retaining contrasted L. AP1/D60 is Bradford-adapted to D65 for OKLab, with signed cube roots and no gamut clipping. Zero selects per-channel contrast; one restores original OKLab hue/chroma, not necessarily perceived saturation. Neutral greys retain the same contrast curve throughout.
+
+Saturation blends between preserving AP1 luminance and anchoring the largest RGB channel, which gives Density its darkening character. Neither endpoint is a physical dye or print simulation.
 
 ### Adjustment layers change controls, not rendered pixels
 
@@ -190,7 +194,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **6**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **7**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

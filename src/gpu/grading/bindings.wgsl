@@ -6,6 +6,9 @@ struct AdjustmentLayerParameters {
 struct AdjustmentLayerContext {
     cones: CameraMatrix,
     inverse: CameraMatrix,
+    oklab_cones: CameraMatrix,
+    oklab_inverse: CameraMatrix,
+    oklab_lightness: vec4f,
     area: vec4u,
     count: vec4u,
 }

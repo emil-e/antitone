@@ -137,12 +137,7 @@ fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
     let linear = 0.8 * smooth(((x - 122.) * 16. + (y - 74.) * 15.) / (16. * 16. + 15. * 15.));
     rgb *= (0.7 * linear).exp2();
     let contrast = 1. + 0.2 * linear;
-    rgb = reference::blend(
-        reference::contrast(rgb, contrast, 0.18, reference::Contrast::Rgb).unwrap(),
-        reference::contrast(rgb, contrast, 0.18, reference::Contrast::BlackOffsetRatios).unwrap(),
-        0.3,
-    )
-    .unwrap();
+    rgb = reference::contrast_mix(rgb, contrast, 0.18, 0.3).unwrap();
     let (sin, cos) = 0.4_f64.sin_cos();
     let dx = x - 131.;
     let dy = y - 82.;

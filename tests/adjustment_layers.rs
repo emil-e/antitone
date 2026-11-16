@@ -385,19 +385,7 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                         let wb = cones.inverse() * (gains * (cones * rgb));
                         let balanced = wb * (-1.5_f64 * w).exp2();
                         let a = 1. + w * (contrast - 1.);
-                        let contrasted = reference::blend(
-                            reference::contrast(balanced, a, 0.11, reference::Contrast::Rgb)
-                                .unwrap(),
-                            reference::contrast(
-                                balanced,
-                                a,
-                                0.11,
-                                reference::Contrast::BlackOffsetRatios,
-                            )
-                            .unwrap(),
-                            blend,
-                        )
-                        .unwrap();
+                        let contrasted = reference::contrast_mix(balanced, a, 0.11, blend).unwrap();
                         let s = 1. + w * (saturation - 1.);
                         let expected = reference::blend(
                             reference::saturation(contrasted, s, reference::Saturation::ConstantY)

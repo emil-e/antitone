@@ -9,7 +9,7 @@ use crate::gpu::{
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
-    color::{Balance, ap1_to_cones},
+    color::{Balance, ap1_to_cones, oklab},
     geometry::SourceRegion,
     photographic::Grade,
     processing::RollSettings,
@@ -29,6 +29,9 @@ pub(super) struct AdjustmentLayerParameters {
 pub(super) struct AdjustmentLayerContext {
     cones: CameraMatrix,
     inverse: CameraMatrix,
+    oklab_cones: CameraMatrix,
+    oklab_inverse: CameraMatrix,
+    oklab_lightness: Vec4,
     area: [u32; 4],
     count: [u32; 4],
 }
@@ -288,6 +291,9 @@ fn context_parameters(count: u32, area: [u32; 4]) -> Result<AdjustmentLayerConte
     Ok(AdjustmentLayerContext {
         cones: CameraMatrix::new(cones)?,
         inverse: CameraMatrix::new(cones.inverse())?,
+        oklab_cones: CameraMatrix::new(*oklab::AP1_TO_LMS)?,
+        oklab_inverse: CameraMatrix::new(*oklab::LMS_TO_AP1)?,
+        oklab_lightness: oklab::LIGHTNESS.as_vec3().extend(0.),
         area,
         count: [count, 0, 0, 0],
     })

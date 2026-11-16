@@ -13,6 +13,8 @@ mod gpu_continuous;
 mod gpu_film_response;
 mod gpu_processing;
 mod lens_precision;
+#[path = "../../tests/support/photographic_reference.rs"]
+mod photographic_reference;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
@@ -23,7 +25,7 @@ fn processing_assembles_shared_photographic_operators_once() {
     for name in [
         "invert_film",
         "colour_encode",
-        "colour_ratio",
+        "colour_preserve",
         "photographic_post",
     ] {
         assert_eq!(shader.matches(&format!("fn {name}(")).count(), 1, "{name}");

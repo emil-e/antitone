@@ -611,7 +611,7 @@ impl Editor {
                     let response =
                         ui::ParameterRow::new("contrast-colour-mix", "Preserve", 0.0..=1.0)
                             .default_value(defaults.contrast_colour_mix)
-                            .help("Reduce colour shifts caused by contrast.")
+                            .help("Restore original hue and chroma in OKLab while keeping contrasted lightness.")
                             .show(ui, &mut photo.contrast_colour_mix)
                             .edit;
                     self.photo_control(response, |adjustment| {

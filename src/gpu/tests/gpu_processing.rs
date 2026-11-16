@@ -11,6 +11,8 @@ use antitone::color::Balance;
 use antitone::processing::{Calibration, InputSettings, NegativeInput, Response, RollSettings};
 use glam::{DMat3, DVec3, Vec4};
 
+use super::photographic_reference as reference;
+
 fn negative(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
     NegativeInput {
         calibration: cal,
@@ -249,6 +251,9 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             zero_y,
             zero_y + DVec3::Y * 1e-6,
             zero_y - DVec3::Y * 1e-6,
+            DVec3::splat(1. / 32768.),
+            DVec3::new(-1e-8, 0., 1e-8),
+            DVec3::new(-1e-5, 1e-5, 0.18),
         ];
         let values: Vec<_> = inputs.iter().map(|v| v.as_vec3().extend(0.)).collect();
         let storage = |label, values: &[Vec4]| {
@@ -273,15 +278,27 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let grading = crate::gpu::grading::Grading::new(
+            &device.limits(),
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            SourceRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
+        let context = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("OKLab working-space conversion"),
+            contents: bytemuck::bytes_of(&grading.context),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let mut contrast_effect = 0_f64;
         for contrast in [0.4_f64, 0.5, 0.8, 1., 1.2, 1.5, 1.6] {
-            let toe_pivot = if contrast < 1. {
-                let qp = (0.155251141552511 - contrast * 0.0729055341958355) / (1. - contrast);
-                (qp * 17.52 - 9.72).exp2()
-            } else {
-                0.18
-            };
-            for pivot in [0.01, 0.18, 1., toe_pivot] {
+            for pivot in [0.01, 0.18, 1.] {
+                let mut baseline_lab = vec![DVec3::ZERO; inputs.len()];
                 for mix in [0., 0.5, 1.] {
                     for saturation in [0., 1., 2.] {
                         let photo = AdjustmentLayerSettings {
@@ -296,7 +313,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                         let parameters = [
                             Vec4::new(
                                 (photo.contrast - 1.) as f32,
-                                prepared.qp as f32 - 0.072_905_53_f32,
+                                prepared.qp as f32,
                                 photo.contrast_colour_mix as f32,
                                 (photo.saturation - 1.) as f32,
                             ),
@@ -308,12 +325,10 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                                 contents: bytemuck::bytes_of(&parameters),
                                 usage: wgpu::BufferUsages::UNIFORM,
                             });
-                        let entries =
-                            [(2, &uniform), (8, &input), (9, &output)].map(|(binding, buffer)| {
-                                wgpu::BindGroupEntry {
-                                    binding,
-                                    resource: buffer.as_entire_binding(),
-                                }
+                        let entries = [(2, &uniform), (7, &context), (8, &input), (9, &output)]
+                            .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                                binding,
+                                resource: buffer.as_entire_binding(),
                             });
                         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("creative test bindings"),
@@ -343,6 +358,50 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                             let result = actual[i].truncate().as_dvec3();
                             assert!(result.is_finite(), "{photo:?}, input={input:?}");
                             assert_eq!(actual[i].w, 0.);
+                            let contrasted =
+                                reference::contrast_mix(input, contrast, pivot, mix).unwrap();
+                            let expected = reference::blend(
+                                reference::saturation(
+                                    contrasted,
+                                    saturation,
+                                    reference::Saturation::ConstantY,
+                                )
+                                .unwrap(),
+                                reference::saturation(
+                                    contrasted,
+                                    saturation,
+                                    reference::Saturation::Maximum,
+                                )
+                                .unwrap(),
+                                mix,
+                            )
+                            .unwrap();
+                            assert!(
+                                (result - expected).abs().max_element()
+                                    <= 2e-5 + 2e-4 * expected.abs().max_element(),
+                                "{photo:?}: {input:?} -> {result:?}, expected {expected:?}"
+                            );
+                            if saturation == 1. && mix == 0. {
+                                baseline_lab[i] = reference::to_oklab(result);
+                            }
+                            if saturation == 1. && contrast != 1. && mix != 0. {
+                                let original_lab = reference::to_oklab(input);
+                                // Compare to the GPU's own contrasted lightness, not f64 tone rounding.
+                                let base_lab = baseline_lab[i];
+                                let expected_lab = DVec3::new(
+                                    base_lab.x,
+                                    (1. - mix) * base_lab.y + mix * original_lab.y,
+                                    (1. - mix) * base_lab.z + mix * original_lab.z,
+                                );
+                                assert!(
+                                    (reference::to_oklab(result) - expected_lab)
+                                        .abs()
+                                        .max_element()
+                                        < 2e-5,
+                                    "Preserve must retain contrasted L and interpolate only a/b: {photo:?}, {input:?} -> {result:?}; actual Lab {:?}, expected {expected_lab:?}",
+                                    reference::to_oklab(result)
+                                );
+                            }
                             if contrast == 1. {
                                 // With contrast absent, both saturation anchors are linear.
                                 let grey = DVec3::splat(y_weights.dot(input));

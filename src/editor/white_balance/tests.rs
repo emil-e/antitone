@@ -770,7 +770,10 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         width: 32,
         height: 32,
     };
+    // Near the ACEScc foot, losing the baseline changes chromaticity. Pure-log
+    // contrast commutes with exposure scaling and cannot distinguish that error.
     let mut layers = crate::project::AdjustmentLayers::with_global(AdjustmentLayerSettings {
+        exposure: -12.,
         contrast: 0.6,
         ..Default::default()
     });
