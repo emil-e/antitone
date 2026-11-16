@@ -3,16 +3,25 @@
 from bisect import bisect_right
 import csv
 import hashlib
+import math
 from pathlib import Path
 import struct
 
 if __package__:
-    from .characteristic import density
+    from .characteristic import PARAMETERS, density
 else:
-    from characteristic import density
+    from characteristic import PARAMETERS, density
 
 NEGATIVE = "kodak_vision3_250d"
 APD_NUMERIC_SHA256 = "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f"
+GRAY_CID = 0.7
+
+
+def exposure_scale():
+    """Place shared neutral gray at the Academy unbuild's CID anchor."""
+    p = PARAMETERS
+    exponent = GRAY_CID * p["toe"] / p["gamma"] * math.log(10)
+    return p["knee"] / p["gray"] * math.expm1(exponent) ** (1 / p["toe"])
 
 
 def responsivities(path):
@@ -82,8 +91,9 @@ def prepare(paper, negative, path):
         [[0.72286, 0.12630, 0.15084], [0.11923, 0.76418, 0.11659], [0.01427, 0.08213, 0.90359]]
     )
     return {
-        "to_records": np.linalg.solve(
-            exposure, ap0.matrix_XYZ_to_RGB @ ap1.matrix_RGB_to_XYZ
+        "to_records": (
+            exposure_scale()
+            * np.linalg.solve(exposure, ap0.matrix_XYZ_to_RGB @ ap1.matrix_RGB_to_XYZ)
         ).tolist(),
         "flux0": (action * prior[:, None]).sum(axis=0).tolist(),
         "samples": [
@@ -99,6 +109,13 @@ def source(path):
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": APD_NUMERIC_SHA256,
         "input_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        "gray_calibration": {
+            "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+            "input_gray": PARAMETERS["gray"],
+            "CID": GRAY_CID,
+            "exposure_scale": exposure_scale(),
+            "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density.",
+        },
         "prior_and_Dmin": NEGATIVE + " base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",

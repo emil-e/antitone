@@ -4,7 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from .reference import receiver_weights, responsivities
+from .characteristic import PARAMETERS, density
+from .reference import exposure_scale, receiver_weights, responsivities
 
 
 class ReferenceInput(unittest.TestCase):
@@ -34,3 +35,8 @@ class ReferenceInput(unittest.TestCase):
                     path.write_text(header + body)
                     with self.assertRaises(ValueError):
                         responsivities(path)
+
+
+class ReferenceCalibration(unittest.TestCase):
+    def test_shared_gray_maps_to_academy_cid_point_seven(self):
+        self.assertAlmostEqual(density(PARAMETERS["gray"] * exposure_scale()), 0.7, places=14)

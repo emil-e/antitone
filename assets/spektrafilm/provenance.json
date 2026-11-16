@@ -99,7 +99,7 @@
   },
   "generator_sha256": "55d1de27d746556227632b9a7411259258142e8a5b64a1cbd84b8462e21275f8",
   "positive_driver_sha256": "3bad1e56bb8cb24af132f9f40da6905a4a85f4ef45b4213b452ea269dab22eb7",
-  "reference_driver_sha256": "599326b173478a4ae2fa105da3e2a413100e61ee9d9d935bc5fc36975df00ced",
+  "reference_driver_sha256": "2c7e3fbfaf8212ef5870116e1826ca240e15260b938d205fe2ed614c90c9fe04",
   "characteristic_sha256": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
   "characteristic_definition_sha256": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b",
   "positive_drivers": {
@@ -112,19 +112,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -2246,6 +2246,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -2254,9 +2261,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.15575967443792532,
-        -0.3640198174588134,
-        -0.3231939967187437
+        -0.10932616984987871,
+        -0.6512855490269811,
+        -0.6032000913845257
       ]
     },
     "kodak_2383": {
@@ -2268,19 +2275,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -4402,6 +4409,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -4410,9 +4424,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.4608807086702531,
-        -0.01720565407122207,
-        -0.015077955113848962
+        0.19649762633613022,
+        -0.3041035534176321,
+        -0.293438493898754
       ]
     },
     "kodak_2393": {
@@ -4424,19 +4438,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -6558,6 +6572,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -6566,9 +6587,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.5163317372763724,
-        -0.06728399863588913,
-        -0.0952490644916967
+        0.25191450037917484,
+        -0.354338065741074,
+        -0.37356025145911825
       ]
     },
     "kodak_ektacolor_edge": {
@@ -6580,19 +6601,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -8714,6 +8735,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -8722,9 +8750,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.020999063061086995,
-        -0.4177553828323944,
-        -0.3299067962412224
+        -0.24407447002301869,
+        -0.7048416481900339,
+        -0.6084303526959272
       ]
     },
     "kodak_endura_premier": {
@@ -8736,19 +8764,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -10870,6 +10898,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -10878,9 +10913,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.07305273565822787,
-        -0.43985854510646716,
-        -0.33766363502046726
+        -0.1916915174009921,
+        -0.7270406211991508,
+        -0.6162369274287822
       ]
     },
     "kodak_portra_endura": {
@@ -10892,19 +10927,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -13026,6 +13061,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -13034,9 +13076,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        -0.01744984621413334,
-        -0.3921588568105273,
-        -0.29578652289149526
+        -0.28315643495887827,
+        -0.6792072889782537,
+        -0.5744416092200406
       ]
     },
     "kodak_supra_endura": {
@@ -13048,19 +13090,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -15182,6 +15224,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -15190,9 +15239,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        -0.019056508897130703,
-        -0.38677355480124403,
-        -0.32394412445688037
+        -0.28476309764187563,
+        -0.6738219869689703,
+        -0.6025992107854257
       ]
     },
     "kodak_ultra_endura": {
@@ -15204,19 +15253,19 @@
       "reference": {
         "to_records": [
           [
-            0.9809888565190708,
-            0.016565338293012224,
-            0.0024437046920540014
+            0.3554787652833627,
+            0.0060027450503325015,
+            0.000885519871990135
           ],
           [
-            -0.09242446313011438,
-            1.1375089483224141,
-            -0.0450858701989869
+            -0.03349164857188368,
+            0.41219660525324964,
+            -0.01633766720544827
           ],
           [
-            -0.013207065575937772,
-            -0.09919851591671501,
-            1.1124168075179202
+            -0.0047858151830693025,
+            -0.035946347118704834,
+            0.40310402160948794
           ]
         ],
         "flux0": [
@@ -17338,6 +17387,13 @@
         "url": "https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf",
         "numeric_sha256": "50bfb192b467f41a6903e44c4d4f15bb5413937f8b94b0696330019d37952f1f",
         "input_sha256": "7ace120a3171a3eff83ba9a2c579b86c3e1e65a899e44523bbc7825e218df145",
+        "gray_calibration": {
+          "source": "https://github.com/aces-aswf/aces-input-and-colorspaces/blob/main/ADX/CSC.Academy.ADX16_to_ACES.ctl",
+          "input_gray": 0.18,
+          "CID": 0.7,
+          "exposure_scale": 0.36236779135773195,
+          "meaning": "Academy reference-rendering anchor, not a measured generic C-41 gray density."
+        },
         "prior_and_Dmin": "kodak_vision3_250d base; no negative characteristic curves",
         "selector": "Minimum relative entropy of summed APD-action distribution at fixed flux ratios; canonical mass fixes total flux.",
         "receiver": "TH-KG3; positive relative-filter interpolation with held endpoints, opaque outside supplied common negative support.",
@@ -17346,9 +17402,9 @@
       },
       "intent": "Shared reference-negative characteristic curve and Academy density basis; convex spectrum selection with fixed base prior, adapter-only cone projection, and fixed printing calibration at AP1 gray 0.18. No per-input neutral subtraction or photographic fitting.",
       "print_log_h": [
-        0.041271522111660935,
-        -0.423220733891277,
-        -0.31322779743476353
+        -0.2234711558559146,
+        -0.7103950135622559,
+        -0.5917927094742625
       ]
     }
   },
@@ -17411,12 +17467,12 @@
   "source_lut_sha256": "52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783",
   "files": {
     "catalog.json.z": {
-      "bytes": 723025,
-      "sha256": "2b497b56d35a8b27a348e10f412caaea926485606920874b8b92f22dc0a5e908"
+      "bytes": 723038,
+      "sha256": "8556c601a8df87679d61d375bb494d04d464f31e2030bb627420e40f1de27d39"
     },
     "conformance.json": {
-      "bytes": 394520,
-      "sha256": "4d04a18b2c0480ea3cb2b9cf62802da7c29b166bd1f9bf82dfd219ae07794f5f"
+      "bytes": 394524,
+      "sha256": "3132a7b517d6282a709a74262c9fddd491c57fc702b31d895cd16a1546727d0c"
     },
     "fujifilm_crystal_archive_typeii-scan.cct.z": {
       "bytes": 2790285,

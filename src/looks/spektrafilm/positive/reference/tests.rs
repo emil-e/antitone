@@ -18,6 +18,22 @@ fn diagonal() -> Reference {
 }
 
 #[test]
+fn catalogue_reference_places_gray_at_the_academy_density_anchor() {
+    let curve = crate::looks::characteristic::reference();
+    for paper in &crate::looks::spektrafilm::data::catalog().paper {
+        let reference = &paper.positive_driver.reference;
+        let records = reference.project(DVec3::splat(curve.gray), curve.gray);
+        let cid = matrix(CDD_TO_CID) * (reference.target(records) * GAIN);
+        // The published exposure matrix is rounded to five decimal places.
+        assert!(
+            (cid - DVec3::splat(0.7)).abs().max_element() < 4e-6,
+            "{}: {cid}",
+            paper.id
+        );
+    }
+}
+
+#[test]
 fn separate_measuring_bands_fix_the_unique_spectrum_and_receiver_flux() {
     let r = diagonal();
     r.validate(DVec3::new(0.2, 0.7, 0.1)).unwrap();

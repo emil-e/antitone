@@ -19,7 +19,8 @@ Antitone modifications:
   authoring DRT, storing ACEScct/AP1 values.
 - Use a shared forward reference-negative characteristic curve, historical Academy
   exposure/density coordinates and a convex APD-action spectral selector for every
-  colour medium's paper-only entry. Retain the supplied base prior and constant-Y
+  colour medium's paper-only entry. Calibrate reference exposure to the Academy
+  unbuild's gray CID anchor of 0.7. Retain the supplied base prior and constant-Y
   radial adapter boundary. Fixed per-medium printing exposure/balance anchors gray;
   reference formation and paper development determine the entire tone/tint trajectory.
   No output hue/saturation fit or selected-negative characteristic curves
