@@ -21,8 +21,10 @@ target even when collapsed; every new photo starts with an ordinary **Global** l
   on top of the roll's shared balance.
 - **Contrast** — with **Pivot** (where contrast is centred) and **Preserve** (how much
   colour is protected from contrast-driven shifts).
-- **Saturation** — with **Density**, which darkens as it saturates, like adding dye
-  density rather than a pure saturation slider.
+- **Saturation** — changes overall colour strength while retaining OKLab lightness and
+  hue; zero makes the image grey, one leaves colour strength unchanged.
+- **Vibrance** — boosts or mutes weaker colours more than already-strong colours;
+  zero leaves them unchanged. Use it alongside Saturation to balance muted and vivid areas.
 
 Hold **Shift** while dragging a slider, its value or the balance wheel for finer motion, and
 with the arrow keys for finer steps; a track's precision drag starts only when Shift is held
@@ -52,7 +54,7 @@ tool shelf.
 ## Adjustment layers
 
 Use **Add global**, **Add linear** or **Add radial** in the **Layers** section. Every
-layer has the same exposure, white balance, contrast and saturation controls; only its
+layer has the same exposure, white balance, contrast, saturation and Vibrance controls; only its
 coverage differs.
 
 - Layers process **bottom to top**. Drag rows to reorder; new layers appear above the

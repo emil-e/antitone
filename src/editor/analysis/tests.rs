@@ -264,7 +264,7 @@ fn state() -> Editor {
     editor.photo_settings_mut().pivot = 0.3;
     editor.photo_settings_mut().contrast_colour_mix = 0.4;
     editor.photo_settings_mut().saturation = 1.2;
-    editor.photo_settings_mut().saturation_density = 0.6;
+    editor.photo_settings_mut().vibrance = 0.6;
     editor.document.project.roll.wb = Balance {
         warmth: 0.2,
         tint: -0.1,

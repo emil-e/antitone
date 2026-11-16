@@ -50,7 +50,7 @@ fn layers(count: usize, photographic: bool) -> Vec<AdjustmentLayer> {
                     contrast: 1.01,
                     contrast_colour_mix: 0.25,
                     saturation: 1.02,
-                    saturation_density: 0.4,
+                    vibrance: 0.4,
                     ..Default::default()
                 }
             } else {

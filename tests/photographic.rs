@@ -23,15 +23,15 @@ fn inputs() -> Vec<DVec3> {
         out.push(DVec3::new(value + 0.02, value - 0.01, value));
     }
     let v = DVec3::new(0.2, -0.1, 0.01);
-    out.push(v - DVec3::splat(reference::y(v)));
+    out.push(v - DVec3::splat((antitone::color::AP1_TO_XYZ * v).y));
     out
 }
 
 #[test]
-fn default_blends_select_rgb_contrast_and_constant_y_saturation() {
+fn defaults_select_rgb_contrast_and_uniform_oklab_chroma() {
     let defaults = AdjustmentLayerSettings::default();
     assert_eq!(defaults.contrast_colour_mix, 0.);
-    assert_eq!(defaults.saturation_density, 0.);
+    assert_eq!(defaults.vibrance, 0.);
     for photo in [
         AdjustmentLayerSettings {
             contrast: 1.2,
@@ -54,51 +54,31 @@ fn default_blends_select_rgb_contrast_and_constant_y_saturation() {
                     .unwrap();
             near(
                 grade.apply(rgb).unwrap(),
-                reference::saturation(
-                    contrasted,
-                    photo.saturation,
-                    reference::Saturation::ConstantY,
-                )
-                .unwrap(),
+                reference::saturation(contrasted, photo.saturation, 0.).unwrap(),
             );
         }
     }
 }
 
 #[test]
-fn production_matches_signed_hdr_reference_for_both_blends() {
+fn production_matches_signed_hdr_reference_for_colour_controls() {
     for contrast in [0.4, 0.5, 0.8, 1., 1.2, 1.5, 1.6] {
         for pivot in [0.01, 0.18, 1.] {
             for colour in [0., 0.5, 1.] {
                 for saturation in [0., 0.7, 1., 1.3, 2.] {
-                    for density in [0., 0.5, 1.] {
+                    for vibrance in [-1., 0., 0.5, 1.] {
                         let photo = AdjustmentLayerSettings {
                             contrast,
                             pivot,
                             contrast_colour_mix: colour,
                             saturation,
-                            saturation_density: density,
+                            vibrance,
                             ..AdjustmentLayerSettings::default()
                         };
                         let grade = Grade::new(photo).unwrap();
                         for rgb in inputs() {
                             let c = reference::contrast_mix(rgb, contrast, pivot, colour).unwrap();
-                            let expected = reference::blend(
-                                reference::saturation(
-                                    c,
-                                    saturation,
-                                    reference::Saturation::ConstantY,
-                                )
-                                .unwrap(),
-                                reference::saturation(
-                                    c,
-                                    saturation,
-                                    reference::Saturation::Maximum,
-                                )
-                                .unwrap(),
-                                density,
-                            )
-                            .unwrap();
+                            let expected = reference::saturation(c, saturation, vibrance).unwrap();
                             near(grade.apply(rgb).unwrap(), expected);
                         }
                     }
@@ -213,20 +193,17 @@ fn preserve_leaves_the_neutral_curve_unchanged() {
 }
 
 #[test]
-fn amount_identity_is_exact_at_every_blend_and_pivot() {
+fn amount_identity_is_exact_at_every_preserve_and_pivot() {
     for pivot in [0.01, 0.18, 1.] {
         for colour in [0., 0.5, 1.] {
-            for density in [0., 0.5, 1.] {
-                let grade = Grade::new(AdjustmentLayerSettings {
-                    pivot,
-                    contrast_colour_mix: colour,
-                    saturation_density: density,
-                    ..AdjustmentLayerSettings::default()
-                })
-                .unwrap();
-                for rgb in inputs() {
-                    assert_eq!(grade.apply(rgb).unwrap(), rgb);
-                }
+            let grade = Grade::new(AdjustmentLayerSettings {
+                pivot,
+                contrast_colour_mix: colour,
+                ..AdjustmentLayerSettings::default()
+            })
+            .unwrap();
+            for rgb in inputs() {
+                assert_eq!(grade.apply(rgb).unwrap(), rgb);
             }
         }
     }
@@ -317,10 +294,6 @@ fn invalid_parameters_and_overflow_reject_without_clamps() {
                 saturation: bad,
                 ..base
             },
-            AdjustmentLayerSettings {
-                saturation_density: bad,
-                ..base
-            },
         ] {
             assert!(photo.validate().is_err());
         }
@@ -348,7 +321,7 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
     let old = r#"{"exposure":1.25,"wb":{"warmth":0.1,"tint":-0.2}}"#;
     let loaded: AdjustmentLayerSettings = serde_json::from_str(old).unwrap();
     assert_eq!(loaded.contrast_colour_mix, 0.);
-    assert_eq!(loaded.saturation_density, 0.);
+    assert_eq!(loaded.vibrance, 0.);
     assert_eq!(
         loaded,
         AdjustmentLayerSettings {
@@ -365,7 +338,7 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
         pivot: 0.123456789012345,
         contrast_colour_mix: 0.23456789012345,
         saturation: 1.23456789012345,
-        saturation_density: 0.3456789012345,
+        vibrance: 0.3456789012345,
         ..loaded
     };
     let json = serde_json::to_string(&photo).unwrap();
@@ -375,13 +348,20 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
     );
     let halfway = AdjustmentLayerSettings {
         contrast_colour_mix: 0.5,
-        saturation_density: 0.5,
+        vibrance: 0.5,
         ..photo
     };
     let json = serde_json::to_string(&halfway).unwrap();
     assert_eq!(
         serde_json::from_str::<AdjustmentLayerSettings>(&json).unwrap(),
         halfway
+    );
+    assert!(
+        serde_json::from_str::<AdjustmentLayerSettings>(&old.replace(
+            "\"exposure\":1.25",
+            "\"exposure\":1.25,\"saturation_density\":0.5"
+        ))
+        .is_err()
     );
     assert!(
         serde_json::from_str::<AdjustmentLayerSettings>(

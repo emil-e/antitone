@@ -883,7 +883,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         pivot: 0.25,
         contrast_colour_mix: 0.5,
         saturation: 1.3,
-        saturation_density: 0.5,
+        vibrance: 0.5,
         ..AdjustmentLayerSettings::default()
     };
     assert!(editor.calibration().is_some());

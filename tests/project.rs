@@ -230,7 +230,7 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         pivot: 0.23456789012345,
         contrast_colour_mix: 0.3456789012345,
         saturation: 1.23456789012345,
-        saturation_density: 0.456789012345,
+        vibrance: 0.456789012345,
         ..before
     };
     project
@@ -267,7 +267,7 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
             "pivot",
             "contrast_colour_mix",
             "saturation",
-            "saturation_density",
+            "vibrance",
         ] {
             fields.remove(name);
         }

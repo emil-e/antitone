@@ -134,6 +134,103 @@ fn record(
     (read_buffer(device, queue, &destination), computes)
 }
 
+#[cfg(all(feature = "project", feature = "ocio-reference"))]
+#[test]
+fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
+    use crate::{
+        looks::{LutChain, spektrafilm},
+        rendering::{CpuRenderer, OutputReference, OutputTarget},
+    };
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let pixels = [
+        [0.22, 0.18, 0.14, 7.],
+        [0.18, 0.18, 0.18, 7.],
+        [0.04, 0.15, 0.7, 7.],
+        [1.2, 0.3, 0.02, 7.],
+    ];
+    let region = CellRegion::new([0, 0], [pixels.len() as u32, 1]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let input = buffer(&device, &pixels);
+    let paper = Arc::new(
+        spektrafilm::Model::new(
+            spektrafilm::Selection {
+                negative: None,
+                paper: Default::default(),
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap()
+        .bake(65, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap(),
+    );
+    let mut baseline = None;
+    for vibrance in [0., -1., 1.] {
+        let grading = Grading::new(
+            &device.limits(),
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+                vibrance,
+                ..Default::default()
+            })])
+            .unwrap(),
+            [0, 0, pixels.len() as u32, 1].into(),
+        )
+        .unwrap();
+        let graded = grading.compose(borrowed_input(domain)).unwrap();
+        let (working, _) = record(&device, &queue, &renderer, graded.clone(), region, &input);
+        if let Some(baseline) = &baseline {
+            let baseline: &Vec<[f32; 4]> = baseline;
+            assert!(
+                (working[0][0] - baseline[0][0]).abs() > 0.01,
+                "standalone Vibrance must change a muted colour"
+            );
+        } else {
+            baseline = Some(working.clone());
+        }
+        for asset in [None, Some(paper.clone())] {
+            let chain = LutChain {
+                film_and_paper: asset.clone(),
+                ..Default::default()
+            };
+            let treated: Vec<_> = working
+                .iter()
+                .map(|pixel| {
+                    let rgb = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64);
+                    asset
+                        .as_ref()
+                        .map_or(Ok(rgb), |asset| asset.lut().apply(rgb))
+                        .unwrap()
+                })
+                .collect();
+            for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+                let reference = Reference::capture(
+                    &device,
+                    &renderer,
+                    OutputReference::DisplayReferred(target),
+                    &chain,
+                )
+                .unwrap();
+                let displayed = reference.compose(graded.clone(), &renderer).unwrap();
+                let (actual, _) = record(&device, &queue, &renderer, displayed, region, &input);
+                let expected = CpuRenderer::new(target).unwrap().render(&treated).unwrap();
+                for (actual, expected) in actual.iter().zip(expected) {
+                    for c in 0..3 {
+                        assert!(
+                            (actual[c] - expected[c]).abs() < 3e-4,
+                            "v={vibrance}, paper={}, {target:?}: {actual:?} vs {expected:?}",
+                            asset.is_some()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();

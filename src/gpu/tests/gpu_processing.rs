@@ -246,7 +246,7 @@ fn film_base_and_signed_neighbours_follow_represented_camera_values() {
 }
 
 #[test]
-fn creative_operators_preserve_identity_linear_anchors_and_finite_signed_values() {
+fn creative_operators_preserve_identity_oklab_lightness_hue_and_finite_signed_values() {
     use wgpu::util::DeviceExt;
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -261,7 +261,7 @@ fn creative_operators_preserve_identity_linear_anchors_and_finite_signed_values(
                 [
                     crate::gpu::photograph::shader::functions(),
                     r#"
-struct PrimitiveParameters { amounts: vec4f, density: vec4f }
+struct PrimitiveParameters { amounts: vec4f, vibrance: vec4f }
 @group(0) @binding(2) var<uniform> primitive: PrimitiveParameters;
 @group(0) @binding(8) var<storage, read> grade_input: array<vec4f>;
 @group(0) @binding(9) var<storage, read_write> grade_output: array<vec4f>;
@@ -270,7 +270,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= arrayLength(&grade_input) { return; }
     let input = grade_input[id.x];
     let rgb = colour_apply(array<f32, 3>(input.x, input.y, input.z),
-        primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.density.x);
+        primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.vibrance.x);
     grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
 }
 "#.to_owned(),
@@ -293,7 +293,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             -(y_weights.x * 0.25 - y_weights.z * 0.125) / y_weights.y,
             -0.125,
         );
-        let inputs = [
+        let mut inputs = vec![
             DVec3::ZERO,
             DVec3::splat(-1.),
             DVec3::splat(0.0078125),
@@ -308,7 +308,25 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             DVec3::splat(1. / 32768.),
             DVec3::new(-1e-8, 0., 1e-8),
             DVec3::new(-1e-5, 1e-5, 0.18),
+            // A near-film-base signed sample whose upstream rounding is amplified by grading.
+            DVec3::new(
+                -0.0005918174865655601,
+                -0.00040678709046915174,
+                0.00025756118702702224,
+            ),
         ];
+        let gradient_start = inputs.len();
+        for g in [-0.18_f64, 0.001, 0.18, 4.] {
+            for direction in [
+                DVec3::new(1., 0., -1.),
+                DVec3::new(1., -1., 0.),
+                DVec3::new(0., 1., -1.),
+            ] {
+                for t in [-0.0005, 0., 0.0005] {
+                    inputs.push(DVec3::splat(g) + g.abs() * t * direction);
+                }
+            }
+        }
         let values: Vec<_> = inputs.iter().map(|v| v.as_vec3().extend(0.)).collect();
         let storage = |label, values: &[Vec4]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -351,16 +369,23 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
         });
         let mut contrast_effect = 0_f64;
         for contrast in [0.4_f64, 0.5, 0.8, 1., 1.2, 1.5, 1.6] {
-            for pivot in [0.01, 0.18, 1.] {
+            for pivot in [0.01, 0.03, 0.18, 1.] {
                 let mut baseline_lab = vec![DVec3::ZERO; inputs.len()];
-                for mix in [0., 0.5, 1.] {
+                for (mix, vibrance) in [
+                    (0., 0.),
+                    (0.5, 0.),
+                    (1., 0.),
+                    (0., -1.),
+                    (0.5, 0.5),
+                    (1., 1.),
+                ] {
                     for saturation in [0., 1., 2.] {
                         let photo = AdjustmentLayerSettings {
                             contrast,
                             pivot,
                             contrast_colour_mix: mix,
                             saturation,
-                            saturation_density: mix,
+                            vibrance,
                             ..AdjustmentLayerSettings::default()
                         };
                         let prepared = antitone::photographic::Grade::new(photo).unwrap();
@@ -371,7 +396,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                                 photo.contrast_colour_mix as f32,
                                 (photo.saturation - 1.) as f32,
                             ),
-                            Vec4::new(photo.saturation_density as f32, 0., 0., 0.),
+                            Vec4::new(photo.vibrance as f32, 0., 0., 0.),
                         ];
                         let uniform =
                             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -414,31 +439,17 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                             assert_eq!(actual[i].w, 0.);
                             let contrasted =
                                 reference::contrast_mix(input, contrast, pivot, mix).unwrap();
-                            let expected = reference::blend(
-                                reference::saturation(
-                                    contrasted,
-                                    saturation,
-                                    reference::Saturation::ConstantY,
-                                )
-                                .unwrap(),
-                                reference::saturation(
-                                    contrasted,
-                                    saturation,
-                                    reference::Saturation::Maximum,
-                                )
-                                .unwrap(),
-                                mix,
-                            )
-                            .unwrap();
+                            let expected =
+                                reference::saturation(contrasted, saturation, vibrance).unwrap();
                             assert!(
                                 (result - expected).abs().max_element()
                                     <= 2e-5 + 2e-4 * expected.abs().max_element(),
                                 "{photo:?}: {input:?} -> {result:?}, expected {expected:?}"
                             );
-                            if saturation == 1. && mix == 0. {
+                            if saturation == 1. && mix == 0. && vibrance == 0. {
                                 baseline_lab[i] = reference::to_oklab(result);
                             }
-                            if saturation == 1. && contrast != 1. && mix != 0. {
+                            if saturation == 1. && contrast != 1. && mix != 0. && vibrance == 0. {
                                 let original_lab = reference::to_oklab(input);
                                 // Compare to the GPU's own contrasted lightness, not f64 tone rounding.
                                 let base_lab = baseline_lab[i];
@@ -457,17 +468,15 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                                 );
                             }
                             if contrast == 1. {
-                                // With contrast absent, both saturation anchors are linear.
-                                let grey = DVec3::splat(y_weights.dot(input));
-                                let maximum = DVec3::splat(input.max_element());
-                                let luminance = grey + saturation * (input - grey);
-                                let density = maximum + saturation * (input - maximum);
-                                let expected = luminance * (1. - mix) + density * mix;
+                                let before = reference::to_oklab(input);
+                                let after = reference::to_oklab(result);
+                                let tolerance = 2e-5 * (1. + before.abs().max_element());
+                                assert!((before.x - after.x).abs() < tolerance, "OKLab L is fixed");
                                 assert!(
-                                    (result - expected).abs().max_element()
-                                        <= 2e-5 + 2e-4 * expected.abs().max_element()
+                                    (before.y * after.z - before.z * after.y).abs() < tolerance,
+                                    "OKLab hue is fixed"
                                 );
-                                if saturation == 1. {
+                                if saturation == 1. && vibrance == 0. {
                                     assert_eq!(
                                         actual[i].to_array(),
                                         value.to_array(),
@@ -488,6 +497,23 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
                             if contrast == 1.5 && pivot == 0.18 && saturation == 1. {
                                 contrast_effect =
                                     contrast_effect.max((result - input).abs().max_element());
+                            }
+                        }
+                        if contrast == 1. {
+                            for (samples, results) in inputs[gradient_start..]
+                                .chunks_exact(3)
+                                .zip(actual[gradient_start..].chunks_exact(3))
+                            {
+                                let h = samples[1].x.abs() * 0.0005;
+                                let curvature = (results[0].truncate() + results[2].truncate()
+                                    - 2. * results[1].truncate())
+                                .as_dvec3()
+                                    / h;
+                                assert!(
+                                    curvature.abs().max_element() < 0.1,
+                                    "neutral-axis cusp: {photo:?}, {:?}: {curvature:?}",
+                                    samples[1]
+                                );
                             }
                         }
                         let grey_indices = [1, 0, 2, 6, 3, 7];

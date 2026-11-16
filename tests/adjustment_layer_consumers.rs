@@ -77,7 +77,7 @@ fn layers() -> Vec<AdjustmentLayer> {
                     tint: -0.07,
                 },
                 saturation: 1.4,
-                saturation_density: 0.6,
+                vibrance: 0.6,
                 ..Default::default()
             },
             enabled: true,
@@ -150,12 +150,7 @@ fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
     let cones = antitone::color::BRADFORD * antitone::color::AP1_TO_XYZ;
     rgb = (cones.inverse() * DMat3::from_diagonal(gains) * cones) * rgb;
     let saturation = 1. + 0.4 * radial;
-    reference::blend(
-        reference::saturation(rgb, saturation, reference::Saturation::ConstantY).unwrap(),
-        reference::saturation(rgb, saturation, reference::Saturation::Maximum).unwrap(),
-        0.6,
-    )
-    .unwrap()
+    reference::saturation(rgb, saturation, 0.6 * radial).unwrap()
 }
 
 async fn image(

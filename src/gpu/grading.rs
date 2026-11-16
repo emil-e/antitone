@@ -270,7 +270,7 @@ impl AdjustmentLayerParameters {
                 adjustment.photo.contrast_colour_mix,
                 adjustment.photo.saturation,
             ],
-            [adjustment.photo.saturation_density, radii[0], radii[1], 0.],
+            [adjustment.photo.vibrance, radii[0], radii[1], 0.],
         ];
         let mut result = Self::zeroed();
         for (i, row) in rows.into_iter().enumerate() {

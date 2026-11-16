@@ -25,8 +25,8 @@ pub struct AdjustmentLayerSettings {
     pub contrast_colour_mix: f64,
     #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
     pub saturation: f64,
-    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
-    pub saturation_density: f64,
+    #[cfg_attr(feature = "project", serde(default))]
+    pub vibrance: f64,
 }
 
 fn identity_amount() -> f64 {
@@ -50,7 +50,7 @@ impl Default for AdjustmentLayerSettings {
             pivot: default_pivot(),
             contrast_colour_mix: default_colour_mix(),
             saturation: identity_amount(),
-            saturation_density: default_colour_mix(),
+            vibrance: 0.,
         }
     }
 }
@@ -213,6 +213,7 @@ fn weighted(photo: AdjustmentLayerSettings, weight: f64) -> AdjustmentLayerSetti
         },
         contrast: 1. + weight * (photo.contrast - 1.),
         saturation: 1. + weight * (photo.saturation - 1.),
+        vibrance: weight * photo.vibrance,
         ..photo
     }
 }
@@ -245,7 +246,8 @@ impl AdjustmentLayer {
             && (self.photo.exposure != 0.
                 || self.photo.wb != Balance::default()
                 || self.photo.contrast != 1.
-                || self.photo.saturation != 1.)
+                || self.photo.saturation != 1.
+                || self.photo.vibrance != 0.)
     }
 
     pub fn weight(self, point: SourcePoint) -> Result<f64, Error> {

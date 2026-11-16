@@ -45,16 +45,122 @@ fn read(path: &Path) -> ([u32; 2], Vec<u16>) {
     ([w, h], pixels)
 }
 
+fn output_directory(name: &str) -> PathBuf {
+    let root = PathBuf::from(
+        std::env::var_os("ANTITONE_PHOTO_OUTPUT").expect("set fresh ANTITONE_PHOTO_OUTPUT"),
+    );
+    assert!(root.is_absolute());
+    std::fs::create_dir_all(&root).unwrap();
+    let output = root.join(name);
+    std::fs::create_dir(&output).unwrap();
+    output
+}
+
+#[test]
+#[ignore = "private read-only RAW; writes saturation/Vibrance comparisons with and without Film & paper"]
+fn saturation_vibrance_with_film_paper_samples() {
+    let output = output_directory("colourfulness");
+    let (scan, calibration) = train_raw::load();
+    let area = SourceRegion::from([scan.area.x, scan.area.y, scan.area.width, scan.area.height]);
+    let composition = Composition::with_crop(
+        area,
+        Default::default(),
+        Default::default(),
+        Some(Crop::from_region(SourceRegion {
+            x: area.x + area.width / 2 - 512,
+            y: area.y + area.height / 2 - 384,
+            width: 1024,
+            height: 768,
+        })),
+    )
+    .unwrap();
+    let (device, queue, renderer) = pollster::block_on(async {
+        let adapter = antitone::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        (device, queue, renderer)
+    });
+    let paper = std::sync::Arc::new(
+        antitone::looks::material::Selection::from(antitone::looks::spektrafilm::Selection {
+            negative: None,
+            paper: Default::default(),
+        })
+        .bake(65, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap(),
+    );
+    for (look, asset) in [("bypass", None), ("paper", Some(paper))] {
+        let mut baseline: Option<Vec<u16>> = None;
+        for (label, saturation, vibrance) in [
+            ("baseline", 1., 0.),
+            ("saturation", 1.4, 0.),
+            ("vibrance", 1., 1.),
+            ("mute", 1., -1.),
+            ("mixed", 0.7, 1.),
+        ] {
+            let path = output.join(format!("{look}-{label}.tif"));
+            authored_export::write(
+                &renderer,
+                &device,
+                (&queue, &SubmissionGate::default()),
+                Request {
+                    scan: &scan,
+                    field: None,
+                    input: InputSettings::negative(calibration),
+                    roll: RollSettings {
+                        exposure: 2.,
+                        ..Default::default()
+                    },
+                    grade: AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(
+                        AdjustmentLayerSettings {
+                            saturation,
+                            vibrance,
+                            ..Default::default()
+                        },
+                    )])
+                    .unwrap(),
+                    repairs: &[],
+                    composition,
+                    format: Format::Tiff(OutputTarget::Srgb),
+                    luts: antitone::looks::LutChain {
+                        film_and_paper: asset.clone(),
+                        ..Default::default()
+                    },
+                    pipeline: Default::default(),
+                },
+                &path,
+                Overwrite::Refuse,
+            )
+            .unwrap();
+            let (_, pixels) = read(&path);
+            if let Some(baseline) = &baseline {
+                let difference = pixels
+                    .iter()
+                    .zip(baseline)
+                    .map(|(a, b)| a.abs_diff(*b) as f64)
+                    .sum::<f64>()
+                    / pixels.len() as f64;
+                assert!(
+                    difference > 1.,
+                    "sample must distinguish {look}-{label} from identity"
+                );
+                println!("{look}-{label}: mean absolute RGB16 change {difference:.2}");
+            } else {
+                baseline = Some(pixels);
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore = "private read-only RAWs; writes paired photographic TIFFs into a fresh cache directory"]
 fn photographic_tiff_pairs() {
     let root =
         PathBuf::from(std::env::var_os("ANTITONE_RAW_SAMPLES").expect("set ANTITONE_RAW_SAMPLES"));
-    let output = PathBuf::from(
-        std::env::var_os("ANTITONE_PHOTO_OUTPUT").expect("set fresh ANTITONE_PHOTO_OUTPUT"),
-    );
-    assert!(root.is_absolute() && output.is_absolute());
-    std::fs::create_dir(&output).unwrap();
+    assert!(root.is_absolute());
+    let output = output_directory("paired");
     let (train, calibration) = train_raw::load();
     let wb = train.white_balance;
     drop(train);
@@ -114,7 +220,7 @@ fn photographic_tiff_pairs() {
             scan.set_flat_field(field.clone());
             let gpu_field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
             let input = InputSettings::negative((calibration).validate().unwrap());
-            for (edited, colour, density) in [
+            for (edited, colour, vibrance) in [
                 ("none", 0., 0.),
                 ("rgb", 0., 0.),
                 ("preserve", 1., 1.),
@@ -130,7 +236,7 @@ fn photographic_tiff_pairs() {
                         contrast: 0.8,
                         contrast_colour_mix: colour,
                         saturation: 1.2,
-                        saturation_density: density,
+                        vibrance,
                         ..Default::default()
                     }
                 } else {
@@ -154,7 +260,7 @@ fn photographic_tiff_pairs() {
                             contrast: 1.1,
                             contrast_colour_mix: colour,
                             saturation: 0.9,
-                            saturation_density: density,
+                            vibrance,
                             ..Default::default()
                         },
                         enabled: true,

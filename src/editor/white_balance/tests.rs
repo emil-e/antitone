@@ -232,6 +232,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
                 },
                 contrast: 1.5,
                 saturation: 1.8,
+                vibrance: 0.9,
                 ..Default::default()
             },
         };
@@ -270,6 +271,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         measured.photo.wb = balance;
         measured.photo.contrast = 1.;
         measured.photo.saturation = 1.;
+        measured.photo.vibrance = 0.;
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             InputSettings::Digital,
             editor.document.project.roll,
