@@ -94,13 +94,7 @@ pub mod spatial_metadata;
 pub(crate) mod sys;
 #[cfg(feature = "editor")]
 pub mod viewport;
-#[cfg(all(
-    test,
-    feature = "gpu",
-    feature = "export",
-    feature = "raw",
-    any(feature = "editor", feature = "ocio-reference")
-))]
+#[cfg(all(test, feature = "gpu", feature = "raw", feature = "render"))]
 #[path = "../tests/support/working_precision.rs"]
 mod working_precision;
 

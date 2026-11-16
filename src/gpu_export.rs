@@ -29,8 +29,6 @@ pub(crate) mod job;
 mod native_resources;
 use crate::gpu::{execution::OutputBlock, rgb16};
 
-#[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]
-mod common_exr_tests;
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod observation_clock;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]

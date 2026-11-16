@@ -192,6 +192,60 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
 }
 
 #[test]
+fn film_base_and_signed_neighbours_follow_represented_camera_values() {
+    let (device, queue) = pollster::block_on(async {
+        let adapter = antitone::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    let fixture = pollster::block_on(CameraFixture::new(&device)).unwrap();
+    let base = 0.5_f32;
+    let calibration = Calibration {
+        dmin: DVec3::splat(f64::from(base) + 2_f64.powi(-28)),
+        dmax: DVec3::splat(0.03125),
+    };
+    // The f64 inputs differ but share the GPU's represented film-base value.
+    // Check its zero anchor and signed neighbours rather than f64 agreement here.
+    assert!(calibration.dmin.x > f64::from(base));
+    assert_eq!(calibration.dmin.x as f32, base);
+    let scalar = antitone::processing::InputPipeline::new(calibration, DMat3::IDENTITY).unwrap();
+    assert!(
+        scalar
+            .apply(DVec3::splat(f64::from(base)))
+            .unwrap()
+            .rgb
+            .min_element()
+            > 0.
+    );
+
+    let pixels = [base, base.next_down(), base.next_up()]
+        .map(|sample| [sample * 65535., sample * 65535., sample * 65535., 0.]);
+    let source = ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY, None).unwrap();
+    let result = capture(
+        &device,
+        &queue,
+        &fixture,
+        &source,
+        ProcessingParameters::positive(calibration, RollSettings::default(), DMat3::IDENTITY)
+            .unwrap(),
+        pixels.len(),
+    );
+    assert_eq!(result[0], [0.; 4], "represented film base anchors zero");
+    assert!(
+        result[1][..3].iter().all(|&value| value > 0.),
+        "denser represented light remains positive"
+    );
+    assert!(
+        result[2][..3].iter().all(|&value| value < 0.),
+        "above-base represented light remains signed"
+    );
+    assert!(result.iter().flatten().all(|value| value.is_finite()));
+    assert!(result.iter().all(|pixel| pixel[3] == 0.));
+}
+
+#[test]
 fn creative_operators_preserve_identity_linear_anchors_and_finite_signed_values() {
     use wgpu::util::DeviceExt;
     pollster::block_on(async {
