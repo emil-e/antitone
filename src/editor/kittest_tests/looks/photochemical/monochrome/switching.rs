@@ -51,7 +51,12 @@ fn negative_family_switch_confirms_default_paper_as_one_undoable_edit_and_cancel
                 (e.document.selected + 1) % e.document.project.order.len(),
             )
         });
-        h.enter(|e, cx| e.select_roll_photo(other, egui::Modifiers::NONE, cx));
+        h.key_press(if other > selected {
+            egui::Key::ArrowRight
+        } else {
+            egui::Key::ArrowLeft
+        });
+        h.step();
         h.read(|e| assert_eq!(e.document.selected, selected));
         h.key_press(egui::Key::Escape);
         h.step();

@@ -26,7 +26,7 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.dirty(), dirty);
             assert!(e.dust_donor_regions().is_empty());
-            assert!(!e.file_available());
+            assert!(e.document_command_available());
         });
         let (canvas, marked) = h.read(|e| {
             let geometry = e.active_canvas().last_layout.unwrap().0;

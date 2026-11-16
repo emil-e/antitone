@@ -324,7 +324,7 @@ fn photo_project_draft_contains_layer_strength_and_grade_and_retires_with_the_vi
     assert_eq!(record.adjustment.strength, 0.4);
     assert_eq!(editor.photo_settings().exposure, 0.75);
     assert_eq!(editor.document.project, accepted);
-    assert!(!editor.file_available());
+    assert!(!editor.document_command_available());
     editor.replace_photo_scope(editor.document.visit.view + 1);
     assert!(!editor.editing());
     assert!(editor.commit_project(edit).is_err());
@@ -351,7 +351,7 @@ fn late_commit_after_install_leaves_accepted_state_unchanged() {
 fn save_and_export_are_unavailable_until_the_edit_is_committed_or_dropped() {
     let mut editor = editor();
     use crate::platform::menu::Action;
-    assert!(editor.file_available());
+    assert!(editor.document_command_available());
     let edit = editor.edit_project("Unfinished").unwrap();
     for action in [Action::Save, Action::SaveAs, Action::Export] {
         assert!(!editor.application_menu_state().enabled(action));
@@ -373,7 +373,7 @@ fn save_and_export_are_unavailable_until_the_edit_is_committed_or_dropped() {
             .is_none()
     );
     drop(edit);
-    assert!(editor.file_available());
+    assert!(editor.document_command_available());
     for action in [Action::Save, Action::SaveAs, Action::Export] {
         assert!(editor.application_menu_state().enabled(action));
     }

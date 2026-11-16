@@ -672,16 +672,19 @@ fn cancelling_new_preserves_batch_proposals_and_discarding_retires_them_without_
 }
 
 #[test]
-fn draft_tool_keeps_import_and_removal_guarded() {
+fn batch_review_allows_import_and_removal_without_applying_or_ending_its_proposals() {
     let (e, _directory) = fixture();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
             let before = e.document.state.project.clone();
             e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
+            assert!(
+                e.application_menu_state()
+                    .enabled(crate::platform::menu::Action::AddScans)
+            );
             e.request_removal(cx);
-            for action in [FileAction::Add, FileAction::Remove] {
-                e.file_action(action, cx);
-            }
+            assert!(e.dialogs.is_open());
+            e.dialogs.answer_for_test("Cancel");
             assert!(
                 e.document.crop_edit().is_none()
                     && e.test_pick().is_none()
@@ -701,6 +704,35 @@ fn draft_tool_keeps_import_and_removal_guarded() {
             assert!(!e.document.auto_crop.reviewing());
             assert!(e.document.state.project.sources.is_empty());
             assert!(!e.interaction_blocked());
+        });
+    });
+}
+
+#[test]
+fn confirmed_removal_preserves_the_batch_owner_but_its_old_targets_cannot_be_applied() {
+    let (mut editor, _directory) = fixture();
+    let removed = editor.document.visit.current_source.unwrap();
+    editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.request_removal(cx));
+        app.update(|editor| editor.dialogs.answer_for_test("Remove photos"));
+        app.run_until(Duration::from_secs(5), |editor| {
+            editor.document.project.source(removed).is_err()
+        });
+        let after = app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing());
+            assert!(!editor.auto_crop_valid());
+            editor.document.state.project.clone()
+        });
+        app.update(|editor| editor.finish_auto_crop(true));
+        app.read(|editor| {
+            assert!(editor.document.auto_crop.reviewing());
+            assert_eq!(editor.document.state.project, after);
+            assert_eq!(
+                editor.history_label(history::Direction::Undo),
+                Some("Remove photos")
+            );
+            assert!(editor.status.contains("not applied"), "{}", editor.status);
         });
     });
 }

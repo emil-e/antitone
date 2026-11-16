@@ -212,11 +212,11 @@ fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
 }
 
 #[test]
-fn snapshots_and_departure_remain_available_while_refinement_blocks_import_and_removal() {
+fn snapshots_and_roll_commands_remain_available_during_private_refinement() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         assert!(
-            editor.file_available(),
+            editor.document_command_available(),
             "idle contextual handles do not block file actions"
         );
         start(&mut editor);
@@ -224,19 +224,15 @@ fn snapshots_and_departure_remain_available_while_refinement_blocks_import_and_r
         crate::application::test_support::with_application(editor, |app| {
             app.read(|editor| {
                 assert!(!editor.tool_interacting());
-                assert!(!editor.file_available());
+                assert!(editor.document_command_available());
                 for action in [
                     crate::platform::menu::Action::New,
+                    crate::platform::menu::Action::AddScans,
                     crate::platform::menu::Action::Open,
                     crate::platform::menu::Action::Close,
                     crate::platform::menu::Action::Quit,
                 ] {
                     assert!(editor.application_menu_state().enabled(action));
-                }
-            });
-            app.enter(|editor, cx| {
-                for action in [FileAction::Add, FileAction::Remove] {
-                    editor.file_action(action, cx);
                 }
             });
             app.update(Editor::open_export_dialog);
@@ -250,7 +246,7 @@ fn snapshots_and_departure_remain_available_while_refinement_blocks_import_and_r
                 editor.document.export.form = None;
                 editor.finish_mask(false);
             });
-            app.read(|editor| assert!(editor.file_available()));
+            app.read(|editor| assert!(editor.document_command_available()));
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
                 assert!(

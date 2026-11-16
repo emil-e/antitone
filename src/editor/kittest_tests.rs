@@ -30,6 +30,7 @@ mod orientation;
 mod picking;
 mod progress;
 mod project;
+mod roll_changes;
 mod roll_selection;
 mod shared_controls;
 mod snapshots;

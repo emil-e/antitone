@@ -56,6 +56,35 @@ pub(super) fn prepared(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
 }
 
 #[test]
+fn removal_keeps_the_review_owner_but_outdated_membership_cannot_start_fitting() {
+    let editor = crate::editor::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| prepared(editor, cx));
+        let removed = app.read(|editor| editor.document.visit.current_source.unwrap());
+        app.enter(|editor, cx| editor.request_removal(cx));
+        app.update(|editor| editor.dialogs.answer_for_test("Remove photos"));
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.project.source(removed).is_err()
+        });
+        let after = app.read(|editor| {
+            assert!(editor.document.analysis_review().is_some());
+            editor.document.state.project.clone()
+        });
+        app.enter(|editor, cx| editor.confirm_analysis_review(cx));
+        app.read(|editor| {
+            assert!(editor.document.analysis_review().is_some());
+            assert!(!editor.analysis_fitting());
+            assert_eq!(editor.document.state.project, after);
+            assert!(
+                editor.status.starts_with("Cannot analyze:"),
+                "{}",
+                editor.status
+            );
+        });
+    });
+}
+
+#[test]
 fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_areas() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {

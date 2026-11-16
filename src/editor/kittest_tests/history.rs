@@ -151,7 +151,7 @@ fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
             );
             assert_eq!(editor.document.project, original);
             assert!(editor.editing());
-            assert!(!editor.file_available());
+            assert!(!editor.document_command_available());
             editor.photo_settings().exposure
         });
         for _ in 0..3 {
@@ -186,7 +186,7 @@ fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
                 !editor.editing(),
                 "release completes the numeric-owned edit"
             );
-            assert!(editor.file_available());
+            assert!(editor.document_command_available());
             editor.document.project.clone()
         });
         shortcut(&mut h, false);

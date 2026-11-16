@@ -55,7 +55,7 @@ fn clean_new_and_close_accept_unapplied_crop_or_armed_mask_without_a_draft_loss_
                     for command in [Action::New, Action::Open, Action::Close, Action::Quit] {
                         assert!(editor.application_menu_state().enabled(command));
                     }
-                    assert!(!editor.application_menu_state().enabled(Action::AddScans));
+                    assert!(editor.application_menu_state().enabled(Action::AddScans));
                     editor.file_action(action, cx);
                 });
                 settle(app);

@@ -32,23 +32,12 @@ impl RollSelection {
 }
 
 impl Editor {
-    pub(super) fn roll_edit_available(&self) -> bool {
-        !self.interaction_blocked() && !self.controls_pending() && self.roll_navigation_available()
-    }
-
-    pub(super) fn roll_navigation_available(&self) -> bool {
-        !self.workspace_input.is_blocked() && self.fullscreen.is_none() && !self.allow_close
-    }
-
     pub(super) fn select_roll_photo(
         &mut self,
         index: usize,
         modifiers: egui::Modifiers,
         cx: &UiContext<'_, Self>,
     ) {
-        if !self.roll_navigation_available() {
-            return;
-        }
         let Some(&id) = self.document.state.project.order.get(index) else {
             return;
         };
@@ -121,9 +110,6 @@ impl Editor {
     }
 
     pub(super) fn select_active_photo_only(&mut self) {
-        if !self.roll_edit_available() || self.dialogs.is_open() {
-            return;
-        }
         if let Some(id) = self
             .document
             .visit
@@ -134,24 +120,8 @@ impl Editor {
         }
     }
 
-    pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
-        if self.roll_edit_available()
-            && !self.dialogs.is_open()
-            && !egui::Popup::is_any_open(context)
-            && context.input_mut(|input| {
-                input.consume_key(
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    egui::Key::A,
-                )
-            })
-        {
-            self.select_active_photo_only();
-            context.request_repaint();
-        }
-    }
-
     pub(super) fn request_removal(&mut self, cx: &UiContext<'_, Self>) {
-        if !self.roll_edit_available() || self.tool_interacting() || self.dialogs.is_open() {
+        if self.editing() {
             return;
         }
         self.document.roll_selection.reconcile(
@@ -187,12 +157,9 @@ impl Editor {
     }
 
     fn remove_selected_photos(&mut self, ids: Vec<SourceId>, cx: &UiContext<'_, Self>) {
-        if self.interaction_blocked()
-            || self.controls_pending()
-            || self.files.pending()
-            || ids
-                .iter()
-                .any(|id| !self.document.project.order.contains(id))
+        if ids
+            .iter()
+            .any(|id| !self.document.project.order.contains(id))
         {
             self.status = "Photo selection changed; removal cancelled".into();
             return;

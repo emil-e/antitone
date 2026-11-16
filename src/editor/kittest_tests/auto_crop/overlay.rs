@@ -355,7 +355,14 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Delete);
         h.step();
-        h.read(|editor| assert!(!editor.dialogs.is_open()));
+        h.read(|editor| assert!(editor.dialogs.is_open()));
+        h.key_press(egui::Key::Escape);
+        h.step();
+        h.step();
+        h.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert!(editor.document.auto_crop.reviewing());
+        });
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();

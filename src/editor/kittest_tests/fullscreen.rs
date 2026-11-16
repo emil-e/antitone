@@ -90,7 +90,14 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 // Acquisition/refinement settle on real workers and wall time, not virtual UI steps.
                 harness.try_run_realtime().unwrap();
                 reveal(&mut harness);
-                for label in ["Export", "Scopes", "Roll", "Photo", "Rendering"] {
+                for label in [
+                    "Export",
+                    "Scopes",
+                    "Roll",
+                    "Photo",
+                    "Rendering",
+                    "patches.dng",
+                ] {
                     assert!(
                         harness.query_by_label(label).is_none(),
                         "fullscreen hides {label}"
@@ -136,6 +143,7 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.try_run_realtime().unwrap();
                 harness.read(|editor| assert!(editor.fullscreen.is_none()));
                 assert!(harness.query_by_label("Scopes").is_some());
+                assert!(harness.query_by_label("patches.dng").is_some());
                 harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
                 harness.read(|editor| assert_eq!(editor.preferences, preferences));
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));

@@ -1871,6 +1871,7 @@ impl Editor {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn dust_search_pending(&self) -> bool {
         self.dust_session()
             .is_some_and(|session| !session.searches.borrow().is_empty())

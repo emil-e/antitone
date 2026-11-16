@@ -123,7 +123,6 @@ fn an_unidentified_modal_owner_blocks_all_workspace_entry_routes_and_then_releas
     let available = |editor: &crate::editor::Editor, expected| {
         assert_eq!(editor.tool_start_available(), expected);
         assert_eq!(editor.history_available(), expected);
-        assert_eq!(editor.roll_navigation_available(), expected);
         assert_eq!(editor.fullscreen_available(), expected);
         for action in [Action::Save, Action::Settings, Action::Export] {
             assert_eq!(
