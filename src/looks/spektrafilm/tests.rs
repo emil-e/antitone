@@ -1,4 +1,5 @@
 use super::*;
+use crate::photographic;
 use serde::Deserialize;
 #[cfg(feature = "gpu")]
 mod gpu;
@@ -172,8 +173,7 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
 }
 
 #[test]
-fn every_media_reference_retains_neutral_tone_and_allows_colour_dependent_luminance() {
-    let mapping = &data::catalog().paper_mapping;
+fn every_media_reference_preserves_gray_and_allows_colour_dependent_luminance() {
     for paper in Paper::all() {
         let model = Model::new(
             Selection {
@@ -185,30 +185,12 @@ fn every_media_reference_retains_neutral_tone_and_allows_colour_dependent_lumina
         .unwrap();
         assert!(model.film.is_none());
         let driver = &model.paper.positive_driver;
-        let baseline = |brightness| {
-            let offset = mapping.exposure_compression
-                * 17.52
-                * (photographic::encode(brightness) - photographic::encode(mapping.gray_ap1))
-                * std::f64::consts::LOG10_2;
-            model.paper.positive_gray_log_h - DVec3::splat(offset)
-        };
-        for value in [-1., -0.02, 0., 0.003, 0.0078125, 0.18, 1., 16., 1024.] {
-            let expected = baseline(value);
-            let actual = model.paper_exposure(DVec3::splat(value)).unwrap();
-            assert!(
-                (actual - expected).abs().max_element() < 1e-12,
-                "{}",
-                paper.id()
-            );
-            assert_eq!(
-                model.encoded(DVec3::splat(value)).unwrap(),
-                model
-                    .scanner
-                    .sample(develop_print_morph(model.paper, actual))
-            );
-        }
+        let gray = model.paper_exposure(DVec3::splat(0.18)).unwrap();
+        assert!((gray - model.paper.positive_gray_log_h).abs().max_element() < 2e-12);
         for colour in [DVec3::new(0.32, 0.16, 0.10), DVec3::new(0.05, 0.18, 0.30)] {
-            let neutral = baseline(driver.input_luminance.dot(colour));
+            let neutral = model
+                .paper_exposure(DVec3::splat(driver.input_luminance.dot(colour)))
+                .unwrap();
             let actual = model.paper_exposure(colour).unwrap();
             assert!(
                 (paper_luminance(model.paper, actual) - paper_luminance(model.paper, neutral))

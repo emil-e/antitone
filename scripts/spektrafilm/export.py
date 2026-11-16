@@ -18,6 +18,7 @@ import tempfile
 import zlib
 
 from build import LOCK, REVISION, verify_environment
+from characteristic import PARAMETERS
 from positive import expose, prepare
 from reference import NEGATIVE as REFERENCE_NEGATIVE
 
@@ -139,7 +140,7 @@ def export(args, scratch):
         reference_space, refprim, white, whitepoint_name="D65"
     )
 
-    gray_target = ocio([[0.18, 0.18, 0.18]], "forward")[0]
+    gray_target = ocio([[PARAMETERS["gray"]] * 3], "forward")[0]
     finishing = gamut.OutputGamutCompressSpec(
         algorithm="cam16ucs", knee=(0.0, 1.0, 6.0), lightness_compression=None
     )
@@ -192,7 +193,6 @@ def export(args, scratch):
         "remap": {},
         "authoring_reference": reference,
         "print_gray_Y": 0.1,
-        "paper_mapping": {"exposure_compression": 0.6, "gray_AP1": 0.18},
         "source_profile_sha256": {p.name: sha(p) for p in paths},
     }
     for name in negative_ids:
@@ -293,7 +293,9 @@ def export(args, scratch):
             name,
             result.message,
         )
-        driver = prepare(p.print, params(REFERENCE_NEGATIVE, name).film, args.apd_responsivities)
+        driver = prepare(
+            p.print, params(REFERENCE_NEGATIVE, name).film, args.apd_responsivities, result.x
+        )
         positive_drivers[name] = driver
         nscan = args.scanner_size
         lo = curves.min(axis=0)
@@ -328,9 +330,9 @@ def export(args, scratch):
             }
         )
         catalog["paper"][-1]["positive_driver"] = {
-            key: driver[key] for key in ["input_luminance", "reference"]
+            key: driver[key] for key in ["input_luminance", "reference", "print_log_h"]
         }
-        paper_h = expose(probes, result.x, driver)
+        paper_h = expose(probes, driver)
         out = read_h(paper_h)
         density = stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
         fixtures["paper_only"].append(
@@ -428,7 +430,7 @@ def export(args, scratch):
         "source": "https://github.com/andreavolpato/spektrafilm",
         "author": "Andrea Volpato",
         "revision": REVISION,
-        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared convex reference-negative spectral entry with calibrated neutral exposure, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
+        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared forward characteristic curve and convex reference-negative spectral entry with fixed printing calibration, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
         "source_code_sha256": sources,
         "environment_lock_sha256": sha(LOCK),
         "build_tool_sha256": sha(ROOT / "scripts/spektrafilm/build.py"),
@@ -444,6 +446,8 @@ def export(args, scratch):
         "generator_sha256": sha(Path(__file__)),
         "positive_driver_sha256": sha(Path(__file__).with_name("positive.py")),
         "reference_driver_sha256": sha(Path(__file__).with_name("reference.py")),
+        "characteristic_sha256": sha(Path(__file__).with_name("characteristic.py")),
+        "characteristic_definition_sha256": sha(ROOT / "assets/looks/reference-negative.json"),
         "positive_drivers": positive_drivers,
         "paper_output_validation": output_validation,
         "output_finishing": {

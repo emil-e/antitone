@@ -83,13 +83,6 @@ pub(super) struct Pair {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Mapping {
-    pub exposure_compression: f64,
-    #[serde(rename = "gray_AP1")]
-    pub gray_ap1: f64,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Catalog {
     pub schema: u32,
     pub revision: String,
@@ -103,7 +96,6 @@ pub(super) struct Catalog {
     pub authoring_reference: [f64; 9],
     #[serde(rename = "print_gray_Y")]
     pub print_gray_y: f64,
-    pub paper_mapping: Mapping,
     pub source_profile_sha256: BTreeMap<String, String>,
 }
 
@@ -152,8 +144,6 @@ fn load_catalog() -> Result<Catalog, Error> {
             && value.authoring_reference == crate::looks::authoring::REFERENCE
             && value.print_gray_y.is_finite()
             && value.print_gray_y > 0.
-            && value.paper_mapping.exposure_compression > 0.
-            && value.paper_mapping.gray_ap1 > 0.
             && !value.source_profile_sha256.is_empty(),
         "unsupported spektrafilm catalogue/reference",
     )?;

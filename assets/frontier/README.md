@@ -6,7 +6,7 @@ Frontier A and B are reproduction alternatives in the **Paper** selector, suppor
 
 ### Negative None
 
-The [formation model](../../src/looks/frontier/formation.rs) defines the neutral-preserving matrix `M` and density-code parameters:
+The [formation model](../../src/looks/frontier/formation.rs) defines the neutral-preserving matrix `M` and code scale/gains. Its forward toe uses the [shared reference-negative curve](../../src/looks/characteristic.rs), with toe and knee from [one definition](../looks/reference-negative.json):
 
 ```text
 c = gains_RGB × max(0, gamut(M × AP1))

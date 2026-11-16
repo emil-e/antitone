@@ -46,8 +46,6 @@ impl Exposure {
 #[derive(Deserialize)]
 pub(super) struct Positive {
     pub gray_log_h: f64,
-    pub gray_ap1: f64,
-    pub exposure_compression: f64,
 }
 #[derive(Deserialize)]
 pub(super) struct Paper {
@@ -116,8 +114,7 @@ pub(super) fn catalog() -> &'static Catalog {
             assert_eq!(paper.material.id, label.id);
             paper.exposure.validate();
             let p = &paper.positive;
-            assert!(p.gray_log_h.is_finite() && p.gray_ap1.is_finite() && p.gray_ap1 > 0.);
-            assert!(p.exposure_compression.is_finite() && p.exposure_compression > 0.);
+            assert!(p.gray_log_h.is_finite());
         }
         let r = &value.readout;
         assert!(r.min.is_finite() && r.max.is_finite() && r.min < r.max);

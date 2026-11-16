@@ -5,7 +5,7 @@
 //! and nonspatial readout use pinned Spektrafilm code/data, not colour-stock
 //! sensitivities, dyes or DIR. See assets/papers/README.md for provenance.
 use super::{LookAsset, LookOrigin, require};
-use crate::{Error, color, photographic};
+use crate::{Error, color};
 use glam::{DMat3, DVec3};
 use std::sync::{OnceLock, atomic::AtomicBool};
 mod data;
@@ -115,6 +115,8 @@ fn fingerprint() -> &'static str {
         let mut hash = blake3::Hasher::new();
         for bytes in [
             include_bytes!("monochrome.rs").as_slice(),
+            include_bytes!("characteristic.rs").as_slice(),
+            super::characteristic::DEFINITION,
             include_bytes!("monochrome/data.rs").as_slice(),
             include_bytes!("lookup.rs").as_slice(),
             include_bytes!("sampling.rs").as_slice(),
@@ -185,11 +187,10 @@ impl Model {
             // at every wavelength. Gray calibration changes only printing time.
             self.paper.positive.gray_log_h + film.gray_density - density
         } else {
-            // Already-positive input: luminance precedes the nonlinear adapter.
-            let p = &self.paper.positive;
+            // A neutral reference negative leaves fixed filtration unchanged.
+            let curve = super::characteristic::reference();
             let y = color::AP1_TO_XYZ.row(1).dot(rgb);
-            let stops = 17.52 * (photographic::encode(y) - photographic::encode(p.gray_ap1));
-            p.gray_log_h - stops * (p.exposure_compression * std::f64::consts::LOG10_2)
+            self.paper.positive.gray_log_h + curve.density(curve.gray) - curve.density(y)
         }
     }
     fn density(&self, log_h: f64) -> f64 {

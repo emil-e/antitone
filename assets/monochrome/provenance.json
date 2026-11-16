@@ -1,9 +1,11 @@
 {
   "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
   "inputs": {
-    "scripts/spektrafilm/monochrome.py": "b6d8e18bbdbdb1965bbb99a7fb11195651abb751a62c940e483351a4220f58d3",
+    "scripts/spektrafilm/monochrome.py": "2c586df14e701e4aec3f6930f7cb7091ff892e81fdefa33d3d3eb285810cab95",
     "scripts/spektrafilm/build.py": "f2b537f9dda4516e8d97bfac058d648f85c4bc2db7bacab30cc0511c53473104",
     "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
+    "scripts/spektrafilm/characteristic.py": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
+    "assets/looks/reference-negative.json": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b",
     "assets/papers/fomabrom-variant-glossy-filter-2/source.json": "ba3f73d627f1c9fa548e3ce79e7065b2468b99db6d41659dbfaaa51f944192a6",
     "assets/papers/fomaspeed-variant-glossy-filter-2/source.json": "e76c3d90a36c27e2753580efdd8e6dcbed94bdbd5cf75759c098633f82d46f12",
     "assets/papers/ilford-multigrade-fb-classic-filter-2/source.json": "68d3d4e58d66fce790c20f70491890ac76449e39defd82421a998761858a4324",
@@ -246,9 +248,9 @@
     }
   },
   "outputs": {
-    "components.json.z": "37e095a05c3e7719a9688410523c56487220f48edaf436ae4bc24f2ade032d8d",
+    "components.json.z": "4bdc8ce049e96e784e71f886881b32d8450762ed16227ddb4f793f5ce9b3398a",
     "spectral.f32.z": "7c538f1b8ec36deb4bced3ae68d33aec57fa2bb2d0512c93a16a701f97fb1c73",
     "index.json": "1916036a5e06acd92a2926129937abd16c499281d7e18ed4be1278c7cde3a76d",
-    "conformance.json.z": "946520673552ed0463ed95977735b3213afcce6be9efb7d3c9e61162fd26aa5f"
+    "conformance.json.z": "42542d7d18fefa423b51535348cb15d83e485a7d258701f3dafb8bf0c1a911e7"
   }
 }

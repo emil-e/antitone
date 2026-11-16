@@ -1,14 +1,16 @@
 //! Black-anchored generic positive entry into RGB-ordered native codes.
 use super::{Variant, require};
-use crate::Error;
+use crate::{
+    Error,
+    looks::characteristic::{self, Characteristic},
+};
 use glam::DVec3;
 
 #[derive(Clone, Debug)]
 pub(super) struct Entry {
     matrix: [[f64; 3]; 3],
     codes_per_stop: f64,
-    knee: f64,
-    toe: f64,
+    curve: Characteristic,
     channel_gains: [f64; 3],
     origin: f64,
 }
@@ -33,19 +35,13 @@ impl Entry {
                 ],
             ],
             codes_per_stop: 73.78531879357067,
-            knee: 0.0044459647893383926,
-            toe: 2.5,
+            curve: *characteristic::reference(),
             channel_gains: [1.0328716504309126, 1., 1.0760157025406742],
             origin: variant.code_offset(),
         }
     }
     fn raw_code(&self, signal: f64) -> f64 {
-        if signal <= 0. {
-            return self.origin;
-        }
-        let z = self.toe * (signal.ln() - self.knee.ln());
-        let softplus = z.max(0.) + (-z.abs()).exp().ln_1p();
-        self.origin + self.codes_per_stop / (self.toe * std::f64::consts::LN_2) * softplus
+        self.origin + self.codes_per_stop / std::f64::consts::LN_2 * self.curve.coordinate(signal)
     }
     fn code(&self, signal: f64) -> f64 {
         let code = self.raw_code(signal);

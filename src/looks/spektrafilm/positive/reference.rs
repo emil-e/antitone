@@ -7,24 +7,7 @@ use glam::{DMat2, DMat3, DVec2, DVec3};
 use serde::Deserialize;
 use std::sync::OnceLock;
 
-const BREAK: f64 = 1. / 128.;
 const GAIN: DVec3 = DVec3::new(1., 0.92, 0.95);
-const CID: [f64; 11] = [
-    -0.19, 0.01, 0.028, 0.054, 0.095, 0.145, 0.220, 0.300, 0.400, 0.500, 0.600,
-];
-const LOG_EXPOSURE: [f64; 11] = [
-    -6.,
-    -2.721718645,
-    -2.521718645,
-    -2.321718645,
-    -2.121718645,
-    -1.921718645,
-    -1.721718645,
-    -1.521718645,
-    -1.321718645,
-    -1.121718645,
-    -0.926545676714876,
-];
 const CDD_TO_CID: [[f64; 3]; 3] = [
     [0.75573, 0.22197, 0.02230],
     [0.05901, 0.96928, -0.02829],
@@ -216,30 +199,13 @@ impl Reference {
         Err(failure("reference moment solve did not converge"))
     }
 
-    fn target(&self, records: DVec3) -> (DVec3, DVec3) {
-        let mut cid = DVec3::ZERO;
-        let mut slope = DVec3::ZERO;
-        for c in 0..3 {
-            let log = records[c].log10();
-            if log > LOG_EXPOSURE[10] {
-                cid[c] = 0.55 * (log + 0.7 / 0.55 - 0.18_f64.log10());
-                slope[c] = 0.55;
-            } else {
-                let k = LOG_EXPOSURE
-                    .partition_point(|&v| v <= log)
-                    .saturating_sub(1)
-                    .min(9);
-                slope[c] = (CID[k + 1] - CID[k]) / (LOG_EXPOSURE[k + 1] - LOG_EXPOSURE[k]);
-                cid[c] = CID[k] + (log - LOG_EXPOSURE[k]) * slope[c];
-            }
-            slope[c] /= records[c] * std::f64::consts::LN_10;
-        }
-        (self.prepared().inverse_cdd * cid / GAIN, slope)
+    fn target(&self, records: DVec3) -> DVec3 {
+        let curve = crate::looks::characteristic::reference();
+        self.prepared().inverse_cdd * records.map(|x| curve.density(x)) / GAIN
     }
 
     fn field(&self, records: DVec3) -> Result<DVec3, Error> {
-        let anchor = records.max(DVec3::splat(BREAK));
-        let (target, slope) = self.target(anchor);
+        let target = self.target(records);
         let log_flux = self.flux0.map(f64::ln) - target * std::f64::consts::LN_10;
         let maximum = log_flux.max_element();
         let flux = (log_flux - DVec3::splat(maximum)).map(f64::exp);
@@ -259,27 +225,12 @@ impl Reference {
         };
         let (theta, at) = self.solve(q, kept, omitted)?;
         let mut receiver = DVec3::ZERO;
-        let mut cross = [DVec3::ZERO; 2];
         for s in &self.samples {
             let feature = Self::features(s, kept);
             let p = (s.log_prior + theta.dot(feature) - at.log_partition).exp();
             receiver += s.receiver * p;
-            cross[0] += s.receiver * (p * feature.x);
-            cross[1] += s.receiver * (p * feature.y);
         }
-        // The displacement retains the existing low-positive receiver tangent;
-        // the positive query anchor is not returned as a clipped colour.
-        let delta_log_flux = -std::f64::consts::LN_10
-            * (self.prepared().inverse_cdd * (slope * (records - anchor)))
-            / GAIN;
-        let delta_total = q.dot(delta_log_flux);
-        let delta_q = DVec2::from_array(kept.map(|c| q[c] * (delta_log_flux[c] - delta_total)));
-        let delta_theta = at.covariance.inverse() * delta_q;
-        let extension = DVec3::splat(delta_total)
-            + (cross[0] / receiver - DVec3::splat(at.mean[kept[0]])) * delta_theta.x
-            + (cross[1] / receiver - DVec3::splat(at.mean[kept[1]])) * delta_theta.y;
-        let result =
-            (DVec3::splat(log_total) + receiver.map(f64::ln) + extension) / std::f64::consts::LN_10;
+        let result = (DVec3::splat(log_total) + receiver.map(f64::ln)) / std::f64::consts::LN_10;
         require(result.is_finite(), "nonfinite reference receiver exposure")?;
         Ok(result)
     }
@@ -291,16 +242,16 @@ impl Reference {
         }
         let neutral = self.prepared().white * brightness;
         let distance = ((neutral - r) / neutral).max_element();
-        neutral + (r - neutral) / distance
+        (neutral + (r - neutral) / distance).max(DVec3::ZERO)
     }
 
-    pub fn colour_difference(&self, rgb: DVec3, brightness: f64) -> Result<DVec3, Error> {
-        if brightness <= 0. {
-            return Ok(DVec3::ZERO);
-        }
-        let records = self.project(rgb, brightness);
-        let neutral = self.prepared().white * brightness;
-        Ok(self.field(records)? - self.field(neutral)?)
+    pub fn expose(&self, rgb: DVec3, brightness: f64) -> Result<DVec3, Error> {
+        let records = if brightness <= 0. {
+            DVec3::ZERO
+        } else {
+            self.project(rgb, brightness)
+        };
+        self.field(records)
     }
 }
 
