@@ -125,8 +125,12 @@ fn inspection_and_positive_views_share_photo_owned_camera_pixels_but_not_view_re
                 let frame = editor.document.visit.working_view.frame.as_ref().unwrap();
                 assert_eq!(frame.request.capture.is_inspection(), spec.is_inspection());
                 assert_eq!(
-                    frame.source.definition.domain().meaning
-                        == crate::gpu::evaluation::Meaning::Inspection,
+                    frame
+                        .source
+                        .definition
+                        .ancestors()
+                        .any(|node| node.domain().meaning
+                            == crate::gpu::evaluation::Meaning::Inspection),
                     spec.is_inspection()
                 );
             });

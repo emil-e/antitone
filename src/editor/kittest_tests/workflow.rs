@@ -743,7 +743,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         });
         assert_eq!(first.image.processing_byte_len(), (0, 0));
         harness.read(|editor| assert!(
-        !editor.document.visit.canvas.ready.as_ref().unwrap().proxy.output_retained(),
+        editor.document.visit.canvas.preview_rendered.is_none(),
         "scopes must not recreate unused provisional storage after accepted working presentation"
     ));
         stage(&mut harness, "Photo");
@@ -769,17 +769,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     "{label} must not reacquire or demote source detail"
                 );
                 assert!(current.spec == first.spec);
-                assert!(
-                    !editor
-                        .document
-                        .visit
-                        .canvas
-                        .ready
-                        .as_ref()
-                        .unwrap()
-                        .proxy
-                        .output_retained()
-                );
+                assert!(editor.document.visit.canvas.preview_rendered.is_none());
                 assert_eq!(
                     &current.processing(),
                     editor
@@ -836,15 +826,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                         .unwrap()
                 );
                 assert!(
-                    !editor
-                        .document
-                        .visit
-                        .canvas
-                        .ready
-                        .as_ref()
-                        .unwrap()
-                        .proxy
-                        .output_retained(),
+                    editor.document.visit.canvas.preview_rendered.is_none(),
                     "dragging/scopes must not allocate a second presentation path"
                 );
                 exposures.push(editor.photo_settings().exposure);
@@ -900,8 +882,8 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         });
         assert!(srgb.same_source_as(&edited));
         assert!(
-            srgb.same_grade_as(&edited),
-            "target-only changes reuse graded AP1"
+            srgb.same_source_as(&edited),
+            "target-only changes preserve physical source reuse"
         );
         wait_settled(&mut harness);
         harness.read(|editor| {

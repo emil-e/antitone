@@ -15,10 +15,10 @@ mod retention;
 
 fn requested_image(
     demand: &Demand,
-    source: &ViewSource,
+    source: &ViewImage,
 ) -> Result<crate::gpu::evaluation::Value, Error> {
     crate::gpu::view::rendering::photograph(
-        &source.renderer.evaluation().device().limits(),
+        &source.renderer,
         &demand.pixels.scan()?,
         demand
             .pixels
@@ -27,15 +27,16 @@ fn requested_image(
             .map(|field| field.gpu.clone()),
         &demand.capture,
         source.spec.clone(),
+        demand.target,
     )
     .map(|image| image.definition)
 }
 
-fn image_matches(demand: &Demand, source: &ViewSource) -> bool {
+fn image_matches(demand: &Demand, source: &ViewImage) -> bool {
     requested_image(demand, source).is_ok_and(|image| source.definition.same_definition(&image))
 }
 
-fn shares_inputs(before: &ViewSource, after: &ViewSource) -> bool {
+fn shares_inputs(before: &ViewImage, after: &ViewImage) -> bool {
     let (
         crate::gpu::evaluation::BufferImage::Produced(before),
         crate::gpu::evaluation::BufferImage::Produced(after),
@@ -189,7 +190,6 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
-                    processed: Vec::new(),
                 })),
             });
             assert!(
@@ -206,7 +206,6 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
-                    processed: Vec::new(),
                 })),
             });
             assert!(!e.document.visit.working_view.support_ready());
@@ -305,6 +304,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
             None,
             &PhotographRequest::Fixture(spec.processing_fixture()),
             spec.clone(),
+            OutputTarget::Srgb,
         )
         .unwrap();
         let processed = pollster::block_on(prepared.produce(&services.queue, &gate, || false))
@@ -513,11 +513,11 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         )
         .unwrap(),
     );
-    let input = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let demand = Demand {
         rendering: OnceLock::new(),
+        target: OutputTarget::Srgb,
         frame,
         pixels,
         capture: PhotographRequest::Recipe(recipe.clone()),
@@ -535,39 +535,38 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                 panic!("recipe capture was replaced");
             };
             assert!(Arc::ptr_eq(captured, &recipe));
-            assert_eq!(ready.processed.len(), 2);
-            let changed = AuthoredPhotograph::from_recipe(&device.limits(), &edited).unwrap();
-            for value in &ready.processed {
+            assert_eq!(ready.images().count(), 2);
+            let mut changed = (*ready.request).clone();
+            changed.capture = PhotographRequest::Recipe(edited.clone());
+            for value in ready.images() {
                 assert!(matches!(
                     value.pixels,
                     crate::gpu::evaluation::BufferImage::Produced(_)
                 ));
                 assert!(
-                    value.stages.is_none(),
+                    value.commands.is_none(),
                     "publication owns a completed value, not unsubmitted grading work"
                 );
-                assert!(value.matches(&device.limits(), &input));
                 assert!(
-                    !value.matches(&device.limits(), &changed),
+                    value
+                        .definition
+                        .same_definition(&requested_image(&ready.request, value).unwrap())
+                );
+                assert!(
+                    !value
+                        .definition
+                        .same_definition(&requested_image(&changed, value).unwrap()),
                     "the requested snapshot must not read subsequent document edits"
                 );
             }
-            working
-                .render(&input, OutputTarget::Srgb, &egui::Context::default())
-                .unwrap();
-            assert!(
-                working
-                    .rendered
-                    .as_ref()
-                    .unwrap()
-                    .uses_processed(&ready.processed[0])
-            );
+            working.render(&egui::Context::default()).unwrap();
+            assert!(working.rendered.as_ref().unwrap().uses_image(&ready.source));
             assert!(
                 working
                     .underlay_rendered
                     .as_ref()
                     .unwrap()
-                    .uses_processed(&ready.processed[1])
+                    .uses_image(ready.underlay.as_ref().unwrap())
             );
         });
         let (mut wanted, context) = app.read(|e| {
@@ -580,14 +579,13 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         let scope = context.materializations();
         scope.set_retention_enabled(false);
         wanted.capture = PhotographRequest::Recipe(edited.clone());
-        let input = wanted.processing(&device.limits()).unwrap();
         app.enter(|e, cx| e.request_working(wanted, cx));
         let definition = app.read(|e| {
             let working = &e.document.visit.working_view;
             assert!(working.support_ready());
-            let value = &working.frame.as_ref().unwrap().processed[0];
+            let value = &working.frame.as_ref().unwrap().source;
             assert!(
-                value.stages.is_some(),
+                value.commands.is_some(),
                 "control: the resident edit must create recorded work"
             );
             assert!(matches!(
@@ -608,7 +606,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             e.document
                 .visit
                 .working_view
-                .render(&input, OutputTarget::Srgb, &egui::Context::default())
+                .render(&egui::Context::default())
                 .unwrap()
         });
         let (rendered, queue, submissions) = app.read(|e| {
@@ -711,6 +709,7 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
     frame.output = [32, 24];
     let initial = Demand {
         rendering: OnceLock::new(),
+        target: OutputTarget::Srgb,
         frame,
         pixels,
         capture: PhotographRequest::Recipe(recipe),
@@ -795,6 +794,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
         );
         let edited = Demand {
             rendering: OnceLock::new(),
+            target: OutputTarget::Srgb,
             frame: spec.frame(),
             pixels: input,
             capture: PhotographRequest::Fixture(processing.clone()),
@@ -820,19 +820,18 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                 services.queue.clone(),
                 e.submissions.clone(),
             );
-            let target = e.document.target();
             let working = &mut e.document.visit.working_view;
             let frame = working.frame.as_ref().unwrap();
             assert!(shares_inputs(&before.source, &frame.source));
             assert!(frame.request.same_calculation(&edited));
-            assert_eq!(before.processed.len(), frame.processed.len());
-            for (old, new) in before.processed.iter().zip(&frame.processed) {
+            assert_eq!(before.images().count(), frame.images().count());
+            for (old, new) in before.images().zip(frame.images()) {
                 assert!(
                     !old.definition.same_definition(&new.definition),
                     "both native consumers must apply the changed output calculation"
                 );
             }
-            working.render(&processing, target, &ui).unwrap();
+            working.render(&ui).unwrap();
             let rendered = working
                 .present(spec.frame(), None, working.compare)
                 .unwrap()

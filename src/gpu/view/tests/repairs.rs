@@ -50,7 +50,7 @@ fn batched_fixture_demands_keep_their_own_captured_neutral_arguments() {
         let mut input = plain.processing_fixture();
         input.replacements = replacements;
         let changed = SourceRequest::for_processing(plain.frame(), &input).unwrap();
-        let sources = ViewSource::acquire_many(
+        let sources = ViewImage::prefixes(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -90,7 +90,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
             SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1, None).unwrap();
         let scope = renderer.evaluation().test_materializations(false);
         let gate = SubmissionGate::default();
-        let base = ViewSource::acquire_originals_fixture(
+        let base = ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -120,7 +120,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
             }
         }));
         let departed = AtomicBool::new(false);
-        let mut leaving = Box::pin(ViewSource::acquire_originals_fixture(
+        let mut leaving = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -138,7 +138,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         entered_rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
-        let mut first = Box::pin(ViewSource::acquire_originals_fixture(
+        let mut first = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -150,7 +150,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
             &scope,
             || false,
         ));
-        let mut second = Box::pin(ViewSource::acquire_originals_fixture(
+        let mut second = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -193,7 +193,7 @@ fn render_repaired(
     queue: &wgpu::Queue,
     scan: &Scan,
     scope: &crate::gpu::evaluation::Materializations,
-    base: Arc<ViewSource>,
+    base: Arc<ViewImage>,
     replacements: &[Replacement],
     (roll, photo): (RollSettings, AdjustmentLayerSettings),
     target: OutputTarget,
@@ -202,7 +202,7 @@ fn render_repaired(
     let mut input = processing_input(device, calibration(), roll, photo, scan);
     input.replacements = replacements.to_vec();
     let spec = SourceRequest::for_processing(base.spec.frame(), &input).unwrap();
-    let source = pollster::block_on(ViewSource::acquire_originals_fixture(
+    let source = pollster::block_on(ViewImage::original_prefixes(
         device,
         queue,
         &SubmissionGate::default(),
@@ -230,10 +230,10 @@ fn render_repaired(
 fn filter_authored_repairs(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     frame: FrameRaster,
     replacements: &[Replacement],
-) -> Arc<ViewSource> {
+) -> Arc<ViewImage> {
     use crate::gpu::evaluation as e;
     let area = source.spec.area;
     assert_eq!(source.spec.frame().output, [area.width, area.height]);
@@ -288,15 +288,18 @@ fn filter_authored_repairs(
             .unwrap(),
     )
     .unwrap();
-    ViewSource::from_acquired(
-        source.kernels.clone(),
-        Arc::new(crate::gpu::view::acquisition::AcquiredViewRaster {
-            spec,
-            renderer: source.renderer.clone(),
-            definition: root.clone(),
+    ViewImage::from_recorded(
+        source.renderer.clone(),
+        source.kernels().clone(),
+        spec,
+        root,
+        bounds,
+        e::RecordedImage {
             pixels: value.try_into().unwrap(),
-        }),
+            commands: None,
+        },
     )
+    .unwrap()
 }
 
 #[test]
@@ -424,7 +427,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_ignores_replaced_values() {
         let actual = read(
             &device,
             &queue,
-            &view.graded.as_ref().unwrap().source.pixels,
+            &view.product.as_ref().unwrap().fixture_input().pixels,
         );
         for (i, (pixel, base)) in actual.iter().zip(&values).enumerate() {
             let point = [area.x + i as u32 % 64, area.y + i as u32 / 64];
@@ -474,7 +477,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         rotated.output = [31, 23];
         for frame in [native, rotated] {
             let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
-            let source = ViewSource::acquire_originals_fixture(
+            let source = ViewImage::original_prefixes(
                 &device,
                 &queue,
                 &SubmissionGate::default(),
@@ -502,7 +505,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 OutputTarget::Srgb,
                 None,
             );
-            let acquired = &first.graded.as_ref().unwrap().source;
+            let acquired = &first.product.as_ref().unwrap().fixture_input();
             let mut captured = acquired.spec.processing_fixture();
             captured.replacements = patches.clone();
             let (definition, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
@@ -577,7 +580,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 OutputTarget::Srgb,
                 Some(&first),
             );
-            let same_acquired = &graded.graded.as_ref().unwrap().source;
+            let same_acquired = &graded.product.as_ref().unwrap().fixture_input();
             assert!(
                 acquired.same_pixels_as(same_acquired),
                 "downstream grading reuses the repaired GPU value"
@@ -587,7 +590,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                     .definition
                     .same_definition(&same_acquired.definition)
             );
-            let values = read(&device, &queue, &graded.graded.as_ref().unwrap().pixels);
+            let values = read(&device, &queue, &graded.product.as_ref().unwrap().pixels);
             let post = wb_matrix(photo.wb).unwrap()
                 * wb_matrix(roll.wb).unwrap()
                 * (roll.exposure + photo.exposure).exp2();
@@ -616,8 +619,8 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 Some(&graded),
             );
             assert!(Arc::ptr_eq(
-                graded.graded.as_ref().unwrap(),
-                p3.graded.as_ref().unwrap()
+                graded.product.as_ref().unwrap(),
+                p3.product.as_ref().unwrap()
             ));
             let cleared = render_repaired(
                 &device,
@@ -632,10 +635,10 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             );
             assert!(
                 cleared
-                    .graded
+                    .product
                     .as_ref()
                     .unwrap()
-                    .source
+                    .fixture_input()
                     .same_pixels_as(&source)
             );
             assert_eq!(read(&device, &queue, &source.pixels), baseline);
@@ -671,7 +674,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         let build = |repairs: Vec<Repair>, cancelled: bool| {
             let mut input = clean.processing_fixture();
             input.repairs = repairs;
-            pollster::block_on(ViewSource::acquire_originals_fixture(
+            pollster::block_on(ViewImage::original_prefixes(
                 &device,
                 &queue,
                 &SubmissionGate::default(),

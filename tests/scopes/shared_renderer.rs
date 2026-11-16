@@ -162,7 +162,15 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     })
                     .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
-                assert!(thumbnail.prepare(&device, &mut encoder, ProcessingParameters::source()));
+                assert!(
+                    thumbnail
+                        .prepare_authored(
+                            &device,
+                            &mut encoder,
+                            &calculation::inspection(ProcessingParameters::source())
+                        )
+                        .unwrap()
+                );
                 tile.encode_authored(&device, &mut encoder, &tile_parameters)
                     .unwrap();
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);

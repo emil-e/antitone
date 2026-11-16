@@ -43,7 +43,7 @@ fn ready_source(
     frame: FrameRaster,
     pipeline: PixelPipeline,
     frequency: f64,
-) -> Arc<ViewSource> {
+) -> Arc<ViewImage> {
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_pipeline(pipeline)
@@ -73,7 +73,7 @@ fn ready_source(
             [value as f32, value as f32, value as f32, 8.]
         })
         .collect();
-    Arc::new(ViewSource::from_neutral_samples(
+    Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer.clone(),
         kernels.clone(),
@@ -88,7 +88,7 @@ fn ready_source(
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     pipeline: PixelPipeline,
 ) -> Vec<[f32; 4]> {
     let input = input(device, source.spec.frame(), pipeline);
@@ -99,7 +99,7 @@ fn render(
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    read(device, queue, &view.graded.as_ref().unwrap().pixels)
+    read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 
 fn modulation(pixels: &[[f32; 4]], size: [u32; 2], frequency: f64) -> [f64; 3] {
@@ -266,13 +266,13 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         .unwrap();
         if budget > 1 {
             let field = view
-                .graded
+                .product
                 .as_ref()
                 .unwrap()
-                .stages
+                .commands
                 .as_ref()
                 .unwrap()
-                .field()
+                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
                 .unwrap();
             assert!(!field.ready());
             assert_eq!(
@@ -280,10 +280,9 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
                 u64::from(frame.output[0] * frame.output[1]) * 16
             );
             let mut abandoned = device.create_command_encoder(&Default::default());
-            view.graded
+            view.product
                 .as_ref()
                 .unwrap()
-                .data
                 .encode(&device, &mut abandoned);
             drop(abandoned);
             assert!(
@@ -297,7 +296,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             &Default::default(),
             &egui::Context::default(),
         );
-        let initial = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+        let initial = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
         let p = pipeline(0.09, 0.8, 0.8);
         let edited = RenderedView::new(
             &device,
@@ -308,10 +307,10 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         )
         .unwrap();
         let scratch = edited
-            .graded
+            .product
             .as_ref()
             .unwrap()
-            .stages
+            .commands
             .as_ref()
             .unwrap()
             .scratch_bytes();
@@ -324,21 +323,21 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             expected_scratch = Some(scratch);
         }
         let a = view
-            .graded
+            .product
             .as_ref()
             .unwrap()
-            .stages
+            .commands
             .as_ref()
             .unwrap()
-            .field();
+            .cached_image(crate::gpu::evaluation::Meaning::Arguments);
         let b = edited
-            .graded
+            .product
             .as_ref()
             .unwrap()
-            .stages
+            .commands
             .as_ref()
             .unwrap()
-            .field();
+            .cached_image(crate::gpu::evaluation::Meaning::Arguments);
         assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
         assert!(
             b.unwrap().ready(),
@@ -350,7 +349,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             &Default::default(),
             &egui::Context::default(),
         );
-        let pixels = read(&device, &queue, &edited.graded.as_ref().unwrap().pixels);
+        let pixels = read(&device, &queue, &edited.product.as_ref().unwrap().pixels);
         assert!(
             pixels
                 .iter()
@@ -439,7 +438,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             .with_pixel_pipeline(pipeline)
         };
         let acquire = |frame, pipeline: PixelPipeline| {
-            ViewSource::acquire(
+            ViewImage::prefix(
                 &device,
                 &queue,
                 &Default::default(),
@@ -471,7 +470,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 &Default::default(),
                 &egui::Context::default(),
             );
-            read(&device, &queue, &view.graded.as_ref().unwrap().pixels)
+            read(&device, &queue, &view.product.as_ref().unwrap().pixels)
         };
         let source = acquire(frame, pipeline.clone());
         assert!(source.spec.plan.output().output[0] > frame.output[0]);

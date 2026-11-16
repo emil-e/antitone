@@ -80,7 +80,8 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
             assert_eq!(
                 renderer.evaluation.programs.len(),
                 compiled,
-                "camera paint must use initialization's compiled source component"
+                "camera paint must use initialization's compiled endpoint (positive: {})",
+                input.is_positive()
             );
             queue.submit([encoder.finish()]);
         }
@@ -100,7 +101,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let frame = frame(&scan);
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &Default::default(),
@@ -113,7 +114,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         )
         .unwrap()
         .unwrap();
-        let inspection = ViewSource::acquire(
+        let inspection = ViewImage::prefix(
             &device,
             &queue,
             &Default::default(),
@@ -130,6 +131,39 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         let compiled = renderer.evaluation.programs.len();
         let context = egui::Context::default();
         let gate = SubmissionGate::default();
+        let complete = |source: Arc<ViewImage>, input: &AuthoredPhotograph, target| {
+            let capture =
+                crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone());
+            let (prefix, plan) = capture
+                .filtered(&device.limits(), &source.spec, source.definition.clone())
+                .unwrap();
+            let endpoint = capture
+                .output(
+                    &renderer,
+                    prefix,
+                    crate::rendering::OutputReference::DisplayReferred(target),
+                )
+                .unwrap();
+            let evaluation =
+                ViewImage::evaluation(renderer.evaluation(), endpoint.clone()).unwrap();
+            let work = renderer
+                .evaluation()
+                .prepare_supplied(evaluation, vec![source.supplied().unwrap()])
+                .unwrap();
+            let mut spec = source.spec.clone();
+            spec.plan = Arc::new(plan);
+            let region = endpoint.domain().finite().unwrap();
+            let image = ViewImage::from_recorded(
+                renderer.clone(),
+                source.kernels().clone(),
+                spec,
+                endpoint,
+                region,
+                work.record(renderer.evaluation()).unwrap(),
+            )
+            .unwrap();
+            RenderedView::from_image(&device, image, capture, target).unwrap()
+        };
         for photo in [
             AdjustmentLayerSettings::default(),
             AdjustmentLayerSettings {
@@ -138,8 +172,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             },
         ] {
             let input = processing_input(&device, calibration(), Default::default(), photo, &scan);
-            let view = RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None)
-                .unwrap();
+            let view = complete(source.clone(), &input, OutputTarget::Srgb);
             view.ensure_submitted(&device, &queue, &gate, &context);
             assert_eq!(
                 renderer.evaluation.programs.len(),
@@ -148,9 +181,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             );
         }
         let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(1.2).unwrap());
-        let view =
-            RenderedView::inspection(&device, inspection, &input, OutputTarget::DisplayP3, None)
-                .unwrap();
+        let view = complete(inspection, &input, OutputTarget::DisplayP3);
         view.ensure_submitted(&device, &queue, &gate, &context);
         assert_eq!(
             renderer.evaluation.programs.len(),

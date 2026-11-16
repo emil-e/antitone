@@ -582,10 +582,12 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             proxy.image(OutputTarget::Srgb).unwrap(),
             proxy.image(OutputTarget::DisplayP3).unwrap(),
         ];
+        let capture = PhotographRequest::Recipe(recipe.clone());
         let roots = [
-            images[0].recipe_calculation(&recipe, None).unwrap(),
-            images[1].recipe_calculation(&recipe, None).unwrap(),
+            images[0].capture_calculation(&capture, None).unwrap(),
+            images[1].capture_calculation(&capture, None).unwrap(),
         ];
+        drop(capture);
         let tracked: Vec<_> = roots.iter().map(Value::downgrade).collect();
         let live_calculations = || {
             tracked
@@ -746,9 +748,10 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         );
         let mut encoder = device.create_command_encoder(&Default::default());
         for (i, image) in images.iter().enumerate() {
-            let inspection = image
+            let prefix = image
                 .inspection(ProcessingParameters::source(), None)
                 .unwrap();
+            let inspection = image.output(prefix, &Default::default()).unwrap();
             image
                 .prepare_calculation(&device, &mut encoder, &inspection, &Default::default())
                 .unwrap();
@@ -834,7 +837,7 @@ fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_
             .proxy
             .image(editor.document.target())
             .unwrap();
-        let calculation = image.recipe_calculation(&recipe, None).unwrap();
+        let calculation = image.processed_prefix(&recipe, None).unwrap();
         let arguments = calculation.downgrade();
         let captured = editor.document.capture();
         let id = editor.document.visit.current_source;

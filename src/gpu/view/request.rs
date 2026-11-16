@@ -174,6 +174,7 @@ impl SourceRequest {
         self.plan.for_pipeline(pipeline)?.using_input(&self.plan)
     }
 
+    #[cfg(test)]
     pub fn input_region(&self) -> Result<crate::gpu::evaluation::CellRegion, Error> {
         let offset = self.plan.output_offset().ok_or(Error::InvalidParameter(
             "physical view requires a frame grid",
@@ -188,6 +189,7 @@ impl SourceRequest {
         crate::gpu::evaluation::CellRegion::new([x, y], self.plan.input().size()).validate()
     }
 
+    #[cfg(test)]
     pub fn input_frame(&self) -> Result<FrameRaster, Error> {
         self.plan.processing_frame()
     }

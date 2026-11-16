@@ -87,7 +87,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         halo.strength,
         8,
     );
-    let source = Arc::new(ViewSource::from_neutral_samples(
+    let source = Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer,
         kernels,
@@ -104,8 +104,11 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    let actual =
-        crate::gpu::evaluation::read_buffer(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+    let actual = crate::gpu::evaluation::read_buffer(
+        &device,
+        &queue,
+        &view.product.as_ref().unwrap().pixels,
+    );
     assert_eq!(actual.len(), (frame.output[0] * frame.output[1]) as usize);
     for y in 0..frame.output[1] {
         for x in 0..frame.output[0] {

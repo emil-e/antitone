@@ -168,10 +168,8 @@ pub fn display(
 
 #[cfg(feature = "render")]
 struct Display {
-    math: Arc<str>,
-    coverage: bool,
     target: OutputTarget,
-    shared: Vec<(u32, Shared)>,
+    operation: value::Operation,
 }
 
 #[cfg(feature = "render")]
@@ -190,17 +188,46 @@ impl Display {
             ));
         }
         let resources = renderer.target(target);
-        Ok(Self {
-            math: resources.math.clone(),
-            coverage: domain.grid.coverage != 0,
+        let code = format!(
+            r#"
+{}
+fn pixel(cell:vec2i,position:vec2f,value:vec4f,coverage:vec4u)->vec4f {{
+    if value.w<0.0 {{return value;}}
+    if coverage.x!=0u && (u32(value.w)&8u)==0u {{return vec4f(0.0);}}
+    if any((bitcast<vec3u>(value.rgb)&vec3u(0x7f800000u))==vec3u(0x7f800000u)) {{return vec4f(0.0,0.0,0.0,-1.0);}}
+    return vec4f(antitone_render(vec4f(value.rgb,1.0)).rgb,value.w);
+}}
+"#,
+            resources.math
+        );
+        let bindings = vec![
+            (
+                1,
+                FunctionBinding::Shared(Shared::Texture(resources.tables[0].clone())),
+            ),
+            (
+                2,
+                FunctionBinding::Shared(Shared::Texture(resources.tables[1].clone())),
+            ),
+            (
+                3,
+                FunctionBinding::Shared(Shared::Sampler(resources.sampler.clone())),
+            ),
+            (
+                5,
+                FunctionBinding::Shared(Shared::Buffer(resources.hues.clone())),
+            ),
+        ];
+        let operation = value::Operation::new(
+            "pinned ACES output v1",
             target,
-            shared: vec![
-                (1, Shared::Texture(resources.tables[0].clone())),
-                (2, Shared::Texture(resources.tables[1].clone())),
-                (3, Shared::Sampler(resources.sampler.clone())),
-                (5, Shared::Buffer(resources.hues.clone())),
-            ],
-        })
+            code,
+            "pixel",
+            value::Access::Pointwise,
+        )
+        .with_bindings(bindings)
+        .with_uniform("vec4u", &[u32::from(domain.grid.coverage != 0), 0, 0, 0]);
+        Ok(Self { target, operation })
     }
 }
 
@@ -226,36 +253,11 @@ impl Operation for Display {
         _budget: crate::gpu::evaluation::Budget,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
-        let code = format!(
-            r#"
-{}
-fn pixel(cell:vec2i,position:vec2f,value:vec4f,coverage:vec4u)->vec4f {{
-    if value.w<0.0 {{return value;}}
-    if coverage.x!=0u && (u32(value.w)&8u)==0u {{return vec4f(0.0);}}
-    if any((bitcast<vec3u>(value.rgb)&vec3u(0x7f800000u))==vec3u(0x7f800000u)) {{return vec4f(0.0,0.0,0.0,-1.0);}}
-    return vec4f(antitone_render(vec4f(value.rgb,1.0)).rgb,value.w);
-}}
-"#,
-            self.math
-        );
-        let bindings = self
-            .shared
-            .iter()
-            .map(|(slot, argument)| (*slot, FunctionBinding::Shared(argument.clone())))
-            .collect();
         value::Calculation::new(
             domain,
             output,
             vec![inputs[0].request(output)?],
-            value::Operation::new(
-                "pinned ACES output v1",
-                self.target,
-                code,
-                "pixel",
-                value::Access::Pointwise,
-            )
-            .with_bindings(bindings)
-            .with_uniform("vec4u", &[u32::from(self.coverage), 0, 0, 0]),
+            self.operation.clone(),
         )
         .map(Some)
     }

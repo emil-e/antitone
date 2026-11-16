@@ -92,15 +92,22 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
                 Some(gpu)
             };
             let recipe = project.image_recipe(id).unwrap();
-            let photograph = image.recipe_calculation(&recipe, field.clone()).unwrap();
+            let photograph = image.processed_prefix(&recipe, field.clone()).unwrap();
             let inspection = image
                 .inspection(ProcessingParameters::source(), field)
                 .unwrap();
             let codes = camera_cells(photograph.clone());
-            assert!(codes.same_capture(&camera_cells(inspection.clone())));
+            let inspected = camera_cells(inspection.clone());
+            assert!(codes.same_definition(&inspected));
+            assert!(
+                crate::gpu::photograph::PhotographGraph::shares_resident_camera(&codes, &inspected)
+            );
             if let Some(original) = &original {
                 assert!(
-                    original.same_capture(&codes),
+                    original.same_definition(&codes)
+                        && crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+                            original, &codes
+                        ),
                     "correction must not replace uploaded camera samples or their coordinate declaration"
                 );
             } else {
@@ -134,6 +141,9 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
         );
         let mut encoder = device.create_command_encoder(&Default::default());
         for photograph in &photographs {
+            let photograph = &image
+                .output(photograph.clone(), &Default::default())
+                .unwrap();
             assert!(
                 image
                     .prepare_calculation(&device, &mut encoder, photograph, &Default::default())
@@ -146,8 +156,11 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
                 "the unchanged calculation still reuses its prepared result"
             );
         }
+        let inspection = image
+            .output(inspections[0].clone(), &Default::default())
+            .unwrap();
         image
-            .prepare_calculation(&device, &mut encoder, &inspections[0], &Default::default())
+            .prepare_calculation(&device, &mut encoder, &inspection, &Default::default())
             .unwrap();
         drop((photographs, inspections));
         assert!(

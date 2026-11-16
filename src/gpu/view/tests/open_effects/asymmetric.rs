@@ -3,7 +3,7 @@ use crate::{
     frame_raster::FrameRaster,
     gpu::{
         evaluation::*,
-        view::{RenderedView, ViewKernels, ViewSource, request::SourceRequest},
+        view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest},
     },
     pixel_pipeline::EffectDefinition,
 };
@@ -130,7 +130,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
                 })
             })
             .collect::<Vec<_>>();
-        let source = Arc::new(ViewSource::from_neutral_samples(
+        let source = Arc::new(ViewImage::from_neutral_samples(
             spec,
             renderer.clone(),
             kernels.clone(),
@@ -150,7 +150,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
         Ok(read_buffer(
             &device,
             &queue,
-            &view.graded.as_ref().unwrap().pixels,
+            &view.product.as_ref().unwrap().pixels,
         ))
     };
     let actual = make(true).unwrap();

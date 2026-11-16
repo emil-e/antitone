@@ -134,17 +134,17 @@ impl<'a> Samples<'a> {
         crate::gpu::photograph::camera_response::normalized(self.camera_light()?, negative)
     }
 
-    pub(in crate::editor) fn photograph(
+    pub(in crate::editor) fn pipeline<'r>(
         &self,
-        recipe: &crate::image_recipe::ImageRecipe,
-    ) -> Result<PhotographGraph, Error> {
+        recipe: &'r crate::image_recipe::ImageRecipe,
+    ) -> Result<crate::gpu::photograph::RecipeGraph<'r>, Error> {
         recipe.neutral.require_scan(self.scan)?;
-        crate::gpu::photograph::RecipeGraph::originals(
+        Ok(crate::gpu::photograph::RecipeGraph::originals(
             self.source.clone(),
             self.field.clone(),
             recipe,
         )?
-        .measurement(&self.services.device.limits())
+        .measurement())
     }
 
     pub(in crate::editor) fn mean(

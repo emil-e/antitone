@@ -4,7 +4,7 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 
 fn candidate(
     device: &wgpu::Device,
-    source: Arc<ViewSource>,
+    source: Arc<ViewImage>,
     film: GrainSettings,
     photo: AdjustmentLayerSettings,
     previous: Option<&Arc<RenderedView>>,
@@ -38,13 +38,13 @@ fn candidate(
 }
 
 fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
-    view.graded
+    view.product
         .as_ref()
         .unwrap()
-        .stages
+        .commands
         .as_ref()
         .unwrap()
-        .field()
+        .cached_image(crate::gpu::evaluation::Meaning::Arguments)
         .unwrap()
 }
 
@@ -67,7 +67,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
             },
             17,
         );
-        let source = base.graded.as_ref().unwrap().source.clone();
+        let source = base.product.as_ref().unwrap().fixture_input();
         let make = |strength, previous: &Arc<RenderedView>| {
             let input = AuthoredPhotograph::new(
                 &device.limits(),
@@ -112,7 +112,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let pixels = read(&device, &queue, &first.graded.as_ref().unwrap().pixels);
+        let pixels = read(&device, &queue, &first.product.as_ref().unwrap().pixels);
         let noise = read(&device, &queue, &field(&first).pixels);
         assert!(field(&first).ready());
         let changed = make(0.8, &first);
@@ -125,7 +125,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
             &egui::Context::default(),
         );
         assert_eq!(noise, read(&device, &queue, &field(&changed).pixels));
-        let rendered = read(&device, &queue, &changed.graded.as_ref().unwrap().pixels);
+        let rendered = read(&device, &queue, &changed.product.as_ref().unwrap().pixels);
         assert!(
             pixels
                 .iter()
@@ -155,8 +155,8 @@ fn grain_gpu_encoded_field_survives_owner_retirement_before_submission() {
         });
         let mut encoder = device.create_command_encoder(&Default::default());
         {
-            let graded = view.graded.as_ref().unwrap();
-            graded.data.encode(&device, &mut encoder);
+            let graded = view.product.as_ref().unwrap();
+            graded.encode(&device, &mut encoder);
             encoder.copy_buffer_to_buffer(&graded.pixels, 0, &output, 0, output.size());
         }
         drop(view);
@@ -202,7 +202,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             },
             17,
         );
-        let source = base.graded.as_ref().unwrap().source.clone();
+        let source = base.product.as_ref().unwrap().fixture_input();
         let settings = GrainSettings {
             enabled: true,
             size: 2. / 6000. * 100.,
@@ -236,13 +236,13 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
         assert!(
             cold_zero
-                .graded
+                .product
                 .as_ref()
                 .unwrap()
-                .stages
+                .commands
                 .as_ref()
                 .unwrap()
-                .field()
+                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
                 .is_none(),
             "omitted grain does not allocate a field; warm reuse may retain an existing value"
         );
@@ -254,13 +254,13 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &egui::Context::default(),
         );
         assert!(
-            zero.graded
+            zero.product
                 .as_ref()
                 .unwrap()
-                .stages
+                .commands
                 .as_ref()
                 .unwrap()
-                .field()
+                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
                 .is_none()
         );
         assert!(
@@ -274,10 +274,9 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         // Encoding alone is not initialization, including when a different photographic view
         // shares the field. A deferred/abandoned UI encoder must not poison later publication.
         let mut abandoned = device.create_command_encoder(&Default::default());
-        base.graded
+        base.product
             .as_ref()
             .unwrap()
-            .data
             .encode(&device, &mut abandoned);
         drop(abandoned);
         assert!(!field(&edited).ready());
@@ -288,7 +287,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &egui::Context::default(),
         );
         assert!(field(&base).ready());
-        let cached = read(&device, &queue, &edited.graded.as_ref().unwrap().pixels);
+        let cached = read(&device, &queue, &edited.product.as_ref().unwrap().pixels);
         let generated = read(&device, &queue, &field(&edited).pixels);
         let variance = settings
             .parameters([6000; 2])
@@ -338,7 +337,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let warm_pixels = read(&device, &queue, &warm.graded.as_ref().unwrap().pixels);
+        let warm_pixels = read(&device, &queue, &warm.product.as_ref().unwrap().pixels);
         let cold_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -346,7 +345,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             .evaluation()
             .materializations()
             .set_test_pressure(crate::sys::MemoryPressure::Normal);
-        let cold_source = Arc::new(ViewSource::from_neutral_samples(
+        let cold_source = Arc::new(ViewImage::from_neutral_samples(
             source.spec.clone(),
             cold_renderer,
             kernels.clone(),
@@ -366,7 +365,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let cold_pixels = read(&device, &queue, &cold.graded.as_ref().unwrap().pixels);
+        let cold_pixels = read(&device, &queue, &cold.product.as_ref().unwrap().pixels);
         assert_eq!(warm_pixels, cold_pixels);
         assert_ne!(
             warm_pixels, cached,
@@ -394,7 +393,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let softer_pixels = read(&device, &queue, &softer.graded.as_ref().unwrap().pixels);
+        let softer_pixels = read(&device, &queue, &softer.product.as_ref().unwrap().pixels);
         assert!(
             warm_pixels
                 .iter()
@@ -415,7 +414,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             Some(&warm),
         );
         assert_ne!(field(&warm).pixels, field(&resized).pixels);
-        let other_source = ViewSource::from_acquired(kernels.clone(), source.acquired());
+        let other_source = independent_image(&source);
         assert!(!Arc::ptr_eq(&source, &other_source));
         let other = candidate(
             &device,
@@ -442,7 +441,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         shifted_frame.min.0 = shifted_frame.min.0.map(|x| x + 8.);
         shifted_frame.max.0 = shifted_frame.max.0.map(|x| x + 8.);
         shifted_spec = shifted_spec.with_frame(shifted_frame).unwrap();
-        let shifted_source = Arc::new(ViewSource::from_neutral_samples(
+        let shifted_source = Arc::new(ViewImage::from_neutral_samples(
             shifted_spec,
             renderer,
             kernels,
@@ -488,7 +487,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
             &Default::default(),
             &egui::Context::default(),
         );
-        let expected = read(&device, &queue, &baseline.graded.as_ref().unwrap().pixels);
+        let expected = read(&device, &queue, &baseline.product.as_ref().unwrap().pixels);
         assert!(field(&baseline).ready());
         let no_grain = configured_probe(
             &device,
@@ -506,7 +505,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
             &Default::default(),
             &egui::Context::default(),
         );
-        let control = read(&device, &queue, &no_grain.graded.as_ref().unwrap().pixels);
+        let control = read(&device, &queue, &no_grain.product.as_ref().unwrap().pixels);
         assert!(
             expected
                 .iter()
@@ -543,13 +542,13 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
                     17,
                 );
                 assert!(
-                    view.graded
+                    view.product
                         .as_ref()
                         .unwrap()
-                        .stages
+                        .commands
                         .as_ref()
                         .unwrap()
-                        .field()
+                        .cached_image(crate::gpu::evaluation::Meaning::Arguments)
                         .is_some(),
                     "a live recording owns its required field independently of optional retention"
                 );
@@ -560,7 +559,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
                     &egui::Context::default(),
                 );
                 assert_eq!(
-                    read(&device, &queue, &view.graded.as_ref().unwrap().pixels),
+                    read(&device, &queue, &view.product.as_ref().unwrap().pixels),
                     expected
                 );
                 assert_eq!(uncached_renderer.evaluation().retained_bytes(), 0);

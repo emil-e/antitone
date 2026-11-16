@@ -16,7 +16,7 @@ fn render_configured(
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    read(device, queue, &view.graded.as_ref().unwrap().pixels)
+    read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 
 fn centred(values: &[f64]) -> (Vec<f64>, f64) {

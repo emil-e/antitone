@@ -1,25 +1,15 @@
-//! Raster adapter for shared image-node composition and declared GPU work.
+//! Raster adapter for declared GPU work over an explicit image value.
 
 use super::{evaluation, raster::Raster};
 use crate::Error;
 #[cfg(test)]
 use crate::pixel_pipeline::PixelPipeline;
-#[cfg(all(test, feature = "editor"))]
-use std::sync::Arc;
 
 pub(crate) struct Prepared {
-    pub raster: Raster,
     execution: Option<evaluation::Recorded>,
 }
 
 impl Prepared {
-    pub(crate) fn recorded(raster: Raster, execution: evaluation::Recorded) -> Self {
-        Self {
-            raster,
-            execution: Some(execution),
-        }
-    }
-
     #[cfg(test)]
     pub fn new(
         device: &wgpu::Device,
@@ -42,36 +32,27 @@ impl Prepared {
         context: evaluation::Context,
     ) -> Result<Self, Error> {
         let domain = evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                raster.size(),
-            )),
+            bounds: Some(evaluation::CellRegion::new([0, 0], raster.size())),
             grid: evaluation::Grid::from_raster(raster),
             meaning: evaluation::Meaning::Graded,
         };
         let root = pipeline.compose(evaluation::raster_input(domain))?;
         if pipeline.is_empty() {
-            return Ok(Self {
-                raster,
-                execution: None,
-            });
+            return Ok(Self { execution: None });
         }
         Self::from_composition(device, raster, root, context)
     }
 
     pub fn from_composition(
         device: &wgpu::Device,
-        raster: Raster,
+        mut raster: Raster,
         root: evaluation::Value,
         context: evaluation::Context,
     ) -> Result<Self, Error> {
-        let mut raster = raster;
+        context.require_device(device)?;
         raster.dimensions[2] = root.domain().grid.coverage;
         let expected = evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                raster.size(),
-            )),
+            bounds: Some(evaluation::CellRegion::new([0, 0], raster.size())),
             grid: evaluation::Grid::from_raster(raster),
             meaning: root.domain().meaning,
         };
@@ -80,43 +61,20 @@ impl Prepared {
                 "recorded composition differs from raster",
             ));
         }
-        Self::record_composition(
-            device,
-            raster,
+        let region = expected.finite()?;
+        let request = context.request(
             root,
-            expected.finite()?,
-            context,
-            device.limits().max_buffer_size.saturating_mul(4),
-            Vec::new(),
-        )
-    }
-
-    /// Record an explicitly composed grid transition into its destination-sized sink.
-    pub(crate) fn record_composition(
-        device: &wgpu::Device,
-        raster: Raster,
-        root: evaluation::Value,
-        region: evaluation::CellRegion,
-        context: evaluation::Context,
-        scratch_bytes: u64,
-        supplied: Vec<evaluation::SuppliedImage>,
-    ) -> Result<Self, Error> {
-        context.require_device(device)?;
-        let output = root.domain();
-        let evaluation = context.request(
-            root.clone(),
             evaluation::Region {
                 bounds: region,
-                grid: output.grid,
+                grid: expected.grid,
             },
             evaluation::Budget {
                 tile: [region.width, region.height],
-                scratch_bytes,
+                scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
             },
         )?;
-        let execution = context.record(evaluation, context.materializations(), supplied)?;
+        let execution = context.record(request, context.materializations(), Vec::new())?;
         Ok(Self {
-            raster,
             execution: Some(execution),
         })
     }
@@ -132,13 +90,6 @@ impl Prepared {
             execution.encode(device, encoder, pixels)?;
         }
         Ok(())
-    }
-
-    #[cfg(all(test, feature = "editor"))]
-    pub fn field(&self) -> Option<&Arc<evaluation::RetainedBuffer>> {
-        self.execution
-            .as_ref()?
-            .cached_image(evaluation::Meaning::Arguments)
     }
 
     #[cfg(test)]
@@ -165,22 +116,5 @@ impl Prepared {
             .as_ref()
             .ok_or(Error::InvalidParameter("missing recorded composition"))?
             .encode_result(device, encoder, destination)
-    }
-
-    pub fn submitted(&self) {
-        if let Some(execution) = &self.execution {
-            execution.submitted();
-        }
-    }
-
-    #[cfg(all(test, feature = "editor"))]
-    pub(crate) fn scratch_bytes(&self) -> u64 {
-        self.execution
-            .as_ref()
-            .map_or(0, |work| work.scratch_bytes())
-    }
-
-    pub fn byte_len(&self) -> u64 {
-        self.execution.as_ref().map_or(0, |p| p.byte_len())
     }
 }

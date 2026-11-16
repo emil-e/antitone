@@ -24,9 +24,9 @@ pub(super) fn roll(
     let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
-    let photograph = samples.photograph(&input)?;
+    let roll = samples.pipeline(&input)?.roll()?;
 
-    crate::color::neutral_wb(samples.mean(photograph.roll, cancelled)?)
+    crate::color::neutral_wb(samples.mean(roll, cancelled)?)
 }
 
 pub(super) fn layer(
@@ -75,9 +75,11 @@ pub(super) fn layer(
             layers.push(selected);
             let mut candidate = recipe.clone();
             candidate.grade = AdjustmentLayerSnapshot::new(layers)?;
-            let photograph = samples.photograph(&candidate)?;
+            let graded = samples
+                .pipeline(&candidate)?
+                .graded(&services.device.limits())?;
 
-            let response = cones * samples.mean(photograph.graded, cancelled)?;
+            let response = cones * samples.mean(graded, cancelled)?;
             if !response.is_finite() || response.min_element() <= 0. {
                 return Err(Error::UnusableSample(
                     "WB patch has invalid Bradford cone responses",

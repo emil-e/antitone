@@ -452,7 +452,10 @@ impl GpuScopes {
         frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
-        let root = image.inspection(parameters, None).ok()?;
+        let root = image
+            .inspection(parameters, None)
+            .and_then(|prefix| image.output(prefix, &Default::default()))
+            .ok()?;
         self.status_calculation(image, (&root, &Default::default()), frame, settings)
     }
 
@@ -648,6 +651,7 @@ impl ScopePaint {
     ) -> Self {
         let calculation = image
             .inspection(parameters, None)
+            .and_then(|prefix| image.output(prefix, &Default::default()))
             .expect("admitted source-view transform");
         Self::with_calculation(
             gpu,

@@ -141,7 +141,7 @@ Rows drag to reorder with an insertion line, double-click renames inline, and De
 
 ## A stable working view while grading
 
-`WorkingView` captures image intent and framing, retains detail/underlay products and presents coherent results. The [rendering request](../src/gpu/view/rendering.rs) selects the described Value endpoint and owns preparation, dependency regions and reuse; the viewer does not predict rendering eligibility. Quality-aware photographic graphs process correction and inversion on originals before footprint filtering into signed linear AP1. Fixed-view grading reuses compatible live inputs through common evaluation. [Processing](processing.md#physical-view-processing-is-an-approximation) and [geometry](geometry.md#process-before-averaging) distinguish arithmetic agreement from sampling quality.
+`WorkingView` captures intent, framing and target, retains detail/underlay products and presents coherent results. [Canonical authoring](../src/gpu/photograph/preview.rs) supplies complete Value endpoints, including look/output; [rendering preparation](../src/gpu/view/rendering.rs) retains their evaluation work. Each [image product](../src/gpu/view/image.rs) owns its definition, region, pixels and pending commands. Evaluation chooses dependencies, fusion and reuse. Physical-view quality processes correction and inversion on originals before early AP1 reconstruction and grading. [Processing](processing.md#physical-view-processing-is-an-approximation) and [geometry](geometry.md#process-before-averaging) distinguish arithmetic agreement from sampling quality.
 
 Same-layout calculations can finish coherently while subsequent demand coalesces to the latest capture. Superseded sampling layouts retire at safe checkpoints instead of delaying the newest viewport. The photo visit owns camera preparation and admitted camera pixels independently of its view; layout, grading and inspection changes preserve them, while source or visit replacement retires them. Pressure releases photo-owned camera storage after active execution leases retire; bounded source work preserves viewing. Detail and underlay advance together. While a new viewport needs source work, rendering can supply current-grade products at the previous frame without blocking on that acquisition. The viewer owns request retirement and publication; submitted work retains resources through completion. Navigation replaces coverage asynchronously from originals rather than recursively resampling a preview. A coarse whole-composition underlay fills exposed regions while detail is missing. [Architecture](architecture.md) owns the workflow and admission model.
 
@@ -161,8 +161,8 @@ The editor uses several image representations for different jobs:
 | --- | --- |
 | Full developed `Scan` | Full-resolution measurement, refinement and export |
 | Camera-RGB proxy | Initial/pending feedback and uncalibrated/source-inspection thumbnails |
-| Proxy-derived neutral AP1 thumbnail | Positive navigation cards with current grading, look and framing |
-| Filtered view-sized linear AP1 | Stable positive/source input at physical display density |
+| Camera-proxy photograph | Positive navigation cards with current grading, look and framing |
+| Physical-view calculation | Preview-quality photograph on the requested grid |
 | Accepted target-linear view | Shared viewer/scope input; never graded or composed again |
 | Original-sample regional result | Explicit same-position comparison or precision-tool refinement |
 | Cached pending preview | Temporary display while the selected RAW prepares |

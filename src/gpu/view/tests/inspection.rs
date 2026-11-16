@@ -47,7 +47,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
             let spec =
                 SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, field.clone())
                     .unwrap();
-            let source = ViewSource::acquire(
+            let source = ViewImage::prefix(
                 &device,
                 &queue,
                 &gate,
@@ -138,7 +138,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
             let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, field).unwrap();
-            let source = ViewSource::acquire(
+            let source = ViewImage::prefix(
                 &device,
                 &queue,
                 &gate,
@@ -195,7 +195,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     .unwrap();
                     assert!(
                         crate::gpu::grading::Grading::captured_bytes(
-                            &view.graded.as_ref().unwrap().definition
+                            &view.product.as_ref().unwrap().definition
                         ) == 0,
                         "no calibration, inversion, WB, contrast, saturation or layers"
                     );
@@ -204,12 +204,12 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         && old.spec == source.spec
                     {
                         assert!(Arc::ptr_eq(
-                            view.graded.as_ref().unwrap(),
-                            old.graded.as_ref().unwrap()
+                            view.product.as_ref().unwrap(),
+                            old.product.as_ref().unwrap()
                         ));
                     }
                     view.ensure_submitted(&device, &queue, &gate, &context);
-                    let graded = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                    let graded = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                     for (pixel, neutral) in graded.iter().zip(&neutral) {
                         assert_eq!(pixel[3], neutral[3]);
                         for c in 0..3 {
@@ -287,7 +287,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let scan = scan();
         let spec =
             SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None).unwrap();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &gate,
@@ -313,7 +313,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
             let view =
                 RenderedView::inspection(&device, source.clone(), &input, target, None).unwrap();
             view.ensure_submitted(&device, &queue, &gate, &ctx);
-            let actual = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+            let actual = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             for (actual, neutral) in actual.iter().zip(&neutral) {
                 let working = DVec3::new(neutral[0] as f64, neutral[1] as f64, neutral[2] as f64);
                 let camera = scan.camera_to_ap1.inverse() * working;
@@ -353,7 +353,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
             ..coarse.frame()
         };
         coarse = coarse.with_frame(resized_frame).unwrap();
-        let mut sources = ViewSource::acquire_many(
+        let mut sources = ViewImage::prefixes(
             &device,
             &queue,
             &gate,

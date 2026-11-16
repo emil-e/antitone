@@ -144,7 +144,7 @@ fn exercise(
                 .as_ref()
                 .map(|f| GpuFlatField::new(device, f.clone()).map(Arc::new))
                 .transpose()?;
-            let sources = ViewSource::acquire_many(
+            let sources = ViewImage::prefixes(
                 device,
                 queue,
                 &gate,
@@ -205,8 +205,8 @@ fn exercise(
                 )?;
                 if case == "target" {
                     assert!(Arc::ptr_eq(
-                        next.graded.as_ref().unwrap(),
-                        previous.as_ref().unwrap().0.graded.as_ref().unwrap()
+                        next.product.as_ref().unwrap(),
+                        previous.as_ref().unwrap().0.product.as_ref().unwrap()
                     ));
                 }
                 Ok::<_, Error>((next, background, visible))

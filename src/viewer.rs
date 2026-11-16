@@ -271,20 +271,6 @@ impl GpuImage {
             })
     }
 
-    /// Shared by viewer and scopes so either callback can prepare the whole proxy first.
-    pub fn prepare(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        parameters: ProcessingParameters,
-    ) -> bool {
-        let root = self
-            .inspection(parameters, None)
-            .expect("processable source inspection");
-        self.prepare_calculation(device, encoder, &root, &Default::default())
-            .expect("processable image")
-    }
-
     #[cfg(test)]
     pub(crate) fn require_processing(&self, input: &AuthoredPhotograph) -> Result<(), Error> {
         let processing = self
@@ -318,6 +304,7 @@ impl GpuImage {
     ) {
         let root = self
             .inspection(parameters, None)
+            .and_then(|prefix| self.output(prefix, &Default::default()))
             .expect("processable source inspection");
         self.encode_calculation(device, encoder, &root, &Default::default())
             .expect("processable image");
@@ -596,7 +583,11 @@ impl ImagePaint {
         uv: impl Into<TextureMapping>,
     ) -> Self {
         let calculation = parameters
-            .map(|parameters| image.inspection(parameters, None))
+            .map(|parameters| {
+                image
+                    .inspection(parameters, None)
+                    .and_then(|prefix| image.output(prefix, &Default::default()))
+            })
             .transpose()
             .expect("admitted source-view transform");
         Self::with_calculation(image, calculation, Default::default(), uv)

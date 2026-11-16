@@ -49,7 +49,7 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
         let cache = renderer.evaluation().test_materializations(false);
         let gate = SubmissionGate::default();
         let acquire = |spec| {
-            ViewSource::acquire_originals_fixture(
+            ViewImage::original_prefixes(
                 &device,
                 &queue,
                 &gate,
@@ -100,7 +100,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let gate = SubmissionGate::default();
         let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
         let cache = renderer.evaluation().test_materializations(true);
-        let source = ViewSource::acquire_originals_fixture(
+        let source = ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -117,7 +117,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .unwrap()
         .remove(0);
         let wanted = source.spec.clone();
-        let found = ViewSource::cached_neutral(
+        let found = ViewImage::cached_neutral(
             &cache,
             renderer.clone(),
             kernels.clone(),
@@ -128,7 +128,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .unwrap();
         assert!(found.spec == wanted);
         assert!(found.same_pixels_as(&source));
-        let repeated = ViewSource::acquire_originals_fixture(
+        let repeated = ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -168,7 +168,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .with_pipeline(wanted.plan.pipeline().clone())
         .unwrap();
         assert!(
-            ViewSource::cached_neutral(
+            ViewImage::cached_neutral(
                 &cache,
                 renderer.clone(),
                 kernels.clone(),
@@ -190,7 +190,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .with_pipeline(wanted.plan.pipeline().clone())
         .unwrap();
         assert!(
-            ViewSource::cached_neutral(
+            ViewImage::cached_neutral(
                 &cache,
                 renderer.clone(),
                 kernels.clone(),
@@ -208,7 +208,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
             })
             .unwrap();
         assert!(
-            ViewSource::cached_neutral(
+            ViewImage::cached_neutral(
                 &cache,
                 renderer.clone(),
                 kernels.clone(),
@@ -221,7 +221,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let foreign = crate::gpu::evaluation::Context::new(&device, Default::default())
             .test_materializations(true);
         assert!(
-            ViewSource::cached_neutral(
+            ViewImage::cached_neutral(
                 &foreign,
                 renderer.clone(),
                 kernels.clone(),
@@ -253,7 +253,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .await
         .unwrap();
         let off_cache = off_renderer.evaluation().test_materializations(false);
-        let off = ViewSource::acquire_originals_fixture(
+        let off = ViewImage::original_prefixes(
             &device,
             &queue,
             &gate,
@@ -269,7 +269,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .unwrap()
         .unwrap()
         .remove(0);
-        let joined = ViewSource::cached_neutral(
+        let joined = ViewImage::cached_neutral(
             &off_cache,
             off_renderer.clone(),
             kernels.clone(),
@@ -290,7 +290,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let wanted = off.spec.clone();
         drop((off, joined));
         assert!(
-            ViewSource::cached_neutral(&off_cache, off_renderer, kernels, &wanted, &scan, None)
+            ViewImage::cached_neutral(&off_cache, off_renderer, kernels, &wanted, &scan, None)
                 .is_none()
         );
     });

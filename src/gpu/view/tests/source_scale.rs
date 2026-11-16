@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation as e;
 use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
@@ -6,7 +7,7 @@ use crate::gpu::view::request::SourceRequest;
 #[test]
 fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_headroom() {
     pollster::block_on(async {
-        let (device, queue, renderer, kernels) = context().await;
+        let (device, queue, renderer, _) = context().await;
         let gate = SubmissionGate::default();
         for (rgb, ev) in [
             ([2949, 11796, 5898], 0.),
@@ -41,27 +42,6 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             if rgb[0] == 64000 {
                 assert!(expected.max_element() > 1.);
             }
-            let spec = SourceRequest::new(
-                frame(&scan),
-                InputSettings::Digital,
-                scan.positive_matrix(&InputSettings::Digital).unwrap(),
-                None,
-            )
-            .unwrap();
-            let original = ViewSource::acquire(
-                &device,
-                &queue,
-                &gate,
-                renderer.clone(),
-                kernels.clone(),
-                &scan,
-                None,
-                spec.clone(),
-                || false,
-            )
-            .unwrap()
-            .unwrap();
-            let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
             let input = AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
@@ -74,35 +54,84 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 scan.area,
             )
             .unwrap();
-            let (navigation, processed) = ViewSource::camera_preview(
+            let capture = crate::gpu::photograph::request::PhotographRequest::Fixture(input);
+            let original = capture
+                .neutral_input(
+                    None,
+                    scan.camera_to_ap1,
+                    crate::image_recipe::quality::Quality::Originals,
+                )
+                .unwrap()
+                .originals(e::camera_source(&scan).unwrap())
+                .unwrap();
+            let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
+            let camera = crate::gpu::source::ProcessingSource::new_continuous(
                 &device,
-                &queue,
-                &gate,
-                renderer.clone(),
-                kernels.clone(),
-                &proxy,
-                None,
-                spec,
-                &crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
+                &proxy.pixels,
+                proxy.matrix,
+                Some(
+                    crate::gpu::source::SourceGeometry::new(
+                        [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                        proxy.dimensions(),
+                    )
+                    .unwrap(),
+                ),
             )
             .unwrap();
+            let mut presentation = frame(&scan);
+            presentation.output = proxy.dimensions();
+            let spec = SourceRequest::for_processing(
+                presentation,
+                &capture.processing(&device.limits()).unwrap(),
+            )
+            .unwrap()
+            .with_sampling(crate::acquisition::Sampling::CameraCells {
+                region: scan.area,
+                size: proxy.dimensions(),
+            })
+            .unwrap();
+            let (_, baseline) = capture.sampled_prefix(&camera, None, spec.clone()).unwrap();
+            let graph = capture
+                .sampled_graph(&device.limits(), &camera, None, spec)
+                .unwrap();
             assert!(
-                processed
-                    .definition
-                    .region_for(
-                        &navigation.definition,
-                        processed.definition.domain().finite().unwrap()
+                graph
+                    .processed
+                    .region_for(&baseline, graph.processed.domain().finite().unwrap())
+                    .unwrap()
+                    .is_some()
+            );
+            for (image, expected) in [
+                (original, expected),
+                (baseline, expected),
+                (graph.processed, expected * 2.),
+            ] {
+                let domain = image.domain();
+                let region = domain.finite().unwrap();
+                let evaluation = renderer
+                    .evaluation()
+                    .request(
+                        image,
+                        e::Region {
+                            bounds: region,
+                            grid: domain.grid,
+                        },
+                        e::Budget {
+                            tile: [64, 64],
+                            scratch_bytes: 32 << 20,
+                        },
                     )
                     .unwrap()
-                    .is_some(),
-                "processed pixels retain their actual native calculation"
-            );
-            for (pixels, expected) in [
-                (&original.pixels, expected),
-                (&navigation.pixels, expected),
-                (&processed.pixels, expected * 2.),
-            ] {
-                let values = read(&device, &queue, pixels);
+                    .without_retention();
+                let prepared = renderer.evaluation().prepare_image(evaluation).unwrap();
+                let pixels = renderer
+                    .evaluation()
+                    .produce_images(&queue, &gate, vec![prepared])
+                    .unwrap()
+                    .remove(0)
+                    .await
+                    .unwrap();
+                let values = read(&device, &queue, pixels.as_buffer().unwrap());
                 let pixel = values[32 + 32 * 64];
                 for channel in 0..3 {
                     assert!(

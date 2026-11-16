@@ -126,8 +126,8 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             &|| false,
         )
         .unwrap();
-        let photograph = samples.photograph(&recipe).unwrap();
-        let mean = samples.mean(photograph.roll, &|| false).unwrap();
+        let roll = samples.pipeline(&recipe).unwrap().roll().unwrap();
+        let mean = samples.mean(roll, &|| false).unwrap();
         let cones = crate::color::ap1_to_cones() * mean;
         cones / cones.y
     })

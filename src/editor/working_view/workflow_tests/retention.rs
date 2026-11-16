@@ -44,6 +44,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
         frame.output = [384, 256];
         let demand = Demand {
             rendering: OnceLock::new(),
+            target: OutputTarget::Srgb,
             frame,
             pixels: editor.source_context().unwrap(),
             capture: PhotographRequest::Recipe(recipe),
@@ -69,8 +70,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
             let (owner, images) = app.read(|editor| {
                 let frame = editor.document.visit.working_view.frame.as_ref().unwrap();
                 let buffers = std::iter::once(&frame.source.pixels)
-                    .chain(frame.underlay.as_ref().map(|source| &source.pixels))
-                    .chain(frame.processed.iter().map(|processed| &processed.pixels));
+                    .chain(frame.underlay.as_ref().map(|source| &source.pixels));
                 let images: Vec<_> = buffers
                     .map(|buffer| {
                         let BufferImage::Produced(image) = buffer else {
@@ -85,8 +85,8 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
                     .collect();
                 assert_eq!(
                     images.len(),
-                    4,
-                    "detail and underlay need both neutral and processed values"
+                    2,
+                    "detail and underlay each own one complete endpoint"
                 );
                 (Arc::downgrade(frame), images)
             });
@@ -118,8 +118,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
             app.read(|editor| {
                 let frame = editor.document.visit.working_view.frame.as_ref().unwrap();
                 let buffers = std::iter::once(&frame.source.pixels)
-                    .chain(frame.underlay.as_ref().map(|source| &source.pixels))
-                    .chain(frame.processed.iter().map(|processed| &processed.pixels));
+                    .chain(frame.underlay.as_ref().map(|source| &source.pixels));
                 for (buffer, (_, _, previous)) in buffers.zip(&images) {
                     let BufferImage::Produced(image) = buffer else {
                         panic!("returned view lost its materialization")

@@ -1,6 +1,9 @@
 //! Rectangular reads of contributing source cells, including real-edge extension.
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl Reconstruction {
     pub(super) fn source_parts(&self, part: Rect, output: Rect) -> Vec<Rect> {
         let corners = [
@@ -84,12 +87,23 @@ impl Reconstruction {
 }
 
 fn row_span(polygon: [[f64; 2]; 4], low: f64, high: f64) -> Option<[f64; 2]> {
-    let mut vertices = polygon.to_vec();
+    let [a, b, c, d] = polygon;
+    if (a[1] == b[1] && b[0] == c[0] && c[1] == d[1] && d[0] == a[0])
+        || (a[0] == b[0] && b[1] == c[1] && c[0] == d[0] && d[1] == a[1])
+    {
+        return (low.max(a[1].min(c[1])) < high.min(a[1].max(c[1])))
+            .then_some([a[0].min(c[0]), a[0].max(c[0])]);
+    }
+    // Clipping four edges to a horizontal strip produces at most eight vertices.
+    let mut vertices = [[0.; 2]; 8];
+    vertices[..4].copy_from_slice(&polygon);
+    let mut count = 4;
     for (edge, greater) in [(low, true), (high, false)] {
-        if vertices.is_empty() {
+        if count == 0 {
             return None;
         }
-        let mut clipped = Vec::with_capacity(8);
+        let mut clipped = [[0.; 2]; 8];
+        let mut clipped_count = 0;
         let inside = |point: [f64; 2]| {
             if greater {
                 point[1] >= edge
@@ -97,19 +111,23 @@ fn row_span(polygon: [[f64; 2]; 4], low: f64, high: f64) -> Option<[f64; 2]> {
                 point[1] <= edge
             }
         };
-        let mut a = *vertices.last()?;
-        for &b in &vertices {
+        let mut a = vertices[count - 1];
+        for &b in &vertices[..count] {
             if inside(a) != inside(b) {
                 let fraction = (edge - a[1]) / (b[1] - a[1]);
-                clipped.push([a[0] + fraction * (b[0] - a[0]), edge]);
+                clipped[clipped_count] = [a[0] + fraction * (b[0] - a[0]), edge];
+                clipped_count += 1;
             }
             if inside(b) {
-                clipped.push(b);
+                clipped[clipped_count] = b;
+                clipped_count += 1;
             }
             a = b;
         }
         vertices = clipped;
+        count = clipped_count;
     }
+    let vertices = &vertices[..count];
     let min_y = vertices
         .iter()
         .map(|point| point[1])

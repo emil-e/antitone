@@ -46,13 +46,31 @@ impl PhotographGraph {
         )?
         .processed;
         for image in [inspection, positive] {
-            renderer.evaluation().prewarm_image(image)?;
+            renderer.evaluation().prewarm_image(image.clone())?;
+            for target in [
+                crate::rendering::OutputTarget::Srgb,
+                crate::rendering::OutputTarget::DisplayP3,
+            ] {
+                let reference = Reference::capture(
+                    device,
+                    renderer,
+                    crate::rendering::OutputReference::DisplayReferred(target),
+                    &Default::default(),
+                )?;
+                renderer
+                    .evaluation()
+                    .prewarm_image(reference.compose(image.clone(), renderer)?)?;
+            }
         }
         Ok(())
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn prewarm_filtered(device: &wgpu::Device, context: &Context) -> Result<(), Error> {
+    pub(crate) fn prewarm_filtered(
+        device: &wgpu::Device,
+        renderer: &crate::renderer::GpuRenderer,
+    ) -> Result<(), Error> {
+        let context = renderer.evaluation();
         let domain = Domain {
             bounds: Some([0, 0, 1, 1].into()),
             grid: Grid {
@@ -61,13 +79,28 @@ impl PhotographGraph {
             },
             meaning: Meaning::Neutral,
         };
-        Grading::prewarm(device, context, domain)?;
-        context.prewarm_image(inspect(
+        let mut images = Grading::warmup_values(device, domain)?;
+        images.push(inspect(
             borrowed_input(Domain {
                 meaning: Meaning::Inspection,
                 ..domain
             }),
             ProcessingParameters::source(),
-        )?)
+        )?);
+        for image in images {
+            context.prewarm_image(image.clone())?;
+            for target in [
+                crate::rendering::OutputTarget::Srgb,
+                crate::rendering::OutputTarget::DisplayP3,
+            ] {
+                context.prewarm_image(compose_output(
+                    renderer,
+                    image.clone(),
+                    crate::rendering::OutputReference::DisplayReferred(target),
+                    &Default::default(),
+                )?)?;
+            }
+        }
+        Ok(())
     }
 }

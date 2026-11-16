@@ -44,7 +44,7 @@ impl<'a> Source<'a> {
             field,
             recipe,
         )?;
-        Self::from_image(renderer, gpu, graph.interpreted()?.unrepaired)
+        Self::from_image(renderer, gpu, graph.unrepaired()?)
     }
 
     pub(crate) fn from_image(

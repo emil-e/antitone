@@ -31,6 +31,20 @@ impl ImageProcessing {
 }
 
 impl GpuImage {
+    /// Select target-linear output for an explicitly requested photographic prefix.
+    pub fn output(&self, prefix: Value, luts: &LutChain) -> Result<Value, Error> {
+        let processing = self
+            .processing
+            .as_ref()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        crate::gpu::photograph::compose_output(
+            &processing.renderer,
+            prefix,
+            crate::rendering::OutputReference::DisplayReferred(processing.target),
+            luts,
+        )
+    }
+
     /// Author a calculation over this image's declared camera cells.
     pub fn photograph(
         &self,
@@ -84,7 +98,26 @@ impl GpuImage {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn recipe_calculation(
+    pub(crate) fn capture_calculation(
+        &self,
+        capture: &crate::gpu::photograph::request::PhotographRequest,
+        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+    ) -> Result<Value, Error> {
+        let processing = self
+            .processing
+            .as_ref()
+            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
+        capture.resident_output(
+            &processing.renderer,
+            &processing.source,
+            [self.presentation.size[0], self.presentation.size[1]],
+            field,
+            processing.target,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn processed_prefix(
         &self,
         recipe: &crate::image_recipe::ImageRecipe,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
@@ -93,44 +126,45 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let raster = crate::gpu::photograph::RecipeGraph::sampled_raster(
-            &processing.source,
-            recipe,
-            [self.presentation.size[0], self.presentation.size[1]],
-        )?;
-        Ok(crate::gpu::photograph::RecipeGraph::sampled_camera(
-            processing.camera(raster)?,
-            &processing.source,
-            field,
-            recipe,
-        )?
-        .photograph(&self.device_limits)?
-        .processed)
+        crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
+            .resident_processed(
+                &processing.renderer,
+                &processing.source,
+                [self.presentation.size[0], self.presentation.size[1]],
+                field,
+            )
     }
 
     #[cfg(test)]
     pub(crate) fn legacy_calculation(&self, input: &AuthoredPhotograph) -> Result<Value, Error> {
         self.require_processing(input)?;
-        let Some(program) = input.source_transform() else {
-            return self.inspection(input.parameters(), input.field.clone());
-        };
         let processing = self.processing.as_ref().expect("admitted camera source");
-        let stages = input.pixel_pipeline();
-        let raster = PhotographGraph::resident_raster(
-            &processing.source,
-            &stages,
-            [self.presentation.size[0], self.presentation.size[1]],
-        )?;
-        Ok(PhotographGraph::resident_photograph(
-            &self.device_limits,
-            processing.camera(raster)?,
-            CameraInput::resident(&processing.source, *program, input.field.clone()),
-            *program,
-            input.grade().expect("admitted photograph").clone(),
-            input.repairs.clone(),
-            &stages,
-        )?
-        .processed)
+        let image = if let Some(program) = input.source_transform() {
+            let stages = input.pixel_pipeline();
+            let raster = PhotographGraph::resident_raster(
+                &processing.source,
+                &stages,
+                [self.presentation.size[0], self.presentation.size[1]],
+            )?;
+            PhotographGraph::resident_photograph(
+                &self.device_limits,
+                processing.camera(raster)?,
+                CameraInput::resident(&processing.source, *program, input.field.clone()),
+                *program,
+                input.grade().expect("admitted photograph").clone(),
+                input.repairs.clone(),
+                &stages,
+            )?
+            .processed
+        } else {
+            self.inspection(input.parameters(), input.field.clone())?
+        };
+        crate::gpu::photograph::compose_output(
+            &processing.renderer,
+            image,
+            crate::rendering::OutputReference::DisplayReferred(processing.target),
+            input.luts(),
+        )
     }
 
     pub(crate) fn prepared_definition(&self) -> Option<Value> {
@@ -153,7 +187,7 @@ impl GpuImage {
             )
             || !matches!(
                 root.domain().meaning,
-                Meaning::Neutral | Meaning::Graded | Meaning::Inspection
+                Meaning::Neutral | Meaning::Graded | Meaning::Inspection | Meaning::Display
             )
         {
             return Err(Error::InvalidParameter(
@@ -232,6 +266,7 @@ impl GpuImage {
                 root.domain().finite()?,
                 processing.working.clone().into(),
             )?,
+            root,
             processing.target,
             luts,
             &self.linear,

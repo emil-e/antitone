@@ -70,7 +70,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                     values.push([if p[0] >= 1008. { 0.4 } else { -0.03 }, 0.18, 0.05, 8.]);
                 }
             }
-            let source = Arc::new(ViewSource::from_neutral_samples(
+            let source = Arc::new(ViewImage::from_neutral_samples(
                 spec,
                 renderer.clone(),
                 kernels.clone(),
@@ -87,7 +87,11 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 &SubmissionGate::default(),
                 &egui::Context::default(),
             );
-            Ok::<_, Error>(read(&device, &queue, &view.graded.as_ref().unwrap().pixels))
+            Ok::<_, Error>(read(
+                &device,
+                &queue,
+                &view.product.as_ref().unwrap().pixels,
+            ))
         };
         let a = make(small, true).unwrap();
         let b = make(wide, true).unwrap();

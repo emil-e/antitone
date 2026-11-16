@@ -93,7 +93,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         let values: Vec<[f32; 4]> = (0..size[0] * size[1])
             .map(|i| [if i % size[0] == 0 { 16. } else { -0.03 }, 0.18, 1.8, 8.])
             .collect();
-        let source = Arc::new(ViewSource::from_neutral_samples(
+        let source = Arc::new(ViewImage::from_neutral_samples(
             spec,
             renderer,
             kernels,
@@ -110,7 +110,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             &crate::gpu::submission::SubmissionGate::default(),
             &egui::Context::default(),
         );
-        let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+        let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
         let weights: Vec<f64> = (-8..=8)
             .map(|x| (-0.5 * f64::from(x * x) / 4.).exp())
             .collect();

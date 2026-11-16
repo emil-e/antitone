@@ -75,7 +75,7 @@ fn cost_and_retirement(with_underlay: bool) {
         } else {
             vec![spec]
         };
-        let mut sources = ViewSource::acquire_many(
+        let mut sources = ViewImage::prefixes(
             &device,
             &queue,
             &gate,
@@ -148,7 +148,7 @@ fn cost_and_retirement(with_underlay: bool) {
                     OutputTarget::DisplayP3
                 };
                 let start = Instant::now();
-                let make = |s: Arc<ViewSource>, old: Option<&Arc<RenderedView>>| {
+                let make = |s: Arc<ViewImage>, old: Option<&Arc<RenderedView>>| {
                     if let Some(old) = old.filter(|r| r.matches(&s.spec, &input.clone(), target)) {
                         return old.clone();
                     }
@@ -183,8 +183,8 @@ fn cost_and_retirement(with_underlay: bool) {
                 );
                 if case == "target-only" {
                     assert!(Arc::ptr_eq(
-                        next.graded.as_ref().unwrap(),
-                        previous.as_ref().unwrap().graded.as_ref().unwrap()
+                        next.product.as_ref().unwrap(),
+                        previous.as_ref().unwrap().product.as_ref().unwrap()
                     ));
                 }
                 visible.ensure_submitted(&device, &queue, &gate, &context);

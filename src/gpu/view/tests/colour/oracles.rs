@@ -92,7 +92,7 @@ fn physical_view_colour_matches_scalar_continuous_source_masks() {
             snapshot,
             OutputTarget::Srgb,
         );
-        let actual = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+        let actual = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
         for (i, (input, result)) in values.iter().zip(actual).enumerate() {
             let expected = scalar
                 .apply(
@@ -154,7 +154,7 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let frame = cropped(area, region, [13, 9], 0.23);
         let spec =
             SourceRequest::new(frame, input, scan.camera_to_ap1, Some(correction.clone())).unwrap();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -243,7 +243,7 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         let view =
             RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None).unwrap();
         let mut abandoned = device.create_command_encoder(&Default::default());
-        let graded = view.graded.as_ref().unwrap();
+        let graded = view.product.as_ref().unwrap();
         graded.encode(&device, &mut abandoned);
         drop(abandoned);
         assert!(!*graded.submitted.lock().unwrap());

@@ -136,7 +136,7 @@ fn configured_probe(
             }
         }
     }
-    let source = Arc::new(ViewSource::from_neutral_samples(
+    let source = Arc::new(ViewImage::from_neutral_samples(
         spec,
         renderer.clone(),
         kernels.clone(),
@@ -194,7 +194,7 @@ fn render_probe(
         &SubmissionGate::default(),
         &egui::Context::default(),
     );
-    read(device, queue, &rendered.graded.as_ref().unwrap().pixels)
+    read(device, queue, &rendered.product.as_ref().unwrap().pixels)
 }
 
 fn gradient_bandwidth(values: &[f64]) -> f64 {
@@ -279,7 +279,7 @@ fn diagnostic_dft_recovers_a_declared_sinusoid() {
 
 // Independent one-dimensional box impulse → finite Gaussian → cell-area integral.
 fn reconstructed_impulse(view: &RenderedView, sigma: f64) -> Vec<f64> {
-    let spec = &view.graded.as_ref().unwrap().source.spec;
+    let spec = &view.product.as_ref().unwrap().spec;
     let pitch = spec.plan.pitch()[0];
     let ratio = f64::from(spec.plan.output().output[0]) / N as f64;
     let offset = f64::from(spec.plan.output_offset().unwrap()[0]);
@@ -334,7 +334,7 @@ fn grain_gpu_bandwidth_and_zoom_scaling() {
                     &SubmissionGate::default(),
                     &egui::Context::default(),
                 );
-                let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                 let expected = reconstructed_impulse(&view, scale);
                 assert!(pixels.iter().flatten().all(|v| v.is_finite()));
                 assert!(

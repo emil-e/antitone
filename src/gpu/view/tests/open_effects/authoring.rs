@@ -2,7 +2,7 @@ use super::*;
 use crate::gpu::source::SourceGeometry;
 use crate::{
     frame_raster::FrameRaster,
-    gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
+    gpu::view::{RenderedView, SourceRequest, ViewImage, ViewKernels},
     pixel_pipeline::authoring_examples::{SignedCurve, TentConvolution},
 };
 
@@ -91,7 +91,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         FrameRaster::full(Composition::new(area, Default::default(), Default::default()).unwrap())
             .unwrap();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
-    let physical = ViewSource::acquire_many(
+    let physical = ViewImage::prefixes(
         &device,
         &queue,
         &Default::default(),

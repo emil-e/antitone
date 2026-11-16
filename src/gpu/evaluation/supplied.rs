@@ -66,6 +66,7 @@ impl SuppliedImage {
         self.layout
     }
 
+    #[cfg(test)]
     pub(crate) fn covers(&self, definition: impl Into<value::Value>, region: CellRegion) -> bool {
         let definition = definition.into();
         self.supplies(&definition)

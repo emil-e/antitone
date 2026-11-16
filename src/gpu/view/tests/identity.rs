@@ -115,7 +115,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
         let scan = scan();
         let cal = calibration();
         let frame = frame(&scan);
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &SubmissionGate::default(),
@@ -173,7 +173,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
             )
             .unwrap();
             view.ensure_submitted(&device, &queue, &gate, &context);
-            let graded = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+            let graded = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             for (i, (actual, original)) in graded.iter().zip(&neutral).enumerate() {
                 let point = frame
                     .source_point([
@@ -207,7 +207,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let cal = calibration();
-        let source = ViewSource::acquire(
+        let source = ViewImage::prefix(
             &device,
             &queue,
             &SubmissionGate::default(),

@@ -4,8 +4,8 @@ use crate::frame_raster::FrameRaster;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
+use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::view::ViewSource;
 use crate::gpu::view::request::SourceRequest;
 use std::sync::{Mutex, OnceLock};
 
@@ -21,6 +21,7 @@ pub(super) struct Demand {
     pub frame: FrameRaster,
     pub pixels: source::Context,
     pub capture: PhotographRequest,
+    pub target: OutputTarget,
     rendering: OnceLock<Result<Arc<crate::gpu::view::rendering::Request>, String>>,
 }
 impl Clone for Demand {
@@ -29,6 +30,7 @@ impl Clone for Demand {
             frame: self.frame,
             pixels: self.pixels.clone(),
             capture: self.capture.clone(),
+            target: self.target,
             rendering: OnceLock::new(),
         }
     }
@@ -51,8 +53,11 @@ impl Demand {
                         .correction
                         .as_ref()
                         .map(|field| field.gpu.clone()),
-                    &self.capture,
-                    self.frame,
+                    crate::gpu::view::rendering::Intent {
+                        capture: &self.capture,
+                        frame: self.frame,
+                        target: self.target,
+                    },
                     previous,
                 )
                 .map(Arc::new)
@@ -71,6 +76,7 @@ impl Demand {
             || self.pixels == other.pixels
                 && self.frame == other.frame
                 && self.capture == other.capture
+                && self.target == other.target
     }
 
     #[cfg(test)]
@@ -80,6 +86,7 @@ impl Demand {
             frame: spec.frame(),
             pixels,
             capture: PhotographRequest::Fixture(processing),
+            target: OutputTarget::Srgb,
             rendering: OnceLock::new(),
         }
     }
@@ -93,30 +100,24 @@ impl Demand {
 /// A captured request's detail and navigation image products.
 pub(super) struct Frame {
     sequence: u64,
-    pub source: Arc<ViewSource>,
-    pub underlay: Option<Arc<ViewSource>>,
+    pub source: Arc<ViewImage>,
+    pub underlay: Option<Arc<ViewImage>>,
     pub request: Arc<Demand>,
-    pub processed: Vec<Arc<crate::gpu::view::processing::ProcessedView>>,
 }
 impl Frame {
-    fn from_images(
-        request: Arc<Demand>,
-        sequence: u64,
-        images: Vec<crate::gpu::view::rendering::ViewImage>,
-    ) -> Self {
-        let processed = images.iter().map(|image| image.processed.clone()).collect();
-        let mut sources = images
-            .into_iter()
-            .map(|image| image.source)
-            .collect::<Vec<_>>();
-        let underlay = sources.pop();
-        let source = sources.pop().expect("detail and underlay image products");
+    #[cfg(test)]
+    pub(super) fn images(&self) -> impl Iterator<Item = &Arc<ViewImage>> {
+        std::iter::once(&self.source).chain(self.underlay.iter())
+    }
+
+    fn from_images(request: Arc<Demand>, sequence: u64, mut images: Vec<Arc<ViewImage>>) -> Self {
+        let underlay = images.pop();
+        let source = images.pop().expect("detail and underlay image products");
         Self {
             sequence,
             request,
             source,
             underlay,
-            processed,
         }
     }
 
@@ -262,6 +263,7 @@ impl WorkingView {
         self.gpu.as_ref().map(|(device, _)| device)
     }
 
+    #[cfg(test)]
     pub(super) fn queue(&self) -> Option<&wgpu::Queue> {
         self.gpu.as_ref().map(|(_, queue)| queue)
     }
@@ -535,32 +537,17 @@ impl WorkingView {
     }
 
     #[cfg(test)]
-    fn source(&self) -> Option<&Arc<ViewSource>> {
+    fn source(&self) -> Option<&Arc<ViewImage>> {
         self.frame.as_ref().map(|frame| &frame.source)
     }
     #[cfg(test)]
-    fn underlay(&self) -> Option<&Arc<ViewSource>> {
+    fn underlay(&self) -> Option<&Arc<ViewImage>> {
         self.frame
             .as_ref()
             .and_then(|frame| frame.underlay.as_ref())
     }
 
-    #[cfg(test)]
-    fn render(
-        &mut self,
-        input: &AuthoredPhotograph,
-        target: OutputTarget,
-        context: &egui::Context,
-    ) -> Result<(), Error> {
-        self.render_capture(&PhotographRequest::Fixture(input.clone()), target, context)
-    }
-
-    fn render_capture(
-        &mut self,
-        _capture: &PhotographRequest,
-        target: OutputTarget,
-        context: &egui::Context,
-    ) -> Result<(), Error> {
+    fn render(&mut self, context: &egui::Context) -> Result<(), Error> {
         if self.colour_in_flight() {
             self.device()
                 .unwrap()
@@ -588,6 +575,7 @@ impl WorkingView {
             return Ok(());
         };
         let capture = &frame.request.capture;
+        let target = frame.request.target;
         let matches = |rendered: &RenderedView, index: usize| {
             let source = if index == 0 {
                 &frame.source
@@ -598,7 +586,7 @@ impl WorkingView {
             rendered.spec == source.spec
                 && rendered.capture == *capture
                 && rendered.target == target
-                && rendered.uses_processed(&frame.processed[index])
+                && rendered.uses_image(source)
         };
         let changed = self
             .rendered
@@ -616,17 +604,15 @@ impl WorkingView {
                 return Ok(());
             }
             let render_source =
-                |source: Arc<ViewSource>, index: usize, previous: Option<&Arc<RenderedView>>| {
+                |source: Arc<ViewImage>, index: usize, previous: Option<&Arc<RenderedView>>| {
                     if let Some(rendered) = previous.filter(|rendered| matches(rendered, index)) {
                         return Ok(rendered.clone());
                     }
-                    RenderedView::from_processed(
+                    RenderedView::from_image(
                         self.device().unwrap(),
                         source,
                         capture.clone(),
                         target,
-                        frame.processed[index].clone(),
-                        previous,
                     )
                 };
             let detail = render_source(frame.source.clone(), 0, self.rendered.as_ref())?;
@@ -885,10 +871,7 @@ impl Editor {
                 let mut demand = (*wanted).clone();
                 demand.capture = capture.clone();
                 self.request_working(demand, cx);
-                self.document
-                    .visit
-                    .working_view
-                    .render_capture(capture, target, context)?;
+                self.document.visit.working_view.render(context)?;
             }
 
             self.document.visit.working_view.displayed = self
@@ -935,14 +918,12 @@ impl Editor {
                     frame,
                     pixels: source_input,
                     capture: capture.clone(),
+                    target,
                     rendering: OnceLock::new(),
                 },
                 cx,
             );
-            self.document
-                .visit
-                .working_view
-                .render_capture(capture, target, context)?;
+            self.document.visit.working_view.render(context)?;
             self.document.visit.working_view.reference = None;
 
             self.document.visit.working_view.displayed = self
@@ -980,14 +961,12 @@ impl Editor {
                 frame,
                 pixels: source_input,
                 capture: capture.clone(),
+                target,
                 rendering: OnceLock::new(),
             },
             cx,
         );
-        self.document
-            .visit
-            .working_view
-            .render_capture(capture, target, context)?;
+        self.document.visit.working_view.render(context)?;
 
         self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference)?

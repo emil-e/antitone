@@ -197,7 +197,7 @@ fn grain_gpu_grain_matches_at_fixed_frame_sampling_across_source_resolutions() {
                                 &egui::Context::default(),
                             );
                             let pixels =
-                                read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                                read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                             assert_eq!(pixels.len(), config.side * config.side);
                             assert!(pixels.iter().flatten().all(|p| p.is_finite()));
                             if let Some(expected) = &reference {
@@ -274,7 +274,7 @@ fn grain_gpu_amount_is_preintegration_rms_with_sampling_loss() {
                     &SubmissionGate::default(),
                     &egui::Context::default(),
                 );
-                let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                 let log: Vec<_> = pixels
                     .iter()
                     .map(|p| (f64::from(p[0]) / 0.18).ln())

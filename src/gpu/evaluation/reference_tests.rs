@@ -5,6 +5,24 @@ use crate::{
 };
 use wgpu::util::DeviceExt;
 
+fn render_reference(
+    renderer: &crate::renderer::GpuRenderer,
+    device: &wgpu::Device,
+    source: SuppliedImage,
+    target: OutputTarget,
+    luts: &crate::looks::LutChain,
+    destination: &wgpu::Texture,
+) -> Result<crate::renderer::RenderBinding, Error> {
+    let reference = Reference::capture(
+        device,
+        renderer,
+        OutputReference::DisplayReferred(target),
+        luts,
+    )?;
+    let endpoint = reference.compose(source.definition().clone(), renderer)?;
+    renderer.render_binding(device, source, endpoint, target, luts, destination)
+}
+
 #[cfg(all(feature = "project", feature = "ocio-reference"))]
 #[test]
 fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
@@ -65,15 +83,15 @@ fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
                 [pixels.len() as u32, 1],
                 wgpu::TextureFormat::Rgba32Float,
             );
-            let binding = renderer
-                .render_binding(
-                    &device,
-                    supplied(&input, [pixels.len() as u32, 1, 0, 0]),
-                    target,
-                    &chain,
-                    &output,
-                )
-                .unwrap();
+            let binding = render_reference(
+                &renderer,
+                &device,
+                supplied(&input, [pixels.len() as u32, 1, 0, 0]),
+                target,
+                &chain,
+                &output,
+            )
+            .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             let check = binding.encode(&device, &mut encoder).unwrap();
             let submission = queue.submit([encoder.finish()]);
@@ -359,15 +377,15 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 let output = texture(&device, [3, 2], wgpu::TextureFormat::Rgba32Float);
                 let expected = texture(&device, [3, 2], wgpu::TextureFormat::Rgba32Float);
                 let dimensions = [3, 2, coverage, 0];
-                let binding = renderer
-                    .render_binding(
-                        &device,
-                        supplied(&source, dimensions),
-                        target,
-                        &(selected).cloned().into(),
-                        &output,
-                    )
-                    .unwrap();
+                let binding = render_reference(
+                    &renderer,
+                    &device,
+                    supplied(&source, dimensions),
+                    target,
+                    &(selected).cloned().into(),
+                    &output,
+                )
+                .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let check = binding.encode(&device, &mut encoder).unwrap();
                 assert_eq!(check.is_some(), selected.is_some());
@@ -514,15 +532,15 @@ fn compare_repeated_admission(look: Arc<LookAsset>) {
         &[[f32::NAN, 0.2, 0.3, 0.], [0.2, f32::INFINITY, 0.3, 8.]],
     );
     let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
-    let binding = renderer
-        .render_binding(
-            &device,
-            supplied(&source, [2, 1, 1, 0]),
-            OutputTarget::Srgb,
-            &(Some(&look)).cloned().into(),
-            &output,
-        )
-        .unwrap();
+    let binding = render_reference(
+        &renderer,
+        &device,
+        supplied(&source, [2, 1, 1, 0]),
+        OutputTarget::Srgb,
+        &(Some(&look)).cloned().into(),
+        &output,
+    )
+    .unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
     let bad = binding.encode(&device, &mut encoder).unwrap().unwrap();
     queue.submit([encoder.finish()]);
@@ -843,15 +861,15 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         assert!(plan.tiles.iter().flat_map(|tile| &tile.fragment.resources).any(|resource| {
             matches!(resource, Storage::ResidentBuffer(image) | Storage::Image { pixels:Some(image), .. } if image.as_buffer() == cached.as_buffer())
         }), "control: readout must actually consume the stored look value");
-        let binding = renderer
-            .render_binding(
-                &device,
-                argument.clone(),
-                OutputTarget::Srgb,
-                &chain(&look),
-                &output,
-            )
-            .unwrap();
+        let binding = render_reference(
+            &renderer,
+            &device,
+            argument.clone(),
+            OutputTarget::Srgb,
+            &chain(&look),
+            &output,
+        )
+        .unwrap();
         let mut checks = Vec::new();
         for _ in 0..2 {
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -1038,15 +1056,15 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
             .collect();
         let expected = cpu.render(&expected).unwrap();
         let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
-        let binding = renderer
-            .render_binding(
-                &device,
-                supplied(&input, [2, 1, 0, 0]),
-                OutputTarget::Srgb,
-                &chain,
-                &output,
-            )
-            .unwrap();
+        let binding = render_reference(
+            &renderer,
+            &device,
+            supplied(&input, [2, 1, 0, 0]),
+            OutputTarget::Srgb,
+            &chain,
+            &output,
+        )
+        .unwrap();
         let mut encoder = device.create_command_encoder(&Default::default());
         let check = binding.encode(&device, &mut encoder).unwrap();
         let submission = queue.submit([encoder.finish()]);

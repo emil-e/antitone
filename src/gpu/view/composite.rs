@@ -19,8 +19,8 @@ impl RenderedView {
         // as though it were neutral working support. Only immutable matching colour parents.
         if detail.composite.is_some()
             || underlay.composite.is_some()
-            || detail.graded.is_none()
-            || underlay.graded.is_none()
+            || detail.product.is_none()
+            || underlay.product.is_none()
             || !detail.spec.same_source(&underlay.spec)
             || frame.composition.area() != detail.spec.area
             || detail.capture != underlay.capture
@@ -52,7 +52,7 @@ impl RenderedView {
         }) {
             return Ok(old.clone());
         }
-        let source = &detail.graded.as_ref().unwrap().source;
+        let source = detail.product.as_ref().unwrap();
         let image = Arc::new(pollster::block_on(GpuImage::new_rendered_shared(
             &source.renderer,
             device,
@@ -104,7 +104,7 @@ impl RenderedView {
             spec,
             capture: detail.capture.clone(),
             target: detail.target,
-            graded: None,
+            product: None,
             group: None,
             composite: Some(Composite {
                 detail,
@@ -136,10 +136,9 @@ impl Composite {
         image: &GpuImage,
     ) -> Arc<crate::gpu::lut3d::Check> {
         self.detail
-            .graded
+            .product
             .as_ref()
             .unwrap()
-            .source
             .renderer
             .check_look_image(device, encoder, &image.linear)
     }
@@ -159,7 +158,7 @@ impl Composite {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(&self.detail.graded.as_ref().unwrap().source.kernels.compose);
+        pass.set_pipeline(&self.detail.product.as_ref().unwrap().kernels().compose);
         pass.set_bind_group(0, &self.group, &[]);
         pass.draw(0..3, 0..1);
     }

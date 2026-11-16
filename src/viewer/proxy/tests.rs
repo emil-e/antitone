@@ -1,105 +1,91 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 
-fn shared_source(image: &GpuImage) -> &Arc<ProcessingSource> {
-    &image.processing.as_ref().unwrap().source
-}
-
+#[cfg(feature = "editor")]
 #[test]
-fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
-    pollster::block_on(async {
-        let instance = crate::gpu::instance();
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
-        let size = [32, 16];
-        let count = size[0] * size[1];
-        let proxy = GpuProxy::new(
-            renderer,
-            &device,
-            size,
-            &vec![[1000, 1200, 5000, 0]; count as usize],
-            DMat3::IDENTITY,
-            SourceGeometry::new([12, 7, 864, 576], size).unwrap(),
-        )
-        .unwrap();
-        let source_bytes = u64::from(count) * 8;
-        assert_eq!(
-            proxy.byte_len(),
-            source_bytes,
-            "no unused target/working output is allocated"
-        );
-        let srgb = proxy.image(OutputTarget::Srgb).unwrap();
-        assert!(Arc::ptr_eq(
-            &srgb,
-            &proxy.image(OutputTarget::Srgb).unwrap()
-        ));
-        let srgb_owner = Arc::downgrade(&srgb);
-        let p3 = proxy.image(OutputTarget::DisplayP3).unwrap();
-        let a = srgb.processing.as_ref().unwrap();
-        let b = p3.processing.as_ref().unwrap();
-        assert!(Arc::ptr_eq(shared_source(&srgb), shared_source(&p3)));
-        assert_ne!(a.working, b.working);
-        assert_eq!(
-            proxy.byte_len(),
-            source_bytes + u64::from(count) * 32,
-            "one active working/target pair; rendering constants are prepared with an actual calculation, and held consumers are separate"
-        );
-        assert!(
-            !shared_source(&srgb)
-                .input
-                .usage()
-                .contains(wgpu::BufferUsages::COPY_DST)
-        );
-        let source = AuthoredPhotograph::from(ProcessingParameters::source());
-        let changed =
-            AuthoredPhotograph::from(ProcessingParameters::source_inspection(1.).unwrap());
-        let mut encoder = device.create_command_encoder(&Default::default());
-        assert!(
-            srgb.prepare_processing(&device, &mut encoder, &source)
-                .unwrap()
-        );
-        assert!(
-            p3.prepare_processing(&device, &mut encoder, &changed)
-                .unwrap()
-        );
-        assert!(
-            !srgb
-                .prepare_processing(&device, &mut encoder, &source)
-                .unwrap(),
-            "target changes must not alias another image's preparation"
-        );
-        queue.submit([encoder.finish()]);
-        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        drop(srgb);
-        assert!(
-            srgb_owner.upgrade().is_none(),
-            "inactive target has no hidden owner"
-        );
-        let p3_owner = Arc::downgrade(&p3);
-        proxy.release_output();
-        assert_eq!(proxy.byte_len(), source_bytes);
-        assert!(
-            p3_owner.upgrade().is_some(),
-            "existing encoded/presentation consumers remain valid"
-        );
-        let fresh = proxy.image(OutputTarget::DisplayP3).unwrap();
-        assert!(!Arc::ptr_eq(&fresh, &p3));
-        assert!(Arc::ptr_eq(shared_source(&fresh), shared_source(&p3)));
-        drop(p3);
-        assert!(p3_owner.upgrade().is_none());
-        drop(proxy);
-        let last = Arc::try_unwrap(fresh).ok().unwrap();
-        assert!(
-            !shared_source(&last)
-                .input
-                .usage()
-                .contains(wgpu::BufferUsages::COPY_DST)
-        );
-    });
+fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_proxy() {
+    use crate::gpu::photograph::{PhotographGraph, request::PhotographRequest};
+    use crate::gpu::view::{RenderedView, ViewKernels, request::SourceRequest};
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
+    let size = [32, 16];
+    let proxy = GpuProxy::new(
+        renderer,
+        &device,
+        size,
+        &vec![[1000, 1200, 5000, 0]; (size[0] * size[1]) as usize],
+        DMat3::IDENTITY,
+        SourceGeometry::new([12, 7, 864, 576], size).unwrap(),
+    )
+    .unwrap();
+    let source_bytes = u64::from(size[0] * size[1]) * 8;
+    assert_eq!(proxy.byte_len(), source_bytes);
+    assert!(
+        !proxy
+            .0
+            .source
+            .input
+            .usage()
+            .contains(wgpu::BufferUsages::COPY_DST)
+    );
+    let source = Arc::downgrade(&proxy.0.source);
+    let composition = crate::geometry::Composition::new(
+        [12, 7, 864, 576].into(),
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
+    frame.output = size;
+    let spec = SourceRequest::inspection(frame).unwrap();
+    let make = |target, parameters| {
+        let capture = PhotographRequest::Fixture(AuthoredPhotograph::from(parameters));
+        let image = proxy
+            .preview(kernels.clone(), &capture, None, spec.clone(), target)
+            .unwrap();
+        RenderedView::from_image(&device, image, capture, target).unwrap()
+    };
+    let srgb = make(OutputTarget::Srgb, ProcessingParameters::source());
+    let p3 = make(
+        OutputTarget::DisplayP3,
+        ProcessingParameters::source_inspection(1.).unwrap(),
+    );
+    assert!(PhotographGraph::shares_resident_camera(
+        &srgb.product().unwrap().definition,
+        &p3.product().unwrap().definition
+    ));
+    assert_ne!(
+        &*srgb.product().unwrap().pixels,
+        &*p3.product().unwrap().pixels
+    );
+    assert_eq!(
+        proxy.byte_len(),
+        source_bytes,
+        "products are owned by their consumers, not a hidden active-target slot"
+    );
+    let srgb_owner = Arc::downgrade(&srgb);
+    drop(srgb);
+    assert!(srgb_owner.upgrade().is_none());
+    drop(proxy);
+    assert!(
+        source.upgrade().is_none(),
+        "the endpoint captures pixels, not the proxy owner"
+    );
+    p3.ensure_submitted(
+        &device,
+        &queue,
+        &crate::gpu::submission::SubmissionGate::default(),
+        &egui::Context::default(),
+    );
+    let pixels = crate::viewer::readback::image_pixels(&device, &queue, &p3.image);
+    assert_eq!(pixels.len(), (size[0] * size[1]) as usize);
+    assert!(
+        pixels
+            .iter()
+            .all(|pixel| pixel[3] == 1. && pixel[..3].iter().all(|v| v.is_finite() && *v > 0.))
+    );
 }
 
 #[cfg(feature = "editor")]
@@ -137,12 +123,11 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     assert!(
         proxy
             .preview(
-                &queue,
-                &gate,
                 kernels.clone(),
                 &crate::gpu::photograph::request::PhotographRequest::Fixture(invalid),
                 None,
-                spec.clone()
+                spec.clone(),
+                OutputTarget::Srgb,
             )
             .is_err()
     );
@@ -152,39 +137,33 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         "a late downstream error must not leave native work submitted"
     );
     let valid = AuthoredPhotograph::from(ProcessingParameters::source());
-    let (source, processed) = proxy
+    let source = proxy
         .preview(
-            &queue,
-            &gate,
             kernels,
             &crate::gpu::photograph::request::PhotographRequest::Fixture(valid.clone()),
             None,
             spec,
+            OutputTarget::Srgb,
         )
         .unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 1);
-    assert!(processed.stages.is_none());
-    assert!(*processed.submitted.lock().unwrap());
+    assert_eq!(count.load(Ordering::Relaxed), 0);
+    assert!(source.commands.is_some());
+    assert!(!*source.submitted.lock().unwrap());
     assert!(
-        processed
+        source
             .definition
-            .region_for(
-                &source.definition,
-                processed.definition.domain().finite().unwrap()
-            )
-            .unwrap()
-            .is_some()
+            .ancestors()
+            .any(|node| node.domain().meaning == crate::gpu::evaluation::Meaning::Inspection)
     );
-    let rendered = crate::gpu::view::RenderedView::from_processed(
+    let rendered = crate::gpu::view::RenderedView::from_image(
         &device,
         source,
         crate::gpu::photograph::request::PhotographRequest::Fixture(valid),
         OutputTarget::Srgb,
-        processed,
-        None,
     )
     .unwrap();
     rendered.ensure_submitted(&device, &queue, &gate, &egui::Context::default());
+    assert_eq!(count.load(Ordering::Relaxed), 1);
     let pixels = crate::viewer::readback::image_pixels(&device, &queue, &rendered.image);
     assert_eq!(pixels.len(), 4);
     assert!(pixels.iter().all(|pixel| {

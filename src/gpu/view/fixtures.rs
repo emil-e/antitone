@@ -1,0 +1,363 @@
+//! Explicit prefix requests used by numerical, spatial and lifetime fixtures.
+
+use super::*;
+use crate::gpu::evaluation as e;
+
+mod authoring;
+
+impl ViewImage {
+    pub(super) fn from_neutral_samples(
+        spec: SourceRequest,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        pixels: wgpu::Buffer,
+    ) -> Self {
+        let region = spec.input_region().expect("declared sample grid");
+        let definition = e::raster_input(e::Domain {
+            bounds: Some(region),
+            grid: e::Grid {
+                coverage: 8,
+                ..e::Grid::from_frame(spec.plan.output())
+            },
+            meaning: if spec.is_inspection() {
+                e::Meaning::Inspection
+            } else {
+                e::Meaning::Neutral
+            },
+        });
+        Self {
+            spec,
+            renderer,
+            kernels,
+            definition,
+            region,
+            pixels: pixels.into(),
+            commands: None,
+            submitted: Mutex::new(true),
+            argument: None,
+        }
+    }
+
+    pub(super) fn fixture_input(&self) -> Arc<Self> {
+        let (spec, supplied) = self.argument.as_ref().expect("explicit fixture argument");
+        Self::from_recorded(
+            self.renderer.clone(),
+            self.kernels.clone(),
+            spec.clone(),
+            supplied.definition().clone(),
+            supplied.layout().region,
+            e::RecordedImage {
+                pixels: supplied.pixels().clone().into(),
+                commands: None,
+            },
+        )
+        .unwrap()
+    }
+
+    pub fn same_pixels_as(&self, other: &Self) -> bool {
+        self.pixels == other.pixels
+    }
+
+    pub fn cached_neutral(
+        cache: &e::Materializations,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        wanted: &SourceRequest,
+        scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
+    ) -> Option<Arc<Self>> {
+        if !cache.belongs_to(renderer.evaluation())
+            || wanted.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
+        {
+            return None;
+        }
+        let root = prefix_definitions(scan, field, std::slice::from_ref(wanted))
+            .ok()?
+            .remove(0);
+        let region = wanted.input_region().ok()?;
+        let found = cache.find_ready::<e::ImageLayout>(root.identity()?, |layout| {
+            layout.domain == root.domain() && layout.region == region
+        })?;
+        Self::from_recorded(
+            renderer,
+            kernels,
+            wanted.clone(),
+            root,
+            region,
+            e::RecordedImage {
+                pixels: found.try_into().ok()?,
+                commands: None,
+            },
+        )
+        .ok()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_processing(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gate: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        source: Arc<ProcessingSource>,
+        input: &AuthoredPhotograph,
+        spec: SourceRequest,
+    ) -> Result<Arc<Self>, Error> {
+        let spec = Self::proxy_request(&source, spec)?;
+        let (spec, root) = PhotographRequest::Fixture(input.clone()).sampled_prefix(
+            &source,
+            input.field.clone(),
+            spec,
+        )?;
+        let region = spec.input_region()?;
+        let context = renderer.evaluation();
+        let work = context.prepare_image(context.request(
+            root.clone(),
+            e::Region {
+                bounds: region,
+                grid: root.domain().grid,
+            },
+            e::Budget {
+                tile: [region.width, region.height],
+                scratch_bytes: 1280 << 20,
+            },
+        )?)?;
+        let image = work.record(context)?;
+        let image = Self::from_recorded(renderer, kernels, spec, root, region, image)?;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        image.encode(device, &mut encoder);
+        gate.submit(queue, [encoder.finish()]);
+        if let Some(commands) = &image.commands {
+            commands.submitted();
+        }
+        image
+            .pixels
+            .submitted(&image.renderer.evaluation().materializations());
+        *image.submitted.lock().unwrap() = true;
+        Ok(image)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prefix(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gate: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
+        spec: SourceRequest,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Arc<Self>>, Error> {
+        Self::prefixes(
+            device,
+            queue,
+            gate,
+            renderer,
+            kernels,
+            scan,
+            field,
+            vec![spec],
+            cancelled,
+        )
+        .map(|images| images.map(|mut images| images.remove(0)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prefixes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gate: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
+        specs: Vec<SourceRequest>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
+        let scope = renderer.evaluation().test_materializations(false);
+        pollster::block_on(Self::original_prefixes(
+            device, queue, gate, renderer, kernels, scan, field, specs, &scope, cancelled,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn original_prefixes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gate: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
+        specs: Vec<SourceRequest>,
+        scope: &e::Materializations,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
+        if cancelled() {
+            return Ok(None);
+        }
+        renderer.evaluation().require_device(device)?;
+        let identity = crate::gpu::source::identity::Identity::camera(scan.source().identity());
+        let specs = specs
+            .into_iter()
+            .map(|spec| spec.capture(identity.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let spec = specs
+            .first()
+            .ok_or(Error::InvalidParameter("empty prefix request"))?;
+        scan.validate_area(spec.area)?;
+        if scan.area != spec.area
+            || (if spec.is_inspection() {
+                scan.camera_to_ap1 != spec.matrix()
+            } else {
+                !spec
+                    .program()
+                    .is_some_and(|program| program.matches_native(scan).unwrap_or(false))
+            })
+            || scan.flat_field() != spec.field.as_ref()
+            || spec.field.as_ref() != field.as_ref().map(|f| f.field())
+            || specs.iter().any(|other| {
+                !other.same_source(spec)
+                    || other.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
+            })
+        {
+            return Err(Error::Gpu(
+                "prefix source authority differs from originals".into(),
+            ));
+        }
+        let definitions = prefix_definitions(scan, field, &specs)?;
+        let requests = definitions
+            .into_iter()
+            .zip(&specs)
+            .map(|(root, spec)| {
+                let domain = root.domain();
+                let region = spec.input_region()?;
+                renderer.evaluation().request(
+                    root,
+                    e::Region {
+                        bounds: region,
+                        grid: domain.grid,
+                    },
+                    e::Budget {
+                        tile: [region.width, region.height],
+                        scratch_bytes: 512 << 20,
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let definitions = requests
+            .iter()
+            .map(|request| request.image().clone())
+            .collect::<Vec<_>>();
+        let futures = renderer
+            .evaluation()
+            .materialize_many(queue, gate, scope, requests)?;
+        let mut pending = Box::pin(futures_util::future::try_join_all(futures));
+        let result = futures_util::future::poll_fn(|cx| {
+            if cancelled() {
+                return std::task::Poll::Ready(None);
+            }
+            std::future::Future::poll(pending.as_mut(), cx).map(Some)
+        })
+        .await;
+        let Some(result) = result else {
+            return Ok(None);
+        };
+        let images = match result {
+            Ok(images) => images,
+            Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
+            Err(error) => return Err(Error::Gpu(error.to_string())),
+        };
+        if cancelled() {
+            return Ok(None);
+        }
+        specs
+            .into_iter()
+            .zip(definitions)
+            .zip(images)
+            .map(|((spec, root), image)| {
+                Self::from_recorded(
+                    renderer.clone(),
+                    kernels.clone(),
+                    spec,
+                    root,
+                    image.descriptor.region,
+                    e::RecordedImage {
+                        pixels: image.try_into()?,
+                        commands: None,
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
+    pub(super) fn filter_fixture(
+        source: &Arc<Self>,
+        input: &AuthoredPhotograph,
+        previous: Option<&Arc<Self>>,
+    ) -> Result<Arc<Self>, Error> {
+        let capture = PhotographRequest::Fixture(input.clone());
+        let (root, plan) = capture.filtered(
+            &source.renderer.evaluation().device().limits(),
+            &source.spec,
+            source.definition.clone(),
+        )?;
+        let region = root.domain().finite()?;
+        if let Some(previous) = previous {
+            let old = previous.definition.output(region)?;
+            let wanted = root.output(region)?;
+            let same = match (old.identity(), wanted.identity()) {
+                (Some(a), Some(b)) => a == b,
+                _ => {
+                    old.same_value(&wanted)
+                        && (previous.pixels == source.pixels
+                            || previous.commands.as_ref().is_some_and(|commands| {
+                                commands
+                                    .reusable_inputs()
+                                    .iter()
+                                    .any(|image| image.as_buffer() == Some(&*source.pixels))
+                            }))
+                }
+            };
+            if same {
+                return Ok(previous.clone());
+            }
+        }
+        let context = source.renderer.evaluation();
+        let work = context.prepare_supplied(
+            Self::evaluation(context, root.clone())?,
+            vec![source.supplied()?],
+        )?;
+        let image = work.record(context)?;
+        let mut spec = source.spec.clone();
+        spec.plan = Arc::new(plan);
+        let mut image = Self::from_recorded(
+            source.renderer.clone(),
+            source.kernels.clone(),
+            spec,
+            root,
+            region,
+            image,
+        )?;
+        Arc::get_mut(&mut image).unwrap().argument =
+            Some((source.spec.clone(), source.supplied()?));
+        Ok(image)
+    }
+}
+
+pub(super) fn prefix_definitions(
+    scan: &Scan,
+    field: Option<Arc<GpuFlatField>>,
+    specs: &[SourceRequest],
+) -> Result<Vec<e::Value>, Error> {
+    specs
+        .iter()
+        .map(|spec| {
+            PhotographRequest::Fixture(spec.processing_fixture())
+                .source_graphs(scan, field.clone(), std::slice::from_ref(spec))
+                .map(|mut roots| roots.remove(0))
+        })
+        .collect()
+}

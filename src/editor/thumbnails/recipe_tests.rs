@@ -76,7 +76,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         "the cached camera proxy must become a graded positive without original reconstruction"
     );
     assert!(plain_key.current_recipe(&document));
-    let neutral = plain.positive.as_ref().unwrap().0.clone();
+    let neutral = plain.positive.as_ref().unwrap().product().unwrap().clone();
     thumbnails.protect_images(vec![plain_key.clone()]);
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
@@ -117,8 +117,17 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     graded_key.target = OutputTarget::Srgb;
     let graded = complete(&mut thumbnails, &document, graded_key.clone()).unwrap();
     assert!(
-        Arc::ptr_eq(&neutral, &graded.positive.as_ref().unwrap().0),
-        "grade/target changes must reuse the neutral proxy"
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &neutral.definition,
+            &graded
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
+        ),
+        "grade/target changes must reuse the physical camera proxy"
     );
     assert!(!Arc::ptr_eq(&plain.image, &graded.image));
     assert!(
@@ -163,10 +172,18 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         .photo
         .exposure = 0.25;
     let readmitted = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
-    assert!(Arc::ptr_eq(
-        &neutral,
-        &readmitted.positive.as_ref().unwrap().0
-    ));
+    assert!(
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &neutral.definition,
+            &readmitted
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
+        )
+    );
 
     assert!(
         !graded_key.current_recipe(&document),
@@ -216,11 +233,23 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         .exposure = 0.5;
     let graded = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
-        Arc::ptr_eq(
-            &plain.positive.as_ref().unwrap().0,
-            &graded.positive.as_ref().unwrap().0
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &plain
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition,
+            &graded
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
         ),
-        "grading must reuse the small neutral source, not request originals"
+        "grading must reuse the small camera buffer, not request originals"
     );
     document
         .project
@@ -265,7 +294,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
         )
         .unwrap();
     let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
-    let neutral = plain.positive.as_ref().unwrap().0.clone();
+    let neutral = plain.positive.as_ref().unwrap().product().unwrap().clone();
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
@@ -276,12 +305,23 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     ));
     let key = tests::key(&document, id);
     let looked = complete(&mut thumbnails, &document, key.clone()).unwrap();
-    let view = &looked.positive.as_ref().unwrap().1;
+    let view = &looked.positive.as_ref().unwrap();
     assert_eq!(view.processing().look_id(), Some(lut.id()));
     assert!(matches!(looked.look_result(), Some(Ok(()))));
-    assert!(Arc::ptr_eq(&neutral, &looked.positive.as_ref().unwrap().0));
+    assert!(
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &neutral.definition,
+            &looked
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
+        )
+    );
     #[cfg(feature = "ui-tests")]
-    assert!(view.same_grade_as(&plain.positive.as_ref().unwrap().1));
+    assert!(view.same_source_as(plain.positive.as_ref().unwrap()));
     assert!(looked.byte_len() > plain.byte_len());
     assert!(key.estimated_product_bytes().unwrap() >= key.retained_bytes() + looked.byte_len());
     let mut draft = key.clone();
@@ -306,19 +346,38 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     );
     assert_ne!(draft, key);
     let framed = complete(&mut thumbnails, &document, draft).unwrap();
-    assert!(Arc::ptr_eq(&neutral, &framed.positive.as_ref().unwrap().0));
+    assert!(
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &neutral.definition,
+            &framed
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
+        )
+    );
     #[cfg(feature = "ui-tests")]
-    assert!(view.same_grade_as(&framed.positive.as_ref().unwrap().1));
+    assert!(view.same_source_as(framed.positive.as_ref().unwrap()));
     assert!(matches!(framed.look_result(), Some(Ok(()))));
     document.project.output.lut = None;
     assert!(!key.current_recipe(&document));
     let restored = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
-    assert!(Arc::ptr_eq(
-        &neutral,
-        &restored.positive.as_ref().unwrap().0
-    ));
+    assert!(
+        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            &neutral.definition,
+            &restored
+                .positive
+                .as_ref()
+                .unwrap()
+                .product()
+                .unwrap()
+                .definition
+        )
+    );
     assert_eq!(
-        restored.positive.as_ref().unwrap().1.processing().look_id(),
+        restored.positive.as_ref().unwrap().processing().look_id(),
         None
     );
 }
