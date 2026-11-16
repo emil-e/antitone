@@ -1,13 +1,17 @@
 //! Frontier source model and provenance, resolved to the common LUT during preparation.
-use super::{LookAsset, LookOrigin, authoring as baking, failure, require};
+use super::{LookAsset, LookOrigin, authoring as baking, failure, require, spektrafilm};
 use crate::{Error, photographic};
 use glam::{DMat3, DVec3};
-use std::sync::{Arc, OnceLock, atomic::AtomicBool};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 #[cfg(feature = "ocio-reference")]
 pub mod authoring;
 mod density;
 mod formation;
+mod negative;
 #[cfg(test)]
 mod tests;
 
@@ -30,6 +34,14 @@ impl Variant {
             Self::B => "Frontier B",
         }
     }
+    pub(super) fn code_offset(self) -> f64 {
+        // Supplied negative-mode recentering: A450, B512.
+        let origin = match self {
+            Self::A => 450.,
+            Self::B => 512.,
+        };
+        origin - 450.
+    }
     fn id(self) -> &'static str {
         match self {
             Self::A => "frontier_a",
@@ -39,17 +51,23 @@ impl Variant {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
+    pub negative: Option<spektrafilm::Negative>,
     pub variant: Variant,
 }
 impl Selection {
     pub fn name(self) -> String {
-        self.variant.name().into()
+        self.negative.map_or_else(
+            || self.variant.name().into(),
+            |negative| format!("{} · {}", negative.name(), self.variant.name()),
+        )
+    }
+    fn response_source(self) -> density::Source {
+        match self.negative {
+            Some(_) => density::Source::Negative(self.variant),
+            None => density::Source::Native(self.variant),
+        }
     }
     pub fn origin(self) -> LookOrigin {
-        let bytes = match self.variant {
-            Variant::A => include_bytes!("../../assets/frontier/density-a.f32.z").as_slice(),
-            Variant::B => include_bytes!("../../assets/frontier/density-b.f32.z").as_slice(),
-        };
         static GENERATOR: OnceLock<String> = OnceLock::new();
         let generator = GENERATOR.get_or_init(|| {
             let mut h = blake3::Hasher::new();
@@ -64,47 +82,91 @@ impl Selection {
             }
             h.finalize().to_hex().to_string()
         });
-        LookOrigin::Renderer {
-            renderer: self.variant.id().into(),
-            revision: blake3::hash(bytes).to_hex().to_string(),
-            generator: generator.clone(),
-            attribution: concat!(
+        let revision = self.response_source().revision();
+        let generator = self.negative.map_or_else(
+            || generator.clone(),
+            |stock| {
+                let mut hash = blake3::Hasher::new();
+                hash.update(generator.as_bytes());
+                hash.update(spektrafilm::negative_fingerprint(stock).as_bytes());
+                hash.update(include_bytes!("frontier/negative.rs"));
+                hash.update(include_bytes!("../../assets/frontier/sensor.json"));
+                hash.finalize().to_hex().to_string()
+            },
+        );
+        let attribution = if self.negative.is_some() {
+            format!(
+                "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. Fixed-exposure colour negative, SP3000-inspired spectral readout, shared zero-origin density calibration and authored rendering gamma; source-mode B origin. Not factory scanner or physical-print calibration. {}",
+                spektrafilm::ATTRIBUTION
+            )
+        } else {
+            concat!(
                 "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. ",
                 "Antitone forward density toe; A calibrated against Fuji TypeII, shared relative formation with source-mode code origins. ",
                 "Not a factory scanner or physical-print calibration."
-            ).into(),
+            ).into()
+        };
+        LookOrigin::Renderer {
+            renderer: self.variant.id().into(),
+            negative: self.negative.map(|stock| stock.id().into()),
+            revision: revision.into(),
+            generator,
+            attribution,
         }
     }
     pub fn from_origin(origin: &LookOrigin) -> Option<Self> {
-        let LookOrigin::Renderer { renderer, .. } = origin else {
+        let LookOrigin::Renderer {
+            renderer, negative, ..
+        } = origin
+        else {
             return None;
         };
         Some(Self {
+            negative: match negative {
+                Some(id) => Some(spektrafilm::Negative::from_id(id)?),
+                None => None,
+            },
             variant: Variant::all().find(|v| v.id() == renderer)?,
         })
     }
     pub fn prepare(self, cancel: &AtomicBool) -> Result<LookAsset, Error> {
-        Model::new(self)?.bake(baking::DEFAULT_GRID, cancel)
+        Model::new(self, cancel)?.bake(baking::DEFAULT_GRID, cancel)
     }
+}
+
+enum Input {
+    Positive(formation::Entry),
+    Negative(negative::Entry),
 }
 
 /// Authoring source only: projects and pixel consumers use its resolved LUT samples.
 pub struct Model {
     selection: Selection,
-    entry: formation::Entry,
+    input: Input,
     response: Arc<density::Response>,
 }
 impl Model {
-    pub fn new(selection: Selection) -> Result<Self, Error> {
+    pub fn new(selection: Selection, cancel: &AtomicBool) -> Result<Self, Error> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(failure("look preparation cancelled"));
+        }
+        let input = match selection.negative {
+            Some(stock) => Input::Negative(negative::Entry::new(stock, selection.variant, cancel)?),
+            None => Input::Positive(formation::Entry::calibrated(selection.variant)),
+        };
         Ok(Self {
             selection,
-            entry: formation::Entry::calibrated(selection.variant),
-            response: density::builtin(selection.variant)?,
+            input,
+            response: selection.response_source().load()?,
         })
     }
     pub fn ap1(&self, rgb: DVec3) -> Result<DVec3, Error> {
         require(rgb.is_finite(), "nonfinite Frontier input")?;
-        let output = self.response.sample(self.entry.coordinates(rgb)?);
+        let coordinates = match &self.input {
+            Input::Positive(entry) => entry.coordinates(rgb)?,
+            Input::Negative(entry) => entry.coordinates(rgb)?,
+        };
+        let output = self.response.sample(coordinates);
         require(output.is_finite(), "nonfinite Frontier AP1 output")?;
         Ok(output)
     }

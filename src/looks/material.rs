@@ -1,4 +1,6 @@
 //! Supported negative/media combinations and their numeric treatment preparation.
+#[cfg(test)]
+mod tests;
 use super::{LookAsset, LookOrigin, frontier, monochrome, spektrafilm};
 use crate::Error;
 use std::sync::atomic::AtomicBool;
@@ -93,10 +95,17 @@ impl From<monochrome::Selection> for Selection {
 impl Selection {
     pub fn new(negative: Option<Negative>, paper: Paper) -> Option<Self> {
         match (negative, paper) {
-            (None, Paper::Frontier(variant)) => {
-                Some(Self::Frontier(frontier::Selection { variant }))
+            (None, Paper::Frontier(variant)) => Some(Self::Frontier(frontier::Selection {
+                negative: None,
+                variant,
+            })),
+            (Some(Negative::Colour(negative)), Paper::Frontier(variant)) => {
+                Some(Self::Frontier(frontier::Selection {
+                    negative: Some(negative),
+                    variant,
+                }))
             }
-            (Some(_), Paper::Frontier(_)) => None,
+            (Some(Negative::Monochrome(_)), Paper::Frontier(_)) => None,
             (None, Paper::Colour(paper)) => Some(
                 spektrafilm::Selection {
                     negative: None,
@@ -146,7 +155,7 @@ impl Selection {
         match self {
             Self::Colour(v) => v.negative.map(Negative::Colour),
             Self::Monochrome(v) => v.negative.map(Negative::Monochrome),
-            Self::Frontier(_) => None,
+            Self::Frontier(v) => v.negative.map(Negative::Colour),
         }
     }
     pub fn paper(self) -> Paper {
@@ -160,7 +169,7 @@ impl Selection {
         match self {
             Self::Colour(v) => spektrafilm::Model::new(v, cancel)?.bake(size, cancel),
             Self::Monochrome(v) => monochrome::Model::new(v).bake(size, cancel),
-            Self::Frontier(v) => frontier::Model::new(v)?.bake(size, cancel),
+            Self::Frontier(v) => frontier::Model::new(v, cancel)?.bake(size, cancel),
         }
     }
 }

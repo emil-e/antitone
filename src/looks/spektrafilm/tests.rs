@@ -115,11 +115,11 @@ fn native_formation_and_spectral_projection_match_executed_upstream() {
                 .find(|p| p.negative == case.negative && p.paper == case.paper)
                 .unwrap();
             for (i, input) in case.input.iter().enumerate() {
-                let h = native.expose(*input);
+                let h = native.formation.expose(*input);
                 max_input = max_input.max((h - case.film_h[i]).abs().max_element());
-                let d = develop(native.profile, h);
+                let d = native.formation.density(*input);
                 max_density = max_density.max((d - case.film_density[i]).abs().max_element());
-                let ph = film_cmy_to_print_log_raw(native.profile, pair, d);
+                let ph = film_cmy_to_print_log_raw(native.formation.profile, pair, d);
                 max_projection = max_projection.max((ph - case.paper_h[i]).abs().max_element());
                 let paper = &catalog.paper[Paper::from_id(&case.paper).unwrap().0];
                 assert!(

@@ -206,6 +206,11 @@ pub enum LookOrigin {
     Imported,
     Renderer {
         renderer: String,
+        #[cfg_attr(
+            feature = "project",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        negative: Option<String>,
         revision: String,
         generator: String,
         attribution: String,
@@ -259,6 +264,7 @@ impl LookOrigin {
         }
         if let Self::Renderer {
             renderer,
+            negative,
             revision,
             generator,
             attribution,
@@ -271,6 +277,10 @@ impl LookOrigin {
                         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
             };
             require(id(renderer), "invalid renderer identity")?;
+            require(
+                negative.as_deref().is_none_or(id),
+                "invalid renderer negative identity",
+            )?;
             require(
                 revision.len() == 64 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
                 "invalid renderer revision",
@@ -317,11 +327,13 @@ impl LookAsset {
                 LookOrigin::Imported => 0,
                 LookOrigin::Renderer {
                     renderer,
+                    negative,
                     revision,
                     generator,
                     attribution,
                 } => {
                     renderer.capacity()
+                        + negative.as_ref().map_or(0, String::capacity)
                         + revision.capacity()
                         + generator.capacity()
                         + attribution.capacity()

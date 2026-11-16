@@ -39,6 +39,7 @@ mod tests {
     fn an_unregistered_provider_prepares_and_reopens_without_a_runtime_definition() {
         let origin = LookOrigin::Renderer {
             renderer: "authored_test_provider".into(),
+            negative: None,
             revision: "a".repeat(64),
             generator: "test-affine-v1".into(),
             attribution: "Authored test function".into(),

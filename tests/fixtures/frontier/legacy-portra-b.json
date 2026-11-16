@@ -1,0 +1,27 @@
+{
+  "contract": "acescct-ap1-d60-tetrahedral-v1",
+  "name": "Kodak Portra 400 · Frontier B",
+  "origin": {
+    "kind": "renderer",
+    "renderer": "frontier_b",
+    "negative": "kodak_portra_400",
+    "revision": "17be44e6bcba8f44ad21241672ecb4f39c2daa916629c3727a9dd55f3ba29fac",
+    "generator": "4e040158f27ac90ed0c7fee666f7a3a06b4e253d5e3cce03c1032d911b426be5",
+    "attribution": "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. Fixed-exposure colour negative, SP3000-inspired spectral readout and shared affine A calibration; source-mode B origin. Not factory scanner or physical-print calibration. Derived from spektrafilm by Andrea Volpato, https://github.com/andreavolpato/spektrafilm. Profile/LUT data licensed CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/. Modified by Antitone contributors: nonspatial factorization, neutral calibration and inverse authoring DRT."
+  },
+  "size": 3,
+  "domain_min": [
+    -0.5,
+    -0.5,
+    -0.5
+  ],
+  "domain_max": [
+    1.0386752,
+    1.0386752,
+    1.0386752
+  ],
+  "input_range": "clip",
+  "encoding": "zlib-rgb32le-base64-v1",
+  "content_id": "97293f3ba684d34e0a483bf13b4c759888c36a34b032b56d685c65b68d65b4d4",
+  "samples": "eJx1jU8oBGEchktchISDi7JNTg7DSTH93k3TNxPWZw8+o+Si1diDg03LZi+oqdlW/uTmwEqtLa1yEHtQirHl5E+KCBdbFCccHHxHDnt7ent6H/XLJn4bpvTaBKl/2AiamPnoQC5kQC3iBGwTTpWGo0kDmTuGykOGqwUF1fcM0RxDyZIC57UfhacBePud/36Cp7PUl50muzRBUxETtQ0aInED+c8w+VfG6eEySr4zh4ZukmQ+LlKba2KnXUNz0kDrC8PeCcPbuoLlAkO9x1CzqSAhW++ydS1bZRscLd0Cjds6djMcgwEBL60jVicw5rMQatJxvMUR6xF4lvtoliPVK+BKdqWzKp1h6Xz7Bc5TFubKdfxIvpA8LznfJTByYCFeoeMX7yyEuQ=="
+}

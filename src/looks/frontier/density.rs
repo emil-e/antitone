@@ -42,6 +42,13 @@ impl Response {
         )
     }
     #[cfg(feature = "ocio-reference")]
+    pub(super) fn values(&self) -> Vec<DVec3> {
+        self.nodes
+            .iter()
+            .map(|v| DVec3::from_array(v.map(f64::from)))
+            .collect()
+    }
+    #[cfg(feature = "ocio-reference")]
     pub(super) fn bytes(&self) -> Vec<u8> {
         self.nodes
             .iter()
@@ -70,32 +77,73 @@ impl Response {
         out
     }
 }
-pub(super) fn builtin(variant: Variant) -> Result<Arc<Response>, Error> {
-    static A: OnceLock<Result<Arc<Response>, Error>> = OnceLock::new();
-    static B: OnceLock<Result<Arc<Response>, Error>> = OnceLock::new();
-    let (slot, bytes) = match variant {
-        Variant::A => (
-            &A,
-            include_bytes!("../../../assets/frontier/density-a.f32.z").as_slice(),
-        ),
-        Variant::B => (
-            &B,
-            include_bytes!("../../../assets/frontier/density-b.f32.z").as_slice(),
-        ),
-    };
-    slot.get_or_init(|| {
-        let mut decoded = Vec::new();
-        let mut decoder = flate2::bufread::ZlibDecoder::new(bytes);
-        decoder
-            .by_ref()
-            .take(BYTES as u64 + 1)
-            .read_to_end(&mut decoded)
-            .map_err(failure)?;
-        require(
-            decoder.total_in() as usize == bytes.len(),
-            "trailing density response data",
-        )?;
-        Response::from_bytes(&decoded).map(Arc::new)
-    })
-    .clone()
+#[derive(Clone, Copy)]
+pub(super) enum Source {
+    Native(Variant),
+    Negative(Variant),
+}
+
+struct Asset {
+    bytes: &'static [u8],
+    revision: OnceLock<String>,
+    response: OnceLock<Result<Arc<Response>, Error>>,
+}
+impl Asset {
+    const fn new(bytes: &'static [u8]) -> Self {
+        Self {
+            bytes,
+            revision: OnceLock::new(),
+            response: OnceLock::new(),
+        }
+    }
+}
+
+impl Source {
+    fn asset(self) -> &'static Asset {
+        static ASSETS: [Asset; 4] = [
+            Asset::new(include_bytes!("../../../assets/frontier/density-a.f32.z")),
+            Asset::new(include_bytes!("../../../assets/frontier/density-b.f32.z")),
+            Asset::new(include_bytes!(
+                "../../../assets/frontier/density-negative-a.f32.z"
+            )),
+            Asset::new(include_bytes!(
+                "../../../assets/frontier/density-negative-b.f32.z"
+            )),
+        ];
+        let index = match self {
+            Self::Native(Variant::A) => 0,
+            Self::Native(Variant::B) => 1,
+            Self::Negative(Variant::A) => 2,
+            Self::Negative(Variant::B) => 3,
+        };
+        &ASSETS[index]
+    }
+
+    pub(super) fn revision(self) -> &'static str {
+        let asset = self.asset();
+        asset
+            .revision
+            .get_or_init(|| blake3::hash(asset.bytes).to_hex().to_string())
+    }
+
+    pub(super) fn load(self) -> Result<Arc<Response>, Error> {
+        let asset = self.asset();
+        asset
+            .response
+            .get_or_init(|| {
+                let mut decoded = Vec::new();
+                let mut decoder = flate2::bufread::ZlibDecoder::new(asset.bytes);
+                decoder
+                    .by_ref()
+                    .take(BYTES as u64 + 1)
+                    .read_to_end(&mut decoded)
+                    .map_err(failure)?;
+                require(
+                    decoder.total_in() as usize == asset.bytes.len(),
+                    "trailing density response data",
+                )?;
+                Response::from_bytes(&decoded).map(Arc::new)
+            })
+            .clone()
+    }
 }

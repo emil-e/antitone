@@ -211,7 +211,7 @@ fn native_fallback_and_viewport_departure_routes_keep_the_dirty_crop_until_the_d
                     .unwrap()
                     .events
                     .push(egui::ViewportEvent::Close);
-                let output = context.run_ui(input, |ui| {
+                let mut output = context.run_ui(input, |ui| {
                     egui::CentralPanel::default()
                         .show(ui, |ui| crate::editor::tests::paint_controller(app, ui));
                 });
@@ -220,6 +220,7 @@ fn native_fallback_and_viewport_departure_routes_keep_the_dirty_crop_until_the_d
                         .commands
                         .contains(&egui::ViewportCommand::CancelClose)
                 );
+                output.textures_delta.clear();
             } else {
                 ui_frame(app, &context, vec![]);
             }

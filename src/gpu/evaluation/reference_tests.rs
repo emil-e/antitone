@@ -32,9 +32,12 @@ fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
     let input = buffer(&device, &pixels);
     for (variant, name) in [(Variant::A, "A"), (Variant::B, "B")] {
         let asset = Arc::new(
-            Selection { variant }
-                .prepare(&std::sync::atomic::AtomicBool::new(false))
-                .unwrap(),
+            Selection {
+                negative: None,
+                variant,
+            }
+            .prepare(&std::sync::atomic::AtomicBool::new(false))
+            .unwrap(),
         );
         let chain = LutChain {
             lut: None,
@@ -184,6 +187,7 @@ fn asset() -> Arc<LookAsset> {
             "Tetrahedral hinges".into(),
             LookOrigin::Renderer {
                 renderer: "unregistered_provider".into(),
+                negative: None,
                 revision: "a".repeat(64),
                 generator: "authored-hinges".into(),
                 attribution: "Synthetic nonseparable corner products".into(),
@@ -568,9 +572,12 @@ fn admission_assets() -> Vec<Arc<LookAsset>> {
         let mut assets = assets;
         for variant in Variant::all() {
             assets.push(Arc::new(
-                Selection { variant }
-                    .prepare(&std::sync::atomic::AtomicBool::new(false))
-                    .unwrap(),
+                Selection {
+                    negative: None,
+                    variant,
+                }
+                .prepare(&std::sync::atomic::AtomicBool::new(false))
+                .unwrap(),
             ));
         }
         assets

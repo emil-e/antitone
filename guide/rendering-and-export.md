@@ -13,11 +13,12 @@ The sections follow processing order:
 - **LUT** — **Load LUT…** imports a creative ACEScct/AP1 3D `.cube`, applied before
   Film & paper. Display and camera-conversion LUTs are not supported.
 - **Film & paper** — **Negative** selects an optional simulated camera-negative stock;
-  None skips synthetic formation, not the Roll panel's inversion of an actual negative.
+  None skips selected-stock simulation, not the Roll panel's inversion of an actual negative.
   **Paper** selects the print medium independently. Paper None is available only without
   a selected negative. From bypass, a colour negative also selects Portra Endura; a B&W
   negative selects Ilford Multigrade RC Deluxe · filter 2. Choose Negative None to use
-  paper alone on an already inverted scan or a Digital photograph.
+  paper alone on an already inverted scan or a Digital photograph. **Frontier A/B** are
+  reproduction alternatives under Paper, compatible with colour negatives or None.
 - **Target** — **sRGB** or **Display P3**, both 100-nit. This is the output colour space,
   not the monitor profile; choosing P3 changes the actual rendering and gamut limitation.
 

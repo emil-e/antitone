@@ -14,9 +14,10 @@ use std::sync::{
 };
 mod data;
 mod grid;
+mod negative;
 mod positive;
-use super::lookup::cubic_2d;
-use grid::{CubicGrid, bilinear};
+use grid::CubicGrid;
+pub(super) use negative::{Formation, fingerprint as negative_fingerprint};
 
 pub const REVISION: &str = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc";
 pub const ATTRIBUTION: &str = "Derived from spektrafilm by Andrea Volpato, https://github.com/andreavolpato/spektrafilm. Profile/LUT data licensed CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/. Modified by Antitone contributors: nonspatial factorization, neutral calibration and inverse authoring DRT.";
@@ -112,6 +113,7 @@ fn fingerprint() -> &'static str {
             include_bytes!("sampling.rs").as_slice(),
             include_bytes!("spektrafilm/data.rs").as_slice(),
             include_bytes!("spektrafilm/grid.rs").as_slice(),
+            include_bytes!("spektrafilm/negative.rs").as_slice(),
             include_bytes!("spektrafilm/positive.rs").as_slice(),
             include_bytes!("spektrafilm/positive/reference.rs").as_slice(),
             include_bytes!("lookup.rs").as_slice(),
@@ -151,52 +153,20 @@ fn interpolate_exposure_to_density(
     }))
 }
 
-fn develop(film: &data::Film, h: DVec3) -> DVec3 {
-    let initial =
-        interpolate_exposure_to_density(h, &film.log_exposure, &film.density_curves, film.gamma);
-    // model/couplers.py uses donor rows and receiver columns.
-    let corrected = compute_exposure_correction_dir_couplers(h, initial, matrix(film.dir_matrix));
-    interpolate_exposure_to_density(
-        corrected,
-        &film.log_exposure,
-        &film.pre_dir_curves,
-        film.gamma,
-    )
-}
-fn compute_exposure_correction_dir_couplers(h: DVec3, density: DVec3, couplers: DMat3) -> DVec3 {
-    h - couplers.transpose() * density
-}
 fn develop_print_morph(paper: &data::Paper, h: DVec3) -> DVec3 {
     // Curve morphing is evaluated upstream at build time; its effective graph is retained.
     interpolate_exposure_to_density(h, &paper.log_exposure, &paper.density_curves, DVec3::ONE)
 }
 
 struct Filming {
-    profile: &'static data::Film,
-    tc: Vec<DVec3>,
+    formation: Formation,
     printing: CubicGrid,
 }
 impl Filming {
     fn new(negative: Negative, paper: Paper, cancel: &AtomicBool) -> Result<Self, Error> {
         let c = data::catalog();
-        let film = &c.negative[negative.0];
-        let spectra = data::spectra()?;
-        let n = c.spectra_size;
-        let w = c.wavelengths;
-        let mut raw = Vec::with_capacity(n * n);
-        for (i, light) in spectra.chunks_exact(w).enumerate() {
-            if i % n == 0 && cancel.load(Ordering::Relaxed) {
-                return Err(failure("look preparation cancelled"));
-            }
-            raw.push(
-                light
-                    .iter()
-                    .zip(&film.sensitivity)
-                    .fold(DVec3::ZERO, |sum, (value, s)| sum + *s * (*value)),
-            );
-        }
-        let coords = data::coordinates(&film.illuminant)?;
-        let tc = coords.into_iter().map(|p| bilinear(&raw, n, p)).collect();
+        let formation = Formation::new(negative, cancel)?;
+        let film = formation.profile;
         let pair = c
             .pairs
             .iter()
@@ -222,8 +192,7 @@ impl Filming {
             }
         }
         Ok(Self {
-            profile: film,
-            tc,
+            formation,
             printing: CubicGrid {
                 size,
                 min: DVec3::ZERO,
@@ -231,19 +200,6 @@ impl Filming {
                 values,
             },
         })
-    }
-    fn expose(&self, rgb: DVec3) -> DVec3 {
-        let xyz = matrix(self.profile.matrix) * rgb;
-        let brightness = xyz.element_sum();
-        let denominator = brightness.max(EPSILON);
-        let x = xyz.x / denominator;
-        let y = xyz.y / denominator;
-        let tc = [
-            ((1. - x) * (1. - x)).clamp(0., 1.),
-            (y / (1. - x).max(EPSILON)).clamp(0., 1.),
-        ];
-        let raw = cubic_2d(&self.tc, data::catalog().spectra_size, tc) * brightness;
-        raw.map(|v| (v.max(0.) + EPSILON).log10())
     }
 }
 
@@ -291,9 +247,7 @@ impl Model {
     }
     fn paper_exposure(&self, rgb: DVec3) -> Result<DVec3, Error> {
         match &self.film {
-            Some(film) => Ok(film
-                .printing
-                .sample(develop(film.profile, film.expose(rgb)))),
+            Some(film) => Ok(film.printing.sample(film.formation.density(rgb))),
             None => {
                 self.paper
                     .positive_driver
