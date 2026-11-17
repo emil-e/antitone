@@ -23,6 +23,7 @@ pub(crate) mod authoring;
 pub(crate) mod authoring_examples;
 #[cfg(feature = "editor")]
 pub mod camera_response;
+mod composition;
 #[cfg(all(
     feature = "raw",
     feature = "project",
@@ -31,17 +32,14 @@ pub mod camera_response;
 #[cfg(all(test, feature = "editor"))]
 mod neutral_readout;
 pub(crate) mod operations;
-#[cfg(feature = "project")]
-mod recipe;
 #[cfg(any(test, feature = "editor"))]
 pub(crate) mod sampling;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod test_effects;
 #[cfg(feature = "project")]
-#[cfg(feature = "project")]
-pub(crate) use recipe::RecipeGraph;
-#[cfg(feature = "editor")]
-mod preview;
+pub(crate) use composition::RecipeGraph;
+#[cfg(feature = "render")]
+pub(crate) use composition::compose_output;
 #[cfg(all(test, feature = "editor"))]
 mod provenance_tests;
 #[cfg(feature = "editor")]
@@ -58,22 +56,6 @@ mod prewarm;
 pub mod test_support;
 
 use assembly::Assembly;
-
-#[cfg(feature = "render")]
-pub(crate) fn compose_output(
-    renderer: &crate::renderer::GpuRenderer,
-    image: Value,
-    reference: crate::rendering::OutputReference,
-    luts: &crate::looks::LutChain,
-) -> Result<Value, Error> {
-    crate::gpu::evaluation::Reference::capture(
-        renderer.evaluation().device(),
-        renderer,
-        reference,
-        luts,
-    )?
-    .compose(image, renderer)
-}
 
 /// Corrected camera light is available independently of positive calibration or grading.
 pub(crate) struct CameraGraph {
@@ -94,15 +76,6 @@ impl CameraGraph {
     fn camera(&self) -> Result<Value, Error> {
         let capture = Captured::new(self.input.clone(), Interpretation::Unavailable)?;
         Ok(Assembly::captured(capture).camera(self.codes.clone()))
-    }
-
-    fn inspection(&self, view: crate::gpu::interpretation::InspectionView) -> Result<Value, Error> {
-        Ok(Assembly::captured(Captured::new(
-            self.input.clone(),
-            Interpretation::Packed(view.parameters()?),
-        )?)
-        .interpret_camera(self.codes.clone(), self.camera()?)?
-        .unrepaired)
     }
 }
 
@@ -207,16 +180,6 @@ impl PhotographGraph {
         }
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn inspection_view(
-        neutral: Value,
-        parameters: ProcessingParameters,
-        presentation: crate::frame_raster::FrameRaster,
-    ) -> Result<Value, Error> {
-        let output = view_domain(presentation, neutral.domain().grid.coverage);
-        window(inspect(neutral, parameters)?, output.finite()?)
-    }
-
     /// Individually selected original cells, retaining their physical correction coordinates.
     #[cfg(feature = "editor")]
     pub(crate) fn camera_samples(
@@ -299,75 +262,6 @@ impl PhotographGraph {
         )?;
 
         Ok(Assembly::captured(captured).camera(source))
-    }
-
-    /// Capture original-cell operations; these arguments are also used by analytic consumers.
-    /// Author a complete original-grid working-positive calculation from operation arguments.
-    pub fn original_image(
-        limits: &wgpu::Limits,
-        source: Value,
-        field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
-        grading: Grading,
-        repairs: &[crate::dust_repair::Repair],
-    ) -> Result<Value, Error> {
-        Ok(Self::original(limits, source, field, program, grading, repairs.to_vec())?.processed)
-    }
-
-    pub(crate) fn original(
-        limits: &wgpu::Limits,
-        source: Value,
-        field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
-        grading: Grading,
-        repairs: Vec<crate::dust_repair::Repair>,
-    ) -> Result<Self, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
-            return Err(Error::InvalidParameter(
-                "photographic conversion requires original camera cells",
-            ));
-        }
-        grading.require_extent(source.domain().finite()?.source()?)?;
-        Assembly::photographic(
-            limits,
-            CameraInput {
-                matrix: program.matrix,
-                field,
-                continuous: true,
-                mapping: Mapping::Originals,
-            },
-            program,
-            grading,
-            repairs,
-        )?
-        .photograph(source)
-    }
-
-    pub(crate) fn inspection_original(
-        source: Value,
-        field: Option<Arc<GpuFlatField>>,
-        matrix: glam::DMat3,
-        view: crate::gpu::interpretation::InspectionView,
-    ) -> Result<Value, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
-            return Err(Error::InvalidParameter(
-                "inspection requires original camera cells",
-            ));
-        }
-        CameraGraph::new(
-            source,
-            CameraInput {
-                matrix,
-                field,
-                continuous: true,
-                mapping: Mapping::Originals,
-            },
-        )?
-        .inspection(view)
     }
 
     #[cfg(test)]

@@ -1,8 +1,5 @@
 //! Fixture graph authoring uses the ordinary operation functions.
-use super::{
-    assembly::{Assembly, ViewOutput},
-    *,
-};
+use super::{assembly::Assembly, composition::ViewOutput, *};
 
 pub(crate) type Author = dyn Fn(Value, Option<ViewOutput>) -> Result<Value, Error> + Send + Sync;
 type Suffix = fn(Value) -> Result<Value, Error>;

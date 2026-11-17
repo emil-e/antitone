@@ -23,3 +23,21 @@ pub fn prepare(
     Grading::validate(limits, roll, layers, area)?;
     ProcessingParameters::interpret(input, roll, matrix)
 }
+
+#[cfg(feature = "project")]
+impl crate::image_recipe::ImageRecipe {
+    pub(crate) fn validate(
+        &self,
+        limits: &wgpu::Limits,
+    ) -> Result<crate::gpu::parameters::ProcessingParameters, Error> {
+        let program = InputTransform::from_recipe(&self.neutral)?;
+        prepare(
+            limits,
+            program.input,
+            self.roll,
+            &self.grade,
+            program.matrix,
+            self.neutral.source_development.active_area().into(),
+        )
+    }
+}
