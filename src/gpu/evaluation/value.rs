@@ -78,7 +78,6 @@ enum Body {
     Gpu(GpuBody),
     Cpu(Arc<dyn CpuKernel>),
     Concatenate,
-    Failed(Error),
 }
 
 #[derive(Clone)]
@@ -232,20 +231,6 @@ impl Operation {
         }
     }
 
-    pub(crate) fn failed<T: std::fmt::Debug + PartialEq + Send + Sync + 'static>(
-        contract: &'static str,
-        parameters: T,
-        error: Error,
-    ) -> Self {
-        Self {
-            key: Some(RetainedKey::new(Arguments {
-                contract,
-                parameters: RetainedKey::new(parameters),
-            })),
-            body: Arc::new(Body::Failed(error)),
-        }
-    }
-
     /// Mixed bodies receive pointwise pixels and use input_i for neighborhood inputs.
     pub fn with_input_access(mut self, access: Vec<Access>) -> Self {
         let Body::Gpu(body) = Arc::make_mut(&mut self.body) else {
@@ -259,7 +244,7 @@ impl Operation {
         match self.body.as_ref() {
             Body::Source(_) | Body::Argument { .. } => Access::Pointwise,
             Body::Gpu(body) => body.access,
-            Body::Cpu(_) | Body::Concatenate | Body::Failed(_) => Access::Neighborhood,
+            Body::Cpu(_) | Body::Concatenate => Access::Neighborhood,
         }
     }
 
@@ -267,7 +252,7 @@ impl Operation {
         match self.body.as_ref() {
             Body::Source(_) | Body::Argument { .. } => Access::Pointwise,
             Body::Gpu(body) => body.input_access.get(index).copied().unwrap_or(body.access),
-            Body::Cpu(_) | Body::Concatenate | Body::Failed(_) => Access::Neighborhood,
+            Body::Cpu(_) | Body::Concatenate => Access::Neighborhood,
         }
     }
 

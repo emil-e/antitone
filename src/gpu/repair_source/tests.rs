@@ -1,4 +1,5 @@
 use super::*;
+mod recovery;
 use crate::gpu::submission::SubmissionGate;
 use crate::processing::InputSettings;
 use glam::{DMat3, DVec3};
@@ -382,9 +383,13 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     .photograph(&device.limits())
     .unwrap()
     .neutral;
-    let error = Source::from_image(&renderer, (&queue, &gate), repaired)
+    let fallback = Source::from_image(&renderer, (&queue, &gate), repaired)
         .unwrap()
         .read(edge, None, &|| false)
-        .unwrap_err();
-    assert!(error.to_string().contains("two-pixel exterior"), "{error}");
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fallback, values,
+        "failed healing preserves the unrepaired search input"
+    );
 }

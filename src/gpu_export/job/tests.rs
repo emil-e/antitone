@@ -8,6 +8,7 @@ use crate::{
 mod cancellation;
 #[cfg(feature = "ocio-reference")]
 mod corrected_source;
+mod recovery;
 mod source_scale;
 #[cfg(feature = "ocio-reference")]
 mod starting_exposure;

@@ -333,22 +333,12 @@ impl WorkingView {
         self.rendered.as_ref()
     }
 
+    #[cfg(test)]
     pub(super) fn completed_capture(&self) -> Option<&PhotographRequest> {
         self.frame
             .as_ref()
             .filter(|_| self.support_ready())
             .map(|frame| &frame.request.capture)
-    }
-
-    pub(super) fn failed_capture(&self) -> Option<&PhotographRequest> {
-        self.failed
-            .as_ref()
-            .filter(|failed| {
-                self.wanted
-                    .as_ref()
-                    .is_some_and(|wanted| failed.same_calculation(wanted))
-            })
-            .map(|demand| &demand.capture)
     }
 
     pub(super) fn support_ready(&self) -> bool {

@@ -349,9 +349,6 @@ pub(crate) fn compile(root: Calculation, boundaries: &[Value]) -> Result<GpuUnit
         let primitive = node.primitive().cloned().ok_or(Error::InvalidParameter(
             "GPU value graph contains an undeclared boundary",
         ))?;
-        if let Body::Failed(error) = primitive.operation.body.as_ref() {
-            return Err(error.clone());
-        }
         if matches!(primitive.operation.body.as_ref(), Body::Cpu(_)) {
             return Err(Error::InvalidParameter(
                 "CPU values must be upstream GPU graph boundaries",

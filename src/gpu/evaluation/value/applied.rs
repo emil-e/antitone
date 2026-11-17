@@ -66,7 +66,7 @@ impl Applied {
     pub(super) fn inline(&self) -> bool {
         matches!(
             self.operation.body.as_ref(),
-            Body::Gpu(_) | Body::Concatenate | Body::Failed(_)
+            Body::Gpu(_) | Body::Concatenate
         )
     }
     pub(super) fn primitive(

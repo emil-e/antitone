@@ -1,6 +1,7 @@
 use super::*;
 mod callable;
 mod dusty;
+mod recovery;
 mod regional;
 use crate::dust_repair::{RepairId, RepairOrigin};
 use std::sync::Mutex;
@@ -202,7 +203,7 @@ fn separated_groups_in_one_repair_keep_their_target_and_donor_crops() {
 }
 
 #[test]
-fn noncontributing_source_edge_repair_does_not_run_its_invalid_solve() {
+fn a_failed_edge_repair_preserves_selected_unselected_and_distant_pixels() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let mut bits = vec![false; 16 * 16];
@@ -215,10 +216,17 @@ fn noncontributing_source_edge_repair_does_not_run_its_invalid_solve() {
         support: SupportMask::new([0, 0], [16, 16], bits).unwrap(),
         offset: [32, 0],
     };
-    let healed = compose(base(Default::default()), &[edge]).unwrap();
+    let input = base(Default::default());
+    let failed = healing_image(&input, &edge).unwrap();
     assert!(
-        pixels(&context, &queue, healed.clone(), [0, 0, 1, 1].into()).is_err(),
-        "the control must require unavailable two-pixel exterior if executed"
+        pixels(&context, &queue, failed, [0, 0, 1, 1].into()).unwrap()[0][3] < 0.,
+        "the missing exterior really fails healing"
+    );
+    let healed = compose(input, &[edge]).unwrap();
+    assert_eq!(
+        pixels(&context, &queue, healed.clone(), [0, 0, 1, 1].into()).unwrap(),
+        vec![[2., -0.5, 0.25, 0.75]],
+        "a failed heal leaves its target pixel unchanged"
     );
     assert_eq!(
         pixels(&context, &queue, healed.clone(), [8, 8, 1, 1].into()).unwrap(),
@@ -232,7 +240,7 @@ fn noncontributing_source_edge_repair_does_not_run_its_invalid_solve() {
 }
 
 #[test]
-fn rotated_reconstruction_skips_zero_weight_source_edge_repair_but_requires_contributing_edges() {
+fn failed_edge_repairs_fall_back_inside_rotated_and_exterior_footprints() {
     use crate::{
         crop::Crop,
         frame_raster::FrameRaster,
@@ -290,7 +298,7 @@ fn rotated_reconstruction_skips_zero_weight_source_edge_repair_but_requires_cont
         let clean = pixels_with_policy(
             &context,
             &queue,
-            reconstruct(plate, frame),
+            reconstruct(plate.clone(), frame),
             [0, 0, 1, 1].into(),
             policy,
         )
@@ -319,36 +327,47 @@ fn rotated_reconstruction_skips_zero_weight_source_edge_repair_but_requires_cont
                 max: FramePoint(max),
                 output: [1, 1],
             };
-            let error = pixels_with_policy(
+            let clean = pixels_with_policy(
+                &context,
+                &queue,
+                reconstruct(plate.clone(), needed),
+                [0, 0, 1, 1].into(),
+                policy,
+            )
+            .unwrap();
+            let actual = pixels_with_policy(
                 &context,
                 &queue,
                 reconstruct(healed.clone(), needed),
                 [0, 0, 1, 1].into(),
                 policy,
             )
-            .unwrap_err();
-            assert!(
-                error.to_string().contains("two-pixel exterior"),
-                "required source edges, including constant exterior extension, really execute: {error}"
+            .unwrap();
+            assert_eq!(
+                actual, clean,
+                "failed heals also preserve contributing source edges and constant exterior extension"
             );
         }
     }
 }
 
 #[test]
-fn zero_weight_repair_with_valid_read_plan_does_not_execute_its_poisoned_donor() {
+fn failed_donor_is_local_to_its_repair_even_when_an_enclosing_read_covers_it() {
     use crate::{crop::Crop, frame_raster::FrameRaster, geometry::Composition};
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let repaired = repair([2, 12], [30, 20]);
     let input = base(Default::default());
-    let healed = compose(input.clone(), &[repaired]).unwrap();
+    let failed = healing_image(&input, &repaired).unwrap();
     assert!(
-        matches!(
-            pixels(&context, &queue, healed.clone(), [2, 12, 1, 1].into()),
-            Err(Error::NumericalOverflow)
-        ),
-        "the donor at32,32 is really poisoned"
+        pixels(&context, &queue, failed, [2, 12, 1, 1].into()).unwrap()[0][3] < 0.,
+        "the poisoned donor is reported as a failed heal"
+    );
+    let healed = compose(input.clone(), &[repaired]).unwrap();
+    assert_eq!(
+        pixels(&context, &queue, healed.clone(), [2, 12, 1, 1].into()).unwrap(),
+        vec![[2., -0.5, 0.25, 0.75]],
+        "only the failed repair falls back, with original RGB and flags"
     );
     let composition = Composition::with_crop(
         [0, 0, 96, 64].into(),
@@ -456,16 +475,15 @@ fn a_repair_donor_reads_unrepaired_neutral_not_an_earlier_healed_sibling() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let mut second = repair([64, 32], [-32, 0]);
     second.id = RepairId(2);
-    let healed = compose(
-        base(Default::default()),
-        &[repair([32, 32], [32, 0]), second],
-    )
-    .unwrap();
+    let input = base(Default::default());
+    let failed = healing_image(&input, &second).unwrap();
     assert!(
-        matches!(
-            pixels(&context, &queue, healed, [64, 32, 1, 1].into()),
-            Err(Error::NumericalOverflow)
-        ),
+        pixels(&context, &queue, failed, [64, 32, 1, 1].into()).unwrap()[0][3] < 0.,
         "a repaired sibling must not hide the NaN in this repair's actual donor input"
+    );
+    let healed = compose(input, &[repair([32, 32], [32, 0]), second]).unwrap();
+    assert_eq!(
+        pixels(&context, &queue, healed, [64, 32, 1, 1].into()).unwrap(),
+        vec![[2., -0.5, 0.25, 0.75]]
     );
 }

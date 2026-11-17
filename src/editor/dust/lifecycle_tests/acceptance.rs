@@ -135,19 +135,12 @@ fn failed_heal_keeps_the_completed_search_donor_draggable() {
         settled(app);
         paint(app);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working_view.failed_capture().is_some()
+            e.dust_render_state() == "Repair failed"
+                && e.document.visit.working_view.completed_capture().is_some()
         });
         app.update(|e| {
-            assert_eq!(e.dust_render_state(), "Repair unavailable");
-            assert!(
-                e.document
-                    .visit
-                    .working_view
-                    .error
-                    .as_ref()
-                    .unwrap()
-                    .contains("two-pixel exterior")
-            );
+            assert_eq!(e.dust_render_state(), "Repair failed");
+            assert!(e.document.visit.working_view.error.is_none());
             let geometry = layout(e);
             let start =
                 screen_source_point(geometry, [origin[0] as f64 + 31., origin[1] as f64 + 1.]);
@@ -645,7 +638,7 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
         root,
     )
     .unwrap();
-    let error = reader
+    let failed = reader
         .read(
             SourceRegion {
                 x: a.x,
@@ -656,8 +649,17 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
             None,
             &|| false,
         )
-        .unwrap_err();
-    assert!(error.to_string().contains("two-pixel exterior"), "{error}");
+        .unwrap()
+        .unwrap();
+    let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
+    for (index, actual) in failed.iter().enumerate() {
+        let expected = input
+            .sample([a.x + index as u32 % 3, a.y + index as u32 / 3])
+            .unwrap();
+        for c in 0..3 {
+            assert!((f64::from(actual[c]) - expected[c]).abs() < 2e-6);
+        }
+    }
     let values = reader
         .read(
             SourceRegion {
@@ -915,7 +917,7 @@ fn navigation_discards_the_unfinished_stroke_and_returning_can_start_a_new_one()
 }
 
 #[test]
-fn real_search_authors_a_donor_before_render_demand_reports_a_failed_heal() {
+fn real_search_authors_a_donor_before_dust_reports_a_nonfatal_failed_heal() {
     let e = coherent_editor();
     with_application(e, |app| {
         let stroke = app.enter(|e, cx| {
@@ -938,9 +940,13 @@ fn real_search_authors_a_donor_before_render_demand_reports_a_failed_heal() {
         });
         paint(app);
         app.run_until(Duration::from_secs(10), |e| {
-            e.document.visit.working_view.failed_capture().is_some()
+            e.dust_render_state() == "Repair failed"
+                && e.document.visit.working_view.completed_capture().is_some()
         });
-        app.read(|e| assert_eq!(e.dust_render_state(), "Repair unavailable"));
+        app.read(|e| {
+            assert_eq!(e.dust_render_state(), "Repair failed");
+            assert!(e.document.visit.working_view.error.is_none());
+        });
         app.read(|e| assert!(!e.dust_donor_regions().is_empty()));
     });
 }

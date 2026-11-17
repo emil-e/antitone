@@ -531,7 +531,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         let stored = h.read(|editor| serde_json::to_value(&editor.document.state.project).unwrap());
         assert_eq!(stored, serde_json::to_value(&project).unwrap());
         ready(&mut h, 1);
-        assert!(h.get_by_label("Display P3 · Repairs").rect().height() > 0.);
+        assert!(h.get_by_label("Display P3").rect().height() > 0.);
     });
 }
 

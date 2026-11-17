@@ -308,7 +308,7 @@ fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_option
 }
 
 #[test]
-fn partial_tiles_do_not_run_a_repair_outside_the_requested_pixels() {
+fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let root = view(&[repair(100, 10000)]);
@@ -330,11 +330,11 @@ fn partial_tiles_do_not_run_a_repair_outside_the_requested_pixels() {
     };
     assert!(
         read([0, 0, 32, 32].into()).unwrap().is_some(),
-        "cache tiling must not widen demand to the invalid donor in the rest of the tile"
+        "a failed repair elsewhere does not block a partial view"
     );
     assert!(
-        read([48, 18, 8, 8].into()).is_err(),
-        "the control must actually require the invalid donor"
+        read([48, 18, 8, 8].into()).unwrap().is_some(),
+        "a view that includes the failed repair also completes with original pixels"
     );
 }
 

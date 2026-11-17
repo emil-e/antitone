@@ -148,7 +148,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_captured_intent() {
 }
 
 #[test]
-fn saves_preserve_instructions_and_pending_or_failed_common_rendering() {
+fn saves_preserve_instructions_while_failed_repairs_fall_back_silently() {
     let mut e = super::acceptance::coherent_editor();
     let source = e.document.visit.current_source.unwrap();
     let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
@@ -187,26 +187,19 @@ fn saves_preserve_instructions_and_pending_or_failed_common_rendering() {
         app.pump();
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            !e.document.write.pending() && e.document.visit.working_view.failed_capture().is_some()
+            !e.document.write.pending()
+                && e.document.visit.working_view.completed_capture().is_some()
         });
         app.update(|e| {
-            assert_eq!(e.dust_render_state(), "Repair unavailable");
-            assert!(
-                e.document
-                    .visit
-                    .working_view
-                    .error
-                    .as_ref()
-                    .unwrap()
-                    .contains("two-pixel exterior")
-            );
+            assert_eq!(e.dust_render_state(), "Repairs");
+            assert!(e.document.visit.working_view.error.is_none());
             assert!(!e.document.dirty());
             let saved = e
                 .document
                 .save(&path, crate::project::Save::Replace)
                 .unwrap();
             e.document.accept_save(saved);
-            assert_eq!(e.dust_render_state(), "Repair unavailable");
+            assert_eq!(e.dust_render_state(), "Repairs");
             let reopened = Document::open(&path).unwrap();
             assert_eq!(reopened.project, e.document.state.project);
             assert!(reopened.project.source(source).unwrap().repairs.repairs()[0].enabled);

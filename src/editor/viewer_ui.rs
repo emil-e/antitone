@@ -209,7 +209,7 @@ impl Editor {
                 } else {
                     ""
                 };
-                let state = if has_repairs {
+                let state = if has_repairs && self.dusting() {
                     format!("{target}{quality} · {}", self.dust_render_state())
                 } else {
                     format!("{target}{quality}")

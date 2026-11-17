@@ -5,6 +5,23 @@ use super::*;
 mod tests;
 
 impl Reconstruction {
+    // Execution may acquire unused cells inside an admitted partition: overlap weights,
+    // not the read rectangle, determine their contribution. Keep precise support separate
+    // for content identity so unused pixels do not invalidate a reconstructed result.
+    pub(super) fn source_window(&self, part: Rect, output: Rect) -> Option<Rect> {
+        self.source_parts(part, output).into_iter().reduce(|a, b| {
+            let x = a.x.min(b.x);
+            let y = a.y.min(b.y);
+            Rect::new(
+                [x, y],
+                [
+                    (a.right().max(b.right()) - x) as u32,
+                    (a.bottom().max(b.bottom()) - y) as u32,
+                ],
+            )
+        })
+    }
+
     pub(super) fn source_parts(&self, part: Rect, output: Rect) -> Vec<Rect> {
         let corners = [
             [output.x, output.y],

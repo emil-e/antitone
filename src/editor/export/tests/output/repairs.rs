@@ -41,7 +41,7 @@ fn edge_border(area: Rect) -> SupportMask {
 }
 
 #[test]
-fn film_mtf_includes_repair_support_just_outside_the_crop() {
+fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
     let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng"]);
     editor.set_dmin(Some(DVec3::splat(0.8)));
     editor.set_dmax(Some(DVec3::splat(0.02)));
@@ -83,6 +83,36 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         crate::repair_source::evaluate(&source, &clean.repairs[0]).is_err(),
         "the source-edge repair cannot actually solve"
     );
+    let limits = editor.source_services.as_ref().unwrap().device.limits();
+    let requires_repair = |recipe: &crate::image_recipe::ImageRecipe| {
+        use crate::gpu::evaluation::{self as ev, Budget, CellRegion};
+        let graph = crate::gpu::photograph::PhotographGraph::from_recipe(
+            &limits,
+            ev::camera_source(&scan).unwrap(),
+            None,
+            recipe,
+        )
+        .unwrap();
+        let healing =
+            crate::gpu::repairs::definition::healing_image(&graph.unrepaired, &recipe.repairs[0])
+                .unwrap();
+        !graph
+            .processed
+            .regions_for(
+                &healing,
+                CellRegion::new([area.x as i32 + 9, area.y as i32 + 16], [32, 32]),
+                Budget {
+                    tile: [512, 128],
+                    scratch_bytes: 32 << 20,
+                },
+            )
+            .unwrap()
+            .is_empty()
+    };
+    assert!(
+        !requires_repair(&clean),
+        "the unfiltered crop excludes this repair"
+    );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("outside-edge.tif");
     editor = wait(editor, |editor, cx| {
@@ -96,7 +126,6 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
     assert!(editor.dialogs.message().is_none(), "{}", editor.status);
     acknowledge_export_summary(&mut editor);
     assert_eq!(tiff_pixels(&path).len(), 32 * 32 * 3);
-    let before = std::fs::read(&path).unwrap();
     editor.document.project.output.grain = GrainSettings {
         enabled: true,
         amount: 0.,
@@ -104,6 +133,10 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         image_sigma: crate::grain::MAX_SIZE,
         ..Default::default()
     };
+    assert!(
+        requires_repair(&editor.document.state.project.image_recipe(id).unwrap()),
+        "MTF support reaches the failed repair outside the crop"
+    );
     editor = wait(editor, |editor, cx| {
         editor.export(
             path.clone(),
@@ -112,22 +145,31 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
             cx,
         )
     });
-    let failure = editor
-        .dialogs
-        .message()
-        .expect("failed repair must report its error");
-    assert_eq!(failure.title, FailureCase::Export.title());
-    assert!(
-        failure.details.contains("two-pixel exterior"),
-        "{}",
-        failure.details
-    );
-    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+    acknowledge_export_summary(&mut editor);
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .clear();
+    let original = directory.path().join("without-repair.tif");
+    editor = wait(editor, |editor, cx| {
+        editor.export(
+            original.clone(),
+            OutputFormat::Tiff(OutputTarget::Srgb),
+            Overwrite::Refuse,
+            cx,
+        )
+    });
+    assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+    acknowledge_export_summary(&mut editor);
+    assert_eq!(tiff_pixels(&path), tiff_pixels(&original));
 }
 
 #[test]
-fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_preserves_destinations()
-{
+fn cold_reopened_exports_apply_successful_heals_and_leave_failed_targets_unchanged() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -392,7 +434,6 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             );
         }
         let before = directory.path().join("repaired.tif");
-        let bytes = std::fs::read(&before).unwrap();
         let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         let repairs = &mut editor
             .document
@@ -413,16 +454,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
                 cx,
             )
         });
-        let notice = editor
-            .dialogs
-            .message()
-            .expect("failed repair preparation must report its failure");
-        assert_eq!(notice.title, FailureCase::Export.title());
-        assert!(
-            notice.details.contains("repair") && notice.details.contains("two-pixel exterior"),
-            "{}",
-            notice.details
-        );
-        assert_eq!(std::fs::read(before).unwrap(), bytes);
+        assert!(editor.dialogs.message().is_none(), "{}", editor.status);
+        acknowledge_export_summary(&mut editor);
+        assert_eq!(tiff_pixels(&before), tiff_pixels(&plain));
     });
 }

@@ -121,15 +121,24 @@ impl Editor {
                 self.photo_settings(),
             )
             .unwrap();
-        let ready = capture
+        if !self
+            .document
+            .visit
+            .working_view
+            .completed_capture()
+            .and_then(|capture| capture.recipe())
+            .is_some_and(|completed| {
+                completed.neutral == capture.neutral && completed.repairs == capture.repairs
+            })
+        {
+            return Vec::new();
+        }
+        let repairs = capture
             .repairs
             .iter()
-            .filter(|repair| {
-                repair.enabled
-                    && self.dust_repair_feedback(&capture, repair) == RepairFeedback::Ready
-            })
+            .filter(|repair| repair.enabled)
             .collect::<Vec<_>>();
-        if ready.is_empty() {
+        if repairs.is_empty() {
             return Vec::new();
         }
         let scan = self.source_context().unwrap().scan().unwrap();
@@ -144,7 +153,7 @@ impl Editor {
         )
         .unwrap();
         let base = graph.interpreted().unwrap().unrepaired;
-        ready
+        repairs
             .into_iter()
             .map(|repair| {
                 Arc::new(Image {
