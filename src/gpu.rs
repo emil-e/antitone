@@ -27,13 +27,13 @@ pub(crate) mod test_support;
 pub(crate) mod grain;
 #[cfg(test)]
 pub(crate) mod image_mtf;
+pub(crate) mod raster;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "render")
 ))]
-pub(crate) mod pixel_pipeline;
-pub(crate) mod raster;
+pub(crate) mod recorded_image;
 
 pub mod parameters;
 pub(crate) mod repairs;

@@ -420,13 +420,13 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
     let direct = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let captured = RecipeGraph::originals(codes.clone(), None, &recipe).unwrap();
     let original = captured.photograph(&device.limits()).unwrap();
-    let original_direct = PhotographGraph::new_with_stages(
+    let original_direct = PhotographGraph::authored(
         &device.limits(),
         codes.clone(),
         None,
         &direct,
         direct.source_transform().unwrap().matrix,
-        &direct.pixel_pipeline(),
+        &direct.definition(),
     )
     .unwrap();
     // Migration consistency with the direct-operation API, not a second photographic oracle.

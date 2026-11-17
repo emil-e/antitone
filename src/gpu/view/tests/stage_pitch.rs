@@ -32,16 +32,29 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
         ([1.5, 3.], [6, 3]),
     ] {
         let frame = rotated_frame(pitch);
-        let stages = crate::pixel_pipeline::PixelPipeline {
-            stages: vec![crate::pixel_pipeline::PixelStage::new(
-                crate::image_mtf::ImageMtfParameters { sigma: 2. },
-            )],
+        let stages = {
+            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         };
-        let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
-            output: frame,
-            stages: &stages,
-            sampling: crate::acquisition::Sampling::NeutralFootprints,
-        })
+        let plan = crate::acquisition::Plan::for_graph(
+            crate::acquisition::Request {
+                output: frame,
+
+                sampling: crate::acquisition::Sampling::NeutralFootprints,
+            },
+            |input| stages.sampling_image(input),
+        )
         .unwrap();
         let raster = crate::gpu::raster::Raster::planned(&plan);
         assert_eq!(raster.pitch(), pitch.map(|v| v as f32));
@@ -67,8 +80,8 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             )
             .unwrap(),
         ))
-        .with_pixel_pipeline(
-            crate::pixel_pipeline::PixelPipeline::emulation(
+        .with_definition(
+            crate::gpu::photograph::assembly::Assembly::emulation(
                 crate::grain::GrainSettings {
                     enabled: true,
                     size: 0.1,
@@ -84,9 +97,9 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         );
         let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
             .unwrap()
-            .with_pipeline(input.pixel_pipeline())
+            .with_definition(input.definition())
             .unwrap();
-        assert_eq!(spec.plan.output_offset(), Some([8, 8]));
+        assert_eq!(spec.plan().output_offset(), Some([8, 8]));
         let size = spec.input_frame().unwrap().output;
         // A signed/HDR stripe exactly eight cells before the requested left edge.
         // A spurious ninth tap clamps to it instead of reading the absent real neighbour.

@@ -1,10 +1,7 @@
 //! An independently supplied finite-neighbourhood component used by composition tests.
 
 use crate::gpu::evaluation::{self, Domain, Operation, value};
-use crate::{
-    Error, gpu::evaluation::CellRegion as Rect, pixel_pipeline::EffectDefinition,
-    processing_support::Support,
-};
+use crate::{Error, gpu::evaluation::CellRegion as Rect, processing_support::Support};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NeighbourEffect {
@@ -12,8 +9,8 @@ pub(crate) struct NeighbourEffect {
     pub gain: f32,
 }
 
-impl EffectDefinition for NeighbourEffect {
-    fn compose(&self, input: evaluation::Value) -> Result<evaluation::Value, Error> {
+impl NeighbourEffect {
+    pub(crate) fn compose(&self, input: evaluation::Value) -> Result<evaluation::Value, Error> {
         let neighbourhood = evaluation::Value::from_operation(
             input.domain(),
             Some(input.clone()),
@@ -26,20 +23,21 @@ impl EffectDefinition for NeighbourEffect {
                 gain: self.gain,
             },
         );
-        Ok(evaluation::pointwise(
+        value::pointwise(
             neighbourhood,
             input.domain().meaning,
-            evaluation::Function {
-                code: r#"
-fn independent_source_bias(pixel: vec4f, position: vec2f) -> vec4f {
+            value::Operation::new(
+                "independent source bias v1",
+                (),
+                r#"
+fn independent_source_bias(cell: vec2i, position: vec2f, pixel: vec4f) -> vec4f {
     return vec4f(pixel.rgb + vec3f(position.x * 0.000001 + position.y * 0.000002), pixel.w);
 }
-"#
-                .into(),
-                symbol: "independent_source_bias",
-                bindings: vec![],
-            },
-        ))
+"#,
+                "independent_source_bias",
+                value::Access::Pointwise,
+            ),
+        )
     }
 }
 
@@ -50,6 +48,14 @@ struct Neighbour {
 }
 
 impl Operation for Neighbour {
+    fn key(&self) -> Option<evaluation::RetainedKey> {
+        Some(evaluation::RetainedKey::new((
+            "independent neighbour v1",
+            self.margin,
+            self.gain,
+        )))
+    }
+
     fn reads(&self, output: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
         Ok(vec![crate::gpu::evaluation::Read::new(
             0,

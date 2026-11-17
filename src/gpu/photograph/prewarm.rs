@@ -42,7 +42,6 @@ impl PhotographGraph {
                 [0, 0, 1, 1].into(),
             )?,
             Default::default(),
-            &Default::default(),
         )?
         .processed;
         for image in [inspection, positive] {

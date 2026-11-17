@@ -140,10 +140,22 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                 "support" => working.request(Demand::fixture(
                     first
                         .clone()
-                        .with_pipeline(crate::pixel_pipeline::PixelPipeline {
-                            stages: vec![crate::pixel_pipeline::PixelStage::new(
-                                crate::image_mtf::ImageMtfParameters { sigma: 2. },
-                            )],
+                        .with_definition({
+                            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+                            let pitch = [Some(mtf.sigma / 0.6)]
+                                .into_iter()
+                                .flatten()
+                                .reduce(f64::min);
+                            crate::gpu::photograph::assembly::Assembly::authored(
+                                move |mut image, output| {
+                                    image = mtf.compose(image)?;
+                                    if let Some(output) = output {
+                                        image = output.compose(image)?;
+                                    }
+                                    Ok(image)
+                                },
+                            )
+                            .with_view_pitch(pitch)
                         })
                         .unwrap(),
                     input.clone(),

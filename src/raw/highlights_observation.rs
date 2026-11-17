@@ -170,7 +170,6 @@ fn supplied_early_highlights_source_observation() {
                 program,
                 grading,
                 &[],
-                &Default::default(),
             )
             .unwrap();
             let height =

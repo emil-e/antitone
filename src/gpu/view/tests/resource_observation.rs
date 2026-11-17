@@ -92,12 +92,12 @@ fn acquisition_execution_resources() {
                 )
                 .unwrap(),
             ))
-            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
+            .with_definition(crate::gpu::photograph::assembly::Assembly::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
         };
         let input = make_input(0.);
         let spec = SourceRequest::new( frame, InputSettings::Digital, matrix, None)
             .unwrap()
-            .with_pipeline(input.pixel_pipeline())
+            .with_definition(input.definition())
             .unwrap();
         let start = Instant::now();
         peak.store(0, Ordering::Relaxed);

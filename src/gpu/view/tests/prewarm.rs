@@ -150,8 +150,9 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 .evaluation()
                 .prepare_supplied(evaluation, vec![source.supplied().unwrap()])
                 .unwrap();
-            let mut spec = source.spec.clone();
-            spec.plan = Arc::new(plan);
+            let spec = capture
+                .planned_request(&device.limits(), source.spec.clone(), plan)
+                .unwrap();
             let region = endpoint.domain().finite().unwrap();
             let image = ViewImage::from_recorded(
                 renderer.clone(),

@@ -144,13 +144,16 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
                     composition,
                     format,
                     luts: look.into(),
-                    pipeline: crate::pixel_pipeline::PixelPipeline::emulation(
-                        Default::default(),
-                        settings,
-                        composition.crop().size,
-                        17,
-                    )
-                    .unwrap(),
+                    calculation: Some(std::sync::Arc::new({
+                        let definition = crate::gpu::photograph::assembly::Assembly::emulation(
+                            Default::default(),
+                            settings,
+                            composition.crop().size,
+                            17,
+                        )
+                        .unwrap();
+                        move |input| definition.compose(input)
+                    })),
                 },
                 &path,
                 Overwrite::Refuse,

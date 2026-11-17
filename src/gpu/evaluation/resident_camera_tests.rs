@@ -211,12 +211,11 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                             .unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
-                let photo = PhotographGraph::from_resident_with_stages(
+                let photo = PhotographGraph::from_resident_fixture(
                     &device.limits(),
                     &source,
                     &input,
                     raster,
-                    &Default::default(),
                 )
                 .unwrap();
                 let mut expected = vec![Vec::new(); 4];
@@ -385,7 +384,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = AuthoredPhotograph::from(pipeline.clone())
-            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
+            .with_definition(crate::gpu::photograph::assembly::Assembly::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();
@@ -421,9 +420,9 @@ fn resident_camera_execution_resources() {
                         .encode(&renderer, device, &mut encoder, &output)
                         .unwrap()
                 } else {
-                    let prepared = crate::gpu::pixel_pipeline::Prepared::with_context(
+                    let prepared = crate::gpu::recorded_image::Prepared::with_context(
                         device,
-                        plan.pipeline(),
+                        &input.definition(),
                         raster,
                         renderer.evaluation.clone(),
                     )

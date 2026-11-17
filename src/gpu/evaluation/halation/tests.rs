@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::evaluation::CellRegion as Rect;
-use crate::{halation::reference, pixel_pipeline::EffectDefinition as _};
+use crate::halation::reference;
 use wgpu::util::DeviceExt;
 
 #[derive(Clone)]

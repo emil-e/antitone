@@ -135,13 +135,11 @@ impl CameraFixture {
         output: &wgpu::Buffer,
         input: &AuthoredPhotograph,
     ) -> Result<(), Error> {
-        let stages = input.pixel_pipeline();
-        let image = PhotographGraph::from_resident_with_stages(
+        let image = PhotographGraph::from_resident_fixture(
             &device.limits(),
             source,
             input,
             Self::raster(source),
-            &stages,
         )?
         .processed;
         self.record(device, encoder, source, output, image)

@@ -128,7 +128,7 @@ fn saturation_vibrance_with_film_paper_samples() {
                         film_and_paper: asset.clone(),
                         ..Default::default()
                     },
-                    pipeline: Default::default(),
+                    calculation: None,
                 },
                 &path,
                 Overwrite::Refuse,
@@ -297,7 +297,7 @@ fn photographic_tiff_pairs() {
                             grade: grade.clone(),
                             repairs: &[],
                             composition,
-                            pipeline: Default::default(),
+                            calculation: None,
                             format: Format::Tiff(target),
                             luts: Default::default(),
                         },

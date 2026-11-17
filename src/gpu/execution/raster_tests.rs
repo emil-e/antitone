@@ -23,8 +23,8 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
         [10, 20, 2, 2].into(),
     )
     .unwrap()
-    .with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    .with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             GrainPreset::ThirtyFiveMm.settings(),
             Default::default(),
             [2000; 2],

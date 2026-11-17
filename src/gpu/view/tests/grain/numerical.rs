@@ -157,15 +157,20 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
         let parameters = settings.parameters([64; 2]).unwrap().unwrap();
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
-        let plan = crate::pixel_pipeline::PixelPipeline {
-            stages: vec![crate::pixel_pipeline::PixelStage::new(
-                crate::pixel_pipeline::Grain {
-                    parameters: parameters.grain(),
-                    seed: 17,
-                },
-            )],
+        let plan = {
+            let grain = crate::gpu::photograph::authoring::Grain {
+                parameters: parameters.grain(),
+                seed: 17,
+            };
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                image = grain.compose(image)?;
+                Ok(image)
+            })
         };
-        let prepared = crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster).unwrap();
+        let prepared = crate::gpu::recorded_image::Prepared::new(&device, &plan, raster).unwrap();
         for value in [1e-30_f32, 0.18, 2_f32.powi(80)] {
             let values = vec![[value, -value, 0., 0.]; 256];
             let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

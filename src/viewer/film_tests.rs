@@ -39,8 +39,8 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         )
         .unwrap();
         let clean = AuthoredPhotograph::from(Arc::new(grade));
-        let film = clean.clone().with_pixel_pipeline(
-            crate::pixel_pipeline::PixelPipeline::emulation(
+        let film = clean.clone().with_definition(
+            crate::gpu::photograph::assembly::Assembly::emulation(
                 GrainPreset::ThirtyFiveMm.settings(),
                 Default::default(),
                 [1200; 2],
@@ -170,8 +170,8 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
                 area,
             )
             .unwrap();
-            let input = AuthoredPhotograph::from(Arc::new(pipeline)).with_pixel_pipeline(
-                crate::pixel_pipeline::PixelPipeline::emulation(
+            let input = AuthoredPhotograph::from(Arc::new(pipeline)).with_definition(
+                crate::gpu::photograph::assembly::Assembly::emulation(
                     crate::grain::GrainSettings {
                         enabled: true,
                         size: 0.065,

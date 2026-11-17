@@ -1,6 +1,6 @@
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::{halation::HalationSettings, pixel_pipeline::PixelPipeline};
+use crate::{gpu::photograph::assembly::Assembly, halation::HalationSettings};
 
 fn base() -> AuthoredPhotograph {
     AuthoredPhotograph::from(
@@ -14,8 +14,7 @@ fn base() -> AuthoredPhotograph {
 }
 
 fn capture(halo: HalationSettings, frame: [u32; 2]) -> AuthoredPhotograph {
-    base()
-        .with_pixel_pipeline(PixelPipeline::emulation(Default::default(), halo, frame, 0).unwrap())
+    base().with_definition(Assembly::emulation(Default::default(), halo, frame, 0).unwrap())
 }
 
 #[test]
@@ -28,12 +27,7 @@ fn active_halation_invalidates_photographic_content_and_tracks_crop_size() {
     let halo = capture(settings, [6000, 4000]);
     assert_ne!(clean, halo);
     assert!(!clean.same_photographic(&halo));
-    assert!(
-        halo.pixel_pipeline()
-            .stages
-            .iter()
-            .all(|stage| stage.get::<crate::pixel_pipeline::Grain>().is_none())
-    );
+    assert!(halo.definition().grain.is_none());
     for changed in [
         capture(settings, [3000, 2000]),
         capture(
@@ -77,7 +71,7 @@ fn disabled_custom_halation_and_zero_strength_do_not_change_content_identity() {
 #[test]
 fn source_inspection_never_adopts_halation() {
     let source = AuthoredPhotograph::from(ProcessingParameters::source());
-    let pipeline = PixelPipeline::emulation(
+    let pipeline = Assembly::emulation(
         Default::default(),
         HalationSettings {
             enabled: true,
@@ -88,7 +82,7 @@ fn source_inspection_never_adopts_halation() {
     )
     .unwrap();
     assert!(!pipeline.is_empty(), "the attempted effect must be active");
-    let candidate = source.clone().with_pixel_pipeline(pipeline);
+    let candidate = source.clone().with_definition(pipeline);
     assert_eq!(source, candidate);
-    assert!(candidate.pixel_pipeline().is_empty());
+    assert!(candidate.definition().is_empty());
 }

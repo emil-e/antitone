@@ -133,8 +133,8 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    let mut input = AuthoredPhotograph::from(pipeline).with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    let mut input = AuthoredPhotograph::from(pipeline).with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             crate::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
@@ -174,7 +174,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         .unwrap(),
     );
     input = input.with_luts(Some(look.clone()));
-    let stages = input.pixel_pipeline();
+    let stages = input.definition();
     let repairs = vec![repair];
     let request = || crate::gpu::execution::test_support::OriginalControls {
         scan: &scan,
@@ -202,14 +202,18 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     for omitted in ["grain", "repairs", "MTF", "look"] {
         let mut control = request();
         match omitted {
-            "grain" => control
-                .stages
-                .stages
-                .retain(|s| s.get::<crate::pixel_pipeline::Grain>().is_none()),
-            "MTF" => control
-                .stages
-                .stages
-                .retain(|s| s.get::<crate::image_mtf::ImageMtfParameters>().is_none()),
+            "grain" => control.stages.grain.as_mut().unwrap().amplitude = 0.,
+            "MTF" => {
+                let definition = control.stages.clone();
+                control.stages =
+                    crate::gpu::photograph::assembly::Assembly::authored(move |mut image, _| {
+                        if let Some(halo) = definition.halation {
+                            image = crate::gpu::evaluation::halation(image, halo)?;
+                        }
+                        let grain = definition.grain.unwrap().grain();
+                        crate::gpu::evaluation::grain(image, grain, definition.seed)
+                    });
+            }
             "repairs" => control.repairs = &[],
             "look" => control.luts = Default::default(),
             _ => unreachable!(),

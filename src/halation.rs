@@ -43,20 +43,6 @@ impl HalationParameters {
     }
 }
 
-impl crate::pixel_pipeline::EffectDefinition for HalationParameters {
-    fn view_pitch(&self) -> Option<f64> {
-        (self.strength > 0.).then_some(self.sigma / crate::pixel_pipeline::GAUSSIAN_VIEW_CELLS)
-    }
-
-    #[cfg(feature = "gpu")]
-    fn compose(
-        &self,
-        input: crate::gpu::evaluation::Value,
-    ) -> Result<crate::gpu::evaluation::Value, Error> {
-        crate::gpu::evaluation::halation(input, *self)
-    }
-}
-
 #[cfg(all(
     test,
     target_os = "macos",

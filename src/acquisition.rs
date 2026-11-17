@@ -1,27 +1,25 @@
 //! Acquisition layouts on original or frame grids. Frame dependencies follow composed nodes.
 
 use crate::{
-    Error, frame_raster::FrameRaster, geometry::SourceRegion, pixel_pipeline::PixelPipeline,
-    processing_support::Support,
+    Error, frame_raster::FrameRaster, geometry::SourceRegion, processing_support::Support,
 };
 
 mod footprints;
+#[cfg(feature = "gpu")]
 mod graph;
 
 mod layout;
 
+#[cfg(all(test, feature = "gpu"))]
 mod originals;
-
-pub use originals::{OriginalBatch, OriginalUnit};
-
 pub(crate) mod windows;
 
 pub use footprints::WindowBudget;
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-use crate::pixel_pipeline::PixelStage;
+#[cfg(all(test, feature = "gpu"))]
+use crate::gpu::photograph::assembly::Assembly;
 
 /// Margins measured in original developed-source cells.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -46,9 +44,8 @@ pub enum Sampling {
 }
 
 /// Geometric portion of a captured processing request; publication rights stay with the caller.
-pub struct Request<'a> {
+pub struct Request {
     pub output: FrameRaster,
-    pub stages: &'a PixelPipeline,
     pub sampling: Sampling,
 }
 
@@ -89,19 +86,18 @@ impl ProcessingRaster {
     }
 }
 
-/// Mapping from the processing raster to the accepted output, after all pixel stages.
+/// Mapping from the processing raster to the accepted output after photographic processing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ValidOutput {
     Reconstruction { affine: [[f32; 2]; 3] },
     Extraction { size: [u32; 2], offset: [u32; 2] },
 }
 
-/// Immutable geometry and stage intent. Actual source edges use constant outer-cell extension.
+/// Immutable acquisition geometry. Actual source edges use constant outer-cell extension.
 #[derive(Clone, Debug)]
 pub struct Plan {
     output: FrameRaster,
     sampling: Sampling,
-    pipeline: PixelPipeline,
     input: ProcessingRaster,
     pitch: [f64; 2],
     read: SourceRead,
@@ -109,12 +105,8 @@ pub struct Plan {
 }
 
 impl Plan {
-    pub fn new(request: Request<'_>) -> Result<Self, Error> {
-        let Request {
-            output,
-            stages: pipeline,
-            sampling,
-        } = request;
+    pub fn new(request: Request) -> Result<Self, Error> {
+        let Request { output, sampling } = request;
         let source = output.composition.area().validate()?;
         if output.output.contains(&0)
             || (0..2).any(|i| {
@@ -140,17 +132,14 @@ impl Plan {
             return Err(Error::InvalidParameter("invalid acquisition pitch"));
         }
         let (required, valid_output) = match required {
-            ProcessingRaster::Originals(region) => {
-                let region = graph::original_input(source, region, pipeline)?;
-                (
-                    ProcessingRaster::Originals(region),
-                    ValidOutput::Reconstruction {
-                        affine: output.affine_in(region)?,
-                    },
-                )
-            }
+            ProcessingRaster::Originals(region) => (
+                ProcessingRaster::Originals(region),
+                ValidOutput::Reconstruction {
+                    affine: output.affine_in(region)?,
+                },
+            ),
             ProcessingRaster::Frame(_) => {
-                let (input, offset) = graph::frame_input(output, pipeline, sampling)?;
+                let (input, offset) = (output, [0; 2]);
                 (
                     ProcessingRaster::Frame(input),
                     ValidOutput::Extraction {
@@ -196,7 +185,6 @@ impl Plan {
         Ok(Self {
             output,
             sampling,
-            pipeline: pipeline.clone(),
             input: required,
             pitch,
             read,
@@ -210,10 +198,6 @@ impl Plan {
 
     pub fn sampling(&self) -> Sampling {
         self.sampling
-    }
-
-    pub fn pipeline(&self) -> &PixelPipeline {
-        &self.pipeline
     }
 
     pub fn input(&self) -> ProcessingRaster {

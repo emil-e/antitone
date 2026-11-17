@@ -26,9 +26,14 @@ fn capture(
         )
         .unwrap(),
     ))
-    .with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(film, Default::default(), frame_size, 17)
-            .unwrap(),
+    .with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
+            film,
+            Default::default(),
+            frame_size,
+            17,
+        )
+        .unwrap(),
     )
 }
 
@@ -81,7 +86,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             None,
         )
         .unwrap()
-        .with_pipeline(input.pixel_pipeline())
+        .with_definition(input.definition())
         .unwrap();
         let source = ViewImage::prefix(
             &device,
@@ -172,7 +177,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
             let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None)
                 .unwrap()
-                .with_pipeline(input.pixel_pipeline())
+                .with_definition(input.definition())
                 .unwrap();
             let source = ViewImage::prefix(
                 &device,
@@ -337,7 +342,7 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
                 None,
             )
             .unwrap()
-            .with_pipeline(input.pixel_pipeline())
+            .with_definition(input.definition())
             .unwrap();
             let acquire = |spec| {
                 ViewImage::prefix(
@@ -361,7 +366,7 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
                 base.pixels.size(),
                 "repairs preserve the padded input layout"
             );
-            let input_size = base.spec.plan.input().size();
+            let input_size = base.spec.plan().input().size();
             assert_eq!(
                 repaired.pixels.size(),
                 u64::from(input_size[0]) * u64::from(input_size[1]) * 16

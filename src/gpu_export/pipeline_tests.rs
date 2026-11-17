@@ -3,17 +3,13 @@ use crate::gpu::submission::SubmissionGate;
 use crate::gpu_export::authored::{Request, write};
 use crate::{
     gpu::evaluation::{self, Value},
-    pixel_pipeline::{EffectDefinition, PixelPipeline, PixelStage, test_effects::NeighbourEffect},
+    gpu::photograph::test_effects::NeighbourEffect,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Square;
 
-impl EffectDefinition for Square {
-    fn view_pitch(&self) -> Option<f64> {
-        Some(64.)
-    }
-
+impl Square {
     fn compose(&self, input: Value) -> Result<Value, Error> {
         let meaning = input.domain().meaning;
         Ok(evaluation::pointwise(
@@ -132,15 +128,26 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
             composition,
             format: Format::Exr(ExrPrecision::Full),
             luts: (None).into(),
-            pipeline: PixelPipeline {
-                stages: vec![
-                    PixelStage::new(NeighbourEffect {
+            calculation: Some(std::sync::Arc::new({
+                let definition = {
+                    let neighbour = NeighbourEffect {
                         radius: 3.,
                         gain: 1.,
-                    }),
-                    PixelStage::new(Square),
-                ],
-            },
+                    };
+                    let square = Square;
+                    crate::gpu::photograph::assembly::Assembly::authored(
+                        move |mut image, output| {
+                            image = neighbour.compose(image)?;
+                            image = square.compose(image)?;
+                            if let Some(output) = output {
+                                image = output.compose(image)?;
+                            }
+                            Ok(image)
+                        },
+                    )
+                };
+                move |input| definition.compose(input)
+            })),
         },
         &actual,
         Overwrite::Refuse,

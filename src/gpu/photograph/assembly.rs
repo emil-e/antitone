@@ -3,31 +3,38 @@
 use super::operations::{Native, Working};
 use super::*;
 use crate::gpu::grading::Grading;
+use crate::gpu::interpretation::InputTransform;
 use crate::gpu::photograph::PhotographGraph;
-use crate::{gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
 #[derive(Clone)]
-pub struct Assembly {
+pub(crate) struct Assembly {
     pub capture: Option<Arc<Captured>>,
     pub grading: Option<Grading>,
     pub interpretation: Interpretation,
     pub repairs: Vec<crate::dust_repair::Repair>,
+    pub grain: Option<crate::grain::GrainResponse>,
+    pub halation: Option<crate::halation::HalationParameters>,
+    pub seed: u64,
+    #[cfg(test)]
+    pub(crate) author: Option<Arc<super::authoring::Author>>,
+    #[cfg(test)]
+    pub(crate) preferred_pitch: Option<f64>,
     #[cfg(test)]
     pub replacements: Vec<crate::gpu::repairs::fixtures::Replacement>,
 }
 
-/// View-grid transition between spatial and footprint-integrated effects.
+/// Reconstruction onto the presentation grid in a physical-view graph.
 #[derive(Clone, Copy)]
-pub(super) struct EffectOutput {
+pub(crate) struct ViewOutput {
     domain: Domain,
     offset: [u32; 2],
     scale: [f64; 2],
 }
 
-impl EffectOutput {
+impl ViewOutput {
     #[cfg(feature = "editor")]
     pub(super) fn new(
         presentation: crate::frame_raster::FrameRaster,
@@ -43,20 +50,12 @@ impl EffectOutput {
         }
     }
 
-    fn compose(self, effects: &PixelPipeline, mut image: Value) -> Result<Value, Error> {
-        let split = effects.footprint_suffix();
-        for stage in &effects.stages[..split] {
-            image = stage.compose(image)?;
-        }
-        image = if image.domain().same_grid(self.domain) {
-            window(image, self.domain.finite()?)?
+    pub(crate) fn compose(self, image: Value) -> Result<Value, Error> {
+        if image.domain().same_grid(self.domain) {
+            window(image, self.domain.finite()?)
         } else {
-            reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)?
-        };
-        for stage in &effects.stages[split..] {
-            image = stage.compose(image)?;
+            reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)
         }
-        Ok(image)
     }
 }
 
@@ -89,7 +88,40 @@ pub(crate) struct SourceImages {
     pub unrepaired: Value,
 }
 
+impl Default for Assembly {
+    fn default() -> Self {
+        Self {
+            capture: None,
+            grading: None,
+            interpretation: Interpretation::Unavailable,
+            repairs: Vec::new(),
+            grain: None,
+            halation: None,
+            seed: 0,
+            #[cfg(test)]
+            replacements: Vec::new(),
+            #[cfg(test)]
+            author: None,
+            #[cfg(test)]
+            preferred_pitch: None,
+        }
+    }
+}
+
 impl Assembly {
+    /// Resolve crop-relative lengths against the accepted photographic composition.
+    #[cfg(feature = "project")]
+    pub(crate) fn resolve_source_scale(
+        &mut self,
+        recipe: &crate::image_recipe::ImageRecipe,
+    ) -> Result<(), Error> {
+        let size = recipe.composition.crop().size;
+        self.grain = recipe.grain.parameters(size)?;
+        self.halation = recipe.halation.parameters(size)?;
+        self.seed = recipe.neutral.source.0;
+        Ok(())
+    }
+
     pub fn photographic(
         limits: &wgpu::Limits,
         definition: CameraInput,
@@ -121,8 +153,7 @@ impl Assembly {
             grading: None,
             interpretation,
             repairs: Default::default(),
-            #[cfg(test)]
-            replacements: Vec::new(),
+            ..Self::default()
         }
     }
 
@@ -133,8 +164,7 @@ impl Assembly {
             grading: None,
             interpretation: Interpretation::Program(program),
             repairs: Default::default(),
-            #[cfg(test)]
-            replacements: Vec::new(),
+            ..Self::default()
         }
     }
 
@@ -145,8 +175,7 @@ impl Assembly {
             grading: Some(grading),
             interpretation: Interpretation::Unavailable,
             repairs: Default::default(),
-            #[cfg(test)]
-            replacements: Vec::new(),
+            ..Self::default()
         }
     }
 
@@ -170,24 +199,19 @@ impl Assembly {
         Ok(captured)
     }
 
-    pub fn photograph(
-        self,
-        source: Value,
-        stages: &PixelPipeline,
-    ) -> Result<PhotographGraph, Error> {
+    pub fn photograph(self, source: Value) -> Result<PhotographGraph, Error> {
         let images = self.source_images(source)?;
         let neutral = self.repair(images.unrepaired.clone())?;
-        Ok(self.finish(neutral, stages, None)?.with_source(images))
+        Ok(self.finish(neutral, None)?.with_source(images))
     }
 
     pub(super) fn finish(
         &self,
         neutral: Value,
-        stages: &PixelPipeline,
-        output: Option<EffectOutput>,
+        output: Option<ViewOutput>,
     ) -> Result<Finished, Error> {
         let (roll, graded) = self.grade(neutral.clone())?;
-        let processed = Self::effects(graded.clone(), stages, output)?;
+        let processed = self.processed(graded.clone(), output)?;
         Ok(Finished {
             neutral,
             roll,
@@ -200,16 +224,12 @@ impl Assembly {
     pub fn preview(
         mut self,
         source: Value,
-        stages: &PixelPipeline,
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(PhotographGraph, crate::acquisition::Plan), Error> {
-        let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
-            frame,
-            stages,
-            crate::acquisition::Sampling::NeutralFootprints,
-        )?
-        .with_native_grid(native_grid)?;
+        let layout = self
+            .view_sampling(frame, crate::acquisition::Sampling::NeutralFootprints)?
+            .with_native_grid(native_grid, |input| self.sampling_image(input))?;
         let plan = layout.plan;
         let native = self.source_images(source)?;
         let repaired = self.repair(native.unrepaired.clone())?;
@@ -225,10 +245,9 @@ impl Assembly {
             },
         )?;
         self.grading = self.grading.map(|grading| grading.for_grid(8));
-        let output = EffectOutput::new(layout.presentation, plan.output(), 8);
+        let output = ViewOutput::new(layout.presentation, plan.output(), 8);
         Ok((
-            self.finish(neutral, stages, Some(output))?
-                .with_source(native),
+            self.finish(neutral, Some(output))?.with_source(native),
             plan,
         ))
     }
@@ -237,16 +256,14 @@ impl Assembly {
     pub fn filtered_image(
         self,
         source: Value,
-        stages: &PixelPipeline,
         output: Domain,
         offset: [u32; 2],
         scale: [f64; 2],
     ) -> Result<Value, Error> {
         let (_, graded) = self.grade(source)?;
-        Self::effects(
+        self.processed(
             graded,
-            stages,
-            Some(EffectOutput {
+            Some(ViewOutput {
                 domain: output,
                 offset,
                 scale,
@@ -386,14 +403,62 @@ impl Assembly {
         Ok((roll, graded))
     }
 
-    fn effects(
-        image: Value,
-        effects: &PixelPipeline,
-        output: Option<EffectOutput>,
+    pub(crate) fn processed(
+        &self,
+        mut image: Value,
+        output: Option<ViewOutput>,
     ) -> Result<Value, Error> {
-        match output {
-            Some(output) => output.compose(effects, image),
-            None => effects.compose(image),
+        #[cfg(test)]
+        if let Some(author) = &self.author {
+            return author(image, output);
         }
+        if let Some(film) = self.grain {
+            image = gaussian(image, film.image_mtf_sigma)?;
+        }
+        if let Some(halation) = self.halation {
+            image = crate::gpu::evaluation::halation(image, halation)?;
+        }
+        if let Some(output) = output {
+            image = output.compose(image)?;
+        }
+        if let Some(film) = self.grain.filter(|film| film.amplitude > 0.) {
+            image = crate::gpu::evaluation::grain(image, film.grain(), self.seed)?;
+        }
+        #[cfg(test)]
+        let image = super::authoring::suffix(image)?;
+        Ok(image)
+    }
+
+    pub(crate) fn sampling_image(&self, input: Value) -> Result<Value, Error> {
+        let graded = if self.grading.is_some() {
+            self.grade(input)?.1
+        } else {
+            Grading::roll_image(input, Default::default())?
+        };
+        self.processed(graded, None)
+    }
+
+    #[cfg(any(test, feature = "editor"))]
+    pub(crate) fn view_sampling(
+        &self,
+        frame: crate::frame_raster::FrameRaster,
+        sampling: crate::acquisition::Sampling,
+    ) -> Result<super::sampling::ViewSampling, Error> {
+        let pitch = self
+            .grain
+            .map(|film| film.image_mtf_sigma)
+            .into_iter()
+            .chain(
+                self.halation
+                    .filter(|halo| halo.strength > 0.)
+                    .map(|halo| halo.sigma),
+            )
+            .reduce(f64::min)
+            .map(|sigma| sigma / super::sampling::GAUSSIAN_VIEW_CELLS);
+        #[cfg(test)]
+        let pitch = self.preferred_pitch.or(pitch);
+        super::sampling::ViewSampling::new(frame, pitch, sampling, |input| {
+            self.sampling_image(input)
+        })
     }
 }

@@ -120,7 +120,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                 grade: grade.clone(),
                 repairs: &[],
                 composition,
-                pipeline: Default::default(),
+                calculation: None,
                 format,
                 luts: Default::default(),
             },

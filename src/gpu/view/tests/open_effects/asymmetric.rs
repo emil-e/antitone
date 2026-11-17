@@ -5,12 +5,11 @@ use crate::{
         evaluation::*,
         view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest},
     },
-    pixel_pipeline::EffectDefinition,
 };
 
 #[derive(Debug, PartialEq)]
 struct ShiftBlend;
-impl EffectDefinition for ShiftBlend {
+impl ShiftBlend {
     fn compose(&self, input: Value) -> Result<Value, crate::Error> {
         Ok(Value::from_operation(
             input.domain(),
@@ -96,13 +95,20 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
         area,
     )
     .unwrap()
-    .with_pixel_pipeline(PixelPipeline {
-        stages: vec![PixelStage::new(ShiftBlend)],
+    .with_definition({
+        let operation = ShiftBlend;
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = operation.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     });
     let make = |acquire_neighbours: bool| -> Result<Vec<[f32; 4]>, crate::Error> {
         let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)?;
         let spec = if acquire_neighbours {
-            spec.with_pipeline(input.pixel_pipeline())?
+            spec.with_definition(input.definition())?
         } else {
             spec
         };
@@ -110,7 +116,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
         if acquire_neighbours {
             assert_eq!(sampled.output, [11, 8]);
             assert_eq!(
-                spec.plan.output_offset(),
+                spec.plan().output_offset(),
                 Some([0, 0]),
                 "all extra neighbours are on the right/bottom"
             );

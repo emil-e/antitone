@@ -330,7 +330,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                         composition: crop,
                         format,
                         luts: Default::default(),
-                        pipeline: Default::default(),
+                        calculation: None,
                     },
                     &output,
                     crate::export::Overwrite::Refuse,

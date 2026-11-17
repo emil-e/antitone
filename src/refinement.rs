@@ -57,7 +57,7 @@ pub(crate) fn refine_cancellable(
         field,
         &input,
         crate::rendering::OutputReference::DisplayReferred(target),
-        &input.pixel_pipeline(),
+        &input.definition(),
     )?;
     refine_definition(
         renderer,

@@ -298,8 +298,8 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         )
         .unwrap(),
     );
-    let input = AuthoredPhotograph::from(gpu).with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    let input = AuthoredPhotograph::from(gpu).with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             crate::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
@@ -357,7 +357,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                     None,
                     &input,
                     crate::rendering::OutputReference::DisplayReferred(target),
-                    &input.pixel_pipeline(),
+                    &input.definition(),
                 )
                 .unwrap();
                 let domain = crate::gpu::evaluation::Domain {

@@ -144,10 +144,20 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
         None,
     )
     .unwrap()
-    .with_pipeline(crate::pixel_pipeline::PixelPipeline {
-        stages: vec![crate::pixel_pipeline::PixelStage::new(
-            crate::image_mtf::ImageMtfParameters { sigma },
-        )],
+    .with_definition({
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma };
+        let pitch = [Some(mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     })
     .unwrap()
     .with_identity(crate::gpu::source::identity::Identity::camera(
@@ -164,7 +174,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
     let queued = positive_spec(frame, &input, 0.5);
     let latest = positive_spec(frame, &input, 0.75);
     assert!(
-        small.processing_plan(latest.plan.pipeline()).is_err(),
+        small.processing_plan(latest.definition()).is_err(),
         "fixture must actually increase required raster support"
     );
     assert!(

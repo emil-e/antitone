@@ -427,7 +427,7 @@ fn accepted_repairs_remain_in_the_painted_image_after_crop_replaces_dust() {
                 assert_eq!(repairs.len(), 1);
                 assert_eq!(&repairs[0].support, evaluated.support());
                 assert_eq!(
-                    view.spec.plan.sampling(),
+                    view.spec.plan().sampling(),
                     crate::acquisition::Sampling::NeutralFootprints
                 );
                 assert!(

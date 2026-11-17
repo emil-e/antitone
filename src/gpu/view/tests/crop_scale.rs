@@ -26,9 +26,9 @@ fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_bl
                     | wgpu::BufferUsages::COPY_DST,
             });
             let plan =
-                crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, 17).unwrap();
+                crate::gpu::photograph::assembly::Assembly::film(settings, frame_size, 17).unwrap();
             let prepared =
-                crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster).unwrap();
+                crate::gpu::recorded_image::Prepared::new(&device, &plan, raster).unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             prepared.encode(&device, &mut encoder, &pixels).unwrap();
             queue.submit([encoder.finish()]);

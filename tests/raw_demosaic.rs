@@ -250,7 +250,7 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
             composition,
             format: Format::Exr(ExrPrecision::Full),
             luts: Default::default(),
-            pipeline: Default::default(),
+            calculation: None,
         },
         &path,
         Overwrite::Refuse,

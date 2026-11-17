@@ -581,7 +581,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                     grade: grade.clone(),
                     repairs: &[],
                     composition,
-                    pipeline: Default::default(),
+                    calculation: None,
                     format,
                     luts: Default::default(),
                 },
