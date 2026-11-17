@@ -197,22 +197,22 @@ fn save_transition_prompts_are_neutral_and_make_edit_loss_conditional_on_not_sav
 }
 
 #[test]
-fn shortcut_save_blocks_a_draft_and_saves_after_explicit_numeric_commit() {
+fn shortcut_save_is_available_during_text_input_and_saves_completed_values() {
     numeric_save(SaveInput::Shortcut);
 }
 
 #[test]
-fn native_save_blocks_a_draft_and_saves_after_explicit_numeric_commit() {
+fn native_save_is_available_during_text_input_and_saves_completed_values() {
     numeric_save(SaveInput::NativeMenu);
 }
 
 #[test]
-fn native_paste_is_preserved_when_save_is_blocked_by_a_draft() {
+fn native_paste_and_numeric_completion_do_not_reserve_save_authority() {
     numeric_save(SaveInput::PasteThenSave);
 }
 
 #[test]
-fn system_quit_declines_a_draft_then_preserves_the_explicitly_committed_paste() {
+fn system_quit_is_available_during_text_input_and_protects_accepted_values() {
     numeric_save(SaveInput::PasteThenSystemQuit);
 }
 
@@ -283,12 +283,9 @@ fn numeric_save(route: SaveInput) {
         assert_eq!(app.read(|e| e.photo_settings().exposure), 0.);
         use crate::platform::menu::Action;
         let events = app.update(|e| match route {
-            SaveInput::NativeMenu => {
-                host::App::menu_action(e, Action::Save);
-                vec![]
-            }
+            SaveInput::NativeMenu => vec![],
             SaveInput::PasteThenSave => {
-                for action in [Action::SelectAll, Action::Paste, Action::Save] {
+                for action in [Action::SelectAll, Action::Paste] {
                     host::App::menu_action(e, action);
                 }
                 host::App::menu_input(e, Some("7.123456789".into()))
@@ -297,23 +294,21 @@ fn numeric_save(route: SaveInput) {
                 for action in [Action::SelectAll, Action::Paste] {
                     host::App::menu_action(e, action);
                 }
-                host::App::request_quit(e);
                 host::App::menu_input(e, Some("7.123456789".into()))
             }
-            SaveInput::Shortcut => vec![egui::Event::Key {
-                key: egui::Key::S,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::COMMAND,
-            }],
+            SaveInput::Shortcut => vec![],
         });
         ui_frame(app, &context, events);
         if !matches!(route, SaveInput::NativeMenu) {
             ui_frame(app, &context, vec![]);
         }
         app.read(|e| {
-            assert!(e.editing());
+            assert!(
+                !e.editing(),
+                "private widget text holds no mutation authority"
+            );
+            assert!(e.application_menu_state().enabled(Action::Save));
+            assert!(e.application_menu_state().enabled(Action::Quit));
             assert!(!e.files.pending() && !e.document.write.pending());
             assert!(!e.allow_close);
             assert_eq!(e.photo_settings().exposure, 0.);
@@ -1162,14 +1157,11 @@ fn shortcut_save_captures_the_current_accepted_document_after_edit_commit() {
                     .adjustment
                     .photo
                     .exposure,
-                0.
+                7.123456789012345
             );
-            e.photo_control(
-                ui::ControlResponse {
-                    active: false,
-                    ..ui::ControlResponse::action(egui::Id::new("test-photo-field"), true)
-                },
-                move |v| *v = adjustment,
+            assert!(
+                !e.editing(),
+                "Save does not need a control gesture to release authority"
             );
         });
         ui_frame(

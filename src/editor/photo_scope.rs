@@ -18,7 +18,6 @@ pub(super) struct PhotoScope {
 pub(super) struct PhotoInput {
     pub view: u64,
     pub project_preview: super::editing::Preview<crate::project::Project>,
-    pub controls_edit: Option<super::editing::ControlEdit>,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
     pub masks: super::mask_editor::MaskEditor,

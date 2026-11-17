@@ -2,7 +2,7 @@ use super::workflow::enter_numeric;
 use super::*;
 
 #[test]
-fn a_completed_gamma_calculation_blocks_other_fields_then_accepts_separate_edits() {
+fn gamma_calculation_preserves_independent_control_updates() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         pin(&mut h);
@@ -27,17 +27,17 @@ fn a_completed_gamma_calculation_blocks_other_fields_then_accepts_separate_edits
             .scroll_to_me();
         h.try_run_realtime().unwrap();
         assert!(
-            h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
+            !h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
                 .accesskit_node()
                 .is_disabled()
         );
-        h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
-            .click();
-        h.event(egui::Event::Text("0.75".into()));
-        h.step();
-        h.read(|editor| {
-            assert!(editor.controls_pending());
-            assert_eq!(editor.document.project, before);
+        enter_numeric(&mut h, "Exposure", "0.75");
+        let exposure = h.read(|editor| {
+            assert!(editor.document.gamma_pivot.calculating());
+            assert!(!editor.editing());
+            assert_eq!(editor.document.project.input, before.input);
+            assert_eq!(editor.document.project.roll.exposure, 0.75);
+            editor.document.project.clone()
         });
         solve.run();
         wait_gamma(&mut h);
@@ -47,19 +47,12 @@ fn a_completed_gamma_calculation_blocks_other_fields_then_accepts_separate_edits
                 .accesskit_node()
                 .is_disabled()
         );
-        let gamma = h.read(|editor| {
+        h.read(|editor| {
             assert_eq!(editor.document.project.input.gamma(), 0.9);
             assert_ne!(editor.document.project.roll.wb, before.roll.wb);
-            assert_eq!(editor.document.project.roll.exposure, before.roll.exposure);
-            editor.document.project.clone()
-        });
-        enter_numeric(&mut h, "Exposure", "0.75");
-        h.read(|editor| {
             assert_eq!(editor.document.project.roll.exposure, 0.75);
-            assert_eq!(editor.document.project.input, gamma.input);
-            assert_eq!(editor.document.project.roll.wb, gamma.roll.wb);
         });
-        for expected in [gamma, before] {
+        for expected in [exposure, before] {
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
             wait_for(&mut h, |editor| !editor.interaction_blocked());
@@ -134,7 +127,7 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
 }
 
 fn wait_gamma(h: &mut Harness<'_, Editor>) {
-    wait_for(h, |editor| !editor.controls_pending());
+    wait_for(h, |editor| !editor.document.gamma_pivot.calculating());
     h.read(|editor| {
         assert!(
             !editor.status.starts_with("Edit rejected:"),
@@ -145,7 +138,7 @@ fn wait_gamma(h: &mut Harness<'_, Editor>) {
 }
 
 #[test]
-fn save_blocks_an_unfinished_gamma_edit_but_not_independent_source_preparation() {
+fn save_captures_accepted_values_during_gamma_calculation_and_source_preparation() {
     use std::sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -210,19 +203,28 @@ fn save_blocks_an_unfinished_gamma_edit_but_not_independent_source_preparation()
             editor.developments = Some(loader);
             editor.document.gamma_pivot.edit_gate = Some(gamma.clone());
         });
+        let before = h.read(|editor| (editor.document.project.input, editor.document.project.roll));
         enter_numeric(&mut h, "Gamma", "0.9");
         let solve = gamma.next(&mut h.application);
         native_file_action(&mut h, crate::platform::menu::Action::Save);
+        wait_for(&mut h, |editor| {
+            destination.exists() && !editor.document.write.pending() && !editor.files.pending()
+        });
+        let first_saved = crate::project::Project::load(&destination).unwrap();
+        assert_eq!(
+            (first_saved.input, first_saved.roll),
+            before,
+            "a private calculation does not alter the snapshot"
+        );
         h.read(|editor| {
-            assert!(editor.controls_pending());
+            assert!(editor.document.gamma_pivot.calculating());
+            assert!(!editor.editing());
             assert!(
-                !editor
+                editor
                     .application_menu_state()
                     .enabled(crate::platform::menu::Action::Save)
             );
-            assert!(!editor.files.pending());
         });
-        assert!(!destination.exists(), "unfinished gamma is not saved");
         h.get_by_label("cold-source.dng").click();
         h.step();
         wait_for(&mut h, |_| entered.load(Ordering::Acquire));
@@ -319,7 +321,7 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
                 .is_some_and(|ready| ready.path == second)
         });
         h.read(|editor| {
-            assert!(editor.controls_pending());
+            assert!(editor.document.gamma_pivot.calculating());
             assert_eq!(editor.document.project.sources, photos);
             assert_eq!(editor.photo_settings().exposure, -1.75);
         });
@@ -329,13 +331,13 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         );
         for tab in ["Photo", "Rendering"] {
             stage(&mut h, tab);
-            h.read(|editor| assert!(editor.controls_pending()));
+            h.read(|editor| assert!(editor.document.gamma_pivot.calculating()));
         }
         h.key_press(egui::Key::F);
         h.step();
         h.read(|editor| {
             assert!(editor.fullscreen.is_some());
-            assert!(editor.controls_pending());
+            assert!(editor.document.gamma_pivot.calculating());
         });
         solve.run();
         wait_gamma(&mut h);
@@ -391,13 +393,7 @@ fn a_gamma_balance_wheel_can_continue_its_own_drag_while_compensation_is_pending
             assert_eq!(editor.document.project, before);
             assert_eq!(editor.document.project_snapshot().input, before.input);
             assert_eq!(editor.document.project_snapshot().roll, before.roll);
-            editor
-                .document
-                .controls_edit
-                .as_ref()
-                .unwrap()
-                .gamma_request
-                .unwrap()
+            editor.document.gamma_pivot.requested_input().unwrap()
         });
         assert!(
             !h.get_by_label("Gamma balance wheel")
@@ -411,13 +407,7 @@ fn a_gamma_balance_wheel_can_continue_its_own_drag_while_compensation_is_pending
         let second = gate.next(&mut h.application);
         h.read(|editor| {
             assert_ne!(
-                editor
-                    .document
-                    .controls_edit
-                    .as_ref()
-                    .unwrap()
-                    .gamma_request
-                    .unwrap(),
+                editor.document.gamma_pivot.requested_input().unwrap(),
                 first_request
             );
             assert_eq!(editor.document.project, before);
@@ -510,10 +500,18 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         let solve = gate.next(&mut h.application);
         native_file_action(&mut h, crate::platform::menu::Action::Save);
         h.read(|editor| {
-            assert!(editor.controls_pending());
+            assert!(editor.document.gamma_pivot.calculating());
             assert_eq!(editor.document.project.input, before.input);
         });
-        assert!(!path.exists(), "unfinished gamma/WB is not saved");
+        wait_for(&mut h, |editor| {
+            path.exists() && !editor.document.write.pending() && !editor.files.pending()
+        });
+        let frozen = crate::project::Project::load(&path).unwrap();
+        assert_eq!(
+            (frozen.input, frozen.roll),
+            (before.input, before.roll),
+            "Save captures the accepted pair, not the pending proposal"
+        );
         solve.run();
         wait_gamma(&mut h);
         native_file_action(&mut h, crate::platform::menu::Action::Save);
@@ -613,7 +611,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
 }
 
 #[test]
-fn orientation_during_gamma_preparation_is_rejected_without_replay() {
+fn orientation_during_gamma_preparation_is_preserved_by_narrow_publication() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         pin(&mut h);
@@ -631,29 +629,26 @@ fn orientation_during_gamma_preparation_is_rejected_without_replay() {
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Turn right")
             .click();
         h.step();
-        h.read(|editor| {
-            assert_eq!(editor.document.project, before);
-            assert!(editor.controls_pending());
-            assert!(editor.status.contains("current edit"), "{}", editor.status);
+        let oriented = h.read(|editor| {
+            assert_ne!(editor.document.project.orientation, before.orientation);
+            assert_eq!(editor.document.project.input, before.input);
+            assert!(editor.document.gamma_pivot.calculating());
+            assert!(!editor.editing());
+            editor.document.project.clone()
         });
         assert!(!solve.cancelled.is_cancelled());
         let completed = solve.completed.clone();
         solve.run();
         completed.wait(&mut h.application);
-        wait_for(&mut h, |editor| !editor.controls_pending());
+        wait_for(&mut h, |editor| !editor.document.gamma_pivot.calculating());
         for _ in 0..3 {
             h.step();
         }
-        let gamma = h.read(|editor| {
+        h.read(|editor| {
             assert_eq!(editor.document.project.input.gamma(), 0.9);
-            assert_eq!(editor.document.project.orientation, before.orientation);
-            editor.document.project.clone()
+            assert_eq!(editor.document.project.orientation, oriented.orientation);
         });
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Turn right")
-            .click();
-        h.step();
-        h.read(|editor| assert_ne!(editor.document.project.orientation, before.orientation));
-        for expected in [gamma, before] {
+        for expected in [oriented, before] {
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
             wait_for(&mut h, |editor| !editor.interaction_blocked());
@@ -663,7 +658,7 @@ fn orientation_during_gamma_preparation_is_rejected_without_replay() {
 }
 
 #[test]
-fn hiding_an_unfinished_gamma_slider_discards_its_calculation() {
+fn hiding_gamma_controls_preserves_their_independent_calculation() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         pin(&mut h);
@@ -693,19 +688,13 @@ fn hiding_an_unfinished_gamma_slider_discards_its_calculation() {
         h.step();
         let solve = gate.next(&mut h.application);
         h.read(|editor| {
-            assert!(editor.editing());
             assert!(
-                !editor.document.controls_edit.as_ref().unwrap().finished(),
-                "held pointer must keep its edit unfinished"
+                !editor.editing(),
+                "held input retains no mutation authority"
             );
+            assert!(editor.document.gamma_pivot.calculating());
             assert_ne!(
-                editor
-                    .document
-                    .controls_edit
-                    .as_ref()
-                    .unwrap()
-                    .gamma_request
-                    .unwrap(),
+                editor.document.gamma_pivot.requested_input().unwrap(),
                 before.input
             );
             assert_eq!(editor.document.project_snapshot().input, before.input);
@@ -742,7 +731,7 @@ fn hiding_an_unfinished_gamma_slider_discards_its_calculation() {
                 "the real hide-controls action must run"
             );
             assert!(!editor.editing());
-            assert!(!editor.controls_pending());
+            assert!(editor.document.gamma_pivot.calculating());
             assert!(
                 editor
                     .application_menu_state()
@@ -750,10 +739,14 @@ fn hiding_an_unfinished_gamma_slider_discards_its_calculation() {
             );
             assert_eq!(editor.document.project, before);
         });
-        wait_for(&mut h, |_| solve.cancelled.is_cancelled());
-        let completed = solve.completed.clone();
+        assert!(!solve.cancelled.is_cancelled());
         solve.run();
-        completed.wait(&mut h.application);
+        wait_gamma(&mut h);
+        let accepted = h.read(|editor| {
+            assert_ne!(editor.document.project.input, before.input);
+            assert_ne!(editor.document.project.roll.wb, before.roll.wb);
+            editor.document.project.clone()
+        });
         h.key_press(egui::Key::F);
         h.step();
         h.read(|editor| assert!(!editor.fullscreen_requested()));
@@ -763,8 +756,8 @@ fn hiding_an_unfinished_gamma_slider_discards_its_calculation() {
             assert!(editor.fullscreen.is_none());
             assert!(!editor.editing());
             assert_eq!(
-                editor.document.project, before,
-                "showing the controls must not resurrect the abandoned proposal"
+                editor.document.project, accepted,
+                "showing the controls preserves the completed result"
             );
         });
     });

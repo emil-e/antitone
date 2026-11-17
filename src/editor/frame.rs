@@ -357,7 +357,6 @@ impl Editor {
                 .show(ui, |ui| self.controls(ui, cx))
                 .inner
         } else {
-            self.retire_control_input();
             self.hidden_filmstrip(ui, cx);
             None
         }

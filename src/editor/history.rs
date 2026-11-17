@@ -87,6 +87,26 @@ impl History {
         self.group = group;
     }
 
+    pub(super) fn control_initial(
+        &self,
+        id: egui::Id,
+        photo: Option<SourceId>,
+        current: &Project,
+    ) -> Option<Project> {
+        self.undo
+            .last()
+            .filter(|entry| {
+                self.group == Some(id) && entry.photo == photo && entry.after == *current
+            })
+            .map(|entry| entry.before.clone())
+    }
+
+    pub(super) fn finish_control(&mut self, id: egui::Id) {
+        if self.group == Some(id) {
+            self.finish_group();
+        }
+    }
+
     pub(super) fn finish_group(&mut self) {
         if self.group.take().is_some() {
             if self
@@ -149,13 +169,23 @@ impl Editor {
         label: &'static str,
         photo: Option<SourceId>,
     ) {
+        self.record_edit_in_group(before, label, photo, None);
+    }
+
+    pub(super) fn record_edit_in_group(
+        &mut self,
+        before: Project,
+        label: &'static str,
+        photo: Option<SourceId>,
+        group: Option<egui::Id>,
+    ) {
         if before == self.document.state.project {
             return;
         }
         let after = self.document.state.project.clone();
         self.document
             .history
-            .record(before, after, label, photo, None);
+            .record(before, after, label, photo, group);
     }
 
     pub(super) fn history_available(&self) -> bool {

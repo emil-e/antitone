@@ -15,7 +15,7 @@ pub(in crate::editor) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool
     cancelled || cancelling
 }
 
-/// Reports input activity in this paint; features own edit lifetime and completion.
+/// Reports input activity in this paint for contextual presentation.
 pub(in crate::editor) fn values_are_being_adjusted(context: &egui::Context) -> bool {
     context.data(|data| data.get_temp::<u64>(egui::Id::new("value-adjustment-frame")))
         == Some(context.cumulative_frame_nr())
@@ -41,6 +41,12 @@ pub(super) fn control_active(ui: &Ui, response: &Response) -> bool {
             || keyboard)
 }
 
+pub(super) fn control_started(ui: &Ui, response: &Response) -> bool {
+    response.gained_focus()
+        || (response.is_pointer_button_down_on()
+            && ui.input(|input| input.pointer.primary_pressed()))
+}
+
 pub(super) fn record_control_interaction(ui: &Ui, response: &Response) {
     if control_active(ui, response) {
         let frame = ui.ctx().cumulative_frame_nr();
@@ -49,11 +55,13 @@ pub(super) fn record_control_interaction(ui: &Ui, response: &Response) {
     }
 }
 
-/// Interaction reported by a value widget; feature code owns its edit and value.
+/// Interaction reported by a value widget; feature code validates and publishes its value.
 #[derive(Clone, Copy)]
 pub(in crate::editor) struct ControlResponse {
     pub id: egui::Id,
     pub active: bool,
+    /// Starts a distinct undo gesture, not an editing reservation.
+    pub started: bool,
     pub cancelled: bool,
     pub changed: bool,
     pub enabled: bool,
@@ -65,6 +73,7 @@ impl ControlResponse {
         Self {
             id: response.id,
             active: false,
+            started: false,
             cancelled: false,
             changed: response.changed(),
             enabled: response.enabled(),
@@ -75,6 +84,7 @@ impl ControlResponse {
         Self {
             id,
             active: false,
+            started: false,
             cancelled: false,
             changed,
             enabled: true,

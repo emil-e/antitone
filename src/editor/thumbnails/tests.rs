@@ -711,7 +711,8 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
             .clone(),
         other_before
     );
-    editor.cancel_control_edit();
+    let accepted_key = key(&editor.document, id);
+    assert_ne!(accepted_key, unchanged_key, "the control value is accepted");
     let mut document_draft = editor.edit_project("Rendering settings").unwrap();
     let mut values = document_draft.values();
     values.roll.exposure = 0.5;
@@ -723,7 +724,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
             .clone(),
         other_before
     );
-    assert_eq!(key(&editor.document, id), unchanged_key);
+    assert_eq!(key(&editor.document, id), accepted_key);
     drop(document_draft);
     editor
         .document

@@ -180,7 +180,6 @@ impl Editor {
     }
 
     fn change_correction(&mut self, enabled: Option<bool>, cx: &UiContext<'_, Self>) {
-        self.cancel_control_edit();
         let mut candidate = self.document.capture();
         if let Some(enabled) = enabled {
             candidate
@@ -280,7 +279,6 @@ impl Editor {
                                 .pick_file()
                         })
                     {
-                        self.cancel_control_edit();
                         FlatTool::open(self, path, None, cx);
                     }
                 });

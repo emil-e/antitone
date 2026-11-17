@@ -68,7 +68,9 @@ fn release(app: &App<'_>) {
 }
 
 fn settle(app: &mut App<'_>) {
-    app.run_until(Duration::from_secs(10), |editor| !editor.controls_pending());
+    app.run_until(Duration::from_secs(10), |editor| {
+        !editor.document.gamma_pivot.calculating()
+    });
 }
 
 fn setup() -> (crate::fixture_path::FixturePath, Editor) {
@@ -133,7 +135,9 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
             assert_eq!(editor.document.project.input, previous.input);
             assert_eq!(editor.document.project.roll, previous.roll);
         });
-        app.run_until(Duration::from_secs(10), |editor| !editor.controls_pending());
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.gamma_pivot.calculating()
+        });
         app.enter(|editor, cx| {
             assert_ne!(
                 editor.document.project.input, before.input,
@@ -158,6 +162,70 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
 }
 
 #[test]
+fn repeated_held_input_keeps_the_same_gamma_calculation() {
+    let (_file, editor) = setup();
+    with_application(editor, |app| {
+        lock(app);
+        let gate = measurement::testing::Gate::default();
+        app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
+        propose(app, 0.9, true);
+        let solve = gate.next(app);
+        propose(app, 0.9, true);
+        app.pump();
+        assert!(
+            !solve.cancelled.is_cancelled(),
+            "a stationary control must not restart identical work"
+        );
+        solve.run();
+        settle(app);
+        propose(app, 0.9, true);
+        app.pump();
+        app.read(|editor| {
+            assert!(
+                !editor.document.gamma_pivot.calculating(),
+                "a completed identical value must not restart work"
+            )
+        });
+        release(app);
+        app.read(|editor| {
+            assert_eq!(editor.document.project.input.gamma(), 0.9);
+            assert!(!editor.editing());
+        });
+    });
+}
+
+#[test]
+fn gamma_calculation_does_not_reserve_tool_admission() {
+    let (_file, editor) = setup();
+    with_application(editor, |app| {
+        lock(app);
+        let gate = measurement::testing::Gate::default();
+        app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
+        propose(app, 0.9, false);
+        let solve = gate.next(app);
+        app.enter(|editor, cx| {
+            assert!(!editor.editing());
+            editor.apply_photo_action(super::super::editing::PhotoAction::Crop, cx);
+            assert!(
+                editor.cropping(),
+                "ordinary tool admission remains available"
+            );
+            assert!(editor.document.gamma_pivot.calculating());
+        });
+        assert!(!solve.cancelled.is_cancelled());
+        solve.run();
+        settle(app);
+        app.read(|editor| {
+            assert_eq!(editor.document.project.input.gamma(), 0.9);
+            assert!(
+                editor.cropping(),
+                "publication does not end the independent tool"
+            );
+        });
+    });
+}
+
+#[test]
 fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start() {
     let (_file, editor) = setup();
     with_application(editor, |app| {
@@ -166,7 +234,7 @@ fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start(
         app.read(|editor| {
             assert_eq!(editor.document.project.input.gamma(), 0.7);
             assert_eq!(editor.document.project.roll.wb, wb);
-            assert!(!editor.controls_pending());
+            assert!(!editor.document.gamma_pivot.calculating());
         });
         lock(app);
         let before = app.enter(|editor, _| editor.history_snapshot());
@@ -178,8 +246,12 @@ fn no_anchor_is_uncompensated_and_a_locked_gesture_returns_exactly_to_its_start(
         app.read(|editor| {
             assert_ne!(editor.document.project_snapshot().roll.wb, wb);
             assert_eq!(
-                editor.document.project.roll.wb, wb,
-                "unfinished gesture stays a draft"
+                editor.document.project.roll.wb,
+                editor.document.project_snapshot().roll.wb
+            );
+            assert!(
+                !editor.editing(),
+                "accepted values retain no mutation authority"
             );
         });
         propose(app, 0.7, true);
