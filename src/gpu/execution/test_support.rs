@@ -5,11 +5,11 @@ use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::Composition,
+    gpu::photograph::assembly::Assembly,
     gpu::{
         evaluation, flat::GpuFlatField, grading::Grading, interpretation::InputTransform,
         photograph::PhotographGraph,
     },
-    pixel_pipeline::PixelPipeline,
     processing::{InputSettings, RollSettings},
     rendering::OutputReference,
     scan::Scan,
@@ -24,7 +24,7 @@ pub(crate) struct OriginalControls<'a> {
     pub grade: AdjustmentLayerSnapshot,
     pub repairs: &'a [crate::dust_repair::Repair],
     pub composition: Composition,
-    pub stages: PixelPipeline,
+    pub stages: Assembly,
     pub output: OutputReference,
     pub luts: crate::looks::LutChain,
     pub encoding: SampleEncoding,
@@ -41,7 +41,7 @@ impl OriginalControls<'_> {
         {
             return Err(Error::Gpu("fixture source/photograph mismatch".into()));
         }
-        let photograph = PhotographGraph::original(
+        let photograph = PhotographGraph::authored_original(
             &device.limits(),
             evaluation::camera_source(self.scan)?,
             self.field,

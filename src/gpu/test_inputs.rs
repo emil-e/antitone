@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub struct AuthoredPhotograph {
     processing: Processing,
     luts: crate::looks::LutChain,
-    pixel_pipeline: crate::pixel_pipeline::PixelPipeline,
+    definition: Arc<crate::gpu::photograph::assembly::Assembly>,
     pub(crate) repairs: Vec<crate::dust_repair::Repair>,
     pub(crate) replacements: Vec<super::repairs::fixtures::Replacement>,
     pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
@@ -74,7 +74,7 @@ impl AuthoredPhotograph {
         Self {
             processing,
             luts: Default::default(),
-            pixel_pipeline: Default::default(),
+            definition: Default::default(),
             repairs: Default::default(),
             replacements: Vec::new(),
             field: None,
@@ -198,7 +198,11 @@ impl AuthoredPhotograph {
             recipe.neutral.source_development.active_area().into(),
         )?
         .with_luts(recipe.luts.clone())
-        .with_pixel_pipeline(crate::image_recipe::quality::sampling_stages(recipe)?);
+        .with_definition({
+            let mut definition = super::photograph::assembly::Assembly::default();
+            definition.resolve_source_scale(recipe)?;
+            definition
+        });
         authored.repairs = recipe.repairs.clone();
         Ok(authored)
     }
@@ -222,17 +226,17 @@ impl AuthoredPhotograph {
         &self.luts
     }
 
-    pub fn with_pixel_pipeline(mut self, pipeline: crate::pixel_pipeline::PixelPipeline) -> Self {
-        self.pixel_pipeline = if self.is_positive() {
+    pub fn with_definition(mut self, pipeline: crate::gpu::photograph::assembly::Assembly) -> Self {
+        self.definition = Arc::new(if self.is_positive() {
             pipeline
         } else {
             Default::default()
-        };
+        });
         self
     }
 
-    pub(crate) fn pixel_pipeline(&self) -> crate::pixel_pipeline::PixelPipeline {
-        self.pixel_pipeline.clone()
+    pub(crate) fn definition(&self) -> crate::gpu::photograph::assembly::Assembly {
+        self.definition.as_ref().clone()
     }
 }
 
@@ -321,7 +325,7 @@ impl AuthoredPhotograph {
             return false;
         }
         self.processing.same_content(&other.processing)
-            && self.pixel_pipeline == other.pixel_pipeline
+            && self.definition.same_authored(&other.definition)
     }
 }
 
@@ -339,7 +343,7 @@ impl std::fmt::Debug for AuthoredPhotograph {
                 &matches!(self.processing, Processing::Parameters(_)),
             )
             .field("look", &self.look_id())
-            .field("pixel_pipeline", &self.pixel_pipeline)
+            .field("definition", &self.definition)
             .field(
                 "snapshot",
                 &match &self.processing {
@@ -358,8 +362,8 @@ mod halation_tests;
 mod tests {
     use super::*;
     use crate::{
+        gpu::photograph::assembly::Assembly,
         grain::{GrainPreset, GrainSettings},
-        pixel_pipeline::{Grain, PixelPipeline},
     };
 
     #[cfg(all(
@@ -436,39 +440,34 @@ mod tests {
         assert_eq!(captured.input_transform().input, recipe.neutral.input);
         assert_eq!(captured.grade().unwrap().roll, recipe.roll);
         assert_eq!(captured.snapshot(), &recipe.grade);
-        let pipeline = captured.pixel_pipeline();
-        let mtf = pipeline
-            .stages
-            .iter()
-            .find_map(|stage| stage.get::<crate::image_mtf::ImageMtfParameters>())
-            .unwrap();
-        let grain = pipeline
-            .stages
-            .iter()
-            .find_map(|stage| stage.get::<crate::pixel_pipeline::Grain>())
-            .unwrap();
-        assert!((mtf.sigma - 0.08).abs() < 1e-12);
-        assert!((grain.parameters.grain_size - 0.11).abs() < 1e-12);
-        assert_eq!(grain.seed, id.0);
+        let pipeline = captured.definition();
+        let film = pipeline.grain.unwrap();
+        assert!((film.image_mtf_sigma - 0.08).abs() < 1e-12);
+        assert!((film.grain_size - 0.11).abs() < 1e-12);
+        assert_eq!(pipeline.seed, id.0);
         assert_eq!(captured.luts().id(), recipe.luts.id());
-        let override_view = captured.clone().with_pixel_pipeline(Default::default());
-        assert!(override_view.pixel_pipeline().is_empty());
+        let override_view = captured.clone().with_definition(Default::default());
+        assert!(override_view.definition().is_empty());
         assert_eq!(
-            crate::image_recipe::quality::sampling_stages(&recipe).unwrap(),
-            pipeline
+            film,
+            recipe
+                .grain
+                .parameters(recipe.composition.crop().size)
+                .unwrap()
+                .unwrap()
         );
         assert_ne!(override_view.clone(), captured.clone());
         project.output.grain.enabled = false;
         project.output.lut = None;
         project.source_mut(id).unwrap().crop = None;
-        assert_eq!(captured.pixel_pipeline(), pipeline);
+        assert!(captured.definition().same_authored(&pipeline));
         assert!(
             AuthoredPhotograph::from_recipe(
                 &wgpu::Limits::default(),
                 &project.image_recipe(id).unwrap(),
             )
             .unwrap()
-            .pixel_pipeline()
+            .definition()
             .is_empty()
         );
     }
@@ -477,11 +476,11 @@ mod tests {
     fn source_inspection_cannot_adopt_grain() {
         let source = AuthoredPhotograph::from(ProcessingParameters::source());
         let pipeline =
-            PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
+            Assembly::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
         assert!(!pipeline.is_empty(), "the attempted effect must be active");
-        let film = source.clone().with_pixel_pipeline(pipeline);
+        let film = source.clone().with_definition(pipeline);
         assert_eq!(source, film);
-        assert!(film.pixel_pipeline().is_empty());
+        assert!(film.definition().is_empty());
     }
 
     fn positive_fixture() -> AuthoredPhotograph {
@@ -500,7 +499,7 @@ mod tests {
         let base = positive_fixture();
         let capture = |film, size| {
             base.clone()
-                .with_pixel_pipeline(PixelPipeline::film(film, size, 17).unwrap())
+                .with_definition(Assembly::film(film, size, 17).unwrap())
         };
         assert_eq!(
             capture(Default::default(), [6000, 4000]),
@@ -515,11 +514,11 @@ mod tests {
     #[cfg(all(feature = "ui", feature = "render"))]
     #[test]
     fn enabled_processing_requires_explicit_crop_context_not_a_source_or_tile_fallback() {
-        assert!(PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [0; 2], 17).is_err());
+        assert!(Assembly::film(GrainPreset::ThirtyFiveMm.settings(), [0; 2], 17).is_err());
         let pipeline =
-            PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
-        let input = positive_fixture().with_pixel_pipeline(pipeline);
-        assert!(!input.pixel_pipeline().is_empty());
+            Assembly::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
+        let input = positive_fixture().with_definition(pipeline);
+        assert!(!input.definition().is_empty());
     }
 
     #[test]
@@ -534,16 +533,15 @@ mod tests {
         };
         let capture = |seed| {
             base.clone()
-                .with_pixel_pipeline(PixelPipeline::film(settings, [3000, 2000], seed).unwrap())
+                .with_definition(Assembly::film(settings, [3000, 2000], seed).unwrap())
         };
         let film = capture(0);
         assert_ne!(base, film);
         assert!(!base.same_photographic(&film));
         assert!(
-            film.pixel_pipeline()
-                .stages
-                .iter()
-                .any(|stage| stage.get::<Grain>().is_some())
+            film.definition()
+                .grain
+                .is_some_and(|grain| grain.amplitude > 0.)
         );
         assert_ne!(film, capture(42));
     }

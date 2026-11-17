@@ -55,7 +55,6 @@ mod native_logging;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub(crate) mod photo_preparation;
 pub mod photographic;
-pub mod pixel_pipeline;
 #[cfg(feature = "ui")]
 pub mod platform;
 pub mod processing;

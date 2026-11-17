@@ -4,7 +4,7 @@ use super::*;
 fn original_units_cover_plain_demand_exactly_once_on_the_declared_grid() {
     let source: SourceRegion = [100, 80, 40, 30].into();
     let output: SourceRegion = [108, 88, 24, 16].into();
-    let units = OriginalBatch::new(source, output, &PixelPipeline::default(), [10, 7])
+    let units = OriginalBatch::new(source, output, &Assembly::default(), [10, 7])
         .unwrap()
         .units()
         .map(Result::unwrap)
@@ -31,7 +31,7 @@ fn original_units_cover_plain_demand_exactly_once_on_the_declared_grid() {
 #[test]
 fn original_batches_reject_empty_tiles_and_off_source_demand_without_stage_execution() {
     let source: SourceRegion = [100, 80, 40, 30].into();
-    let pipeline = PixelPipeline::default();
+    let pipeline = Assembly::default();
     assert!(OriginalBatch::new(source, source, &pipeline, [0, 7]).is_err());
     assert!(OriginalBatch::new(source, [99, 80, 10, 10].into(), &pipeline, [10, 7]).is_err());
 }
@@ -41,10 +41,20 @@ fn original_batches_reject_empty_tiles_and_off_source_demand_without_stage_execu
 fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_edges() {
     let source: SourceRegion = [100, 80, 40, 30].into();
     let output: SourceRegion = [108, 88, 24, 16].into();
-    let pipeline = PixelPipeline {
-        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-            sigma: 1.,
-        })],
+    let pipeline = {
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let pitch = [Some(mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     };
     let units: Vec<_> = OriginalBatch::new(source, output, &pipeline, [10, 7])
         .unwrap()
@@ -85,13 +95,23 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
 #[test]
 fn original_batch_captures_stage_values_and_rejects_nonprogressing_or_exterior_demands() {
     let source: SourceRegion = [100, 80, 40, 30].into();
-    let mut pipeline = PixelPipeline {
-        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-            sigma: 1.,
-        })],
+    let mut pipeline = {
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let pitch = [Some(mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     };
     let batch = OriginalBatch::new(source, [112, 92, 2, 2].into(), &pipeline, [10, 7]).unwrap();
-    pipeline.stages.clear();
+    pipeline.author = None;
     let unit = batch.units().next().unwrap().unwrap();
     assert_eq!(unit.offset, [4, 4]);
     assert_eq!(

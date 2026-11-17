@@ -16,7 +16,7 @@ fn plan() -> Plan {
     };
     Plan::new(Request {
         output: frame,
-        stages: &PixelPipeline::default(),
+
         sampling: Sampling::NeutralFootprints,
     })
     .unwrap()

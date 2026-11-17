@@ -50,12 +50,15 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
                 composition,
                 format,
                 luts: look.into(),
-                pipeline: crate::pixel_pipeline::PixelPipeline::film(
-                    settings,
-                    composition.crop().size,
-                    seed,
-                )
-                .unwrap(),
+                calculation: Some(std::sync::Arc::new({
+                    let definition = crate::gpu::photograph::assembly::Assembly::film(
+                        settings,
+                        composition.crop().size,
+                        seed,
+                    )
+                    .unwrap();
+                    move |input| definition.compose(input)
+                })),
             },
             &path,
             Overwrite::Refuse,
@@ -224,8 +227,8 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             Composition::with_crop(scan.area, Default::default(), Default::default(), crop)
                 .unwrap();
         let frame = FrameRaster::full(composition).unwrap();
-        let input = input.clone().with_pixel_pipeline(
-            crate::pixel_pipeline::PixelPipeline::film(film, composition.crop().size, seed)
+        let input = input.clone().with_definition(
+            crate::gpu::photograph::assembly::Assembly::film(film, composition.crop().size, seed)
                 .unwrap(),
         );
         let view = crate::refinement::refine(
@@ -264,12 +267,15 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
                 composition,
                 format: Format::Tiff(OutputTarget::Srgb),
                 luts: Default::default(),
-                pipeline: crate::pixel_pipeline::PixelPipeline::film(
-                    film,
-                    composition.crop().size,
-                    seed,
-                )
-                .unwrap(),
+                calculation: Some(std::sync::Arc::new({
+                    let definition = crate::gpu::photograph::assembly::Assembly::film(
+                        film,
+                        composition.crop().size,
+                        seed,
+                    )
+                    .unwrap();
+                    move |input| definition.compose(input)
+                })),
             },
             &path,
             Overwrite::Refuse,

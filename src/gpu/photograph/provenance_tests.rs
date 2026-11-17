@@ -51,12 +51,11 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         offset: [16, 0],
     }];
     let graph = |camera: &ProcessingSource| {
-        PhotographGraph::from_resident_with_stages(
+        PhotographGraph::from_resident_fixture(
             &device.limits(),
             camera,
             &input,
             crate::gpu::raster::Raster::region(area, [64; 2]),
-            &Default::default(),
         )
         .unwrap()
     };
@@ -142,12 +141,11 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         .unwrap(),
     );
     let different = input.clone().with_flat_field(Some(other_field.clone()));
-    let other = PhotographGraph::from_resident_with_stages(
+    let other = PhotographGraph::from_resident_fixture(
         &device.limits(),
         &camera,
         &different,
         crate::gpu::raster::Raster::region(area, [64; 2]),
-        &Default::default(),
     )
     .unwrap();
     let conflicting = crate::gpu::repairs::definition::compose_images(

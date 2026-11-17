@@ -1,6 +1,6 @@
 //! Bounded view acquisition quality, independent of optional pixel retention.
 
-use super::PixelPipeline;
+use crate::gpu::evaluation::Value;
 use crate::{
     Error,
     acquisition::{Plan, Request, Sampling},
@@ -9,6 +9,10 @@ use crate::{
 
 /// Refinement allowance including real-neighbour padding. A larger presentation keeps its
 /// requested cells, subject to the independent active-input and evaluator scratch limits.
+// A quality/cost choice for acquisition, not a native-kernel parameter.
+// Integral presentation subdivisions also constrain the actual working pitch.
+pub(super) const GAUSSIAN_VIEW_CELLS: f64 = 0.6;
+
 const REFINED_CELLS: u64 = 5 * 1024 * 1024;
 const ACTIVE_CELLS: u64 = 16 * 1024 * 1024;
 
@@ -22,16 +26,11 @@ pub(crate) struct ViewSampling {
 impl ViewSampling {
     pub fn new(
         presentation: FrameRaster,
-        pipeline: &PixelPipeline,
+        preferred_pitch: Option<f64>,
         sampling: Sampling,
+        compose: impl Fn(Value) -> Result<Value, Error>,
     ) -> Result<Self, Error> {
-        let build = |output| {
-            Plan::new(Request {
-                output,
-                stages: pipeline,
-                sampling,
-            })
-        };
+        let build = |output| Plan::for_graph(Request { output, sampling }, &compose);
         let base = build(presentation)?;
         let base_cells = cells(&base)?;
         if base_cells > ACTIVE_CELLS {
@@ -47,17 +46,15 @@ impl ViewSampling {
             _ => 1.,
         };
         let mut pitch = f64::INFINITY;
-        if !matches!(sampling, Sampling::CameraCells { .. }) {
-            for stage in &pipeline.stages {
-                if let Some(preferred) = stage.view_pitch() {
-                    if !preferred.is_finite() || preferred <= 0. {
-                        return Err(Error::InvalidParameter(
-                            "invalid effect view-sampling pitch",
-                        ));
-                    }
-                    pitch = pitch.min(preferred.max(native_pitch));
-                }
+        if !matches!(sampling, Sampling::CameraCells { .. })
+            && let Some(preferred) = preferred_pitch
+        {
+            if !preferred.is_finite() || preferred <= 0. {
+                return Err(Error::InvalidParameter(
+                    "invalid effect view-sampling pitch",
+                ));
             }
+            pitch = pitch.min(preferred.max(native_pitch));
         }
         // Subdivide destination cells integrally: two area integrations then retain the
         // exact destination aperture, instead of introducing a second pixel-box blur.
@@ -136,7 +133,11 @@ impl ViewSampling {
     }
 
     #[cfg(feature = "editor")]
-    pub fn with_native_grid(mut self, grid: Option<FrameRaster>) -> Result<Self, Error> {
+    pub fn with_native_grid(
+        mut self,
+        grid: Option<FrameRaster>,
+        compose: impl Fn(Value) -> Result<Value, Error>,
+    ) -> Result<Self, Error> {
         if let Some(grid) = grid {
             if grid.composition != self.presentation.composition
                 || grid.min != self.presentation.min
@@ -151,11 +152,13 @@ impl ViewSampling {
                     "acquired view grid is too coarse for processing",
                 ));
             }
-            self.plan = Plan::new(Request {
-                output: grid,
-                stages: self.plan.pipeline(),
-                sampling: self.plan.sampling(),
-            })?;
+            self.plan = Plan::for_graph(
+                Request {
+                    output: grid,
+                    sampling: self.plan.sampling(),
+                },
+                compose,
+            )?;
         }
         Ok(self)
     }
@@ -175,8 +178,8 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{Composition, FramePoint},
+        gpu::photograph::assembly::Assembly,
         image_mtf::ImageMtfParameters,
-        pixel_pipeline::PixelStage,
     };
 
     fn frame(side: u32, output: [u32; 2]) -> FrameRaster {
@@ -198,18 +201,31 @@ mod tests {
     fn preferred_pitch_refines_source_acquisition_not_presentation_or_native_scale() {
         for side in [600, 4096, 8640] {
             let frame = frame(side, [113, 97]);
-            let pipeline = PixelPipeline {
-                stages: vec![PixelStage::new(ImageMtfParameters {
+            let pipeline = {
+                let mtf = ImageMtfParameters {
                     sigma: f64::from(side) * 0.0004,
-                })],
+                };
+                let pitch = [Some(mtf.sigma / 0.6)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(f64::min);
+                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                    image = mtf.compose(image)?;
+                    if let Some(output) = output {
+                        image = output.compose(image)?;
+                    }
+                    Ok(image)
+                })
+                .with_view_pitch(pitch)
             };
-            let sampled = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
+            let sampled = pipeline
+                .view_sampling(frame, Sampling::NeutralFootprints)
+                .unwrap();
             assert_eq!(sampled.presentation, frame);
             let acquired = sampled.plan.processing_frame().unwrap();
             assert!(acquired.output[0] > frame.output[0]);
             assert!(cells(&sampled.plan).unwrap() <= REFINED_CELLS);
             assert!(sampled.plan.pitch().iter().all(|p| *p >= 1. - 1e-12));
-            assert_eq!(sampled.plan.pipeline(), &pipeline);
             assert!(
                 !sampled.limited(),
                 "ordinary default-scale refinement fits its allowance"
@@ -220,27 +236,38 @@ mod tests {
     #[test]
     fn no_effect_is_not_refined_and_proxy_cells_are_not_invented() {
         let frame = frame(6000, [512; 2]);
-        let clean = ViewSampling::new(
-            frame,
-            &PixelPipeline::default(),
-            Sampling::NeutralFootprints,
-        )
-        .unwrap();
+        let clean = Assembly::default()
+            .view_sampling(frame, Sampling::NeutralFootprints)
+            .unwrap();
         assert_eq!(clean.plan.output(), frame);
-        let pipeline = PixelPipeline {
-            stages: vec![PixelStage::new(ImageMtfParameters { sigma: 2.4 })],
+        let pipeline = {
+            let mtf = ImageMtfParameters { sigma: 2.4 };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         };
-        let proxy = ViewSampling::new(
-            frame,
-            &pipeline,
-            Sampling::CameraProxy {
-                region: frame.composition.area(),
-                size: [512; 2],
-            },
-        )
-        .unwrap();
+        let proxy = pipeline
+            .view_sampling(
+                frame,
+                Sampling::CameraProxy {
+                    region: frame.composition.area(),
+                    size: [512; 2],
+                },
+            )
+            .unwrap();
         assert_eq!(proxy.plan.output(), frame);
-        let small = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
+        let small = pipeline
+            .view_sampling(frame, Sampling::NeutralFootprints)
+            .unwrap();
         assert!(small.plan.output().output[0] > 512);
     }
 
@@ -248,22 +275,41 @@ mod tests {
     #[test]
     fn supplied_native_grids_preserve_the_footprint_and_satisfy_processing_quality() {
         let frame = frame(600, [20, 10]);
-        let pipeline = PixelPipeline {
-            stages: vec![PixelStage::new(ImageMtfParameters { sigma: 24. })],
+        let pipeline = {
+            let mtf = ImageMtfParameters { sigma: 24. };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         };
-        let sampled = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
+        let sampled = pipeline
+            .view_sampling(frame, Sampling::NeutralFootprints)
+            .unwrap();
         let required = sampled.plan.output();
-        let unchanged = sampled.clone().with_native_grid(None).unwrap();
+        let unchanged = sampled
+            .clone()
+            .with_native_grid(None, |input| pipeline.sampling_image(input))
+            .unwrap();
         assert_eq!(unchanged.plan.output(), required);
         assert_eq!(unchanged.plan.input(), sampled.plan.input());
         let finer_grid = FrameRaster {
             output: required.output.map(|n| n * 2),
             ..required
         };
-        let finer = sampled.clone().with_native_grid(Some(finer_grid)).unwrap();
+        let finer = sampled
+            .clone()
+            .with_native_grid(Some(finer_grid), |input| pipeline.sampling_image(input))
+            .unwrap();
         assert_eq!(finer.presentation, frame);
         assert_eq!(finer.plan.output(), finer_grid);
-        assert_eq!(finer.plan.pipeline(), &pipeline);
         assert_eq!(finer.plan.sampling(), Sampling::NeutralFootprints);
         assert!(
             !finer.limited(),
@@ -273,7 +319,10 @@ mod tests {
         moved.min.0[0] += 1.;
         moved.max.0[0] += 1.;
         assert_eq!(
-            sampled.clone().with_native_grid(Some(moved)).unwrap_err(),
+            sampled
+                .clone()
+                .with_native_grid(Some(moved), |input| pipeline.sampling_image(input))
+                .unwrap_err(),
             Error::InvalidParameter("view grids describe different footprints")
         );
         let coarse = FrameRaster {
@@ -281,7 +330,9 @@ mod tests {
             ..required
         };
         assert_eq!(
-            sampled.with_native_grid(Some(coarse)).unwrap_err(),
+            sampled
+                .with_native_grid(Some(coarse), |input| pipeline.sampling_image(input))
+                .unwrap_err(),
             Error::InvalidParameter("acquired view grid is too coarse for processing")
         );
     }
@@ -290,10 +341,24 @@ mod tests {
     fn extreme_refinement_and_wide_views_have_bounded_required_input() {
         for output in [[512, 512], [4096, 512], [3840, 2160]] {
             let frame = frame(9000, output);
-            let pipeline = PixelPipeline {
-                stages: vec![PixelStage::new(ImageMtfParameters { sigma: 0.45 })],
+            let pipeline = {
+                let mtf = ImageMtfParameters { sigma: 0.45 };
+                let pitch = [Some(mtf.sigma / 0.6)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(f64::min);
+                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                    image = mtf.compose(image)?;
+                    if let Some(output) = output {
+                        image = output.compose(image)?;
+                    }
+                    Ok(image)
+                })
+                .with_view_pitch(pitch)
             };
-            let sampled = ViewSampling::new(frame, &pipeline, Sampling::NeutralFootprints).unwrap();
+            let sampled = pipeline
+                .view_sampling(frame, Sampling::NeutralFootprints)
+                .unwrap();
             assert!(sampled.limited());
             assert!(
                 cells(&sampled.plan).unwrap()
@@ -302,12 +367,9 @@ mod tests {
             assert!((0..2).all(|i| sampled.plan.output().output[i] >= output[i]));
         }
         assert!(
-            ViewSampling::new(
-                frame(9000, [8192; 2]),
-                &PixelPipeline::default(),
-                Sampling::NeutralFootprints
-            )
-            .is_err()
+            Assembly::default()
+                .view_sampling(frame(9000, [8192; 2]), Sampling::NeutralFootprints)
+                .is_err()
         );
     }
 }

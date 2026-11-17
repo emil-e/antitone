@@ -9,10 +9,7 @@ use crate::{
 
 #[test]
 fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
-    use crate::{
-        acquisition::Sampling,
-        pixel_pipeline::{PixelPipeline, PixelStage},
-    };
+    use crate::acquisition::Sampling;
     let composition = Composition::new(
         [100, 80, 40, 30].into(),
         Default::default(),
@@ -29,39 +26,69 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     let base = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
     let small = base
         .clone()
-        .with_pipeline(PixelPipeline {
-            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 2.,
-            })],
+        .with_definition({
+            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         })
         .unwrap();
     let large = base
         .clone()
-        .with_pipeline(PixelPipeline {
-            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 3.,
-            })],
+        .with_definition({
+            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 3. };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         })
         .unwrap();
     assert!(small.same_source(&large));
     assert!(!small.same_acquisition(&large));
-    assert!(large.plan.can_supply(&small.plan));
-    assert!(!small.plan.can_supply(&large.plan));
+    assert!(large.plan().can_supply(small.plan()));
+    assert!(!small.plan().can_supply(large.plan()));
     let finer = base
         .clone()
-        .with_pipeline(PixelPipeline {
-            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 0.6,
-            })],
+        .with_definition({
+            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 0.6 };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
         })
         .unwrap();
-    assert!(finer.plan.output().output[0] > large.plan.output().output[0]);
+    assert!(finer.plan().output().output[0] > large.plan().output().output[0]);
     assert!(
-        !large.plan.can_supply(&finer.plan),
+        !large.plan().can_supply(finer.plan()),
         "extra coarse neighbours cannot satisfy a finer sampling request"
     );
     assert!(
-        large.processing_plan(finer.plan.pipeline()).is_err(),
+        large.processing_plan(finer.definition()).is_err(),
         "a coarse fallback must not run a finer effect request"
     );
     let moved = large
@@ -74,11 +101,11 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(large.same_source(&moved));
     assert!(
-        large.processing_plan(moved.plan.pipeline()).is_ok(),
+        large.processing_plan(moved.definition()).is_ok(),
         "the retained footprint can still be graded as a navigation fallback"
     );
     assert!(
-        !large.plan.can_supply(&moved.plan),
+        !large.plan().can_supply(moved.plan()),
         "fallback coverage is not the newly requested output"
     );
     let proxy = large
@@ -90,7 +117,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(large.same_source(&proxy));
     assert!(
-        !large.plan.can_supply(&proxy.plan),
+        !large.plan().can_supply(proxy.plan()),
         "equal source identity does not substitute a different sample representation"
     );
     let other = FrameRaster::full(

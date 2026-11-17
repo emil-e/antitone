@@ -4,21 +4,33 @@ use crate::crop::Crop;
 use crate::geometry::{Composition, FramePoint};
 
 #[cfg(feature = "gpu")]
-fn pipeline() -> PixelPipeline {
+fn pipeline() -> Assembly {
     use crate::grain::GrainParameters;
-    PixelPipeline {
-        stages: vec![
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2. }),
-            PixelStage::new(crate::pixel_pipeline::Grain {
-                parameters: GrainParameters {
-                    grain_size: 2.,
-                    amplitude: 0.055,
-                    colour: 0.5,
-                },
-                seed: 17,
-            }),
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 7.5 }),
-        ],
+    {
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+        let grain = crate::gpu::photograph::authoring::Grain {
+            parameters: GrainParameters {
+                grain_size: 2.,
+                amplitude: 0.055,
+                colour: 0.5,
+            },
+            seed: 17,
+        };
+        let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 7.5 };
+        let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            image = grain.compose(image)?;
+            image = next_mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     }
 }
 
@@ -45,13 +57,16 @@ fn output() -> FrameRaster {
 #[cfg(feature = "gpu")]
 #[test]
 fn unequal_neighbourhoods_propagate_backwards_through_a_point_stage() {
-    let plan = Plan::new(Request {
-        output: output(),
-        stages: &pipeline(),
-        sampling: Sampling::Originals {
-            reconstruction: SourceSupport([0; 2]),
+    let plan = Plan::for_graph(
+        Request {
+            output: output(),
+
+            sampling: Sampling::Originals {
+                reconstruction: SourceSupport([0; 2]),
+            },
         },
-    })
+        |input| pipeline().sampling_image(input),
+    )
     .unwrap();
     assert_eq!(
         plan.source_read(),
@@ -73,13 +88,16 @@ fn unequal_neighbourhoods_propagate_backwards_through_a_point_stage() {
 #[cfg(feature = "gpu")]
 #[test]
 fn reconstruction_guard_acquires_additional_real_cells() {
-    let plan = Plan::new(Request {
-        output: output(),
-        stages: &pipeline(),
-        sampling: Sampling::Originals {
-            reconstruction: SourceSupport([1; 2]),
+    let plan = Plan::for_graph(
+        Request {
+            output: output(),
+
+            sampling: Sampling::Originals {
+                reconstruction: SourceSupport([1; 2]),
+            },
         },
-    })
+        |input| pipeline().sampling_image(input),
+    )
     .unwrap();
     assert_eq!(
         plan.source_read(),
@@ -95,11 +113,14 @@ fn filtered_rasters_keep_pitch_source_coordinates_and_valid_output_at_each_scale
             output: size,
             ..output()
         };
-        let plan = Plan::new(Request {
-            output: frame,
-            stages: &pipeline(),
-            sampling: Sampling::NeutralFootprints,
-        })
+        let plan = Plan::for_graph(
+            Request {
+                output: frame,
+
+                sampling: Sampling::NeutralFootprints,
+            },
+            |input| pipeline().sampling_image(input),
+        )
         .unwrap();
         assert_eq!(plan.output_offset(), Some([margin; 2]));
         let ProcessingRaster::Frame(input) = plan.input() else {
@@ -128,7 +149,6 @@ fn only_actual_source_edges_clip_neighbourhoods_and_exterior_reads_use_nearest_c
         Default::default(),
     )
     .unwrap();
-    let empty = PixelPipeline::default();
     for (min, max, expected) in [
         ([-8., -9.], [4., 5.], [100, 80, 4, 5]),
         ([-8., -9.], [-3., -4.], [100, 80, 1, 1]),
@@ -149,7 +169,6 @@ fn only_actual_source_edges_clip_neighbourhoods_and_exterior_reads_use_nearest_c
         ] {
             let plan = Plan::new(Request {
                 output: frame,
-                stages: &empty,
                 sampling,
             })
             .unwrap();
@@ -157,13 +176,16 @@ fn only_actual_source_edges_clip_neighbourhoods_and_exterior_reads_use_nearest_c
         }
     }
     #[cfg(feature = "gpu")]
-    let plan = Plan::new(Request {
-        output: FrameRaster::full(composition).unwrap(),
-        stages: &pipeline(),
-        sampling: Sampling::Originals {
-            reconstruction: SourceSupport([1; 2]),
+    let plan = Plan::for_graph(
+        Request {
+            output: FrameRaster::full(composition).unwrap(),
+
+            sampling: Sampling::Originals {
+                reconstruction: SourceSupport([1; 2]),
+            },
         },
-    })
+        |input| pipeline().sampling_image(input),
+    )
     .unwrap();
     #[cfg(feature = "gpu")]
     assert_eq!(
@@ -190,11 +212,14 @@ fn rotated_dependencies_preserve_footprints() {
         output: [20, 10],
         ..FrameRaster::full(composition).unwrap()
     };
-    let plan = Plan::new(Request {
-        output: frame,
-        stages: &pipeline(),
-        sampling: Sampling::NeutralFootprints,
-    })
+    let plan = Plan::for_graph(
+        Request {
+            output: frame,
+
+            sampling: Sampling::NeutralFootprints,
+        },
+        |input| pipeline().sampling_image(input),
+    )
     .unwrap();
     assert_eq!(plan.output_offset(), Some([19; 2]));
     let ProcessingRaster::Frame(input) = plan.input() else {
@@ -209,7 +234,7 @@ fn rotated_dependencies_preserve_footprints() {
     }
     let native = Plan::new(Request {
         output: frame,
-        stages: &PixelPipeline::default(),
+
         sampling: Sampling::Originals {
             reconstruction: SourceSupport([1; 2]),
         },
@@ -227,11 +252,14 @@ fn proxy_read_declares_its_representation_separately_from_original_reads_and_pub
         region: frame.composition.area(),
         size: [600, 400],
     };
-    let plan = Plan::new(Request {
-        output: frame,
-        stages: &pipeline,
-        sampling,
-    })
+    let plan = Plan::for_graph(
+        Request {
+            output: frame,
+
+            sampling,
+        },
+        |input| pipeline.sampling_image(input),
+    )
     .unwrap();
     assert_eq!(
         plan.source_read(),
@@ -241,16 +269,18 @@ fn proxy_read_declares_its_representation_separately_from_original_reads_and_pub
         }
     );
     assert_eq!(plan.output_offset(), Some([38; 2]));
-    assert_eq!(plan.pipeline(), &pipeline);
     assert!(
-        Plan::new(Request {
-            output: frame,
-            stages: &pipeline,
-            sampling: Sampling::CameraProxy {
-                region: [0, 0, 6000, 4000].into(),
-                size: [600, 400]
-            }
-        })
+        Plan::for_graph(
+            Request {
+                output: frame,
+
+                sampling: Sampling::CameraProxy {
+                    region: [0, 0, 6000, 4000].into(),
+                    size: [600, 400]
+                }
+            },
+            |input| pipeline.sampling_image(input)
+        )
         .is_err()
     );
 }

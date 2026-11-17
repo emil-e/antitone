@@ -8,7 +8,7 @@ use crate::gpu::{
     photograph::{PhotographGraph, operations::CameraInput},
     raster::Raster,
 };
-use crate::{looks::LutChain, pixel_pipeline::PixelPipeline};
+use crate::looks::LutChain;
 
 impl ImageProcessing {
     fn camera(&self, raster: Raster) -> Result<Value, Error> {
@@ -51,7 +51,6 @@ impl GpuImage {
         program: InputTransform,
         grading: Grading,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        stages: &PixelPipeline,
     ) -> Result<Value, Error> {
         let processing = self
             .processing
@@ -59,7 +58,6 @@ impl GpuImage {
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         let raster = PhotographGraph::resident_raster(
             &processing.source,
-            stages,
             [self.presentation.size[0], self.presentation.size[1]],
         )?;
         Ok(PhotographGraph::resident_photograph(
@@ -69,7 +67,6 @@ impl GpuImage {
             program,
             grading,
             Default::default(),
-            stages,
         )?
         .processed)
     }
@@ -86,7 +83,6 @@ impl GpuImage {
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         let raster = PhotographGraph::resident_raster(
             &processing.source,
-            &Default::default(),
             [self.presentation.size[0], self.presentation.size[1]],
         )?;
         PhotographGraph::resident_inspection(
@@ -140,22 +136,22 @@ impl GpuImage {
         self.require_processing(input)?;
         let processing = self.processing.as_ref().expect("admitted camera source");
         let image = if let Some(program) = input.source_transform() {
-            let stages = input.pixel_pipeline();
+            let stages = input.definition();
             let raster = PhotographGraph::resident_raster(
                 &processing.source,
-                &stages,
                 [self.presentation.size[0], self.presentation.size[1]],
             )?;
-            PhotographGraph::resident_photograph(
-                &self.device_limits,
-                processing.camera(raster)?,
-                CameraInput::resident(&processing.source, *program, input.field.clone()),
-                *program,
-                input.grade().expect("admitted photograph").clone(),
-                input.repairs.clone(),
-                &stages,
+            stages.compose(
+                PhotographGraph::resident_photograph(
+                    &self.device_limits,
+                    processing.camera(raster)?,
+                    CameraInput::resident(&processing.source, *program, input.field.clone()),
+                    *program,
+                    input.grade().expect("admitted photograph").clone(),
+                    input.repairs.clone(),
+                )?
+                .processed,
             )?
-            .processed
         } else {
             self.inspection(input.parameters(), input.field.clone())?
         };
@@ -252,7 +248,7 @@ impl GpuImage {
     ) -> Result<(), Error> {
         let processing = self.processing.as_ref().expect("admitted working image");
         let raster = root.domain().grid.raster(root.domain().finite()?);
-        let prepared = crate::gpu::pixel_pipeline::Prepared::from_composition(
+        let prepared = crate::gpu::recorded_image::Prepared::from_composition(
             device,
             raster,
             root.clone(),

@@ -25,8 +25,8 @@ fn candidate(
         )
         .unwrap(),
     );
-    let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    let input = AuthoredPhotograph::from(grade).with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             film,
             Default::default(),
             source.spec.frame().composition.crop().size,
@@ -78,8 +78,8 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
                 source.spec.area,
             )
             .unwrap()
-            .with_pixel_pipeline(
-                crate::pixel_pipeline::PixelPipeline::emulation(
+            .with_definition(
+                crate::gpu::photograph::assembly::Assembly::emulation(
                     GrainSettings {
                         enabled: true,
                         size: 2. / 6000. * 100.,

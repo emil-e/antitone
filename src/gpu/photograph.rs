@@ -16,7 +16,11 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use std::sync::Arc;
 
 pub(crate) mod admission;
-mod assembly;
+pub(crate) mod assembly;
+#[cfg(test)]
+pub(crate) mod authoring;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) mod authoring_examples;
 #[cfg(feature = "editor")]
 pub mod camera_response;
 #[cfg(all(
@@ -29,6 +33,10 @@ mod neutral_readout;
 pub(crate) mod operations;
 #[cfg(feature = "project")]
 mod recipe;
+#[cfg(any(test, feature = "editor"))]
+pub(crate) mod sampling;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) mod test_effects;
 #[cfg(feature = "project")]
 #[cfg(feature = "project")]
 pub(crate) use recipe::RecipeGraph;
@@ -184,7 +192,7 @@ impl PhotographGraph {
     pub(crate) fn filtered(
         grading: &Grading,
         neutral: Value,
-        stages: &crate::pixel_pipeline::PixelPipeline,
+        definition: &Assembly,
         presentation: crate::frame_raster::FrameRaster,
         processing: crate::frame_raster::FrameRaster,
     ) -> Result<Value, Error> {
@@ -192,7 +200,11 @@ impl PhotographGraph {
         let scale = std::array::from_fn(|i| {
             f64::from(processing.output[i]) / f64::from(presentation.output[i])
         });
-        Assembly::filtered(grading.clone()).filtered_image(neutral, stages, output, [0; 2], scale)
+        {
+            let mut assembly = definition.clone();
+            assembly.grading = Some(grading.clone());
+            assembly.filtered_image(neutral, output, [0; 2], scale)
+        }
     }
 
     #[cfg(feature = "editor")]
@@ -298,18 +310,8 @@ impl PhotographGraph {
         program: crate::gpu::interpretation::InputTransform,
         grading: Grading,
         repairs: &[crate::dust_repair::Repair],
-        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Value, Error> {
-        Ok(Self::original(
-            limits,
-            source,
-            field,
-            program,
-            grading,
-            repairs.to_vec(),
-            stages,
-        )?
-        .processed)
+        Ok(Self::original(limits, source, field, program, grading, repairs.to_vec())?.processed)
     }
 
     pub(crate) fn original(
@@ -319,7 +321,6 @@ impl PhotographGraph {
         program: crate::gpu::interpretation::InputTransform,
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
-        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
@@ -341,7 +342,7 @@ impl PhotographGraph {
             grading,
             repairs,
         )?
-        .photograph(source, stages)
+        .photograph(source)
     }
 
     pub(crate) fn inspection_original(
@@ -377,19 +378,25 @@ impl PhotographGraph {
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
     ) -> Result<Self, Error> {
-        Self::new_with_stages(limits, source, field, input, matrix, &Default::default())
+        Self::authored(limits, source, field, input, matrix, &Default::default())
     }
 
     #[cfg(test)]
-    pub(crate) fn new_with_stages(
+    pub(crate) fn authored(
         limits: &wgpu::Limits,
         source: Value,
         field: Option<Arc<GpuFlatField>>,
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
-        stages: &crate::pixel_pipeline::PixelPipeline,
+        definition: &Assembly,
     ) -> Result<Self, Error> {
-        Self::original_assembly(limits, &source, field, input, matrix)?.photograph(source, stages)
+        let mut assembly = Self::original_assembly(limits, &source, field, input, matrix)?;
+        assembly.grain = definition.grain;
+        assembly.halation = definition.halation;
+        assembly.seed = definition.seed;
+        assembly.author = definition.author.clone();
+        assembly.preferred_pitch = definition.preferred_pitch;
+        assembly.photograph(source)
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -411,7 +418,6 @@ impl PhotographGraph {
         }
         Self::original_assembly(limits, &source, field, input, program.matrix)?.preview(
             source,
-            &input.pixel_pipeline(),
             frame,
             native_grid,
         )
@@ -448,12 +454,11 @@ impl PhotographGraph {
     }
 
     #[cfg(test)]
-    pub(crate) fn from_resident_with_stages(
+    pub(crate) fn from_resident_fixture(
         limits: &wgpu::Limits,
         source: &ProcessingSource,
         input: &AuthoredPhotograph,
         raster: crate::gpu::raster::Raster,
-        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         input.require_source(source)?;
         if u64::from(raster.size()[0]) * u64::from(raster.size()[1])
@@ -498,7 +503,7 @@ impl PhotographGraph {
             },
             input,
         )?
-        .photograph(camera, stages)
+        .photograph(camera)
     }
 
     #[cfg(test)]
@@ -526,7 +531,9 @@ impl PhotographGraph {
                 None => Interpretation::Unavailable,
             },
         )?;
-        let mut assembly = Assembly::captured(captured.clone());
+        let mut assembly = input.definition();
+        assembly.capture = Some(captured.clone());
+        assembly.interpretation = captured.interpretation;
         if input.parameters().graded() {
             assembly.repairs = input.repairs.clone();
             assembly.replacements = input.replacements.clone();

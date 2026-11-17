@@ -85,11 +85,8 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
                         e.photo_settings()
                     )
                     .unwrap()
-                    .pixel_pipeline()
-                    .stages
-                    .iter()
-                    .find_map(|stage| stage.get::<crate::halation::HalationParameters>())
-                    .copied(),
+                    .definition()
+                    .halation,
                     e.document
                         .project
                         .output

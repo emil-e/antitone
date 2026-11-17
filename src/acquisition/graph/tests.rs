@@ -4,7 +4,6 @@ use crate::{
     gpu::evaluation::{
         Budget, CellRegion, CpuImage, CpuKernel, Domain, Operation, Read, Value, WorkUnits, value,
     },
-    pixel_pipeline::{EffectDefinition, PixelStage},
 };
 use std::sync::Arc;
 
@@ -15,10 +14,7 @@ struct Declared {
     natural: Option<CellRegion>,
     preferred: Option<f64>,
 }
-impl EffectDefinition for Declared {
-    fn view_pitch(&self) -> Option<f64> {
-        self.preferred
-    }
+impl Declared {
     fn compose(&self, input: Value) -> Result<Value, Error> {
         Ok(Value::from_operation(
             input.domain(),
@@ -100,9 +96,15 @@ fn definition(before: [u32; 2], after: [u32; 2]) -> Declared {
         preferred: None,
     }
 }
-fn pipeline(definition: Declared) -> PixelPipeline {
-    PixelPipeline {
-        stages: vec![PixelStage::new(definition)],
+fn pipeline(definition: Declared) -> Assembly {
+    {
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = definition.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     }
 }
 fn frame() -> FrameRaster {
@@ -120,11 +122,14 @@ fn frame() -> FrameRaster {
     .unwrap()
 }
 fn plan(definition: Declared) -> Plan {
-    Plan::new(Request {
-        output: frame(),
-        stages: &pipeline(definition),
-        sampling: Sampling::NeutralFootprints,
-    })
+    Plan::for_graph(
+        Request {
+            output: frame(),
+
+            sampling: Sampling::NeutralFootprints,
+        },
+        |input| pipeline(definition).sampling_image(input),
+    )
     .unwrap()
 }
 
@@ -150,13 +155,16 @@ fn asymmetric_unit_reads_determine_acquisition_without_running_pixels() {
 #[test]
 fn original_envelopes_follow_asymmetric_and_natural_unit_reads() {
     let plan = |stage| {
-        Plan::new(Request {
-            output: frame(),
-            stages: &pipeline(stage),
-            sampling: Sampling::Originals {
-                reconstruction: SourceSupport([1; 2]),
+        Plan::for_graph(
+            Request {
+                output: frame(),
+
+                sampling: Sampling::Originals {
+                    reconstruction: SourceSupport([1; 2]),
+                },
             },
-        })
+            |input| pipeline(stage).sampling_image(input),
+        )
         .unwrap()
     };
     let asymmetric = plan(definition([2, 1], [5, 3]));
@@ -193,7 +201,6 @@ fn acquisition_reuse_checks_both_ends_of_asymmetric_input_windows() {
     let reused = right.using_input(&both).unwrap();
     assert_eq!(reused.input(), both.input());
     assert_eq!(reused.output_offset(), Some([5, 0]));
-    assert_eq!(reused.pipeline(), right.pipeline());
 }
 
 #[test]
@@ -216,14 +223,17 @@ fn only_full_camera_cell_domains_clip_declared_neighbours() {
         output: [10, 10],
         ..FrameRaster::full(composition).unwrap()
     };
-    let plan = Plan::new(Request {
-        output: frame,
-        stages: &pipeline(definition([7, 8], [9, 10])),
-        sampling: Sampling::CameraCells {
-            region: composition.area(),
-            size: [10, 10],
+    let plan = Plan::for_graph(
+        Request {
+            output: frame,
+
+            sampling: Sampling::CameraCells {
+                region: composition.area(),
+                size: [10, 10],
+            },
         },
-    })
+        |input| pipeline(definition([7, 8], [9, 10])).sampling_image(input),
+    )
     .unwrap();
     assert_eq!(plan.input(), ProcessingRaster::Frame(frame));
     assert_eq!(plan.output_offset(), Some([0, 0]));
@@ -231,7 +241,7 @@ fn only_full_camera_cell_domains_clip_declared_neighbours() {
 
 #[derive(Debug, PartialEq)]
 struct Split;
-impl EffectDefinition for Split {
+impl Split {
     fn compose(&self, input: Value) -> Result<Value, Error> {
         let left = definition([2, 0], [0, 0]).compose(input.clone())?;
         let right = definition([0, 0], [5, 0]).compose(input.clone())?;
@@ -265,14 +275,24 @@ impl Operation for Merge {
 
 #[test]
 fn acquisition_follows_both_parents_of_a_composed_effect_dag() {
-    let pipeline = PixelPipeline {
-        stages: vec![PixelStage::new(Split)],
+    let pipeline = {
+        let split = Split;
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = split.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     };
-    let plan = Plan::new(Request {
-        output: frame(),
-        stages: &pipeline,
-        sampling: Sampling::NeutralFootprints,
-    })
+    let plan = Plan::for_graph(
+        Request {
+            output: frame(),
+
+            sampling: Sampling::NeutralFootprints,
+        },
+        |input| pipeline.sampling_image(input),
+    )
     .unwrap();
     assert_eq!(plan.input().size(), [15, 6]);
     assert_eq!(plan.output_offset(), Some([2, 0]));
@@ -296,12 +316,11 @@ fn quality_refinement_counts_graph_declared_inputs_not_just_visible_cells() {
     };
     let mut declared = definition([0, 0], [3000, 3000]);
     declared.preferred = Some(1.);
-    let sampled = crate::pixel_pipeline::sampling::ViewSampling::new(
-        frame,
-        &pipeline(declared),
-        Sampling::NeutralFootprints,
-    )
-    .unwrap();
+    let preferred = declared.preferred;
+    let sampled = pipeline(declared)
+        .with_view_pitch(preferred)
+        .view_sampling(frame, Sampling::NeutralFootprints)
+        .unwrap();
     assert!(
         sampled.ideal[0] > frame.output[0],
         "control: quality asks for finer sampling"
@@ -313,4 +332,30 @@ fn quality_refinement_counts_graph_declared_inputs_not_just_visible_cells() {
         "expanded base is already larger than the refinement allowance; refinement must count all declared neighbours"
     );
     assert_eq!(sampled.presentation, frame);
+}
+
+#[test]
+fn acquisition_follows_interleaved_neighbourhoods_and_changes_of_sample_meaning() {
+    use crate::gpu::evaluation::{Function, Meaning, pointwise};
+    let plan = Plan::for_graph(
+        Request { output: frame(), sampling: Sampling::NeutralFootprints },
+        |input| {
+            let opponents = pointwise(input, Meaning::Arguments, Function::new(
+                "fn opponents(v:vec4f,p:vec2f)->vec4f { return vec4f(v.r-v.g,v.g,v.b-v.g,v.w); }",
+                "opponents",
+            ));
+            let spread = definition([2, 1], [4, 2]).compose(opponents)?;
+            let light = pointwise(spread, Meaning::Neutral, Function::new(
+                "fn light(v:vec4f,p:vec2f)->vec4f { return vec4f(v.r+v.g,v.g,v.b+v.g,v.w); }",
+                "light",
+            ));
+            definition([1, 3], [1, 4]).compose(light)
+        },
+    ).unwrap();
+    assert_eq!(plan.output_offset(), Some([3, 4]));
+    assert_eq!(plan.input().size(), [16, 16]);
+    assert_eq!(
+        plan.source_read(),
+        SourceRead::Originals([107, 96, 16, 16].into())
+    );
 }

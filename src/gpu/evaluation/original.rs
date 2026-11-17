@@ -103,7 +103,7 @@ pub(crate) fn original_chain(
     field: Option<Arc<GpuFlatField>>,
     input: &AuthoredPhotograph,
     reference: crate::rendering::OutputReference,
-    stages: &crate::pixel_pipeline::PixelPipeline,
+    stages: &crate::gpu::photograph::assembly::Assembly,
 ) -> Result<Value, Error> {
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
@@ -120,7 +120,7 @@ pub(crate) fn original_chain(
     };
     let node = camera_source(scan)?;
     let photograph =
-        PhotographGraph::new_with_stages(&device.limits(), node, field, input, matrix, stages)?;
+        PhotographGraph::authored(&device.limits(), node, field, input, matrix, stages)?;
     Reference::capture(device, renderer, reference, input.luts())?
         .compose(photograph.processed, renderer)
 }

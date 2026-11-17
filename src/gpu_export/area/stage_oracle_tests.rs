@@ -145,7 +145,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         let mut without_look: Option<DVec3> = None;
         for look in [None, Some(asset.clone())] {
             let request = Request {
-                pipeline: Default::default(),
+                calculation: None,
                 scan: &scan,
                 field: None,
                 input: calibration.into(),

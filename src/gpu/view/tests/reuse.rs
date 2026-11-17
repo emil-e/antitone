@@ -68,8 +68,8 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             )
             .unwrap(),
         ))
-        .with_pixel_pipeline(
-            crate::pixel_pipeline::PixelPipeline::emulation(
+        .with_definition(
+            crate::gpu::photograph::assembly::Assembly::emulation(
                 crate::grain::GrainPreset::ThirtyFiveMm.settings(),
                 crate::halation::HalationSettings {
                     enabled: true,
@@ -81,14 +81,15 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             )
             .unwrap(),
         );
-        assert!(input.pixel_pipeline().stages.iter().any(|stage| {
-            stage
-                .get::<crate::halation::HalationParameters>()
+        assert!(
+            input
+                .definition()
+                .halation
                 .is_some_and(|parameters| parameters.strength > 0.)
-        }));
+        );
         let spec = SourceRequest::new(frame(&scan), InputSettings::Digital, matrix, None)
             .unwrap()
-            .with_pipeline(input.pixel_pipeline())
+            .with_definition(input.definition())
             .unwrap();
         let gate = SubmissionGate::default();
         let source = ViewImage::prefix(

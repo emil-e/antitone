@@ -47,18 +47,26 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             .unwrap(),
         );
         // Resolve sigma directly to isolate boundary handling from crop-relative recipe assembly.
-        let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
-            crate::pixel_pipeline::PixelPipeline {
-                stages: vec![crate::pixel_pipeline::PixelStage::new(
-                    crate::image_mtf::ImageMtfParameters { sigma: 2. },
-                )],
-            },
-        );
+        let input = AuthoredPhotograph::from(grade).with_definition({
+            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let pitch = [Some(mtf.sigma / 0.6)]
+                .into_iter()
+                .flatten()
+                .reduce(f64::min);
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = mtf.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
+            .with_view_pitch(pitch)
+        });
         let make = |frame: FrameRaster, padded: bool| {
             let spec =
                 SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
             let spec = if padded {
-                spec.with_pipeline(input.pixel_pipeline()).unwrap()
+                spec.with_definition(input.definition()).unwrap()
             } else {
                 spec
             };

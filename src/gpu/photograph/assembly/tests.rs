@@ -5,8 +5,6 @@ use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::color::Balance;
 use crate::gpu::grading::Grading;
 use crate::gpu::interpretation::InputTransform;
-use crate::pixel_pipeline::EffectDefinition;
-use crate::pixel_pipeline::PixelStage;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
 use crate::processing::NegativeInput;
@@ -138,7 +136,7 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Scale(DVec3);
 
-impl EffectDefinition for Scale {
+impl Scale {
     fn compose(&self, image: Value) -> Result<Value, Error> {
         let meaning = image.domain().meaning;
         Ok(pointwise(
@@ -163,7 +161,7 @@ fn scale_assembly_input(pixel: vec4f, position: vec2f) -> vec4f {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Square;
 
-impl EffectDefinition for Square {
+impl Square {
     fn compose(&self, image: Value) -> Result<Value, Error> {
         let meaning = image.domain().meaning;
         Ok(pointwise(
@@ -180,11 +178,7 @@ impl EffectDefinition for Square {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct FootprintScale;
 
-impl EffectDefinition for FootprintScale {
-    fn integrates_footprint(&self) -> bool {
-        true
-    }
-
+impl FootprintScale {
     fn compose(&self, image: Value) -> Result<Value, Error> {
         Scale(DVec3::splat(image.domain().grid.pitch[0])).compose(image)
     }
@@ -335,13 +329,20 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
     };
     let grade_gain = 0.5;
     let scale = Scale(DVec3::new(0.75, 1.25, 0.9));
-    let effects = PixelPipeline {
-        stages: vec![PixelStage::new(Square), PixelStage::new(scale)],
+    let effects = {
+        let square = Square;
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = square.compose(image)?;
+            image = scale.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     };
-    let graph = assembly
-        .clone()
-        .photograph(codes.clone(), &effects)
-        .unwrap();
+    let mut complete = assembly.clone();
+    complete.author = effects.author;
+    let graph = complete.photograph(codes.clone()).unwrap();
     let prefix = assembly.neutral(codes).unwrap();
     let native = Assembly::native(program).interpret(normalized).unwrap();
     let actual = read(context, &queue, graph.processed);
@@ -368,7 +369,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
 }
 
 #[test]
-fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_presentation() {
+fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 4, 1].into()),
@@ -394,13 +395,21 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         domain.finite().unwrap().source().unwrap(),
     )
     .unwrap();
-    let effects = PixelPipeline {
-        stages: vec![PixelStage::new(FootprintScale)],
+    let effects = {
+        let footprint_scale = FootprintScale;
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            image = footprint_scale.compose(image)?;
+            Ok(image)
+        })
     };
     let upstream = DVec3::new(0.75, 1.25, 0.9);
     let input = Square.compose(input).unwrap();
     let input = Scale(upstream).compose(input).unwrap();
-    let assembly = Assembly::filtered(grading);
+    let mut assembly = Assembly::filtered(grading);
+    assembly.author = effects.author;
     let mut output = domain;
     output.meaning = Meaning::Graded;
     output.bounds = Some([0, 0, 2, 1].into());
@@ -415,7 +424,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         close(value, upstream * f64::from(original).powi(2) * 0.5);
     }
     let image = assembly
-        .filtered_image(input, &effects, output, [0; 2], [2., 1.])
+        .filtered_image(input, output, [0; 2], [2., 1.])
         .unwrap();
     assert!(image.domain().same_grid(output));
     let actual = read(renderer.evaluation(), &queue, image);
@@ -428,4 +437,53 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
             upstream * (f64::from(pair[0]).powi(2) + f64::from(pair[1]).powi(2)) * 0.5,
         );
     }
+}
+
+#[test]
+fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_before_grain() {
+    let input = crate::gpu::evaluation::borrowed_input(Domain {
+        bounds: Some(CellRegion::new([0; 2], [80, 64])),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Graded,
+    });
+    let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
+    let halo = crate::halation::HalationSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    let response = film.parameters([80, 64]).unwrap().unwrap();
+    let halo = halo.parameters([80, 64]).unwrap().unwrap();
+    let definition = Assembly {
+        grain: Some(response),
+        halation: Some(halo),
+        seed: 17,
+        ..Default::default()
+    };
+    let mtf = gaussian(input.clone(), response.image_mtf_sigma).unwrap();
+    let halated = crate::gpu::evaluation::halation(mtf, halo).unwrap();
+    let original = crate::gpu::evaluation::grain(halated.clone(), response.grain(), 17).unwrap();
+    assert!(
+        definition
+            .processed(input.clone(), None)
+            .unwrap()
+            .same_definition(&original)
+    );
+
+    let output = ViewOutput {
+        domain: Domain {
+            bounds: Some(CellRegion::new([0; 2], [8, 4])),
+            grid: Grid::axis_aligned([0.; 2], [10., 16.]),
+            meaning: Meaning::Graded,
+        },
+        offset: [0; 2],
+        scale: [10., 16.],
+    };
+    let reconstructed = output.compose(halated).unwrap();
+    let expected = crate::gpu::evaluation::grain(reconstructed, response.grain(), 17).unwrap();
+    let actual = definition.processed(input, Some(output)).unwrap();
+    assert!(actual.same_definition(&expected));
+    assert!(
+        !actual.same_definition(&output.compose(original).unwrap()),
+        "original-cell grain followed by reduction is a different calculation"
+    );
 }

@@ -9,21 +9,14 @@ use crate::{
         interpretation::{InputTransform, InspectionView},
         raster::Raster,
     },
-    pixel_pipeline::PixelPipeline,
 };
 
 impl PhotographGraph {
     pub(crate) fn resident_raster(
         source: &ProcessingSource,
-        stages: &PixelPipeline,
         layout: [u32; 2],
     ) -> Result<Raster, Error> {
         let Some(geometry) = source.geometry() else {
-            if !stages.is_empty() {
-                return Err(Error::Gpu(
-                    "pixel processing requires declared raster geometry".into(),
-                ));
-            }
             return Ok(Raster::native([0, 0, layout[0], layout[1]].into()));
         };
         let region = geometry.region();
@@ -35,7 +28,6 @@ impl PhotographGraph {
         };
         let plan = Plan::new(Request {
             output,
-            stages,
             sampling: Sampling::CameraCells { region, size },
         })?;
         Ok(Raster::planned(&plan))
@@ -76,7 +68,6 @@ impl PhotographGraph {
         program: InputTransform,
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
-        stages: &PixelPipeline,
     ) -> Result<Self, Error> {
         let Mapping::Resident(geometry) = definition.mapping else {
             return Err(Error::InvalidParameter(
@@ -109,7 +100,7 @@ impl PhotographGraph {
             grading.for_grid(0).with_camera_coordinates(geometry),
             repairs,
         )?
-        .photograph(camera, stages)
+        .photograph(camera)
     }
 
     pub(crate) fn resident_inspection(

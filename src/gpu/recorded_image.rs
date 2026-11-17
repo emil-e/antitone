@@ -3,7 +3,7 @@
 use super::{evaluation, raster::Raster};
 use crate::Error;
 #[cfg(test)]
-use crate::pixel_pipeline::PixelPipeline;
+use crate::gpu::photograph::assembly::Assembly;
 
 pub(crate) struct Prepared {
     execution: Option<evaluation::Recorded>,
@@ -11,11 +11,7 @@ pub(crate) struct Prepared {
 
 impl Prepared {
     #[cfg(test)]
-    pub fn new(
-        device: &wgpu::Device,
-        pipeline: &PixelPipeline,
-        raster: Raster,
-    ) -> Result<Self, Error> {
+    pub fn new(device: &wgpu::Device, pipeline: &Assembly, raster: Raster) -> Result<Self, Error> {
         Self::with_context(
             device,
             pipeline,
@@ -27,7 +23,7 @@ impl Prepared {
     #[cfg(test)]
     pub fn with_context(
         device: &wgpu::Device,
-        pipeline: &PixelPipeline,
+        pipeline: &Assembly,
         raster: Raster,
         context: evaluation::Context,
     ) -> Result<Self, Error> {
@@ -36,7 +32,7 @@ impl Prepared {
             grid: evaluation::Grid::from_raster(raster),
             meaning: evaluation::Meaning::Graded,
         };
-        let root = pipeline.compose(evaluation::raster_input(domain))?;
+        let root = pipeline.processed(evaluation::raster_input(domain), None)?;
         if pipeline.is_empty() {
             return Ok(Self { execution: None });
         }

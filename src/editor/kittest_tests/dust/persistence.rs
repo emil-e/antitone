@@ -199,7 +199,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                     view.capture
                         .recipe()
                         .is_some_and(|recipe| recipe.repairs.len() == 1)
-                        && view.spec.plan.sampling()
+                        && view.spec.plan().sampling()
                             == crate::acquisition::Sampling::NeutralFootprints
                 })
         });

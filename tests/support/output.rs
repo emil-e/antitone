@@ -14,13 +14,14 @@ use antitone::{
         photograph::PhotographGraph,
         submission::SubmissionGate,
     },
-    pixel_pipeline::PixelPipeline,
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputReference,
     scan::{ImageSource, Scan},
 };
 use std::{path::Path, sync::Arc};
+
+pub type Calculation = dyn Fn(Value) -> Result<Value, Error> + Send + Sync;
 
 pub struct Request<'a> {
     pub scan: &'a Scan,
@@ -32,7 +33,7 @@ pub struct Request<'a> {
     pub composition: Composition,
     pub format: Format,
     pub luts: antitone::looks::LutChain,
-    pub pipeline: PixelPipeline,
+    pub calculation: Option<Arc<Calculation>>,
 }
 impl Request<'_> {
     pub fn calculation(
@@ -52,8 +53,11 @@ impl Request<'_> {
             ImageSource::new(self.scan, self.input)?.gpu_program()?,
             Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,
             self.repairs,
-            &self.pipeline,
         )?;
+        let photograph = match self.calculation {
+            Some(compose) => compose(photograph)?,
+            None => photograph,
+        };
         let reference = match self.format {
             Format::Tiff(target) => OutputReference::DisplayReferred(target),
             Format::Exr(_) => OutputReference::SceneReferred,

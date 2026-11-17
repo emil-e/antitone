@@ -44,8 +44,8 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         area,
     )
     .unwrap()
-    .with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    .with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             Default::default(),
             halo,
             composition.crop().size,
@@ -55,10 +55,10 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
     );
     let spec = SourceRequest::new(frame, InputSettings::Digital, glam::DMat3::IDENTITY, None)
         .unwrap()
-        .with_pipeline(processing.pixel_pipeline())
+        .with_definition(processing.definition())
         .unwrap();
     let upstream = spec.input_frame().unwrap();
-    let offset = spec.plan.output_offset().unwrap();
+    let offset = spec.plan().output_offset().unwrap();
     let [width, height] = upstream.output;
     assert!(offset[0] > 0 && offset[1] > 0);
     let values: Vec<[f32; 4]> = (0..height)
@@ -76,9 +76,9 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         .unwrap()
         .unwrap()
         .sigma;
-    let pitch = spec.plan.pitch();
+    let pitch = spec.plan().pitch();
     let scale: [f64; 2] = std::array::from_fn(|i| {
-        f64::from(spec.plan.output().output[i]) / f64::from(frame.output[i])
+        f64::from(spec.plan().output().output[i]) / f64::from(frame.output[i])
     });
     let expected = reference::apply(
         &values.iter().map(|p| p.map(f64::from)).collect::<Vec<_>>(),

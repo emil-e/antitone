@@ -43,8 +43,7 @@ pub fn photograph_with_field(
     let program = InputTransform::new(input, matrix)?;
     let grading = Grading::new(limits, roll, layers, area)?;
     Ok(Arc::new(move |image| {
-        let prefix =
-            image.photograph(program, grading.clone(), field.clone(), &Default::default())?;
+        let prefix = image.photograph(program, grading.clone(), field.clone())?;
         image.output(prefix, &Default::default())
     }))
 }

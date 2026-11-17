@@ -156,7 +156,7 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
                 composition,
                 format: Format::Exr(ExrPrecision::Full),
                 luts: Default::default(),
-                pipeline: Default::default(),
+                calculation: None,
             },
             &path,
             Overwrite::Refuse,

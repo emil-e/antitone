@@ -60,8 +60,8 @@ fn case(
         )
         .unwrap(),
     ))
-    .with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    .with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             film,
             Default::default(),
             composition.crop().size,

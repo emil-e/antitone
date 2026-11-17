@@ -31,7 +31,7 @@ impl Unit {
         composition: Composition,
         origin: [u32; 2],
         extent: [u32; 2],
-        pipeline: &crate::pixel_pipeline::PixelPipeline,
+        pipeline: &crate::gpu::photograph::assembly::Assembly,
     ) -> Result<(Self, Plan), Error> {
         if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
             return Err(Error::InvalidParameter(
@@ -46,13 +46,16 @@ impl Unit {
             })),
             extent,
         )?;
-        let plan = Plan::new(AcquisitionRequest {
-            output,
-            stages: pipeline,
-            sampling: Sampling::Originals {
-                reconstruction: SourceSupport([1; 2]),
+        let plan = Plan::for_graph(
+            AcquisitionRequest {
+                output,
+
+                sampling: Sampling::Originals {
+                    reconstruction: SourceSupport([1; 2]),
+                },
             },
-        })?;
+            |input| (pipeline).sampling_image(input),
+        )?;
         Ok((Self::from_plan(&plan, origin)?, plan))
     }
 

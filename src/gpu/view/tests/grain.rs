@@ -112,19 +112,23 @@ fn configured_probe(
     };
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
-        .with_pipeline(
-            crate::pixel_pipeline::PixelPipeline::film(acquisition, [config.frame_extent; 2], seed)
-                .unwrap(),
+        .with_definition(
+            crate::gpu::photograph::assembly::Assembly::film(
+                acquisition,
+                [config.frame_extent; 2],
+                seed,
+            )
+            .unwrap(),
         )
         .unwrap();
     let size = spec.input_frame().unwrap().output;
-    let offset = spec.plan.output_offset().unwrap();
+    let offset = spec.plan().output_offset().unwrap();
     let mut values = vec![[0.18_f32, 0.18, 0.18, 8.]; (size[0] * size[1]) as usize];
     if config.impulse {
         // A destination-cell box impulse has unit area at every acquisition pitch.
         // Injecting a single finer cell would shrink its energy under reconstruction.
         let ratio: [f64; 2] =
-            std::array::from_fn(|i| f64::from(spec.plan.output().output[i]) / config.side as f64);
+            std::array::from_fn(|i| f64::from(spec.plan().output().output[i]) / config.side as f64);
         let low: [f64; 2] =
             std::array::from_fn(|i| f64::from(offset[i]) + (config.side / 2) as f64 * ratio[i]);
         let high: [f64; 2] = std::array::from_fn(|i| low[i] + ratio[i]);
@@ -158,8 +162,8 @@ fn configured_probe(
         )
         .unwrap(),
     );
-    let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
-        crate::pixel_pipeline::PixelPipeline::emulation(
+    let input = AuthoredPhotograph::from(grade).with_definition(
+        crate::gpu::photograph::assembly::Assembly::emulation(
             settings,
             Default::default(),
             composition.crop().size,
@@ -280,9 +284,9 @@ fn diagnostic_dft_recovers_a_declared_sinusoid() {
 // Independent one-dimensional box impulse → finite Gaussian → cell-area integral.
 fn reconstructed_impulse(view: &RenderedView, sigma: f64) -> Vec<f64> {
     let spec = &view.product.as_ref().unwrap().spec;
-    let pitch = spec.plan.pitch()[0];
-    let ratio = f64::from(spec.plan.output().output[0]) / N as f64;
-    let offset = f64::from(spec.plan.output_offset().unwrap()[0]);
+    let pitch = spec.plan().pitch()[0];
+    let ratio = f64::from(spec.plan().output().output[0]) / N as f64;
+    let offset = f64::from(spec.plan().output_offset().unwrap()[0]);
     let low = offset + (N / 2) as f64 * ratio;
     let high = low + ratio;
     let sigma = sigma / pitch;

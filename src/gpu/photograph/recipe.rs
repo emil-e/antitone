@@ -2,11 +2,10 @@
 //! reconstruction belongs; consumers choose endpoints, not photographic stage order.
 
 #[cfg(feature = "editor")]
-use super::assembly::EffectOutput;
+use super::assembly::ViewOutput;
 use super::*;
 use crate::gpu::interpretation::InputTransform;
 use crate::image_recipe::ImageRecipe;
-use crate::image_recipe::quality::sampling_stages;
 
 #[cfg(all(test, feature = "render"))]
 mod tests;
@@ -126,7 +125,8 @@ impl<'a> RecipeGraph<'a> {
     }
 
     pub(crate) fn processed(&self, limits: &wgpu::Limits) -> Result<Value, Error> {
-        self.stages()?.compose(self.graded(limits)?)
+        self.assembly(limits, 0)?
+            .processed(self.graded(limits)?, None)
     }
 
     #[cfg(feature = "render")]
@@ -143,12 +143,13 @@ impl<'a> RecipeGraph<'a> {
         )
     }
 
-    fn stages(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
-        #[cfg(feature = "editor")]
-        if self.quality == Quality::Measurement {
-            return Ok(Default::default());
-        }
-        sampling_stages(self.recipe)
+    #[cfg(feature = "editor")]
+    fn view_definition(limits: &wgpu::Limits, recipe: &ImageRecipe) -> Result<Assembly, Error> {
+        let area = recipe.neutral.source_development.active_area().into();
+        let grading = Grading::new(limits, recipe.roll, recipe.grade.clone(), area)?;
+        let mut definition = Assembly::filtered(grading);
+        definition.resolve_source_scale(recipe)?;
+        Ok(definition)
     }
 
     fn interpretation(&self) -> Result<Assembly, Error> {
@@ -189,7 +190,14 @@ impl<'a> RecipeGraph<'a> {
             }
             grading = grading.with_camera_coordinates(geometry);
         }
-        Assembly::photographic(limits, camera, program, grading, Default::default())
+        let mut assembly =
+            Assembly::photographic(limits, camera, program, grading, Default::default())?;
+        #[cfg(feature = "editor")]
+        if self.quality == Quality::Measurement {
+            return Ok(assembly);
+        }
+        assembly.resolve_source_scale(self.recipe)?;
+        Ok(assembly)
     }
 
     fn repair(&self, image: Value) -> Result<Value, Error> {
@@ -208,9 +216,7 @@ impl<'a> RecipeGraph<'a> {
         let assembly = self.assembly(limits, 0)?;
         let source = assembly.interpret_camera(self.codes(), self.camera()?)?;
         let neutral = self.repair(source.unrepaired.clone())?;
-        Ok(assembly
-            .finish(neutral, &self.stages()?, None)?
-            .with_source(source))
+        Ok(assembly.finish(neutral, None)?.with_source(source))
     }
 
     #[cfg(feature = "editor")]
@@ -220,15 +226,11 @@ impl<'a> RecipeGraph<'a> {
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(PhotographGraph, crate::acquisition::Plan), Error> {
-        let stages = self.stages()?;
-        let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
-            frame,
-            &stages,
-            crate::acquisition::Sampling::NeutralFootprints,
-        )?
-        .with_native_grid(native_grid)?;
-        let plan = layout.plan;
         let assembly = self.assembly(limits, 8)?;
+        let layout = assembly
+            .view_sampling(frame, crate::acquisition::Sampling::NeutralFootprints)?
+            .with_native_grid(native_grid, |input| assembly.sampling_image(input))?;
+        let plan = layout.plan;
         let source = assembly.interpret_camera(self.codes(), self.camera()?)?;
         let repaired = self.repair(source.unrepaired.clone())?;
         // Repair original working positives, then filter before the view's nonlinear grade.
@@ -243,11 +245,9 @@ impl<'a> RecipeGraph<'a> {
                 meaning: Meaning::Neutral,
             },
         )?;
-        let output = EffectOutput::new(layout.presentation, plan.output(), 8);
+        let output = ViewOutput::new(layout.presentation, plan.output(), 8);
         Ok((
-            assembly
-                .finish(neutral, &stages, Some(output))?
-                .with_source(source),
+            assembly.finish(neutral, Some(output))?.with_source(source),
             plan,
         ))
     }
@@ -258,7 +258,21 @@ impl<'a> RecipeGraph<'a> {
         recipe: &ImageRecipe,
         layout: [u32; 2],
     ) -> Result<crate::gpu::raster::Raster, Error> {
-        PhotographGraph::resident_raster(source, &sampling_stages(recipe)?, layout)
+        if source.geometry().is_none()
+            && (recipe
+                .grain
+                .parameters(recipe.composition.crop().size)?
+                .is_some()
+                || recipe
+                    .halation
+                    .parameters(recipe.composition.crop().size)?
+                    .is_some())
+        {
+            return Err(Error::Gpu(
+                "photographic processing requires declared raster geometry".into(),
+            ));
+        }
+        PhotographGraph::resident_raster(source, layout)
     }
 }
 
@@ -344,11 +358,11 @@ impl PhotographGraph {
             program.matrix,
             area,
         )?;
-        let stages = sampling_stages(recipe)?;
-        let plan = spec.processing_plan(&stages)?;
-        let assembly = Assembly::filtered(grading.for_grid(neutral.domain().grid.coverage));
-        let output = EffectOutput::new(spec.frame(), plan.output(), neutral.domain().grid.coverage);
-        let finished = assembly.finish(neutral, &stages, Some(output))?;
+        let mut assembly = Assembly::filtered(grading.for_grid(neutral.domain().grid.coverage));
+        assembly.resolve_source_scale(recipe)?;
+        let plan = spec.processing_plan(&assembly)?;
+        let output = ViewOutput::new(spec.frame(), plan.output(), neutral.domain().grid.coverage);
+        let finished = assembly.finish(neutral, Some(output))?;
         Ok((finished.processed, plan))
     }
 
@@ -377,7 +391,10 @@ impl crate::gpu::view::request::SourceRequest {
         let request = Self::for_frame(frame)?;
         #[cfg(test)]
         let request = request.with_program_fixture(program);
-        request.with_pipeline(sampling_stages(recipe)?)
+        request.with_definition(RecipeGraph::view_definition(
+            &wgpu::Limits::default(),
+            recipe,
+        )?)
     }
 }
 
@@ -459,7 +476,7 @@ impl super::request::PhotographRequest {
                     field,
                     input,
                     reference,
-                    &input.pixel_pipeline(),
+                    &input.definition(),
                 );
             }
         };
@@ -484,6 +501,27 @@ impl super::request::PhotographRequest {
             #[cfg(test)]
             Self::Fixture(input) => input.validate_controls(limits),
         }
+    }
+
+    pub(crate) fn planned_request(
+        &self,
+        limits: &wgpu::Limits,
+        request: crate::gpu::view::request::SourceRequest,
+        plan: crate::acquisition::Plan,
+    ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
+        let definition = match self {
+            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+                RecipeGraph::view_definition(limits, recipe)?
+            }
+            Self::Inspection(_) => Assembly::default(),
+            #[cfg(test)]
+            Self::Fixture(input) => {
+                let mut definition = input.definition();
+                definition.grading = input.grade().cloned();
+                definition
+            }
+        };
+        Ok(request.with_plan(definition, plan))
     }
 
     pub fn source_request(
@@ -590,9 +628,9 @@ impl super::request::PhotographRequest {
         field: Option<Arc<GpuFlatField>>,
         spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<ViewGraph, Error> {
-        let (mut request, baseline) = self.sampled_prefix(source, field, spec)?;
+        let (request, baseline) = self.sampled_prefix(source, field, spec)?;
         let (processed, plan) = self.filtered(limits, &request, baseline)?;
-        request.plan = Arc::new(plan);
+        let request = self.planned_request(limits, request, plan)?;
         Ok(ViewGraph { request, processed })
     }
 
@@ -605,8 +643,7 @@ impl super::request::PhotographRequest {
     ) -> Result<ViewGraph, Error> {
         let baseline = self.retained_prefix(baseline, field, request)?;
         let (processed, plan) = self.filtered(limits, request, baseline)?;
-        let mut request = request.clone();
-        request.plan = Arc::new(plan);
+        let request = self.planned_request(limits, request.clone(), plan)?;
         Ok(ViewGraph { request, processed })
     }
 
@@ -652,7 +689,7 @@ impl super::request::PhotographRequest {
         root: Value,
         spec: &crate::gpu::view::request::SourceRequest,
     ) -> Result<Value, Error> {
-        let output = match spec.plan.sampling() {
+        let output = match spec.plan().sampling() {
             crate::acquisition::Sampling::CameraCells { .. } => Domain {
                 grid: Grid {
                     coverage: 8,
@@ -664,7 +701,7 @@ impl super::request::PhotographRequest {
                 bounds: None,
                 grid: Grid {
                     coverage: 8,
-                    ..Grid::from_frame(spec.plan.output())
+                    ..Grid::from_frame(spec.plan().output())
                 },
                 meaning: root.domain().meaning,
             },
@@ -724,7 +761,7 @@ impl super::request::PhotographRequest {
                 parameters,
                 presentation,
             )?;
-            return Ok((root, spec.plan.as_ref().clone()));
+            return Ok((root, spec.plan().clone()));
         }
         let program = input.source_transform().ok_or_else(|| {
             Error::Gpu("positive view requires captured source interpretation".into())
@@ -736,7 +773,7 @@ impl super::request::PhotographRequest {
         }
         input.grade().unwrap().require_extent(spec.area)?;
         input.validate_controls(limits)?;
-        let stages = input.pixel_pipeline();
+        let stages = input.definition();
         let plan = spec.processing_plan(&stages)?;
         let grading = input
             .grade()
@@ -774,7 +811,7 @@ impl super::request::PhotographRequest {
                         view.parameters()?,
                         spec.frame(),
                     )?,
-                    spec.plan.as_ref().clone(),
+                    spec.plan().clone(),
                 ))
             }
             #[cfg(test)]
@@ -795,7 +832,7 @@ impl super::request::PhotographRequest {
                 let input =
                     self.neutral_input(field.clone(), scan.camera_to_ap1, Quality::PhysicalView)?;
                 input
-                    .original_views(source.clone(), [spec.plan.output()])?
+                    .original_views(source.clone(), [spec.plan().output()])?
                     .pop()
                     .ok_or(Error::InvalidParameter(
                         "missing requested photographic prefix",

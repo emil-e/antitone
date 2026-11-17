@@ -10,16 +10,12 @@ fn film_seed_routing_uses_source_identity_not_visit_identity() {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor.document.project.output.grain.enabled = true;
         let seed = |input: &AuthoredPhotograph| {
-            input
-                .pixel_pipeline()
-                .stages
-                .iter()
-                .find_map(|stage| {
-                    stage
-                        .get::<crate::pixel_pipeline::Grain>()
-                        .map(|grain| grain.seed)
-                })
-                .expect("fixture must request actual grain")
+            let definition = input.definition();
+            assert!(
+                definition.grain.is_some_and(|grain| grain.amplitude > 0.),
+                "fixture must request actual grain"
+            );
+            definition.seed
         };
         let source = editor.document.visit.current_source.unwrap();
         let first = editor

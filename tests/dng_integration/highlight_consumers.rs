@@ -56,7 +56,7 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
                 .unwrap(),
             format: Format::Exr(ExrPrecision::Full),
             luts: Default::default(),
-            pipeline: Default::default(),
+            calculation: None,
         },
         &path,
         Overwrite::Refuse,

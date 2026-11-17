@@ -35,7 +35,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.render().unwrap();
         let image = h.read(|editor| {
             assert!(!editor.document.source);
-            let effects = crate::pixel_pipeline::PixelPipeline::film(
+            let effects = crate::gpu::photograph::assembly::Assembly::film(
                 editor.document.project.output.grain,
                 editor
                     .source_composition(
@@ -50,12 +50,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 0,
             )
             .unwrap();
-            assert_eq!(
-                effects.stages.iter().any(|stage| stage
-                    .get::<crate::image_mtf::ImageMtfParameters>()
-                    .is_some()),
-                film_enabled
-            );
+            assert_eq!(effects.grain.is_some(), film_enabled);
             assert_eq!(editor.document.project.roll.exposure, 0.);
             assert_eq!(editor.photo_settings().exposure, 0.);
             let reference = editor

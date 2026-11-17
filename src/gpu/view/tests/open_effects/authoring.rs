@@ -2,8 +2,8 @@ use super::*;
 use crate::gpu::source::SourceGeometry;
 use crate::{
     frame_raster::FrameRaster,
+    gpu::photograph::authoring_examples::{SignedCurve, TentConvolution},
     gpu::view::{RenderedView, SourceRequest, ViewImage, ViewKernels},
-    pixel_pipeline::authoring_examples::{SignedCurve, TentConvolution},
 };
 
 #[test]
@@ -20,11 +20,17 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
     .write();
     let scan = crate::scan::Scan::open(file.path(), None).unwrap();
     let area = scan.area;
-    let pipeline = PixelPipeline {
-        stages: vec![
-            PixelStage::new(SignedCurve::new(1.2, 0.15).unwrap()),
-            PixelStage::new(TentConvolution::new(0.8).unwrap()),
-        ],
+    let pipeline = {
+        let curve = SignedCurve::new(1.2, 0.15).unwrap();
+        let convolution = TentConvolution::new(0.8).unwrap();
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = curve.compose(image)?;
+            image = convolution.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     };
     let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
     let scalar = crate::adjustment_layers::GradingPipeline::new(
@@ -60,20 +66,21 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             &native(&device, &queue, &renderer, &scan, pipeline.clone())
         ) < 2e-5
     );
-    let omitted = native(&device, &queue, &renderer, &scan, PixelPipeline::default());
+    let omitted = native(&device, &queue, &renderer, &scan, Assembly::default());
     assert!(
         max_error(&expected, &omitted) > 0.01,
         "the accepted collection must actually change pixels"
     );
-    let only_curve = native(
-        &device,
-        &queue,
-        &renderer,
-        &scan,
-        PixelPipeline {
-            stages: vec![PixelStage::new(SignedCurve::new(1.2, 0.15).unwrap())],
-        },
-    );
+    let only_curve = native(&device, &queue, &renderer, &scan, {
+        let curve = SignedCurve::new(1.2, 0.15).unwrap();
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = curve.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+    });
     assert!(
         max_error(&expected, &only_curve) > 0.01,
         "the marked cell must expose omitted convolution independently of the curve"
@@ -86,7 +93,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         area,
         scan.positive_matrix(&InputSettings::Digital).unwrap(),
     )
-    .with_pixel_pipeline(pipeline.clone());
+    .with_definition(pipeline.clone());
     let frame =
         FrameRaster::full(Composition::new(area, Default::default(), Default::default()).unwrap())
             .unwrap();
@@ -107,7 +114,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
                 None,
             )
             .unwrap()
-            .with_pipeline(pipeline)
+            .with_definition(pipeline)
             .unwrap(),
         ],
         || false,

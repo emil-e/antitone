@@ -20,7 +20,8 @@ fn processed_with_flags(
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
     let pipeline =
-        crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, (1 << 60) + 17).unwrap();
+        crate::gpu::photograph::assembly::Assembly::film(settings, frame_size, (1 << 60) + 17)
+            .unwrap();
     processed_pipeline(device, queue, bounds, &pipeline, flags)
 }
 
@@ -28,7 +29,7 @@ fn processed_pipeline(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     bounds: SourceRegion,
-    pipeline: &crate::pixel_pipeline::PixelPipeline,
+    pipeline: &crate::gpu::photograph::assembly::Assembly,
     flags: f32,
 ) -> Vec<[f32; 4]> {
     let values: Vec<_> = (bounds.y..bounds.y + bounds.height)
@@ -50,7 +51,7 @@ fn processed_pixels(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     bounds: SourceRegion,
-    pipeline: &crate::pixel_pipeline::PixelPipeline,
+    pipeline: &crate::gpu::photograph::assembly::Assembly,
     values: &[[f32; 4]],
 ) -> Vec<[f32; 4]> {
     let working = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -67,7 +68,7 @@ fn processed_pixels(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    let prepared = crate::gpu::pixel_pipeline::Prepared::new(
+    let prepared = crate::gpu::recorded_image::Prepared::new(
         device,
         pipeline,
         crate::gpu::raster::Raster::native(bounds),
@@ -166,8 +167,12 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             composition,
             origin,
             extent,
-            &crate::pixel_pipeline::PixelPipeline::film(settings, composition.crop().size, 17)
-                .unwrap(),
+            &crate::gpu::photograph::assembly::Assembly::film(
+                settings,
+                composition.crop().size,
+                17,
+            )
+            .unwrap(),
         )
         .unwrap();
         unit.mapping.space[0] = 1;
@@ -243,10 +248,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
 
 #[test]
 fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolution() {
-    use crate::{
-        grain::GrainParameters,
-        pixel_pipeline::{PixelPipeline, PixelStage},
-    };
+    use crate::grain::GrainParameters;
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let composition = Composition::with_crop(
         [100, 80, 6000, 4000].into(),
@@ -259,21 +261,33 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
         }),
     )
     .unwrap();
-    let pipeline = PixelPipeline {
-        stages: vec![
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 1.5 }),
-            PixelStage::new(crate::pixel_pipeline::Grain {
-                parameters: GrainParameters {
-                    grain_size: 2.,
-                    amplitude: 0.,
-                    colour: 0.5,
-                },
-                seed: (1 << 60) + 17,
-            }),
-            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2.25 }),
-        ],
+    let pipeline = {
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1.5 };
+        let grain = crate::gpu::photograph::authoring::Grain {
+            parameters: GrainParameters {
+                grain_size: 2.,
+                amplitude: 0.,
+                colour: 0.5,
+            },
+            seed: (1 << 60) + 17,
+        };
+        let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 2.25 };
+        let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            image = grain.compose(image)?;
+            image = next_mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     };
-    let (mut unit, plan) = Unit::planned(composition, [0, 0], [8, 6], &pipeline).unwrap();
+    let (mut unit, _) = Unit::planned(composition, [0, 0], [8, 6], &pipeline).unwrap();
     unit.mapping.space[0] = 1;
     // Periodic signed/HDR impulses cross the read boundaries: interior-only structure
     // can hide under-acquisition when replicated boundary samples happen to be constant.
@@ -291,7 +305,7 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
                 .map(move |x| sample(x as i32, y as i32))
         })
         .collect();
-    let samples = processed_pixels(&device, &queue, unit.bounds, plan.pipeline(), &values);
+    let samples = processed_pixels(&device, &queue, unit.bounds, &pipeline, &values);
     let actual = super::tests::reconstructed(
         &device,
         &queue,

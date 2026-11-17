@@ -17,7 +17,7 @@ impl ViewImage {
             bounds: Some(region),
             grid: e::Grid {
                 coverage: 8,
-                ..e::Grid::from_frame(spec.plan.output())
+                ..e::Grid::from_frame(spec.plan().output())
             },
             meaning: if spec.is_inspection() {
                 e::Meaning::Inspection
@@ -67,7 +67,7 @@ impl ViewImage {
         field: Option<Arc<GpuFlatField>>,
     ) -> Option<Arc<Self>> {
         if !cache.belongs_to(renderer.evaluation())
-            || wanted.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
+            || wanted.plan().sampling() != crate::acquisition::Sampling::NeutralFootprints
         {
             return None;
         }
@@ -219,7 +219,7 @@ impl ViewImage {
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
             || specs.iter().any(|other| {
                 !other.same_source(spec)
-                    || other.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
+                    || other.plan().sampling() != crate::acquisition::Sampling::NeutralFootprints
             })
         {
             return Err(Error::Gpu(
@@ -331,8 +331,11 @@ impl ViewImage {
             vec![source.supplied()?],
         )?;
         let image = work.record(context)?;
-        let mut spec = source.spec.clone();
-        spec.plan = Arc::new(plan);
+        let spec = capture.planned_request(
+            &source.renderer.evaluation().device().limits(),
+            source.spec.clone(),
+            plan,
+        )?;
         let mut image = Self::from_recorded(
             source.renderer.clone(),
             source.kernels.clone(),

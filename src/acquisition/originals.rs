@@ -10,14 +10,14 @@ use crate::{
     geometry::{Composition, FramePoint},
 };
 
-pub struct OriginalBatch {
+pub(crate) struct OriginalBatch {
     source: SourceRegion,
     output: SourceRegion,
-    pipeline: PixelPipeline,
+    definition: Assembly,
     tile: [u32; 2],
 }
 
-pub struct OriginalUnit {
+pub(crate) struct OriginalUnit {
     pub plan: Plan,
     pub output: SourceRegion,
     pub offset: [u32; 2],
@@ -27,7 +27,7 @@ impl OriginalBatch {
     pub fn new(
         source: SourceRegion,
         output: SourceRegion,
-        pipeline: &PixelPipeline,
+        definition: &Assembly,
         tile: [u32; 2],
     ) -> Result<Self, Error> {
         source.validate()?;
@@ -40,7 +40,7 @@ impl OriginalBatch {
         Ok(Self {
             source,
             output,
-            pipeline: pipeline.clone(),
+            definition: definition.clone(),
             tile,
         })
     }
@@ -76,13 +76,16 @@ impl OriginalBatch {
                     ]),
                     [output.width, output.height],
                 )?;
-                let plan = Plan::new(Request {
-                    output: frame,
-                    stages: &self.pipeline,
-                    sampling: Sampling::Originals {
-                        reconstruction: SourceSupport([0; 2]),
+                let plan = Plan::for_graph(
+                    Request {
+                        output: frame,
+
+                        sampling: Sampling::Originals {
+                            reconstruction: SourceSupport([0; 2]),
+                        },
                     },
-                })?;
+                    |input| self.definition.sampling_image(input),
+                )?;
                 let SourceRead::Originals(read) = plan.source_read() else {
                     unreachable!()
                 };

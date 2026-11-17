@@ -1,11 +1,11 @@
-//! Immutable source-space sampling demand; mathematical inputs belong to the calculation.
+//! Captured source-space demand and the photographic definition used when replanning.
 
 #[cfg(test)]
 use crate::gpu::interpretation::InputTransform;
 use crate::{Error, frame_raster::FrameRaster, gpu::source::SourceGeometry};
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling},
-    pixel_pipeline::PixelPipeline,
+    gpu::photograph::assembly::Assembly,
 };
 #[cfg(test)]
 use glam::DMat3;
@@ -19,8 +19,9 @@ pub struct SourceRequest {
     fixture: Option<SourceFixture>,
     #[cfg(test)]
     pub field: Option<Arc<crate::flat_field::FlatField>>,
-    pub plan: Arc<Plan>,
+    plan: Arc<Plan>,
     presentation: FrameRaster,
+    definition: Arc<Assembly>,
 }
 
 #[cfg(test)]
@@ -68,7 +69,9 @@ impl SourceRequest {
             field: input.field.as_ref().map(|field| field.field().clone()),
             ..request
         };
-        request.with_pipeline(input.pixel_pipeline())
+        let mut definition = input.definition();
+        definition.grading = input.grade().cloned();
+        request.with_definition(definition)
     }
 
     #[cfg(test)]
@@ -76,12 +79,23 @@ impl SourceRequest {
         match &self.fixture {
             Some(SourceFixture::Photograph(input)) => input
                 .clone()
-                .with_pixel_pipeline(self.plan.pipeline().clone()),
+                .with_definition(self.definition.as_ref().clone()),
             _ => crate::gpu::test_inputs::AuthoredPhotograph::from(
                 crate::gpu::parameters::ProcessingParameters::source(),
             ),
         }
     }
+
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    pub(crate) fn with_plan(mut self, definition: Assembly, plan: Plan) -> Self {
+        self.definition = Arc::new(definition);
+        self.plan = Arc::new(plan);
+        self
+    }
+
     pub fn frame(&self) -> FrameRaster {
         self.presentation
     }
@@ -122,27 +136,27 @@ impl SourceRequest {
         }
         Self::require_frame(frame)?;
         self.presentation = frame;
-        let pipeline = self.plan.pipeline().clone();
         let sampling = self.plan.sampling();
-        self.replan(pipeline, sampling)
+        self.replan(sampling)
     }
 
-    pub fn with_pipeline(self, pipeline: PixelPipeline) -> Result<Self, Error> {
+    pub(crate) fn with_definition(mut self, definition: Assembly) -> Result<Self, Error> {
+        self.definition = Arc::new(definition);
         let sampling = self.plan.sampling();
-        self.replan(pipeline, sampling)
+        self.replan(sampling)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn definition(&self) -> &Assembly {
+        &self.definition
     }
 
     pub fn with_sampling(self, sampling: Sampling) -> Result<Self, Error> {
-        let pipeline = self.plan.pipeline().clone();
-        self.replan(pipeline, sampling)
+        self.replan(sampling)
     }
 
-    fn replan(mut self, pipeline: PixelPipeline, sampling: Sampling) -> Result<Self, Error> {
-        let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
-            self.presentation,
-            &pipeline,
-            sampling,
-        )?;
+    fn replan(mut self, sampling: Sampling) -> Result<Self, Error> {
+        let layout = self.definition.view_sampling(self.presentation, sampling)?;
         log::trace!(
             "captured view sampling: ideal {:?}, working {:?}, limited {}",
             layout.ideal,
@@ -154,24 +168,28 @@ impl SourceRequest {
         Ok(self)
     }
 
-    fn view_grid_sufficient(&self, pipeline: &PixelPipeline) -> bool {
-        crate::pixel_pipeline::sampling::ViewSampling::new(
-            self.presentation,
-            pipeline,
-            self.plan.sampling(),
-        )
-        .is_ok_and(|wanted| {
-            (0..2).all(|i| self.plan.output().output[i] >= wanted.plan.output().output[i])
-        })
+    fn view_grid_sufficient(&self, definition: &Assembly) -> bool {
+        definition
+            .view_sampling(self.presentation, self.plan.sampling())
+            .is_ok_and(|wanted| {
+                (0..2).all(|i| self.plan.output().output[i] >= wanted.plan.output().output[i])
+            })
     }
 
-    pub fn processing_plan(&self, pipeline: &PixelPipeline) -> Result<Plan, Error> {
-        if !self.view_grid_sufficient(pipeline) {
+    pub fn processing_plan(&self, definition: &Assembly) -> Result<Plan, Error> {
+        if !self.view_grid_sufficient(definition) {
             return Err(Error::InvalidParameter(
                 "acquired view grid is too coarse for processing",
             ));
         }
-        self.plan.for_pipeline(pipeline)?.using_input(&self.plan)
+        Plan::for_graph(
+            AcquisitionRequest {
+                output: self.plan.output(),
+                sampling: self.plan.sampling(),
+            },
+            |input| definition.sampling_image(input),
+        )?
+        .using_input(&self.plan)
     }
 
     #[cfg(test)]
@@ -293,9 +311,9 @@ impl SourceRequest {
             #[cfg(test)]
             field: None,
             presentation: frame,
+            definition: Arc::default(),
             plan: Arc::new(Plan::new(AcquisitionRequest {
                 output: frame,
-                stages: &PixelPipeline::default(),
                 sampling: Sampling::NeutralFootprints,
             })?),
         })

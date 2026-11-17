@@ -26,7 +26,7 @@ impl PhotographRequest {
                 .processed(&limits)?
             }
             Self::Inspection(view) => {
-                let raster = PhotographGraph::resident_raster(source, &Default::default(), layout)?;
+                let raster = PhotographGraph::resident_raster(source, layout)?;
                 PhotographGraph::resident_inspection(
                     PhotographGraph::resident_codes(source, raster)?,
                     source,
@@ -36,20 +36,20 @@ impl PhotographRequest {
             }
             #[cfg(test)]
             Self::Fixture(input) => {
-                let raster =
-                    PhotographGraph::resident_raster(source, &input.pixel_pipeline(), layout)?;
+                let raster = PhotographGraph::resident_raster(source, layout)?;
                 let codes = PhotographGraph::resident_codes(source, raster)?;
                 if let Some(program) = input.source_transform() {
-                    PhotographGraph::resident_photograph(
-                        &limits,
-                        codes,
-                        operations::CameraInput::resident(source, *program, field),
-                        *program,
-                        input.grade().expect("positive grading").clone(),
-                        input.repairs.clone(),
-                        &input.pixel_pipeline(),
+                    input.definition().compose(
+                        PhotographGraph::resident_photograph(
+                            &limits,
+                            codes,
+                            operations::CameraInput::resident(source, *program, field),
+                            *program,
+                            input.grade().expect("positive grading").clone(),
+                            input.repairs.clone(),
+                        )?
+                        .processed,
                     )?
-                    .processed
                 } else {
                     PhotographGraph::resident_inspection(
                         codes,
@@ -129,7 +129,7 @@ impl PhotographRequest {
         renderer: &crate::renderer::GpuRenderer,
         scan: &crate::scan::Scan,
         field: Option<Arc<GpuFlatField>>,
-        mut spec: SourceRequest,
+        spec: SourceRequest,
         target: OutputTarget,
     ) -> Result<(Value, SourceRequest), Error> {
         let limits = renderer.evaluation().device().limits();
@@ -158,7 +158,7 @@ impl PhotographRequest {
                 self.filtered(&limits, &spec, source)?
             }
         };
-        spec.plan = Arc::new(plan);
+        let spec = self.planned_request(&limits, spec, plan)?;
         Ok((
             self.output(renderer, image, OutputReference::DisplayReferred(target))?,
             spec,

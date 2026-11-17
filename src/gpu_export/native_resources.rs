@@ -90,7 +90,7 @@ fn native_output_resources() {
                         execution::SampleEncoding::LinearFloat,
                     ),
                 };
-                let photograph = crate::gpu::photograph::PhotographGraph::original(
+                let photograph = crate::gpu::photograph::PhotographGraph::authored_original(
                     &device.limits(),
                     crate::gpu::evaluation::camera_source(&scan)?,
                     None,
@@ -105,7 +105,7 @@ fn native_output_resources() {
                         scan.area,
                     )?,
                     Default::default(),
-                    &crate::pixel_pipeline::PixelPipeline::film(
+                    &crate::gpu::photograph::assembly::Assembly::film(
                         film,
                         composition.size(),
                         (1 << 60) + 17,
@@ -154,12 +154,15 @@ fn native_output_resources() {
                     repairs: &[],
                     composition,
                     format,
-                    pipeline: crate::pixel_pipeline::PixelPipeline::film(
-                        film,
-                        composition.crop().size,
-                        (1 << 60) + 17,
-                    )
-                    .unwrap(),
+                    calculation: Some(std::sync::Arc::new({
+                        let definition = crate::gpu::photograph::assembly::Assembly::film(
+                            film,
+                            composition.crop().size,
+                            (1 << 60) + 17,
+                        )
+                        .unwrap();
+                        move |input| definition.compose(input)
+                    })),
                     luts: (None).into(),
                 },
                 (&path, crate::export::Overwrite::Confirmed),

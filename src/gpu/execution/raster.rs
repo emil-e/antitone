@@ -6,8 +6,8 @@ use crate::acquisition::Request as AcquisitionRequest;
 use crate::acquisition::Sampling;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::Composition;
-use crate::gpu::pixel_pipeline::Prepared;
 use crate::gpu::raster::Raster;
+use crate::gpu::recorded_image::Prepared;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::renderer::GpuRenderer;
@@ -23,7 +23,7 @@ pub(crate) fn resident_plan(
     input: &AuthoredPhotograph,
 ) -> Result<Option<Plan>, Error> {
     input.require_source(source)?;
-    let stages = input.pixel_pipeline();
+    let stages = input.definition();
     let Some(geometry) = source.geometry() else {
         return if stages.is_empty() {
             Ok(None)
@@ -40,11 +40,14 @@ pub(crate) fn resident_plan(
         output: size,
         ..FrameRaster::full(composition)?
     };
-    Plan::new(AcquisitionRequest {
-        output,
-        stages: &stages,
-        sampling: Sampling::CameraCells { region, size },
-    })
+    Plan::for_graph(
+        AcquisitionRequest {
+            output,
+
+            sampling: Sampling::CameraCells { region, size },
+        },
+        |input| stages.sampling_image(input),
+    )
     .map(Some)
 }
 
@@ -106,16 +109,11 @@ impl<'a> Request<'a> {
                 .map(|geometry| Raster::region(geometry.region(), geometry.size()))
                 .unwrap_or_else(|| Raster::native([0, 0, self.layout[0], self.layout[1]].into()))
         });
-        let stages = self
-            .plan
-            .map(|plan| plan.pipeline().clone())
-            .unwrap_or_default();
-        let root = crate::gpu::photograph::PhotographGraph::from_resident_with_stages(
+        let root = crate::gpu::photograph::PhotographGraph::from_resident_fixture(
             &device.limits(),
             self.source,
             self.input,
             raster,
-            &stages,
         )?
         .processed;
         let prepared =

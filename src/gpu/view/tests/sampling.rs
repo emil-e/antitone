@@ -4,26 +4,22 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 use crate::{
-    halation::HalationParameters,
+    gpu::photograph::assembly::Assembly, halation::HalationParameters,
     image_mtf::ImageMtfParameters,
-    pixel_pipeline::{EffectDefinition, PixelPipeline, PixelStage},
 };
 
-// Recreate the unrefined view composition with the same native effect operators. Only
-// acquisition hints are omitted; this is a control, not a second photographic model.
-#[derive(Debug, PartialEq)]
-struct Unrefined(PixelStage);
-
-impl EffectDefinition for Unrefined {
-    fn compose(
-        &self,
-        input: crate::gpu::evaluation::Value,
-    ) -> Result<crate::gpu::evaluation::Value, Error> {
-        self.0.compose(input)
-    }
+// The control uses identical operations without acquisition refinement.
+fn unrefined(definition: Assembly) -> Assembly {
+    Assembly::authored(move |image, output| {
+        let image = definition.compose(image)?;
+        match output {
+            Some(output) => output.compose(image),
+            None => Ok(image),
+        }
+    })
 }
 
-fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: PixelPipeline) -> AuthoredPhotograph {
+fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: Assembly) -> AuthoredPhotograph {
     AuthoredPhotograph::new(
         &device.limits(),
         InputSettings::Digital,
@@ -33,7 +29,7 @@ fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: PixelPipeline) -> 
         frame.composition.area(),
     )
     .unwrap()
-    .with_pixel_pipeline(pipeline)
+    .with_definition(pipeline)
 }
 
 fn ready_source(
@@ -41,16 +37,16 @@ fn ready_source(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
     frame: FrameRaster,
-    pipeline: PixelPipeline,
+    pipeline: Assembly,
     frequency: f64,
 ) -> Arc<ViewImage> {
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
-        .with_pipeline(pipeline)
+        .with_definition(pipeline)
         .unwrap();
     let upstream = spec.input_frame().unwrap();
     let width = frame.max.0[0] - frame.min.0[0];
-    let pitch = spec.plan.pitch()[0];
+    let pitch = spec.plan().pitch()[0];
     let phase = std::f64::consts::PI * frequency * pitch / width;
     let aperture = if phase == 0. { 1. } else { phase.sin() / phase };
     let reference = frame.source_point([0.; 2]).0;
@@ -89,7 +85,7 @@ fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: Arc<ViewImage>,
-    pipeline: PixelPipeline,
+    pipeline: Assembly,
 ) -> Vec<[f32; 4]> {
     let input = input(device, source.spec.frame(), pipeline);
     let view = RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap();
@@ -141,14 +137,28 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
         Default::default(),
     )
     .unwrap();
-    let pipeline = PixelPipeline {
-        stages: vec![
-            PixelStage::new(ImageMtfParameters { sigma: 1.44 }),
-            PixelStage::new(HalationParameters {
-                sigma: 3.6,
-                strength: 0.54,
-            }),
-        ],
+    let pipeline = {
+        let mtf = ImageMtfParameters { sigma: 1.44 };
+        let halo = HalationParameters {
+            sigma: 3.6,
+            strength: 0.54,
+        };
+        let pitch = [
+            Some(mtf.sigma / 0.6),
+            (halo.strength > 0.).then_some(halo.sigma / 0.6),
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            image = halo.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     };
     for start in [0., 1e-5, 2.4] {
         let frame = FrameRaster::new(
@@ -159,14 +169,14 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
         )
         .unwrap();
         let source = ready_source(&device, &renderer, &kernels, frame, pipeline.clone(), 3.);
-        assert!(source.spec.plan.output_offset().unwrap()[0] > 0);
+        assert!(source.spec.plan().output_offset().unwrap()[0] > 0);
         let domain = crate::gpu::evaluation::Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new(
                 [0, 0],
                 source.spec.input_frame().unwrap().output,
             )),
             grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::planned(
-                &source.spec.plan,
+                source.spec.plan(),
             )),
             meaning: crate::gpu::evaluation::Meaning::Graded,
         };
@@ -177,8 +187,8 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
             )),
             meaning: crate::gpu::evaluation::Meaning::Graded,
         };
-        let offset = source.spec.plan.output_offset().unwrap().map(f64::from);
-        let scale = std::array::from_fn(|i| f64::from(source.spec.plan.output().output[i]) / 50.);
+        let offset = source.spec.plan().output_offset().unwrap().map(f64::from);
+        let scale = std::array::from_fn(|i| f64::from(source.spec.plan().output().output[i]) / 50.);
         assert!(
             crate::gpu::evaluation::reconstruct_cells(
                 crate::gpu::evaluation::borrowed_input(domain),
@@ -217,7 +227,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
     .unwrap();
     let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
     let pipeline = |amount, colour, strength| {
-        PixelPipeline::emulation(
+        Assembly::emulation(
             GrainSettings {
                 amount,
                 colour,
@@ -255,7 +265,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .set_test_pressure(crate::sys::MemoryPressure::Normal);
         let p = pipeline(film.amount, film.colour, 0.2);
         let source = ready_source(&device, &renderer, &kernels, frame, p.clone(), 5.);
-        assert!(source.spec.plan.output().output[0] > frame.output[0]);
+        assert!(source.spec.plan().output().output[0] > frame.output[0]);
         let view = RenderedView::new(
             &device,
             source.clone(),
@@ -411,7 +421,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             // ratio established from that actual area, retaining its left/top source edges.
             frame.max.0 = composition.size().map(|n| f64::from(n / 64 * 64));
         }
-        let pipeline = PixelPipeline::emulation(
+        let pipeline = Assembly::emulation(
             GrainSettings {
                 enabled: true,
                 amount: 0.,
@@ -435,9 +445,9 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 scan.area,
             )
             .unwrap()
-            .with_pixel_pipeline(pipeline)
+            .with_definition(pipeline)
         };
-        let acquire = |frame, pipeline: PixelPipeline| {
+        let acquire = |frame, pipeline: Assembly| {
             ViewImage::prefix(
                 &device,
                 &queue,
@@ -448,7 +458,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 None,
                 SourceRequest::new(frame, InputSettings::Digital, matrix, None)
                     .unwrap()
-                    .with_pipeline(pipeline)
+                    .with_definition(pipeline)
                     .unwrap(),
                 || false,
             )
@@ -473,7 +483,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             read(&device, &queue, &view.product.as_ref().unwrap().pixels)
         };
         let source = acquire(frame, pipeline.clone());
-        assert!(source.spec.plan.output().output[0] > frame.output[0]);
+        assert!(source.spec.plan().output().output[0] > frame.output[0]);
         let whole = render(source, pipeline.clone());
         for right in [false, true] {
             let middle = (frame.min.0[0] + frame.max.0[0]) * 0.5;
@@ -508,13 +518,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             native_frame.output = frame.max.0.map(|v| v as u32);
             assert!((0..2).all(|i| native_frame.output[i].is_multiple_of(frame.output[i])));
             let native = render(acquire(native_frame, pipeline.clone()), pipeline.clone());
-            let old = PixelPipeline {
-                stages: pipeline
-                    .stages
-                    .into_iter()
-                    .map(|s| PixelStage::new(Unrefined(s)))
-                    .collect(),
-            };
+            let old = unrefined(pipeline.clone());
             let coarse = render(acquire(frame, old.clone()), old);
             // Integer native/output cells provide an independent f64 box oracle here.
             let factor = native_frame.output[0] / frame.output[0];
@@ -582,20 +586,27 @@ fn selected_view_resolves_subpixel_mtf_and_independent_halation_toward_native_re
                 strength: 0.54,
             };
             for frequency in [32., (0.45 * f64::from(output)).floor()] {
-                for (name, stages) in [
-                    ("mtf", vec![PixelStage::new(mtf)]),
-                    ("halo", vec![PixelStage::new(halo)]),
-                    ("both", vec![PixelStage::new(mtf), PixelStage::new(halo)]),
-                ] {
-                    let pipeline = PixelPipeline { stages };
-                    let old = PixelPipeline {
-                        stages: pipeline
-                            .stages
-                            .iter()
-                            .cloned()
-                            .map(|s| PixelStage::new(Unrefined(s)))
-                            .collect(),
-                    };
+                for name in ["mtf", "halo", "both"] {
+                    let pipeline = Assembly::authored(move |mut image, output| {
+                        if name != "halo" {
+                            image = mtf.compose(image)?;
+                        }
+                        if name != "mtf" {
+                            image = halo.compose(image)?;
+                        }
+                        match output {
+                            Some(output) => output.compose(image),
+                            None => Ok(image),
+                        }
+                    })
+                    .with_view_pitch(Some(
+                        if name == "halo" {
+                            halo.sigma
+                        } else {
+                            mtf.sigma
+                        } / 0.6,
+                    ));
+                    let old = unrefined(pipeline.clone());
                     let source = ready_source(
                         &device,
                         &renderer,
@@ -605,9 +616,9 @@ fn selected_view_resolves_subpixel_mtf_and_independent_halation_toward_native_re
                         frequency,
                     );
                     assert_eq!(source.spec.frame(), frame);
-                    assert!(source.spec.plan.output().output[0] > output);
+                    assert!(source.spec.plan().output().output[0] > output);
                     let clean = modulation(
-                        &render(&device, &queue, source.clone(), PixelPipeline::default()),
+                        &render(&device, &queue, source.clone(), Assembly::default()),
                         frame.output,
                         frequency,
                     );
@@ -619,12 +630,7 @@ fn selected_view_resolves_subpixel_mtf_and_independent_halation_toward_native_re
                     let old_source =
                         ready_source(&device, &renderer, &kernels, frame, old.clone(), frequency);
                     let old_clean = modulation(
-                        &render(
-                            &device,
-                            &queue,
-                            old_source.clone(),
-                            PixelPipeline::default(),
-                        ),
+                        &render(&device, &queue, old_source.clone(), Assembly::default()),
                         frame.output,
                         frequency,
                     );

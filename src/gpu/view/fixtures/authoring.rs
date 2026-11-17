@@ -170,10 +170,20 @@ fn native_view_regions_follow_the_graphs_neighbourhood_contracts() {
     ] {
         let mut input = input(&limits, 2.);
         if sigma > 0. {
-            input = input.with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline {
-                stages: vec![crate::pixel_pipeline::PixelStage::new(
-                    crate::image_mtf::ImageMtfParameters { sigma },
-                )],
+            input = input.with_definition({
+                let mtf = crate::image_mtf::ImageMtfParameters { sigma };
+                let pitch = [Some(mtf.sigma / 0.6)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(f64::min);
+                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                    image = mtf.compose(image)?;
+                    if let Some(output) = output {
+                        image = output.compose(image)?;
+                    }
+                    Ok(image)
+                })
+                .with_view_pitch(pitch)
             });
         }
         let (photo, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(

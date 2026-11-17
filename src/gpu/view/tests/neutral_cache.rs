@@ -27,11 +27,19 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
         let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
         let padded = |radius| {
             spec.clone()
-                .with_pipeline(crate::pixel_pipeline::PixelPipeline {
-                    stages: vec![crate::pixel_pipeline::PixelStage::new(
-                        crate::pixel_pipeline::authoring_examples::TentConvolution::new(radius)
-                            .unwrap(),
-                    )],
+                .with_definition({
+                    let operation_0 =
+                        crate::gpu::photograph::authoring_examples::TentConvolution::new(radius)
+                            .unwrap();
+                    crate::gpu::photograph::assembly::Assembly::authored(
+                        move |mut image, output| {
+                            image = operation_0.compose(image)?;
+                            if let Some(output) = output {
+                                image = output.compose(image)?;
+                            }
+                            Ok(image)
+                        },
+                    )
                 })
                 .unwrap()
         };
@@ -41,7 +49,7 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
             large_spec.input_frame().unwrap(),
             small_spec.input_frame().unwrap()
         );
-        assert_eq!(large_spec.plan.output(), small_spec.plan.output());
+        assert_eq!(large_spec.plan().output(), small_spec.plan().output());
         let large_region = large_spec.input_region().unwrap();
         let small_region = small_spec.input_region().unwrap();
         assert!(large_region.contains_region(small_region));
@@ -165,7 +173,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         )
         .unwrap()
         .with_identity(wanted.identity.clone())
-        .with_pipeline(wanted.plan.pipeline().clone())
+        .with_definition(wanted.definition().clone())
         .unwrap();
         assert!(
             ViewImage::cached_neutral(
@@ -187,7 +195,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         )
         .unwrap()
         .with_identity(wanted.identity.clone())
-        .with_pipeline(wanted.plan.pipeline().clone())
+        .with_definition(wanted.definition().clone())
         .unwrap();
         assert!(
             ViewImage::cached_neutral(

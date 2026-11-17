@@ -2,15 +2,11 @@ use super::*;
 use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::{ProcessingSource, SourceGeometry};
 use crate::gpu::view::request::SourceRequest;
-use crate::pixel_pipeline::{EffectDefinition, PixelStage};
 use crate::rendering::{OutputReference, OutputTarget};
 
 #[derive(Debug, PartialEq)]
 struct Suffix;
-impl EffectDefinition for Suffix {
-    fn integrates_footprint(&self) -> bool {
-        true
-    }
+impl Suffix {
     fn compose(&self, input: Value) -> Result<Value, Error> {
         let meaning = input.domain().meaning;
         evaluation::value::pointwise(
@@ -163,8 +159,9 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .unwrap();
     let target = OutputTarget::Srgb;
     let display = OutputReference::DisplayReferred(target);
-    let authored =
-        crate::image_recipe::quality::testing::with_suffix(PixelStage::new(Suffix), || {
+    let authored = crate::gpu::photograph::authoring::with_suffix(
+        |image| Suffix.compose(image),
+        || {
             let graph = RecipeGraph::originals(codes, None, &recipe).unwrap();
             assert!(roll.same_definition(&graph.roll().unwrap()));
             vec![
@@ -233,7 +230,8 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     display,
                 ),
             ]
-        });
+        },
+    );
     // This checks routing and placement relative to grading, not the DRT's numerical accuracy.
     // Expected photographic input is the unmodified purpose's output; the added arithmetic is independent.
     for (name, baseline, actual, reference) in authored {
@@ -275,4 +273,138 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
             );
         }
     }
+}
+
+#[test]
+fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sampling_and_regrading()
+ {
+    use crate::acquisition::Sampling;
+    let (device, _, renderer) = crate::gpu::test_support::render_context();
+    let limits = device.limits();
+    let file = crate::raw::fixture::bayer_dng_with_rgb([2949, 11796, 5898]);
+    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
+    let mut project = Project {
+        input: crate::processing::InputSettings::Digital,
+        ..Default::default()
+    };
+    let id = project
+        .add_source(Source {
+            id: SourceId(0),
+            path: file.path().into(),
+            development_mode: crate::project::DevelopmentMode::Unity,
+            development: SourceDevelopment::from_metadata(
+                &scan.source().metadata(),
+                scan.source().white_balance(),
+            )
+            .unwrap(),
+            orientation: Default::default(),
+            crop: None,
+            repairs: Default::default(),
+            adjustment_layers: None,
+        })
+        .unwrap();
+    project.output.grain.enabled = true;
+    project.output.grain.amount = 0.;
+    project.output.halation.enabled = true;
+    let recipe = Arc::new(project.image_recipe(id).unwrap());
+    let capture = PhotographRequest::Recipe(recipe.clone());
+    let mut frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
+    frame.output = [8, 6];
+    let fresh = capture.source_request(frame).unwrap();
+    assert!(
+        fresh.plan().output().output[0] > frame.output[0],
+        "the fixture must need photographic refinement"
+    );
+
+    let check = |capture: &PhotographRequest, returned: &SourceRequest| {
+        let mut moved = returned.frame();
+        moved.output = [7, 5];
+        let proxy = Sampling::CameraProxy {
+            region: scan.area,
+            size: [scan.area.width, scan.area.height],
+        };
+        for sampling in [Sampling::NeutralFootprints, proxy] {
+            let actual = returned
+                .clone()
+                .with_sampling(sampling)
+                .unwrap()
+                .with_frame(moved)
+                .unwrap();
+            let expected = capture
+                .source_request(moved)
+                .unwrap()
+                .with_sampling(sampling)
+                .unwrap();
+            assert!(
+                actual.plan().same_acquisition_layout(expected.plan()),
+                "replanning must retain the current photograph's refinement and neighbours"
+            );
+        }
+        let actual = returned.underlay().unwrap();
+        let expected = capture
+            .source_request(returned.frame())
+            .unwrap()
+            .with_sampling(returned.plan().sampling())
+            .unwrap()
+            .underlay()
+            .unwrap();
+        assert!(actual.plan().same_acquisition_layout(expected.plan()));
+    };
+    let (_, preview) = capture
+        .preview_output(
+            &renderer,
+            &scan,
+            None,
+            SourceRequest::for_frame(frame).unwrap(),
+            OutputTarget::Srgb,
+        )
+        .unwrap();
+    check(&capture, &preview);
+
+    let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
+    let camera = ProcessingSource::new_continuous(
+        &device,
+        &proxy.pixels,
+        proxy.matrix,
+        Some(
+            SourceGeometry::new(
+                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                proxy.dimensions(),
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap();
+    let mut full = frame;
+    full.output = proxy.dimensions();
+    let sampling = Sampling::CameraCells {
+        region: scan.area,
+        size: proxy.dimensions(),
+    };
+    let sampled = capture
+        .sampled_graph(
+            &limits,
+            &camera,
+            None,
+            SourceRequest::for_frame(full)
+                .unwrap()
+                .with_sampling(sampling)
+                .unwrap(),
+        )
+        .unwrap();
+    check(&capture, &sampled.request);
+
+    let acquired = capture
+        .source_request(full)
+        .unwrap()
+        .with_sampling(sampling)
+        .unwrap();
+    let mut changed = (*recipe).clone();
+    changed.grain.enabled = false;
+    changed.halation.enabled = false;
+    let changed = PhotographRequest::Recipe(Arc::new(changed));
+    let retained = changed
+        .retained_graph(&limits, &sampled.processed, None, &acquired)
+        .unwrap();
+    check(&changed, &retained.request);
 }

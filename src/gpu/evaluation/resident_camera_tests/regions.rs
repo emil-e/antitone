@@ -61,12 +61,11 @@ fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction
         )
         .unwrap();
         let input = input.with_flat_field(Some(gpu_field.clone()));
-        let photo = PhotographGraph::from_resident_with_stages(
+        let photo = PhotographGraph::from_resident_fixture(
             &device.limits(),
             &source,
             &input,
             crate::gpu::raster::Raster::region(area, size),
-            &Default::default(),
         )
         .unwrap();
         let region: SourceRegion = [2, 1, 3, 3].into();

@@ -49,7 +49,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
     )
     .unwrap();
     let request = |composition, format| Request {
-        pipeline: Default::default(),
+        calculation: None,
         scan: &scan,
         field: None,
         input: Calibration {

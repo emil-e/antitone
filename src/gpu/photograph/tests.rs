@@ -101,10 +101,20 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
     )
     .unwrap();
     input.replacements = crate::gpu::repairs::fixtures::replacements(&[evaluated]).unwrap();
-    let stages = crate::pixel_pipeline::PixelPipeline {
-        stages: vec![crate::pixel_pipeline::PixelStage::new(
-            crate::image_mtf::ImageMtfParameters { sigma: 1. },
-        )],
+    let stages = {
+        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let pitch = [Some(mtf.sigma / 0.6)]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min);
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = mtf.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
+        .with_view_pitch(pitch)
     };
     let domain = Domain {
         bounds: Some([0, 0, 1, 1].into()),
@@ -114,8 +124,8 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         },
         meaning: Meaning::Graded,
     };
-    let compose = |stages: &crate::pixel_pipeline::PixelPipeline| {
-        let photograph = PhotographGraph::new_with_stages(
+    let compose = |stages: &crate::gpu::photograph::assembly::Assembly| {
+        let photograph = PhotographGraph::authored(
             &device.limits(),
             source(codes.clone()),
             None,

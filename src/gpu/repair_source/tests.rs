@@ -174,7 +174,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
     let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
     let scalar = crate::processing::InputPipeline::new(input, matrix).unwrap();
     assert!(scalar.apply(DVec3::ZERO).unwrap().rgb.min_element() > f64::from(f32::MAX));
-    let graph = crate::gpu::photograph::PhotographGraph::original(
+    let graph = crate::gpu::photograph::PhotographGraph::authored_original(
         &device.limits(),
         crate::gpu::evaluation::camera_source(&scan).unwrap(),
         None,

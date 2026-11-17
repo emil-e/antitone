@@ -25,25 +25,31 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
+use crate::gpu::photograph::assembly::Assembly;
+use crate::gpu::photograph::test_effects::NeighbourEffect;
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::pixel_pipeline::PixelPipeline;
-use crate::pixel_pipeline::PixelStage;
-use crate::pixel_pipeline::test_effects::NeighbourEffect;
 use crate::processing::InputSettings;
 use crate::rendering::OutputReference;
 use crate::rendering::OutputTarget;
 use glam::{DMat3, DVec3};
 use wgpu::util::DeviceExt;
 
-fn recipe() -> PixelPipeline {
-    PixelPipeline {
-        stages: vec![PixelStage::new(NeighbourEffect {
+fn recipe() -> Assembly {
+    {
+        let neighbour = NeighbourEffect {
             radius: 0.8,
             gain: 1.4,
-        })],
+        };
+        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            image = neighbour.compose(image)?;
+            if let Some(output) = output {
+                image = output.compose(image)?;
+            }
+            Ok(image)
+        })
     }
 }
 
@@ -63,7 +69,7 @@ fn input(
         )
         .unwrap(),
     ))
-    .with_pixel_pipeline(recipe())
+    .with_definition(recipe())
 }
 
 fn neighbour(left: DVec3, center: DVec3, right: DVec3, position: [f64; 2]) -> DVec3 {
@@ -76,7 +82,7 @@ fn native(
     queue: &wgpu::Queue,
     renderer: &crate::renderer::GpuRenderer,
     scan: &crate::scan::Scan,
-    stages: PixelPipeline,
+    stages: Assembly,
 ) -> Vec<[f32; 4]> {
     let area = scan.area;
     let size = [area.width, area.height];
@@ -160,7 +166,7 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
         .collect();
     let modified = native(&device, &queue, &renderer, &scan, recipe());
     assert!(max_error(&expected, &modified) < 2e-5);
-    let clean = native(&device, &queue, &renderer, &scan, PixelPipeline::default());
+    let clean = native(&device, &queue, &renderer, &scan, Assembly::default());
     assert!(
         max_error(&expected, &clean) > 0.05,
         "omitting the supplied effect changes the photograph"
@@ -282,7 +288,7 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
     let processing = input(&device, area, DMat3::IDENTITY);
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
-        .with_pipeline(processing.pixel_pipeline())
+        .with_definition(processing.definition())
         .unwrap();
     let origin = frame.source_point([0.5, 0.5]).0;
     let axis = frame.source_point([1.5, 0.5]).0;
@@ -319,7 +325,14 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
             usage: wgpu::BufferUsages::STORAGE,
         }),
     ));
-    let view = RenderedView::new(&device, source, &processing, OutputTarget::Srgb, None).unwrap();
+    let view = RenderedView::new(
+        &device,
+        source.clone(),
+        &processing,
+        OutputTarget::Srgb,
+        None,
+    )
+    .unwrap();
     view.ensure_submitted(
         &device,
         &queue,
@@ -345,16 +358,28 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
         "a real neighbour outside the requested frame contributes through the declared effect support"
     );
     let equal = input(&device, area, DMat3::IDENTITY);
-    assert_eq!(
-        processing.clone(),
-        equal.clone(),
-        "independently assembled equal effect values preserve reuse identity"
+    let repeated =
+        RenderedView::new(&device, source, &equal, OutputTarget::Srgb, Some(&view)).unwrap();
+    assert!(
+        view.product
+            .as_ref()
+            .unwrap()
+            .definition
+            .same_definition(&repeated.product.as_ref().unwrap().definition),
+        "independently authored operations retain their mathematical identity"
+    );
+    assert!(
+        Arc::ptr_eq(
+            view.product.as_ref().unwrap(),
+            repeated.product.as_ref().unwrap()
+        ),
+        "the compatible graph reuses the submitted product"
     );
     assert_ne!(
         processing.clone(),
         processing
             .clone()
-            .with_pixel_pipeline(PixelPipeline::default())
+            .with_definition(Assembly::default())
             .clone()
     );
 }

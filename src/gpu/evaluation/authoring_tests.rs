@@ -1,10 +1,7 @@
 use super::*;
 use crate::{
     gpu::evaluation::CellRegion as Rect,
-    pixel_pipeline::{
-        EffectDefinition, PixelPipeline, PixelStage,
-        authoring_examples::{SignedCurve, TentConvolution},
-    },
+    gpu::photograph::authoring_examples::{SignedCurve, TentConvolution},
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -257,11 +254,17 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
     for coverage in [0, 1] {
         let data = pattern(coverage);
         let size = [13, 11];
-        let pipeline = PixelPipeline {
-            stages: vec![
-                PixelStage::new(SignedCurve::new(1.2, 0.15).unwrap()),
-                PixelStage::new(TentConvolution::new(2.2).unwrap()),
-            ],
+        let pipeline = {
+            let curve = SignedCurve::new(1.2, 0.15).unwrap();
+            let convolution = TentConvolution::new(2.2).unwrap();
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = curve.compose(image)?;
+                image = convolution.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
         };
         let original = source(Arc::new(data.clone()));
         let image = pipeline.compose(original.clone()).unwrap();
@@ -384,8 +387,15 @@ fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() 
     for (gain, curvature) in [(1.2f32, 0.15f32), (0.7, 0.4)] {
         let second = SignedCurve::new(gain, curvature).unwrap();
         let first = SignedCurve::new(1.2, 0.15).unwrap();
-        let pipeline = PixelPipeline {
-            stages: vec![PixelStage::new(first), PixelStage::new(second)],
+        let pipeline = {
+            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+                image = first.compose(image)?;
+                image = second.compose(image)?;
+                if let Some(output) = output {
+                    image = output.compose(image)?;
+                }
+                Ok(image)
+            })
         };
         let image = pipeline.compose(source(Arc::new(data.clone()))).unwrap();
         let plan = Plan::with_policy(

@@ -6,22 +6,6 @@ mod tests;
 use super::*;
 
 impl Plan {
-    pub fn for_output(&self, output: FrameRaster) -> Result<Self, Error> {
-        Self::new(Request {
-            output,
-            stages: &self.pipeline,
-            sampling: self.sampling,
-        })
-    }
-
-    pub fn for_pipeline(&self, stages: &PixelPipeline) -> Result<Self, Error> {
-        Self::new(Request {
-            output: self.output,
-            stages,
-            sampling: self.sampling,
-        })
-    }
-
     /// Neutral samples depend on layout/representation, not the downstream parameter values.
     pub fn same_acquisition_layout(&self, other: &Self) -> bool {
         self.output == other.output

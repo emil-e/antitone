@@ -4,7 +4,6 @@ use crate::{
     Error,
     gpu::evaluation::CellRegion as Rect,
     gpu::evaluation::{self, Domain, Function, Meaning, Operation, Value, value},
-    pixel_pipeline::EffectDefinition,
     processing_support::Support,
 };
 
@@ -23,8 +22,8 @@ impl SignedCurve {
     }
 }
 
-impl EffectDefinition for SignedCurve {
-    fn compose(&self, input: Value) -> Result<Value, Error> {
+impl SignedCurve {
+    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter("example curve requires graded AP1"));
         }
@@ -62,8 +61,8 @@ impl TentConvolution {
     }
 }
 
-impl EffectDefinition for TentConvolution {
-    fn compose(&self, input: Value) -> Result<Value, Error> {
+impl TentConvolution {
+    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
         if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter(
                 "example convolution requires graded AP1",
