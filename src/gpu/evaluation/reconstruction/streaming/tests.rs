@@ -4,6 +4,7 @@ use std::sync::Mutex;
 mod admission;
 mod counts;
 mod coverage;
+mod packing;
 mod planning;
 mod resident;
 mod values;

@@ -21,6 +21,9 @@ fn pixel(p: vec2i, position: vec2f, original: vec4f) -> vec4f {
                     let mask = table_0(header.w + offset / 128u);
                     if (mask[(offset / 32u) % 4u] & (1u << (offset % 32u))) != 0u {
                         let replacement = input_1(vec2i(i32(offset), 0));
+                        if replacement.w < 0.0 {
+                            return original;
+                        }
                         return vec4f(replacement.rgb, original.w);
                     }
                 }

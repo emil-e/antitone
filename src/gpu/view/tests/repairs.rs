@@ -541,17 +541,16 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 }
                 expected /= footprint.area();
                 assert_eq!(pixel[3], baseline[i][3]);
-                if !repaired {
+                touched += usize::from(repaired);
+                if !repaired && frame.composition.is_exact() {
                     assert_eq!(pixel.map(f32::to_bits), baseline[i].map(f32::to_bits));
-                } else {
-                    touched += 1;
-                    for c in 0..3 {
-                        assert!(
-                            (pixel[c] as f64 - expected[c]).abs()
-                                <= 2e-6 + 2e-5 * expected[c].abs(),
-                            "{i}/{c}: {pixel:?} vs {expected:?}"
-                        );
-                    }
+                }
+                // Read windows can change rotated accumulation order outside the repair.
+                for c in 0..3 {
+                    assert!(
+                        (pixel[c] as f64 - expected[c]).abs() <= 2e-6 + 2e-5 * expected[c].abs(),
+                        "{i}/{c}: {pixel:?} vs {expected:?}"
+                    );
                 }
             }
             assert!(touched > 0);

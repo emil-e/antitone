@@ -181,8 +181,8 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
             assert!(e.document.visit.working_view.completed_capture().is_none());
             assert_eq!(
                 e.dust_render_state(),
-                "Repairs pending",
-                "a proxy retaining complete intent has not completed the requested healing"
+                "Repairs",
+                "repair feedback remains confined to Dust"
             );
         });
         h.render().unwrap();
@@ -227,7 +227,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
 }
 
 #[test]
-fn repair_evaluation_failures_preserve_usable_navigation_previews() {
+fn failed_repairs_keep_the_photo_usable_and_show_error_outlines_only_in_dust() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         wait_for(&mut h, |editor| {
             editor
@@ -261,37 +261,26 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
         });
         h.step();
         assert_navigation_preview(&h);
-        wait_for(&mut h, |editor| {
-            editor
-                .document
-                .visit
-                .working_view
-                .failed_capture()
-                .is_some()
-        });
+        wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
+        assert!(!failed_repair_outline(&h));
         for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
             h.set_size(size);
             h.step();
             assert_navigation_preview(&h);
-            wait_for(&mut h, |editor| {
-                editor
-                    .document
-                    .visit
-                    .working_view
-                    .failed_capture()
-                    .is_some()
-            });
+            wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
             h.read(|editor| {
+                assert!(editor.document.visit.working_view.error.is_none());
                 assert!(
                     editor
                         .document
                         .visit
                         .working_view
-                        .failed_capture()
-                        .is_some(),
-                    "the current failed view remains unavailable while navigation stays usable"
+                        .completed_capture()
+                        .is_some()
                 );
+                assert!(!editor.dusting());
             });
+            assert!(!failed_repair_outline(&h));
             save_capture(
                 &h.render().unwrap(),
                 &format!(
@@ -300,6 +289,24 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
                 ),
             );
         }
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            editor.dust_render_state() == "Repair failed"
+        });
+        h.step();
+        assert!(
+            failed_repair_outline(&h),
+            "the failed repair has an error-role outline"
+        );
+        h.read(|editor| assert!(editor.document.visit.working_view.error.is_none()));
+        save_capture(&h.render().unwrap(), "failed-repair-dust-outline");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Done")
+            .click();
+        h.step();
+        assert!(!failed_repair_outline(&h));
         h.update(|editor| {
             editor
                 .document
@@ -313,6 +320,19 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
         h.step();
         assert_navigation_preview(&h);
     });
+}
+
+fn failed_repair_outline(h: &Harness<'_, Editor>) -> bool {
+    let color = h.ctx.global_style().visuals.error_fg_color;
+    let canvas = h.read(|editor| editor.document.visit.canvas.last_layout.unwrap().0.canvas);
+    h.output().shapes.iter().any(|shape| {
+        matches!(
+            &shape.shape,
+            egui::Shape::LineSegment { points, stroke }
+                if (stroke.color == color || stroke.color == color.linear_multiply(0.7))
+                    && points.iter().all(|point| canvas.contains(*point))
+        )
+    })
 }
 
 fn assert_navigation_preview(h: &Harness<'_, Editor>) {

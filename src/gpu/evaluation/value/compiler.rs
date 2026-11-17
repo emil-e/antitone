@@ -198,11 +198,9 @@ impl Primitive {
     pub(super) fn shape(&self) -> Shape {
         match self.operation.body.as_ref() {
             Body::Gpu(body) => body.shape,
-            Body::Source(_)
-            | Body::Argument { .. }
-            | Body::Cpu(_)
-            | Body::Concatenate
-            | Body::Failed(_) => Shape::Pixel,
+            Body::Source(_) | Body::Argument { .. } | Body::Cpu(_) | Body::Concatenate => {
+                Shape::Pixel
+            }
         }
     }
 }
@@ -240,7 +238,6 @@ impl Primitive {
                     kernel: kernel.clone(),
                 }),
             }),
-            Body::Failed(error) => Err(error.clone()),
             Body::Gpu(_) | Body::Argument { .. } | Body::Concatenate => {
                 let reads = self.reads(output)?;
                 let images = reads
@@ -454,7 +451,6 @@ impl Primitive {
                 Ok(Sampled::buffer(fragment, bounds, Binding::Read(input)))
             }
             Body::Gpu(body) => body.link(fragment, inputs, &self.input_shapes, domain, region),
-            Body::Failed(error) => Err(error.clone()),
             Body::Source(_) | Body::Cpu(_) | Body::Concatenate => Err(Error::InvalidParameter(
                 "CPU calculation cannot be lowered to WGSL",
             )),

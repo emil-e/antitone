@@ -64,6 +64,40 @@ impl<'a> Source<'a> {
         })
     }
 
+    pub(crate) fn repair_succeeded(
+        &self,
+        repair: &crate::dust_repair::Repair,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Option<bool>, Error> {
+        let healed = crate::gpu::repairs::definition::healing_image(&self.image, repair)?;
+        let point = repair
+            .support
+            .selected_points()
+            .next()
+            .expect("validated repair support is nonempty");
+        let region = evaluation::CellRegion::new(point.map(|v| v as i32), [1, 1]);
+        let query = self.context.request(
+            healed.clone(),
+            evaluation::Region {
+                bounds: region,
+                grid: healed.domain().grid,
+            },
+            self.budget,
+        )?;
+        let mut succeeded = false;
+        let result = self.context.read(
+            self.queue,
+            self.submissions,
+            &query,
+            cancelled,
+            |_, pixels| {
+                succeeded = pixels[0][3] >= 0.;
+                Ok(())
+            },
+        )?;
+        Ok(result.map(|_| succeeded))
+    }
+
     #[cfg(test)]
     pub(crate) fn image(&self) -> &evaluation::Value {
         &self.image

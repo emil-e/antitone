@@ -39,10 +39,7 @@ impl Reconstruction {
             && u64::from(demand.width) * u64::from(demand.height) <= available / 64
             && demand.height as usize <= value::MAX_UNIT_VALUES
         {
-            match self.source_parts(demand, output).as_slice() {
-                [part] => Some(*part),
-                _ => None,
-            }
+            self.source_window(demand, output)
         } else {
             None
         };
@@ -108,7 +105,7 @@ impl Reconstruction {
                 [x, y],
                 [(chunk.right() - x) as u32, (chunk.bottom() - y) as u32],
             );
-            for part in self.source_parts(chunk, output) {
+            if let Some(part) = self.source_window(chunk, output) {
                 let Some(affected) = self.affected(part, output) else {
                     continue;
                 };

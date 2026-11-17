@@ -17,6 +17,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
+mod feedback;
+
 #[cfg(test)]
 mod search_testing;
 #[cfg(test)]
@@ -140,10 +142,12 @@ struct Edit {
 struct Interaction {
     edit: Rc<RefCell<Edit>>,
     searches: RefCell<SearchState>,
+    feedback: Rc<RefCell<feedback::State>>,
 }
 
 pub(super) struct DustTool {
     interaction: Rc<Interaction>,
+    feedback_task: Option<async_executor::Task<()>>,
     reveal_controls: bool,
 }
 
@@ -501,27 +505,16 @@ impl Editor {
         capture: &crate::image_recipe::ImageRecipe,
         repair: &Repair,
     ) -> RepairFeedback {
-        let working = &self.document.visit.working_view;
-        if working
-            .failed_capture()
-            .and_then(|capture| capture.recipe())
-            .is_some_and(|failed| **failed == *capture)
-        {
-            return RepairFeedback::Failed;
-        }
-        if working
-            .completed_capture()
-            .and_then(|capture| capture.recipe())
-            .is_some_and(|completed| {
-                completed.neutral == capture.neutral && completed.repairs.contains(repair)
+        self.dust_session()
+            .map_or(RepairFeedback::Pending, |session| {
+                session.feedback.borrow().repair(capture, repair)
             })
-        {
-            return RepairFeedback::Ready;
-        }
-        RepairFeedback::Pending
     }
 
     pub(super) fn dust_render_state(&self) -> &'static str {
+        if !self.dusting() {
+            return "Repairs";
+        }
         if self.document.source {
             return "Repairs hidden";
         }
@@ -538,7 +531,7 @@ impl Editor {
         let mut pending = self.dust_pending_supports(source).next().is_some();
         for repair in capture.repairs.iter().filter(|repair| repair.enabled) {
             match self.dust_repair_feedback(&capture, repair) {
-                RepairFeedback::Failed => return "Repair unavailable",
+                RepairFeedback::Failed => return "Repair failed",
                 RepairFeedback::Pending => pending = true,
                 RepairFeedback::Ready => {}
             }
@@ -780,6 +773,7 @@ impl tool::Tool for DustTool {
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
     ) -> Option<crate::viewport::CanvasLayout> {
+        self.update_feedback(editor, cx);
         viewer.show(
             self,
             editor,
@@ -871,7 +865,9 @@ impl DustTool {
                     ..Default::default()
                 })),
                 searches: RefCell::default(),
+                feedback: Rc::default(),
             }),
+            feedback_task: None,
             reveal_controls: true,
         }
     }
@@ -1565,7 +1561,7 @@ impl DustTool {
         }
         self.paint_brush_cursor(editor, ui, geometry, &painter);
         if show_masks && !overlays_hidden {
-            self.paint_donor_guides(editor, geometry, &painter);
+            self.paint_donor_guides(editor, ui, geometry, &painter);
         }
     }
 
@@ -1704,31 +1700,44 @@ impl DustTool {
     fn paint_donor_guides(
         &self,
         editor: &Editor,
+        ui: &egui::Ui,
         geometry: crate::viewport::CanvasLayout,
         painter: &egui::Painter,
     ) {
+        let failed = editor
+            .positive_recipe(
+                editor.input(),
+                editor.document.project_snapshot().roll,
+                editor.photo_settings(),
+            )
+            .ok()
+            .is_some_and(|capture| {
+                capture
+                    .repairs
+                    .iter()
+                    .find(|repair| Some(repair.id) == editor.selected_dust_repair())
+                    .is_some_and(|repair| {
+                        editor.dust_repair_feedback(&capture, repair) == RepairFeedback::Failed
+                    })
+            });
+        let target_color = if failed {
+            ui.visuals().error_fg_color
+        } else {
+            egui::Color32::WHITE
+        };
+        let donor_color = if failed {
+            ui.visuals().error_fg_color
+        } else {
+            egui::Color32::from_rgb(100, 220, 240)
+        };
         for region in self.dust_donor_regions(editor) {
             let (target, donor, support) = (region.target, region.donor, region.support);
             let offset = [
                 f64::from(donor.x) - f64::from(target.x),
                 f64::from(donor.y) - f64::from(target.y),
             ];
-            paint_support_outline(
-                painter,
-                geometry,
-                &support,
-                [0., 0.],
-                egui::Color32::WHITE,
-                2.,
-            );
-            paint_support_outline(
-                painter,
-                geometry,
-                &support,
-                offset,
-                egui::Color32::from_rgb(100, 220, 240),
-                2.,
-            );
+            paint_support_outline(painter, geometry, &support, [0., 0.], target_color, 2.);
+            paint_support_outline(painter, geometry, &support, offset, donor_color, 2.);
             let target_anchor = support_anchor(&support);
             let donor_anchor = [target_anchor[0] + offset[0], target_anchor[1] + offset[1]];
             painter.line_segment(
@@ -2026,7 +2035,7 @@ impl Editor {
             self.document.dust.selected.insert(source, repair);
         }
         log::info!(repair = repair.0, repairs = self.dust_repairs(source).unwrap().repairs().len(), seconds = stroke.released.elapsed().as_secs_f64(); "dust_donor_accepted");
-        self.status = "Donor selected; evaluating repair…".into();
+        self.status = "Donor selected".into();
         self.invalidate_settled();
         Ok(repair)
     }

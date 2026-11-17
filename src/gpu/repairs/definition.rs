@@ -61,6 +61,8 @@ pub(crate) fn compose_images(
     ))
 }
 
+/// Failed healing is a finite image with a negative fourth component. Composition
+/// keeps the underlying pixels; Dust can inspect the same result for its failure cue.
 pub(crate) fn healing_image(base: &Value, repair: &Repair) -> Result<Value, Error> {
     if base.domain().meaning != Meaning::Neutral
         || base.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
@@ -82,24 +84,27 @@ pub(crate) fn healing_image(base: &Value, repair: &Repair) -> Result<Value, Erro
         repair: repair.clone(),
         active,
     };
-    let values = calculation.input_regions().and_then(|regions| {
-        regions
-            .into_iter()
-            .map(|region| base.request(region)?.read(region))
-            .collect::<Result<Vec<_>, Error>>()
-    });
-    let (values, operation) = match values {
-        Ok(values) => (
-            values,
+    let (values, operation) = match calculation.input_regions() {
+        Ok(regions) => (
+            regions
+                .into_iter()
+                .map(|region| base.request(region)?.read(region))
+                .collect::<Result<Vec<_>, Error>>()?,
             value::Operation::cpu(
                 dust_repair::REPAIR_CONTRACT,
                 calculation.identity(),
                 Arc::new(calculation),
             ),
         ),
-        Err(error) => (
-            vec![base.request(region)?.read(region)?],
-            value::Operation::failed(dust_repair::REPAIR_CONTRACT, calculation.identity(), error),
+        Err(_) => (
+            Vec::new(),
+            value::Operation::new(
+                "failed healing image v1",
+                calculation.identity(),
+                "fn pixel(p:vec2i,position:vec2f)->vec4f{return vec4f(0.0,0.0,0.0,-1.0);}",
+                "pixel",
+                value::Access::Pointwise,
+            ),
         ),
     };
     value::Value::new(
@@ -161,15 +166,20 @@ impl CpuKernel for Heal {
     ) -> Result<Option<Vec<[f32; 4]>>, Error> {
         let mut base = Inputs(inputs);
         let mut execution = dust_repair::Execution { cancelled };
-        let Some(evaluated) =
-            dust_repair::evaluate_image(&self.repair, self.active, &mut base, &mut execution)?
-        else {
+        let evaluated =
+            dust_repair::evaluate_image(&self.repair, self.active, &mut base, &mut execution);
+        if cancelled() || matches!(evaluated, Ok(None) | Err(Error::Cancelled)) {
             return Ok(None);
+        }
+        let cells = output.width as usize * output.height as usize;
+        let Ok(Some(evaluated)) = evaluated else {
+            return Ok(Some(vec![[0., 0., 0., -1.]; cells]));
         };
-        let mut pixels = vec![[0.; 4]; output.width as usize * output.height as usize];
+        let mut pixels = vec![[0.; 4]; cells];
         for (point, value) in evaluated.pixels() {
             if !value.iter().all(|value| value.is_finite()) {
-                return Err(Error::NumericalOverflow);
+                pixels.fill([0., 0., 0., -1.]);
+                return Ok(Some(pixels));
             }
             pixels[output.index(point.map(|value| value as i32))] =
                 [value[0], value[1], value[2], 0.];
