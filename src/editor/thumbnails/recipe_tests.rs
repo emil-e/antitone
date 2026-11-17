@@ -394,134 +394,150 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let document = document();
     let id = document.project.order[0];
     let initial_key = tests::key(&document, id);
-    complete(&mut thumbnails, &document, initial_key.clone()).unwrap();
+    complete(&mut thumbnails, &document, initial_key).unwrap();
+    let Some(Services::Production(worker)) = thumbnails.services.clone() else {
+        panic!("fixture requires the production thumbnail worker");
+    };
+    let (commands, requests) = mpsc::channel();
+    thumbnails.services = Some(Services::Controlled(commands));
     let mut editor = Editor::state();
     editor.document = document;
     editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
     editor.load_input(editor.document.state.project.input);
     editor.document.visit.current_source = Some(id);
-    // Hold asynchronous replacement so the composed filmstrip must use existing pixels.
-    editor.set_test_busy(true);
     let context = egui::Context::default();
     context.enable_accesskit();
-    let frame = |editor: &mut Editor| {
-        let mut output = context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100., 800.),
-                )),
-                ..Default::default()
-            },
-            |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
-        );
-        output.textures_delta.clear();
-        output
-    };
-    let gamma = editor.document.state.project.input.gamma();
-    for (index, (exposure, gamma)) in [(0.25, gamma), (0.5, gamma), (0.75, gamma), (1., 1.2)]
-        .into_iter()
-        .enumerate()
-    {
-        if index == 3 {
+    crate::application::test_support::with_application(editor, |app| {
+        let frame = |app: &mut crate::application::test_support::TestApplication<'_, Editor>| {
+            let mut output = app.enter(|editor, cx| {
+                context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1100., 800.),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| editor.filmstrip(ui, cx),
+                )
+            });
+            output.textures_delta.clear();
+            output
+        };
+        let gamma = app.read(|e| e.document.state.project.input.gamma());
+        for (index, (exposure, gamma)) in [(0.25, gamma), (0.5, gamma), (0.75, gamma), (1., 1.2)]
+            .into_iter()
+            .enumerate()
+        {
+            app.update(|editor| {
+                if index == 3 {
+                    editor
+                        .document
+                        .thumbnails
+                        .set_limits(cache_limits::CacheLimits {
+                            cpu_bytes: 0,
+                            gpu_bytes: 0,
+                        });
+                }
+                editor.document.state.project.set_gamma(gamma);
+                editor.set_gamma(gamma);
+                editor
+                    .document
+                    .project
+                    .source_mut(id)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_mut()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo
+                    .exposure = exposure;
+                editor.photo_settings_mut().exposure = exposure;
+            });
+            let output = frame(app);
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+                "grading must not replace the existing image with a blank/JPEG"
+            );
+            assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.job.text=="…")));
+            assert!(
+                output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.label() == Some("Photo updating")),
+                "previous pixels must not claim to be a current grade"
+            );
+            app.pump();
+            let submission = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+            let provider = app.read(|editor| editor.document.thumbnails.acquisition().unwrap());
+            let outcome =
+                pollster::block_on(worker.clone().process(submission.job, provider)).unwrap();
+            assert!(submission.reply.send(outcome).is_ok());
+            let key = app.read(|editor| tests::key(&editor.document, id));
+            app.run_until(Duration::from_secs(10), |editor| {
+                editor.document.thumbnails.cache.contains(&key)
+                    && !editor.document.thumbnail_work.pending()
+            });
+            app.read(|editor| {
+                assert_eq!(
+                    editor.document.thumbnails.cache.entries.len(),
+                    1,
+                    "superseded grades must not compete with other roll photos for retention"
+                )
+            });
+            let output = frame(app);
+            assert!(
+                !output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.label() == Some("Photo updating"))
+            );
+        }
+        app.update(|editor| {
+            editor
+                .document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .adjustment_layers
+                .as_mut()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo
+                .exposure = 1.25;
+            let key = tests::key(&editor.document, id);
+            editor.document.thumbnails.protect_images(vec![key.clone()]);
             editor
                 .document
                 .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 0,
-                    gpu_bytes: 0,
-                });
-        }
-        editor.document.state.project.set_gamma(gamma);
-        editor.set_gamma(gamma);
-        editor
-            .document
-            .project
-            .source_mut(id)
-            .unwrap()
-            .adjustment_layers
-            .as_mut()
-            .unwrap()
-            .layers[0]
-            .adjustment
-            .photo
-            .exposure = exposure;
-        editor.photo_settings_mut().exposure = exposure;
-        let output = frame(&mut editor);
+                .cache
+                .insert(key, Err("render rejected".into()));
+        });
+        let output = frame(app);
         assert!(
-            output
+            !output
                 .shapes
                 .iter()
                 .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
-            "grading must not replace the existing image with a blank/JPEG"
+            "an authoritative error must not be hidden by old pixels"
         );
-        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::Text(text) if text.galley.job.text == "…")));
-        assert!(
-            output
-                .platform_output
-                .accesskit_update
-                .as_ref()
-                .unwrap()
-                .nodes
-                .iter()
-                .any(|(_, node)| node.label() == Some("Photo updating")),
-            "previous pixels must not claim to be a current grade"
-        );
-        let key = tests::key(&editor.document, id);
-        complete(
-            &mut editor.document.thumbnails,
-            &editor.document.state,
-            key.clone(),
-        )
-        .unwrap();
-        assert_eq!(
-            editor.document.thumbnails.cache.entries.len(),
-            1,
-            "superseded grades must not compete with other roll photos for retention"
-        );
-        assert!(editor.document.thumbnails.cache.contains(&key));
-        let output = frame(&mut editor);
-        assert!(
-            !output
-                .platform_output
-                .accesskit_update
-                .as_ref()
-                .unwrap()
-                .nodes
-                .iter()
-                .any(|(_, node)| node.label() == Some("Photo updating"))
-        );
-    }
-    editor
-        .document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .adjustment_layers
-        .as_mut()
-        .unwrap()
-        .layers[0]
-        .adjustment
-        .photo
-        .exposure = 1.25;
-    let key = tests::key(&editor.document, id);
-    editor.document.thumbnails.protect_images(vec![key.clone()]);
-    editor
-        .document
-        .thumbnails
-        .cache
-        .insert(key, Err("render rejected".into()));
-    let output = frame(&mut editor);
-    assert!(
-        !output
-            .shapes
-            .iter()
-            .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
-        "an authoritative error must not be hidden by old pixels"
-    );
-    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-        egui::Shape::Text(text) if text.galley.job.text == "!")));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.job.text=="!")));
+    });
 }
 
 #[test]
@@ -669,7 +685,12 @@ fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identi
 }
 
 #[test]
-fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_becomes_idle() {
+fn document_thumbnails_finish_without_visible_cards_or_a_settled_main_view() {
+    assert_document_cards_finish(false);
+    assert_document_cards_finish(true);
+}
+
+fn assert_document_cards_finish(show_selected: bool) {
     let (device, queue) = gpu();
     let thumbnails = Thumbnails::with_disk(
         device,
@@ -702,8 +723,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
             gpu_bytes: 64 << 20,
         });
     editor.document.visit.current_source = Some(selected);
-    // An unsettled selected-view intent blocks optional offscreen GPU work, not
-    // the actual thumbnail/native services or the selected card's visible work.
+    // Keep the selected view unsettled throughout real thumbnail preparation.
     let frame = crate::frame_raster::FrameRaster::full(
         editor.thumbnail_composition(editor.document.state.project.source(selected).unwrap()),
     )
@@ -718,7 +738,9 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.thumbnails.demand = Demand::Visible(vec![selected]);
+            if show_selected {
+                editor.document.thumbnails.visible = vec![selected];
+            }
             editor.advance_thumbnail_demand(cx);
         });
         app.run_until(Duration::from_secs(10), |editor| {
@@ -731,8 +753,8 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
                     .document
                     .thumbnails
                     .ready_count(&editor.document, editor.document.target()),
-                1,
-                "the selected positive completes while offscreen cards are CPU-only"
+                3,
+                "offscreen positives do not wait for selected-view readiness"
             );
             assert!(
                 editor
@@ -742,21 +764,8 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
                     .contains(&tests::key(&editor.document, selected))
             );
         });
-        app.enter(|editor, cx| {
-            editor.document.visit.working_view.clear();
-            editor.document.visit.canvas.original.last_edit =
-                std::time::Instant::now() - Duration::from_secs(1);
-            editor.advance_thumbnail_demand(cx);
-        });
-        app.run_until(Duration::from_secs(10), |editor| {
-            editor
-                .document
-                .thumbnails
-                .ready_count(&editor.document, editor.document.target())
-                == 3
-                && editor.document.thumbnails.pending.is_none()
-        });
         app.read(|editor| {
+            assert!(!editor.document.visit.working_view.idle());
             assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
             assert!(
                 !editor.document.thumbnail_work.pending(),

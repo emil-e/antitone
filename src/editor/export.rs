@@ -402,7 +402,6 @@ impl Editor {
             cancelled: cancelled.clone(),
             task: None,
         });
-        self.document.thumbnails.cancel();
         self.status = "Exporting…".into();
         #[cfg(test)]
         {

@@ -309,7 +309,6 @@ impl FlatTool {
         if !editor.prepare_tool() {
             return;
         }
-        editor.document.thumbnails.cancel();
         let activity = editor
             .activities
             .start(ActivityOptions::new("Preparing reference…").modal());

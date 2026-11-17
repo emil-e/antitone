@@ -234,7 +234,6 @@ impl Editor {
         if stage_changed {
             self.document.hosted_tool = Default::default();
             self.cancel_spatial();
-            self.document.thumbnails.cancel();
         }
         self.document.visit.current_source = selected;
         self.document

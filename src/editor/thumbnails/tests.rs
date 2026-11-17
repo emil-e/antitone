@@ -113,7 +113,6 @@ pub(super) fn complete_service_request(thumbnails: &mut Thumbnails, document: &D
     let ticket = job.ticket;
     let key = job.key.clone();
     thumbnails.pending = Some((ticket, key.clone()));
-    thumbnails.pending_render = job.render;
     match run_service_request(thumbnails, job) {
         Ok(outcome) => thumbnails.complete(outcome, document),
         Err(_) => thumbnails.stopped(ticket, key),
@@ -127,7 +126,6 @@ fn typed_ticket(thumbnails: &mut Thumbnails, key: ImageKey) -> (u64, ImageKey) {
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
     thumbnails.pending = Some((ticket, key.clone()));
-    thumbnails.pending_render = true;
     (ticket, key)
 }
 
@@ -943,7 +941,7 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
 }
 
 #[test]
-fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
+fn visible_then_eager_rendering_does_not_wait_for_refinement_or_grading_idle() {
     let mut editor = Editor::state();
     *editor.document = fixture();
     editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
@@ -993,8 +991,8 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
         let eager = take_submission(app, &requests);
         assert_eq!(eager.job.key.source.id, last);
         assert!(
-            !eager.job.render,
-            "original refinement keeps optional GPU priority"
+            eager.job.render,
+            "offscreen rendering does not wait for unrelated original refinement"
         );
         assert_eq!(eager.job.priority, source_loading::Priority::Eager);
     });
@@ -1071,38 +1069,48 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
 }
 
 #[test]
-fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
-    for suspension in ["busy", "pick"] {
-        let mut editor = Editor::state();
-        *editor.document = fixture();
-        let (commands, requests) = mpsc::channel();
-        editor.document.thumbnails.services = Some(Services::Controlled(commands));
-        match suspension {
-            "busy" => editor.set_test_busy(true),
-            "pick" => picking::preview(&mut editor, super::super::PickerCase::Dmin.display()),
-            _ => unreachable!(),
-        }
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|e, cx| {
-                filmstrip_frame(
-                    e,
-                    &egui::Context::default(),
-                    e.document.thumbnails.budgets,
-                    cx,
-                )
-            });
-            app.pump();
-            assert!(
-                matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)),
-                "{suspension}"
-            );
-            app.read(|e| {
-                assert!(
-                    e.document.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending()
-                )
-            });
+fn visible_work_advances_while_modal_input_remains_reserved() {
+    let mut editor = Editor::state();
+    *editor.document = fixture();
+    editor.document.thumbnails.pressure_override = Some(memory::Pressure::Warning);
+    let ids = editor.document.state.project.order[..2].to_vec();
+    let (commands, requests) = mpsc::channel();
+    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    let modal = editor
+        .activities
+        .start(crate::editor::ActivityOptions::new("Independent foreground operation").modal());
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.document
+                .thumbnails
+                .apply_budgets(memory::CacheBudgets::for_memory(
+                    48 << 30,
+                    memory::Pressure::Warning,
+                ));
+            e.document.thumbnails.visible = ids.clone();
+            e.advance_thumbnail_demand(cx);
         });
-    }
+        for id in &ids {
+            let submitted = take_submission(app, &requests);
+            assert_eq!(submitted.job.key.source.id, *id);
+            assert_eq!(submitted.job.priority, source_loading::Priority::Visible);
+            assert!(submitted.job.render);
+            app.read(|e| assert!(e.interaction_blocked() && e.workspace_input.is_blocked()));
+            finish_submission(submitted, Err("controlled card completed".into()), true);
+        }
+        app.run_until(Duration::from_secs(5), |e| {
+            !e.document.thumbnail_work.pending()
+        });
+        app.read(|e| {
+            assert!(e.document.thumbnails.pending.is_none());
+            for id in &ids {
+                assert!(e.document.thumbnails.cache.contains(&key(&e.document, *id)));
+            }
+            assert!(e.workspace_input.is_blocked());
+        });
+        drop(modal);
+        app.read(|e| assert!(!e.workspace_input.is_blocked()));
+    });
 }
 
 #[test]
@@ -1132,7 +1140,7 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
     });
 }
 
-fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
+fn eager_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
     let mut editor = Editor::state();
     *editor.document = fixture();
     let last = *editor.document.state.project.order.last().unwrap();
@@ -1152,8 +1160,6 @@ fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
     }
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
-    editor.document.visit.canvas.original.last_edit =
-        std::time::Instant::now() - Duration::from_secs(1);
     (editor, requests)
 }
 
@@ -1199,7 +1205,7 @@ fn take_submission(
                 e.document.thumbnails.budgets,
                 e.document.thumbnails.attempted_sources.len(),
                 e.document.thumbnail_work.pending(),
-                matches!(e.document.thumbnails.demand, Demand::None),
+                e.document.thumbnails.visible.is_empty(),
             )
         });
         panic!("live thumbnail command did not submit: {error:?}; {state:?}");
@@ -1226,8 +1232,8 @@ fn finish_submission(
 }
 
 #[test]
-fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_graded_product() {
-    let (mut editor, requests) = idle_prefetch_fixture();
+fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_complete_product() {
+    let (mut editor, requests) = eager_prefetch_fixture();
     editor.document.state.project.set_dmin(Some([0.8; 3]));
     editor.document.state.project.set_dmax(Some([0.02; 3]));
     editor.document.thumbnails.cache.retain(|_, _| false);
@@ -1255,76 +1261,89 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
         assert!(matches!(submitted.job.key.recipe, Ok(Some(_))));
         assert!(
             !submitted.job.render,
-            "positive forecast includes neutral and graded ownership"
+            "positive forecast includes the complete retained product"
         );
     });
 }
 
 #[test]
-fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
-    let (mut editor, requests) = idle_prefetch_fixture();
+fn offscreen_card_renders_after_its_cpu_pass_when_retention_space_returns() {
+    let (mut editor, requests) = eager_prefetch_fixture();
+    editor.document.state.project.set_dmin(Some([0.8; 3]));
+    editor.document.state.project.set_dmax(Some([0.02; 3]));
+    editor.document.thumbnails.cache.retain(|_, _| false);
     let last = *editor.document.state.project.order.last().unwrap();
-    editor.document.visit.canvas.original.last_edit = std::time::Instant::now();
+    for &id in &editor.document.state.project.order {
+        if id != last {
+            editor
+                .document
+                .thumbnails
+                .cache
+                .insert(key(&editor.document, id), Err("already visited".into()));
+        }
+    }
     let context = egui::Context::default();
-    let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
+    editor
+        .document
+        .thumbnails
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 3 << 20,
+        });
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        app.enter(|e, cx| filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx));
         let cpu = take_submission(app, &requests);
         assert_eq!(cpu.job.key.source.id, last);
         assert!(!cpu.job.render);
         finish_submission(cpu, Ok(None), true);
-        app.pump();
+        app.run_until(Duration::from_secs(5), |e| {
+            !e.document.thumbnail_work.pending()
+        });
         app.enter(|e, cx| {
-            e.document.visit.canvas.original.last_edit =
-                std::time::Instant::now() - Duration::from_secs(1);
-            e.advance_thumbnail_demand(cx);
+            e.document.visit.canvas.original.last_edit = std::time::Instant::now();
+            e.document.thumbnails.set_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 64 << 20,
+            });
+            filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);
         });
         let image = take_submission(app, &requests);
         assert_eq!(image.job.key.source.id, last);
         assert!(
             image.job.render,
-            "CPU completion must not permanently suppress proactive GPU thumbnails"
+            "CPU completion must not suppress a later GPU card"
         );
     });
 }
 
 #[test]
-fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
-    let (editor, requests) = idle_prefetch_fixture();
+fn view_activity_preserves_offscreen_work_but_a_visible_miss_takes_priority() {
+    let (editor, requests) = eager_prefetch_fixture();
     let last = *editor.document.state.project.order.last().unwrap();
     let context = egui::Context::default();
     let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
-        let old = take_submission(app, &requests);
-        assert_eq!(old.job.key.source.id, last);
-        assert!(old.job.render);
+        let offscreen = take_submission(app, &requests);
+        assert_eq!(offscreen.job.key.source.id, last);
+        assert!(offscreen.job.render);
+        let ticket = offscreen.job.ticket;
         app.enter(|e, cx| {
             e.document.visit.canvas.original.last_edit = std::time::Instant::now();
             filmstrip_frame(e, &context, budgets, cx);
         });
-        let cpu_only = take_submission(app, &requests);
-        assert_ne!(old.job.ticket, cpu_only.job.ticket);
-        assert_eq!(cpu_only.job.key.source.id, last);
-        assert!(!cpu_only.job.render);
-        let current = cpu_only.job.ticket;
-        finish_submission(old, Ok(None), false);
         app.pump();
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
         app.read(|e| {
             assert_eq!(
                 e.document.thumbnails.pending.as_ref().map(|p| p.0),
-                Some(current)
+                Some(ticket),
+                "view activity does not retire unrelated thumbnail demand",
             )
         });
-        finish_submission(cpu_only, Ok(None), false);
-        app.pump();
-        app.enter(|e, cx| {
-            e.document.visit.canvas.original.last_edit =
-                std::time::Instant::now() - Duration::from_secs(1);
-            filmstrip_frame(e, &context, budgets, cx);
-        });
-        let retry = take_submission(app, &requests);
-        assert_eq!(retry.job.key.source.id, last);
         let first = app.read(|e| e.document.state.project.order[0]);
         app.enter(|e, cx| {
             e.document
@@ -1334,26 +1353,36 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
             filmstrip_frame(e, &context, budgets, cx);
         });
         let visible = take_submission(app, &requests);
-        assert_ne!(retry.job.ticket, visible.job.ticket);
+        assert_ne!(ticket, visible.job.ticket);
         assert_eq!(visible.job.key.source.id, first);
         assert_eq!(visible.job.priority, source_loading::Priority::Visible);
-        app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
+        assert!(visible.job.render);
+        let current = visible.job.ticket;
+        finish_submission(offscreen, Ok(None), true);
         app.pump();
-        assert!(matches!(
-            requests.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
+        app.read(|e| {
+            assert_eq!(
+                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                Some(current),
+                "retired GPU work cannot replace the current visible ticket",
+            )
+        });
+        finish_submission(visible, Err("visible card completed".into()), true);
+        let resumed = take_submission(app, &requests);
+        assert_eq!(resumed.job.key.source.id, last);
+        assert!(resumed.job.render);
+        assert_eq!(resumed.job.priority, source_loading::Priority::Eager);
     });
 }
 
 #[test]
-fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work() {
+fn memory_pressure_suspends_eager_prefetch_without_blocking_visible_work() {
     for pressure in [
         memory::Pressure::Normal,
         memory::Pressure::Warning,
         memory::Pressure::Critical,
     ] {
-        let (editor, requests) = idle_prefetch_fixture();
+        let (editor, requests) = eager_prefetch_fixture();
         let context = egui::Context::default();
         let budgets = memory::CacheBudgets::for_memory(48 << 30, pressure);
         crate::application::test_support::with_application(editor, |app| {
@@ -1400,8 +1429,8 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
 }
 
 #[test]
-fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
-    let (mut editor, requests) = idle_prefetch_fixture();
+fn hidden_filmstrip_requests_rendered_thumbnails_and_keeps_resource_backoff() {
+    let (mut editor, requests) = eager_prefetch_fixture();
     editor.document.thumbnails.cache.retain(|_, _| false);
     let ids = editor.document.state.project.order.clone();
     let context = egui::Context::default();
@@ -1413,16 +1442,19 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
         for id in ids {
             let submitted = take_submission(app, &requests);
             assert_eq!(submitted.job.key.source.id, id);
-            assert!(!submitted.job.render);
+            assert!(submitted.job.render);
             assert_eq!(submitted.job.priority, source_loading::Priority::Eager);
-            finish_submission(submitted, Ok(None), true);
+            finish_submission(submitted, Err("finished hidden card".into()), true);
         }
         app.pump();
         assert!(matches!(
             requests.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
-        app.update(|e| e.document.thumbnails.attempted_sources.clear());
+        app.update(|e| {
+            e.document.thumbnails.cache.retain(|_, _| false);
+            e.document.thumbnails.attempted_sources.clear();
+        });
         for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
             app.enter(|e, cx| {
                 e.document.thumbnails.pressure_override = Some(pressure);
@@ -1440,7 +1472,79 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
 }
 
 #[test]
-fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
+fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
+    let (mut editor, requests) = eager_prefetch_fixture();
+    let target = *editor.document.state.project.order.last().unwrap();
+    super::super::tests::add_ready_fixture(&mut editor);
+    editor.document.thumbnails.cache.retain(|_, _| false);
+    for id in editor.document.state.project.order.clone() {
+        if id != target {
+            editor
+                .document
+                .thumbnails
+                .cache
+                .insert(key(&editor.document, id), Err("already prepared".into()));
+        }
+    }
+    let context = egui::Context::default();
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.advance_thumbnail_demand(cx));
+        let submitted = take_submission(app, &requests);
+        assert_eq!(submitted.job.key.source.id, target);
+        assert!(submitted.job.render);
+        let ticket = submitted.job.ticket;
+        app.update(|editor| {
+            editor.toggle_fullscreen(&context);
+            assert!(
+                editor.fullscreen.is_some(),
+                "real fullscreen entry was admitted"
+            );
+            assert_eq!(
+                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                ticket
+            );
+        });
+        app.enter(|editor, cx| {
+            let mut output =
+                context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui, cx));
+            output.textures_delta.clear();
+            assert_eq!(
+                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                ticket
+            );
+            let visit = editor.id;
+            editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
+            assert_ne!(
+                editor.id, visit,
+                "fixture must replace the active photo visit"
+            );
+            assert_eq!(
+                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                ticket
+            );
+        });
+        finish_submission(submitted, Err("prepared across departure".into()), true);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.document.thumbnail_work.pending()
+        });
+        app.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .cache
+                    .contains(&key(&editor.document, target))
+            );
+        });
+        assert!(
+            requests.try_recv().is_err(),
+            "no replacement or duplicate thumbnail request"
+        );
+    });
+}
+
+#[test]
+fn modal_input_preserves_the_existing_current_visible_ticket() {
     let mut editor = super::super::tests::fixture();
     editor.document = editor.document.replacement(fixture());
     let id = editor.document.state.project.order[0];
@@ -1448,14 +1552,16 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
     editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.document.thumbnails.demand = Demand::Visible(vec![id]);
+            e.document.thumbnails.visible = vec![id];
             e.advance_thumbnail_demand(cx);
         });
         let submitted = take_submission(app, &requests);
-        app.enter(|e, cx| {
-            e.set_test_busy(true);
-            e.advance_thumbnail_demand(cx);
+        let modal = app.read(|e| {
+            e.activities.start(
+                crate::editor::ActivityOptions::new("Independent foreground operation").modal(),
+            )
         });
+        app.enter(|e, cx| e.advance_thumbnail_demand(cx));
         app.pump();
         assert!(matches!(
             requests.try_recv(),
@@ -1467,64 +1573,56 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
                 Some(submitted.job.ticket)
             )
         });
+        drop(modal);
+        app.read(|e| assert!(!e.workspace_input.is_blocked()));
     });
 }
 
 #[test]
-fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
-    let mut editor = Editor::state();
-    *editor.document = fixture();
+fn crop_draft_preserves_offscreen_rendering_and_its_completion() {
+    let (mut editor, requests) = eager_prefetch_fixture();
     super::super::tests::add_ready_fixture(&mut editor);
     let last = *editor.document.state.project.order.last().unwrap();
     let image_key = key(&editor.document, last);
-    let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    for &id in &editor.document.state.project.order {
+        if id != last {
+            editor
+                .document
+                .thumbnails
+                .cache
+                .insert(key(&editor.document, id), Err("already visited".into()));
+        }
+    }
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.request_thumbnail(image_key, true, source_loading::Priority::Eager, cx)
+            e.request_thumbnail(image_key.clone(), true, source_loading::Priority::Eager, cx)
         });
-        let old = take_submission(app, &requests);
+        let pending = take_submission(app, &requests);
+        let ticket = pending.job.ticket;
         app.enter(|e, cx| {
             e.begin_crop();
             assert!(e.document.crop_edit().is_some());
-            e.document.visit.canvas.original.last_edit =
-                std::time::Instant::now() - Duration::from_secs(1);
+            e.document.visit.canvas.original.last_edit = std::time::Instant::now();
             filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);
-            assert!(e.document.thumbnails.pending.is_none());
-            assert_ne!(
-                e.document
-                    .thumbnails
-                    .generation
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                old.job.ticket
+            assert_eq!(
+                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                Some(ticket)
             );
         });
-        finish_submission(old, Ok(None), false);
-        app.pump();
-        let retired = app.read(|e| {
-            e.document
-                .thumbnails
-                .generation
-                .load(std::sync::atomic::Ordering::Relaxed)
-        });
-        app.enter(|e, cx| filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx));
         app.pump();
         assert!(matches!(
             requests.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+        finish_submission(pending, Err("controlled card completed".into()), true);
+        app.run_until(Duration::from_secs(5), |e| {
+            !e.document.thumbnail_work.pending()
+        });
         app.read(|e| {
-            assert_eq!(
-                e.document
-                    .thumbnails
-                    .generation
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                retired
-            );
-            assert!(
-                e.document.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending()
-            );
+            assert!(e.cropping());
+            assert!(e.document.thumbnails.cache.contains(&image_key));
+            assert!(e.document.thumbnails.pending.is_none());
         });
     });
 }
@@ -1686,12 +1784,12 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
     );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.document.thumbnails.demand = Demand::Visible(vec![id]);
+            e.document.thumbnails.visible = vec![id];
             e.advance_thumbnail_demand(cx);
         });
         let old = take_submission(app, &requests);
         app.enter(|e, cx| {
-            e.document.thumbnails.demand = Demand::Visible(vec![next]);
+            e.document.thumbnails.visible = vec![next];
             e.advance_thumbnail_demand(cx);
         });
         let replacement = take_submission(app, &requests);

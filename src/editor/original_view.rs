@@ -231,6 +231,7 @@ impl OriginalView {
             self.cancel_pending();
         }
     }
+    #[cfg(test)]
     pub fn idle(&self) -> bool {
         !self.refining()
             && (self.wanted.is_none() || self.settled().is_some() || self.failed())
