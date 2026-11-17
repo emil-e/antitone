@@ -65,7 +65,7 @@ The names Dmin and Dmax come from film density, but the stored values are **line
 - **Dmin** represents low-density film, usually film base. It transmits more light and anchors the positive at zero.
 - **Dmax** represents a dense part of the negative. It transmits less light and anchors the positive at one.
 
-Consequently, Dmin's measured value must be greater than Dmax's in each channel. The RGB anchors need not come from one jointly neutral pixel; their role is to establish each channel's response, not to declare a sampled object white.
+For inversion, Dmin's measured value must be greater than Dmax's in each channel. The RGB anchors need not come from one jointly neutral pixel; their role is to establish each channel's response, not to declare a sampled object white. Successful reference picks are retained, undoable and saveable even when the pair cannot define an inversion. Positive rendering reports that failure; source viewing and reference picking remain available.
 
 Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. Toe 1 with no shoulder removes that shaping; gamma still sets the curve's contrast between the anchors.
 
@@ -194,7 +194,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **8**. Negative calibration must be finite and satisfy `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **8**. Negative inversion requires finite references satisfying `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

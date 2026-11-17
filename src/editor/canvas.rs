@@ -439,60 +439,31 @@ impl Editor {
         (geometry, panning)
     }
 
-    fn canvas_calculation(
-        &mut self,
-        ui: &mut egui::Ui,
-        image: ImageMode,
-    ) -> Option<crate::gpu::photograph::request::PhotographRequest> {
-        use crate::gpu::photograph::request::PhotographRequest;
-        let inspection = image.inspection(self.canvas_inspection());
-        let bypass_look = image.is_sample();
-        let capture = if inspection {
-            match self
+    fn canvas_calculation(&mut self, image: ImageMode) -> Result<PhotographRequest, Error> {
+        if image.inspection(self.canvas_inspection()) {
+            return self
                 .source_parameters(self.source_exposure)
-                .and_then(PhotographRequest::inspection)
-            {
-                Ok(capture) => capture,
-                Err(error) => {
-                    ui.label(format!("Source inspection unavailable: {error}"));
-                    return None;
-                }
-            }
+                .and_then(PhotographRequest::inspection);
+        }
+        let recipe = Arc::new(self.view_recipe(
+            self.input(),
+            self.document.project_snapshot().roll,
+            self.photo_settings(),
+        )?);
+        let capture = if image.is_sample() {
+            PhotographRequest::BeforeLooks(recipe)
         } else {
-            let captured = self
-                .view_recipe(
-                    self.input(),
-                    self.document.project_snapshot().roll,
-                    self.photo_settings(),
-                )
-                .map(|recipe| {
-                    let recipe = Arc::new(recipe);
-                    if bypass_look {
-                        PhotographRequest::BeforeLooks(recipe)
-                    } else {
-                        PhotographRequest::Recipe(recipe)
-                    }
-                });
-            let captured = captured.and_then(|capture| {
-                let limits = self
-                    .document
-                    .visit
-                    .working_view
-                    .device()
-                    .map(|device| device.limits())
-                    .unwrap_or_default();
-                capture.validate(&limits)?;
-                Ok(capture)
-            });
-            match captured {
-                Ok(capture) => capture,
-                Err(error) => {
-                    ui.label(format!("Positive preview unavailable: {error}"));
-                    return None;
-                }
-            }
+            PhotographRequest::Recipe(recipe)
         };
-        Some(capture)
+        let limits = self
+            .document
+            .visit
+            .working_view
+            .device()
+            .map(|device| device.limits())
+            .unwrap_or_default();
+        capture.validate(&limits)?;
+        Ok(capture)
     }
 
     fn canvas_image(
@@ -536,7 +507,23 @@ impl Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             })
         };
-        let capture = self.canvas_calculation(ui, image)?;
+        let capture = match self.canvas_calculation(image) {
+            Ok(capture) => capture,
+            Err(error) => {
+                let subject = if inspection {
+                    "Source inspection"
+                } else {
+                    "Positive preview"
+                };
+                ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(canvas)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                )
+                .label(format!("{subject} unavailable: {error}"));
+                return None;
+            }
+        };
         let target = self.document.target();
         if (working || capture.has_repairs())
             && self

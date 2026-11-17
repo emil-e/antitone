@@ -433,23 +433,24 @@ fn save_completion_baselines_only_the_written_snapshot_and_undo_can_return_to_it
 }
 
 #[test]
-fn accepted_calibration_is_one_entry_and_an_invalid_pick_preserves_redo() {
+fn incompatible_reference_is_an_ordinary_history_branch() {
     let mut editor = controller();
     let before = editor.history_snapshot();
-    (calibration::set_dmin(&mut editor, DVec3::splat(0.25))).unwrap();
-    editor.finish_pick(&crate::application::UiContext::render_only());
+    calibration::set_dmin(&mut editor, DVec3::splat(0.25)).unwrap();
     let picked = editor.document.state.project.clone();
     assert_ne!(picked, before);
     assert_eq!(editor.document.history.undo.len(), 1);
     editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.state.project, before);
-    assert!((calibration::set_dmin(&mut editor, DVec3::splat(0.0001))).is_err());
-    editor.finish_pick(&crate::application::UiContext::render_only());
+    calibration::set_dmin(&mut editor, DVec3::splat(0.0001)).unwrap();
+    let incompatible = editor.document.state.project.clone();
+    assert_eq!(editor.dmin(), Some(DVec3::splat(0.0001)));
+    assert_eq!(editor.document.history.undo.len(), 1);
+    assert!(editor.document.history.redo.is_empty());
+    editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.state.project, before);
-    assert!(editor.document.history.undo.is_empty());
-    assert_eq!(editor.document.history.redo.len(), 1);
     editor = accept_history(editor, Direction::Redo);
-    assert_eq!(editor.document.state.project, picked);
+    assert_eq!(editor.document.state.project, incompatible);
 }
 
 #[test]

@@ -766,59 +766,40 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
 }
 
 #[test]
-fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
-    let mut editor = fixture();
-    editor.document.source = false;
-    let original = (
-        editor.dmin(),
-        editor.dmax(),
-        editor.document.project.roll,
-        editor.photo_settings(),
-    );
-    for (kind, invalid) in [(PickerCase::Dmin, 0.001), (PickerCase::Dmax, 1.)] {
-        editor.preview_picker(kind);
-        assert!(editor.canvas_inspection());
-        editor.set_test_pick_region(Some(patch()));
-        assert!(
-            (match kind {
-                PickerCase::Dmin => calibration::set_dmin(&mut editor, DVec3::splat(invalid)),
-                PickerCase::Dmax => calibration::set_dmax(&mut editor, DVec3::splat(invalid)),
+fn incompatible_reference_preserves_view_preferences_and_survives_cancelling_another_pick() {
+    for source_view in [false, true] {
+        for (kind, value) in [(PickerCase::Dmin, 0.001), (PickerCase::Dmax, 1.)] {
+            let mut editor = fixture();
+            editor.document.source = source_view;
+            let mut expected = editor.document.state.project.clone();
+            editor.preview_picker(kind);
+            assert!(editor.canvas_inspection());
+            editor.set_test_pick_region(Some(patch()));
+            match kind {
+                PickerCase::Dmin => {
+                    calibration::set_dmin(&mut editor, DVec3::splat(value)).unwrap();
+                    expected.set_dmin(Some([value; 3]));
+                }
+                PickerCase::Dmax => {
+                    calibration::set_dmax(&mut editor, DVec3::splat(value)).unwrap();
+                    expected.set_dmax(Some([value; 3]));
+                }
                 _ => unreachable!("reference proposal"),
-            })
-            .is_err()
-        );
-        editor.finish_pick(&crate::application::UiContext::render_only());
-        assert!(!editor.document.source);
-        assert!(!editor.interaction_blocked());
-        assert!(editor.test_pick().is_none());
-        assert!(editor.test_pick_region().is_none());
-        assert_eq!(
-            (
-                editor.dmin(),
-                editor.dmax(),
-                editor.document.project.roll,
-                editor.photo_settings()
-            ),
-            original
-        );
-        editor.preview_picker(kind);
-        assert!(editor.canvas_inspection());
-        editor.finish_pick(&crate::application::UiContext::render_only());
-        assert!(!editor.document.source);
-        assert_eq!(
-            (
-                editor.dmin(),
-                editor.dmax(),
-                editor.document.project.roll,
-                editor.photo_settings()
-            ),
-            original
-        );
+            }
+            editor.finish_pick(&crate::application::UiContext::render_only());
+            assert_eq!(editor.document.source, source_view);
+            assert!(!editor.interaction_blocked());
+            assert!(editor.test_pick().is_none());
+            assert!(editor.test_pick_region().is_none());
+            assert_eq!(editor.document.state.project, expected);
+
+            editor.preview_picker(kind);
+            assert!(editor.canvas_inspection());
+            editor.finish_pick(&crate::application::UiContext::render_only());
+            assert_eq!(editor.document.source, source_view);
+            assert_eq!(editor.document.state.project, expected);
+        }
     }
-    editor.document.source = true;
-    editor.preview_picker(PickerCase::Dmax);
-    editor.finish_pick(&crate::application::UiContext::render_only());
-    assert!(editor.document.source);
 }
 
 #[test]
@@ -874,7 +855,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
 }
 
 #[test]
-fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calibration() {
+fn cancelling_initial_reference_preserves_source_view_but_a_completed_pick_is_retained() {
     for kind in [PickerCase::Dmin, PickerCase::Dmax] {
         let mut editor = fixture();
         if kind == PickerCase::Dmin {
@@ -883,59 +864,33 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
             editor.set_dmax(None);
         }
         editor.document.source = true;
-        let before = (
-            editor.dmin(),
-            editor.dmax(),
-            editor.document.project.roll,
-            editor.photo_settings(),
-            editor.document.visit.canvas.viewport,
-        );
+        let before = editor.document.state.project.clone();
+        let viewport = editor.document.visit.canvas.viewport;
         editor.preview_picker(kind);
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(editor.document.source);
-        {
-            editor.preview_picker(kind);
-            editor.set_test_pick_region(Some(patch()));
-            assert!(
-                (match kind {
-                    PickerCase::Dmin => calibration::set_dmin(
-                        &mut editor,
-                        DVec3::splat(if kind == PickerCase::Dmin {
-                            0.0001
-                        } else {
-                            0.4
-                        },)
-                    ),
-                    PickerCase::Dmax => calibration::set_dmax(
-                        &mut editor,
-                        DVec3::splat(if kind == PickerCase::Dmin {
-                            0.0001
-                        } else {
-                            0.4
-                        },)
-                    ),
-                    _ => unreachable!("reference proposal"),
-                })
-                .is_err()
-            );
-            editor.finish_pick(&crate::application::UiContext::render_only());
-            assert!(editor.document.source);
-            assert!(
-                editor.test_pick().is_none()
-                    && !editor.interaction_blocked()
-                    && editor.calibration().is_none()
-            );
-            assert_eq!(
-                (
-                    editor.dmin(),
-                    editor.dmax(),
-                    editor.document.project.roll,
-                    editor.photo_settings(),
-                    editor.document.visit.canvas.viewport
-                ),
-                before
-            );
+        assert_eq!(editor.document.state.project, before);
+
+        editor.preview_picker(kind);
+        editor.set_test_pick_region(Some(patch()));
+        let mut expected = before;
+        match kind {
+            PickerCase::Dmin => {
+                calibration::set_dmin(&mut editor, DVec3::splat(0.0001)).unwrap();
+                expected.set_dmin(Some([0.0001; 3]));
+            }
+            PickerCase::Dmax => {
+                calibration::set_dmax(&mut editor, DVec3::splat(0.4)).unwrap();
+                expected.set_dmax(Some([0.4; 3]));
+            }
+            _ => unreachable!("reference proposal"),
         }
+        editor.finish_pick(&crate::application::UiContext::render_only());
+        assert!(!editor.document.source);
+        assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
+        assert_eq!(editor.document.state.project, expected);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
+        assert!(editor.input().calibration().unwrap().validate().is_err());
     }
 }
 

@@ -826,9 +826,6 @@ impl Project {
                 )?;
             }
         }
-        if let Some(negative) = self.input.negative_input() {
-            negative.parameters()?;
-        }
         if let Some(scan) = &self.scan {
             scan.basis.validate()?;
             if let Some(field) = &scan.flat_field {
