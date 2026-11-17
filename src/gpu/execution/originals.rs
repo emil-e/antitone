@@ -419,26 +419,29 @@ pub(crate) fn execute(
                     },
                     &|| {},
                 ),
-                evaluation::Sink {
-                    encode: |encoder: &mut wgpu::CommandEncoder,
-                             image: evaluation::PlannedImage,
-                             pixels: &wgpu::Buffer| {
-                        reconstruction.encode_pixels(device, encoder, pixels, image.cells())?;
-                        #[cfg(all(test, target_os = "macos", feature = "export"))]
-                        if let Some(probe) = timing.borrow_mut().as_mut() {
-                            probe.resolve(encoder);
-                            probe.submitting();
-                        }
-                        Ok(())
+                (
+                    evaluation::Sink {
+                        encode: |encoder: &mut wgpu::CommandEncoder,
+                                 image: evaluation::PlannedImage,
+                                 pixels: &wgpu::Buffer| {
+                            reconstruction.encode_pixels(device, encoder, pixels, image.cells())?;
+                            #[cfg(all(test, target_os = "macos", feature = "export"))]
+                            if let Some(probe) = timing.borrow_mut().as_mut() {
+                                probe.resolve(encoder);
+                                probe.submitting();
+                            }
+                            Ok(())
+                        },
+                        submitted: || {
+                            *receiver.borrow_mut() = Some(reconstruction.arm(extent));
+                            #[cfg(all(test, target_os = "macos", feature = "export"))]
+                            if let Some(probe) = timing.borrow_mut().as_mut() {
+                                probe.arm();
+                            }
+                        },
                     },
-                    submitted: || {
-                        *receiver.borrow_mut() = Some(reconstruction.arm(extent));
-                        #[cfg(all(test, target_os = "macos", feature = "export"))]
-                        if let Some(probe) = timing.borrow_mut().as_mut() {
-                            probe.arm();
-                        }
-                    },
-                },
+                    None,
+                ),
             )?;
             let Some(_executed) = executed else {
                 return Err(interrupted.into_inner().unwrap_or(Error::Cancelled));

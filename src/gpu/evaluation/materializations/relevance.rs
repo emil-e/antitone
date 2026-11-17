@@ -87,6 +87,21 @@ impl Materializations {
         &self,
         images: impl IntoIterator<Item = &'a Arc<ImageValue>>,
     ) {
+        self.use_values(images, false);
+    }
+
+    pub(in crate::gpu::evaluation) fn submitted_values<'a>(
+        &self,
+        images: impl IntoIterator<Item = &'a Arc<ImageValue>>,
+    ) {
+        self.use_values(images, true);
+    }
+
+    fn use_values<'a>(
+        &self,
+        images: impl IntoIterator<Item = &'a Arc<ImageValue>>,
+        submitted: bool,
+    ) {
         let images: HashSet<_> = images.into_iter().map(Arc::as_ptr).collect();
         if images.is_empty() {
             return;
@@ -105,6 +120,17 @@ impl Materializations {
                 entries.push_back(entry);
             }
         }
-        entries.extend(used);
+        for entry in used {
+            if submitted
+                && entry.retain
+                && entry.lease.is_none()
+                && let Some(image) = entry.value.image()
+                && let Some(bytes) = image.bytes()
+            {
+                self.completed(&mut entries, entry, &image, bytes);
+            } else {
+                entries.push_back(entry);
+            }
+        }
     }
 }

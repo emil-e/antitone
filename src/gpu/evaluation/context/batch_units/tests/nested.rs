@@ -88,7 +88,7 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
     let gate = crate::gpu::submission::SubmissionGate::default();
     for (evaluation, bias) in evaluations.iter().zip([5., 9.]) {
         let scope = context.test_materializations(false);
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let worker = Worker {
             context: &context,
             queue: &queue,
@@ -110,7 +110,7 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
         );
     }
     let scope = context.test_materializations(false);
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let worker = Worker {
         context: &context,
         queue: &queue,

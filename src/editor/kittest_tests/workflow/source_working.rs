@@ -612,7 +612,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
 }
 
 #[test]
-fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspection_and_navigation() {
+fn uncalibrated_source_keeps_coherent_detail_and_inspection_through_zero_retention_navigation() {
     editor_harness(|mut harness, _| {
         harness.update(|editor| {
             editor
@@ -650,7 +650,6 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
         // A remembered positive comparison must neither replace source working detail on idle nor
         // force an optional reference past the zero budget while its control is hidden.
         harness.update(|editor| editor.document.visit.working_view.compare = true);
-        let hold = crate::background::testing::pause();
         for (index, delta) in [egui::vec2(400., 0.), egui::vec2(-800., 100.)]
             .into_iter()
             .enumerate()
@@ -680,23 +679,24 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 project.output.tiff = crate::project::TiffTarget::Srgb;
             }
             wait_for(&mut harness, |e| {
-                e.document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .is_some_and(|v| {
-                        v.spec.frame() == e.document.visit.working_view.current_frame().unwrap()
-                            && Some(&v.processing())
-                                == e.document.visit.working_view.processing().as_ref()
-                            && v.target == e.document.target()
-                    })
+                e.document.visit.working_view.support_ready()
+                    && e.document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .is_some_and(|v| {
+                            v.spec.frame() == e.document.visit.working_view.current_frame().unwrap()
+                                && Some(&v.processing())
+                                    == e.document.visit.working_view.processing().as_ref()
+                                && v.target == e.document.target()
+                        })
             });
             harness.render().unwrap();
-            harness.read(|editor| assert!(!editor.document.visit.working_view.support_ready()));
+            harness.read(|editor| assert!(editor.document.visit.working_view.support_ready()));
             harness.read(|editor| {
                 assert!(
-                    editor
+                    !editor
                         .document
                         .visit
                         .working_view
@@ -734,13 +734,21 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     "inspection EV and navigation do not alter the document"
                 )
             });
-            harness.read(|editor| assert!(
-            !Arc::ptr_eq(
-                editor.document.visit.working_view.displayed.as_ref().unwrap(),
-                editor.document.visit.working_view.regional().unwrap()
-            ),
-            "the physical-frame underlay composite, not only a transformed regional patch, is painted"
-        ));
+            harness.read(|editor| {
+                assert!(
+                    Arc::ptr_eq(
+                        editor
+                            .document
+                            .visit
+                            .working_view
+                            .displayed
+                            .as_ref()
+                            .unwrap(),
+                        editor.document.visit.working_view.regional().unwrap()
+                    ),
+                    "the completed current view replaces the transformed fallback"
+                )
+            });
             let held = harness.read(|editor| {
                 editor
                     .document
@@ -770,9 +778,8 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     "idle does not replace source detail"
                 )
             });
-            harness.read(|editor| assert!(editor.document.visit.working_view.task.is_some()));
+            harness.read(|editor| assert!(editor.document.visit.working_view.task.is_none()));
         }
-        drop(hold);
         wait_for(&mut harness, |e| {
             e.document.visit.working_view.support_ready()
         });

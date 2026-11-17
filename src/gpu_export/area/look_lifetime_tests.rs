@@ -8,6 +8,11 @@ use crate::processing::Calibration;
 fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_stop() {
     let (device, queue, renderer) = super::super::tests::context();
     let gate = SubmissionGate::default();
+    // Exercise changing production layouts rather than reuse of retained source images.
+    renderer
+        .evaluation()
+        .materializations()
+        .set_test_pressure(crate::sys::MemoryPressure::Warning);
     let scan = Scan::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,

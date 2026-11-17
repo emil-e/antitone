@@ -11,7 +11,7 @@ pub struct Worker<'a> {
     pub gate: &'a crate::gpu::submission::SubmissionGate,
     pub scope: &'a Materializations,
     pub budget: Budget,
-    pub working: &'a HostWorkingSet,
+    pub working: &'a RunWorkingSet,
     pub cancelled: &'a dyn Fn() -> bool,
     pub progress: &'a dyn Fn(),
 }
@@ -75,6 +75,7 @@ pub(super) fn admitted_plans<'a>(
 
 impl Production<'_> {
     pub(crate) fn produce(&self, evaluation: &Evaluation) -> Result<WorkCounts, Error> {
+        let _target = self.working.activate_buffer(self.pixels);
         let evaluation = evaluation.clone().with_materializations(self.scope.clone());
         let node = evaluation.job.image();
         let stored = super::super::materialized::Stored::find(
@@ -132,10 +133,13 @@ impl Production<'_> {
             (self.queue, self.gate),
             plan,
             (self.cancelled, self.progress),
-            Sink {
-                encode: sink,
-                submitted: || {},
-            },
+            (
+                Sink {
+                    encode: sink,
+                    submitted: || {},
+                },
+                Some(self.pixels),
+            ),
         )
     }
 
@@ -156,19 +160,28 @@ impl Production<'_> {
                 .flat_map(|tile| &tile.fragment.work)
                 .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }));
         if resident {
+            let _target = self.working.activate_buffer(self.pixels);
             let recorded = self.executor().prepare(self.context.device(), plan)?;
             let mut encoder = self
                 .context
                 .device()
                 .create_command_encoder(&Default::default());
-            let mut stats =
-                recorded.encode_result_counts(self.context.device(), &mut encoder, self.pixels)?;
+            let encoded =
+                recorded.encode_result_owned(self.context.device(), &mut encoder, self.pixels)?;
+            let mut stats = encoded.counts;
             stats.include(recorded.preparation.clone());
-            self.context
-                .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
-                    recorded.submitted()
-                })?
-                .ok_or(Error::Cancelled)?;
+            let resources = encoded.resources;
+            if (self.cancelled)() {
+                return Err(Error::Cancelled);
+            }
+            self.working.submit_gpu(
+                self.context.device(),
+                (self.queue, self.gate),
+                encoder,
+                resources,
+                (encoded.working_bytes, recorded.plan_budget()),
+                || recorded.submitted(),
+            )?;
             stats.submitted();
             Ok(stats)
         } else {
@@ -200,18 +213,30 @@ impl Worker<'_> {
         plan: Plan,
         inputs: &[&wgpu::Buffer],
     ) -> Result<WorkCounts, Error> {
+        let mut borrowed = Allocations::default();
+        for input in inputs {
+            borrowed.buffer(input);
+        }
+        let _inputs = self.working.activate(borrowed);
         let recorded = self.executor().prepare(self.context.device(), plan)?;
         let mut encoder = self
             .context
             .device()
             .create_command_encoder(&Default::default());
-        let mut stats = recorded.encode_work(self.context.device(), &mut encoder, inputs)?;
+        let encoded = recorded.encode_work_owned(self.context.device(), &mut encoder, inputs)?;
+        let mut stats = encoded.counts;
         stats.include(recorded.preparation.clone());
-        self.context
-            .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
-                recorded.submitted()
-            })?
-            .ok_or(Error::Cancelled)?;
+        if (self.cancelled)() {
+            return Err(Error::Cancelled);
+        }
+        self.working.submit_gpu(
+            self.context.device(),
+            (self.queue, self.gate),
+            encoder,
+            encoded.resources,
+            (encoded.working_bytes, recorded.plan_budget()),
+            || recorded.submitted(),
+        )?;
         stats.submitted();
         Ok(stats)
     }
@@ -229,7 +254,7 @@ impl Context {
         (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         plan: &Plan,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
-        sink: Sink<E, S>,
+        sink: (Sink<E, S>, Option<&wgpu::Buffer>),
     ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,

@@ -483,7 +483,7 @@ pub(super) fn evaluate_region(
         Err(error) => return Err(error),
     };
     let node = calculation.clone();
-    let discover = planning.scope.is_some() && value::pixel_kernel(&node);
+    let discover = planning.scope.is_some() && value::pixel_materialization(&node);
 
     if policy == Policy::Composed
         && let Some(graph) = value::FunctionGraph::new(&node)?

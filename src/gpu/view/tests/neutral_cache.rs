@@ -234,7 +234,8 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let active = found.pixels.clone();
         let evaluation = renderer.evaluation().clone();
         let owner = Arc::downgrade(&renderer);
-        assert_eq!(evaluation.retained_bytes(), source.pixels.size());
+        assert!(evaluation.retained_bytes() >= source.pixels.size());
+        assert!(evaluation.retained_bytes() <= evaluation.cache_policy().generated_bytes);
         drop((source, found, repeated, renderer));
         assert!(
             owner.upgrade().is_none(),

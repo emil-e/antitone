@@ -66,7 +66,6 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             .evaluation()
             .materializations()
             .set_test_pressure(pressure);
-        editor.document.visit.camera.pressure(pressure);
         let pixels = editor.source_context().unwrap();
         let scan = pixels.scan().unwrap();
         let (graph, _) = crate::gpu::photograph::PhotographGraph::preview(
@@ -87,6 +86,8 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
                 .identity(),
             "this viewport must actually omit the other repair from its content description"
         );
+        let submissions = editor.submissions.clone();
+        let services = editor.source_services.as_ref().unwrap().clone();
         let mut constant: Option<[f32; 4]> = None;
         with_application(editor, |app| {
             for frame in [full, left, right, left, full] {
@@ -117,6 +118,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
                         .unwrap()
                         .clone()
                 });
+                complete_frame(&acquired, &services, &submissions);
                 assert_eq!(acquired.request.frame, frame);
                 assert!(acquired.request.same_calculation(&demand));
                 let produced = &acquired.source;

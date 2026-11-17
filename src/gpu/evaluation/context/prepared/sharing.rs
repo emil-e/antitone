@@ -11,6 +11,7 @@ struct Node {
     parents: HashSet<(usize, usize)>,
     children: HashSet<usize>,
     source_work: bool,
+    missing: bool,
 }
 
 struct DependencyDemand {
@@ -81,6 +82,7 @@ fn discover(
                     parents: HashSet::new(),
                     children: HashSet::new(),
                     source_work: false,
+                    missing: false,
                 });
                 index
             });
@@ -97,14 +99,15 @@ fn discover(
         }
         nodes[index].regions.push(region);
         if let Some(stored) = Stored::find(Some(scope), supplied, &value, region).ok()? {
+            nodes[index].source_work = true;
             for image in stored.images() {
-                nodes[index].source_work |= image.admitted();
                 if !held.iter().any(|prior| Arc::ptr_eq(prior, image)) {
                     held.push(image.clone());
                 }
             }
             continue;
         }
+        nodes[index].missing = true;
         nodes[index].source_work |= value.operation().source().is_some();
         for read in value.operation().reads(region).ok()? {
             let input = value.inputs().get(read.input)?;
@@ -127,7 +130,8 @@ fn discover(
     while let Some(index) = ready.pop() {
         let node = &nodes[index];
         // Stream a missing projection before its consumers; completed projections stay inputs.
-        let spatial = node.source_work
+        let spatial = node.missing
+            && node.source_work
             && !node.parents.is_empty()
             && node.value.inputs().iter().any(|input| {
                 input.domain().meaning == node.value.domain().meaning

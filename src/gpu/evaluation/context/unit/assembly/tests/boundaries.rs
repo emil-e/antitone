@@ -6,7 +6,7 @@ fn a_single_oversize_host_or_preexisting_gpu_value_keeps_one_unit_transfer_behav
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
     let gate = crate::gpu::submission::SubmissionGate::default();
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let region = [0, 0, 4, 2].into();
     let destination = gpu(&device, &[[0.; 4]; 8]);
     let production = Production {
@@ -64,7 +64,7 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
     let gate = crate::gpu::submission::SubmissionGate::default();
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let cancelled = || std::time::Instant::now() >= deadline;
     let budget = Budget {
@@ -115,9 +115,15 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
         .unit_image_before(&root, unit, &mut WorkCounts::default(), || {
             copies.flush(&production)?;
             assert!(
-                weak.upgrade().is_none(),
-                "release previous copy inputs before waiting for more work"
+                copies.images.is_empty(),
+                "commit pending copies before waiting for more work"
             );
+            if let Some(image) = weak.upgrade() {
+                assert!(
+                    working.submitted_owns(&image),
+                    "in-flight inputs retain completion-owned storage"
+                );
+            }
             producer
                 .take()
                 .unwrap()
@@ -135,6 +141,8 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     assert_eq!(image.as_host().unwrap(), field(right));
     copies.copy(&production, image, right, right).unwrap();
     copies.flush(&production).unwrap();
+    working.finish_gpu().unwrap();
+    assert!(weak.upgrade().is_none());
     assert_eq!(copies.counts.submissions, 2);
     let actual = super::super::super::super::super::execute::read(
         &device,

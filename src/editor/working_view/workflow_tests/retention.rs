@@ -57,11 +57,6 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
             .unwrap();
         let store = renderer.evaluation().materializations();
         store.set_test_pressure(crate::sys::MemoryPressure::Normal);
-        editor
-            .document
-            .visit
-            .camera
-            .pressure(memory::Pressure::Normal);
         with_application(editor, |app| {
             app.enter(|editor, cx| editor.request_working(demand.clone(), cx));
             app.run_until(Duration::from_secs(15), |editor| {
@@ -105,11 +100,6 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
                 );
             }
             app.enter(|editor, cx| {
-                editor
-                    .document
-                    .visit
-                    .camera
-                    .pressure(memory::Pressure::Normal);
                 editor.request_working(demand.clone(), cx);
             });
             app.run_until(Duration::from_secs(15), |editor| {

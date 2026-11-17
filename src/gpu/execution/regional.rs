@@ -170,7 +170,7 @@ pub(crate) fn execute(
                     gate,
                     scope: &scope,
                     budget,
-                    working: &evaluation::HostWorkingSet::default(),
+                    working: &evaluation::RunWorkingSet::default(),
                     cancelled: &cancelled,
                     progress: &|| {},
                 },

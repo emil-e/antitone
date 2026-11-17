@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod lifetimes;
+
 fn domain(meaning: Meaning) -> Domain {
     Domain {
         bounds: Some([4, 5, 8, 6].into()),
@@ -433,6 +435,185 @@ fn source_texture_uploads_are_bounded_and_preserve_every_row_across_strips() {
                 [sx + 0.125, -sy - 0.5, 100_000.25 + sy + sx, 8.],
                 "uploaded source ({x},{y})"
             );
+        }
+    }
+}
+
+#[test]
+fn uploaded_inputs_reuse_the_common_budget_across_changed_consumers() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    for capacity in [0, 4096] {
+        let data = Codes::new(17);
+        let original = source(Arc::new(data.clone()));
+        let context = Context::new(
+            &device,
+            CachePolicy {
+                generated_bytes: capacity,
+            },
+        );
+        let scope = context.materializations();
+        let mut first_reads = 0;
+        for factor in [1, 2] {
+            let root = value::pointwise(
+                original.clone(),
+                Meaning::Neutral,
+                value::Operation::new(
+                    "uploaded value consumer",
+                    factor,
+                    format!("fn multiply(p:vec2i,at:vec2f,pixel:vec4f)->vec4f{{return vec4f(pixel.rgb*{factor}.,pixel.a);}}"),
+                    "multiply",
+                    value::Access::Pointwise,
+                ),
+            ).unwrap();
+            let result = pollster::block_on(
+                context
+                    .materialize(
+                        &queue,
+                        &Default::default(),
+                        &scope,
+                        request(&context, root, original.domain().finite().unwrap()),
+                        ImageFormat::Rgba32Float,
+                        ImageBacking::Buffer,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                execute::read(&device, &queue, result.as_buffer().unwrap()),
+                data.values
+                    .iter()
+                    .map(|p| [
+                        f32::from(p[0]) * factor as f32,
+                        f32::from(p[1]) * factor as f32,
+                        f32::from(p[2]) * factor as f32,
+                        f32::from(p[3]),
+                    ])
+                    .collect::<Vec<_>>()
+            );
+            if factor == 1 {
+                first_reads = data.reads.load(Ordering::Relaxed);
+                assert!(first_reads > 0);
+            } else if capacity == 0 {
+                assert!(data.reads.load(Ordering::Relaxed) > first_reads);
+                assert_eq!(context.retained_bytes(), 0);
+            } else {
+                assert_eq!(data.reads.load(Ordering::Relaxed), first_reads);
+                assert!(context.retained_bytes() <= capacity);
+            }
+        }
+    }
+}
+
+#[test]
+fn overlapping_stored_support_covers_a_demand_without_reacquiring_the_overlap() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    for (format, backing) in [
+        (ImageFormat::Rgba16Uint, ImageBacking::Texture),
+        (ImageFormat::Rgba32Float, ImageBacking::Buffer),
+    ] {
+        let data = Codes::new(7);
+        let original = source(Arc::new(data.clone()));
+        let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+        let scope = context.test_materializations(false);
+        let owners: Vec<_> = [[4, 5, 8, 4], [4, 8, 8, 3]]
+            .into_iter()
+            .map(|region| {
+                pollster::block_on(
+                    context
+                        .materialize(
+                            &queue,
+                            &Default::default(),
+                            &scope,
+                            request(&context, original.clone(), region.into()),
+                            format,
+                            backing,
+                        )
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let before = data.reads.load(Ordering::Relaxed);
+        assert_eq!(before, 2);
+        let result = roundtrip(&context, &queue, &scope, original);
+        assert_eq!(data.reads.load(Ordering::Relaxed), before);
+        assert_eq!(
+            execute::read(&device, &queue, result.as_buffer().unwrap()),
+            data.values
+                .iter()
+                .map(|pixel| pixel.map(f32::from))
+                .collect::<Vec<_>>()
+        );
+        drop(owners);
+    }
+}
+
+#[test]
+fn overlapping_materializations_do_not_hide_a_hole_in_their_union() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let data = Codes::new(7);
+    let original = source(Arc::new(data.clone()));
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.test_materializations(false);
+    let owners: Vec<_> = [[4, 5, 5, 6], [8, 5, 4, 2], [8, 9, 4, 2]]
+        .into_iter()
+        .map(|region| {
+            pollster::block_on(
+                context
+                    .materialize(
+                        &queue,
+                        &Default::default(),
+                        &scope,
+                        request(&context, original.clone(), region.into()),
+                        ImageFormat::Rgba16Uint,
+                        ImageBacking::Texture,
+                    )
+                    .unwrap(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let before = data.reads.load(Ordering::Relaxed);
+    let result = roundtrip(&context, &queue, &scope, original);
+    assert!(data.reads.load(Ordering::Relaxed) > before);
+    assert_eq!(
+        execute::read(&device, &queue, result.as_buffer().unwrap()),
+        data.values
+            .iter()
+            .map(|pixel| pixel.map(f32::from))
+            .collect::<Vec<_>>()
+    );
+    drop(owners);
+}
+
+#[test]
+fn subtracting_stored_coverage_partitions_only_the_uncovered_cells() {
+    let region = Rect::from([-3, -4, 8, 9]);
+    for cover in [
+        [-8, -7, 3, 2],
+        [-7, -6, 6, 5],
+        [-1, -2, 3, 4],
+        [-8, -7, 20, 20],
+        [2, 2, 6, 6],
+        [5, -4, 2, 9],
+    ] {
+        let cover = Rect::from(cover);
+        let parts = subtract(region, cover);
+        for part in &parts {
+            assert!(region.contains_region(*part));
+        }
+        for y in region.y..region.bottom() {
+            for x in region.x..region.right() {
+                let cell = Rect::from([x, y, 1, 1]);
+                assert_eq!(
+                    parts
+                        .iter()
+                        .filter(|part| part.contains_region(cell))
+                        .count(),
+                    usize::from(!cover.contains_region(cell)),
+                    "cell ({x},{y}), cover {cover:?}"
+                );
+            }
         }
     }
 }

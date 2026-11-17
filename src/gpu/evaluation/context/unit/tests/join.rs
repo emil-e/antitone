@@ -328,7 +328,7 @@ fn consume_backend(
     thread::spawn(move || {
         let scope = context.materializations();
         let gate = crate::gpu::submission::SubmissionGate::default();
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let cancelled = || stop.load(Ordering::Acquire);
         let worker = Worker {
             context: &context,
@@ -903,7 +903,7 @@ fn bounded_run_ownership_uses_common_discovery_without_optional_retention() {
     let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
-    let working = HostWorkingSet::new(32);
+    let working = RunWorkingSet::new(32);
     let layout = ImageLayout {
         domain: Ramp.domain(),
         region: [0, 0, 2, 1].into(),

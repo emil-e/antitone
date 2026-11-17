@@ -242,6 +242,13 @@ fn run(
     total: u64,
     counts: &mut WorkCounts,
 ) -> Vec<Option<UnitResult>> {
+    if let Err(error) =
+        worker
+            .working
+            .admit_gpu(worker.context.device(), total, worker.budget.scratch_bytes)
+    {
+        return targets.iter().map(|_| Some(Err(error.clone()))).collect();
+    }
     let mut running = Vec::new();
     let mut failed = vec![None; targets.len()];
     for (i, (target, (_, producer))) in targets.iter_mut().zip(claims).enumerate() {

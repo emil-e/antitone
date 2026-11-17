@@ -20,23 +20,14 @@ fn image(device: &wgpu::Device, key: u32, value: f32) -> Image<ImageLayout> {
 }
 
 #[test]
-fn phase_inputs_remain_discoverable_until_their_last_live_owner_retires() {
+fn zero_retention_preserves_published_inputs_until_their_last_live_owner_retires() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let context = Context::new(
-        &device,
-        CachePolicy {
-            generated_bytes: 128,
-        },
-    );
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let store = context.materializations();
     let input = image(&device, 1, 2.);
-    store.submitted_input(&input);
-    store.submitted_input(&input);
-    assert_eq!(
-        context.retained_bytes(),
-        0,
-        "publishing the same phase argument twice must not turn it into optionally retained output"
-    );
+    store.submitted_image(&input);
+    store.submitted_image(&input);
+    assert_eq!(context.retained_bytes(), 0);
     let joined = store
         .find_ready::<ImageLayout>(&input.identity, |_| true)
         .unwrap();
@@ -49,14 +40,11 @@ fn phase_inputs_remain_discoverable_until_their_last_live_owner_retires() {
         "another live consumer keeps the real pixels usable"
     );
     drop(joined);
-    assert!(
-        store.find_ready::<ImageLayout>(&key, |_| true).is_none(),
-        "an unused phase argument must release discovery rather than occupy the cache"
-    );
+    assert!(store.find_ready::<ImageLayout>(&key, |_| true).is_none());
 }
 
 #[test]
-fn a_stream_of_phase_inputs_does_not_evict_a_selected_calculation_result() {
+fn published_inputs_compete_with_other_results_under_the_same_retention_budget() {
     let (device, _, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -69,29 +57,26 @@ fn a_stream_of_phase_inputs_does_not_evict_a_selected_calculation_result() {
     let key = selected.identity.clone();
     store.submitted_image(&selected);
     drop(selected);
+    let mut last = None;
     for index in 0..64 {
         let input = image(&device, index, index as f32);
-        store.submitted_input(&input);
-        assert!(
-            store
-                .find_ready::<ImageLayout>(&input.identity, |_| true)
-                .is_some()
-        );
+        store.submitted_image(&input);
+        last = Some(input.identity.clone());
         drop(input);
+        assert!(context.retained_bytes() <= 128);
     }
-    assert_eq!(
-        context.retained_bytes(),
-        64,
-        "only the selected output needs optional cache ownership"
-    );
+    assert_eq!(context.retained_bytes(), 128);
+    assert!(store.find_ready::<ImageLayout>(&key, |_| true).is_none());
     assert!(
-        store.find_ready::<ImageLayout>(&key, |_| true).is_some(),
-        "transient input churn must not discard the selected reuse boundary"
+        store
+            .find_ready::<ImageLayout>(&last.unwrap(), |_| true)
+            .is_some(),
+        "a submitted input remains reusable after its producer retires"
     );
 }
 
 #[test]
-fn phase_publication_preserves_an_independently_selected_results_retention() {
+fn repeated_publication_retains_one_physical_result_once() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -103,7 +88,7 @@ fn phase_publication_preserves_an_independently_selected_results_retention() {
     let selected = image(&device, 1, 4.);
     let key = selected.identity.clone();
     store.submitted_image(&selected);
-    store.submitted_input(&selected);
+    store.submitted_image(&selected);
     drop(selected);
     let retained = store.find_ready::<ImageLayout>(&key, |_| true).unwrap();
     assert_eq!(context.retained_bytes(), 64);
@@ -111,6 +96,52 @@ fn phase_publication_preserves_an_independently_selected_results_retention() {
         execute::read(&device, &queue, retained.as_buffer().unwrap()),
         [[4., -0.25, 3., 9.]; 4]
     );
+}
+
+#[test]
+fn submitted_use_can_restore_optional_ownership_after_pressure_but_discovery_cannot() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 128,
+        },
+    );
+    let store = context.materializations();
+    let input = image(&device, 1, 3.);
+    store.submitted_image(&input);
+    assert_eq!(context.retained_bytes(), 64);
+    store.set_retention_enabled(false);
+    assert_eq!(context.retained_bytes(), 0);
+    store.set_retention_enabled(true);
+    drop(
+        store
+            .find_ready::<ImageLayout>(&input.identity, |_| true)
+            .unwrap(),
+    );
+    assert_eq!(context.retained_bytes(), 0);
+    let target = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 64,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(input.as_buffer().unwrap(), 0, &target, 0, 64);
+    queue.submit([encoder.finish()]);
+    store.submitted_values([&input.image]);
+    assert_eq!(context.retained_bytes(), 64);
+    assert_eq!(
+        execute::read(&device, &queue, &target),
+        [[3., -0.25, 3., 9.]; 4]
+    );
+    let key = input.identity.clone();
+    drop(input);
+    assert!(store.find_ready::<ImageLayout>(&key, |_| true).is_some());
+    store.set_retention_enabled(false);
+    assert!(store.find_ready::<ImageLayout>(&key, |_| true).is_none());
 }
 
 #[test]
@@ -137,15 +168,11 @@ fn phase_publication_preserves_an_independent_pending_requests_optional_ownershi
         pending.as_mut().poll(&mut task).is_pending(),
         "the independent request must actually be pending when the phase publishes"
     );
-    store.submitted_input(&input);
+    store.submitted_image(&input);
     let published = store
         .find_ready::<ImageLayout>(&input.identity, |_| true)
         .unwrap();
-    assert_eq!(
-        context.retained_bytes(),
-        64,
-        "an explicit pending calculation still selects this result for retention"
-    );
+    assert_eq!(context.retained_bytes(), 64);
     send.send(input.image.clone()).unwrap();
     let completed = pollster::block_on(pending).unwrap();
     assert!(Arc::ptr_eq(&completed.image, &published.image));

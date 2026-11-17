@@ -45,8 +45,6 @@ pub struct Context {
     device: wgpu::Device,
     pub(crate) programs: Arc<Programs>,
     retention: cache::Allowance,
-    #[cfg(feature = "editor")]
-    pub(super) active_inputs: cache::Allowance,
     products: Materializations,
 }
 
@@ -59,8 +57,6 @@ impl Context {
             products: Materializations::new(programs.clone(), retention.clone()),
             programs,
             retention,
-            #[cfg(feature = "editor")]
-            active_inputs: cache::Allowance::new(super::inputs::capacity(device)),
         }
     }
 
@@ -361,10 +357,13 @@ impl Context {
                 (queue, gate),
                 &plan?,
                 (&cancelled, &|| {}),
-                Sink {
-                    encode: &mut sink.encode,
-                    submitted: &mut sink.submitted,
-                },
+                (
+                    Sink {
+                        encode: &mut sink.encode,
+                        submitted: &mut sink.submitted,
+                    },
+                    None,
+                ),
             )?
             else {
                 return Ok(None);

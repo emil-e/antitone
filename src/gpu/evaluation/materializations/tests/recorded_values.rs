@@ -194,7 +194,41 @@ fn cold_recorded_calculation_keeps_intermediate_publication_through_real_zero_re
 }
 
 #[test]
-fn live_compiler_values_become_optional_retention_only_through_an_image_demand() {
+fn abandoned_recording_releases_its_materialization_reservation_without_publication() {
+    let (device, _, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 4096,
+        },
+    );
+    let scope = context.materializations();
+    let (seed, root, domain, region) = recording_values();
+    let key = seed.identity().unwrap().clone();
+    let request = context
+        .request(
+            root,
+            Region {
+                bounds: region,
+                grid: domain.grid,
+            },
+            Budget {
+                tile: [4, 1],
+                scratch_bytes: 1 << 20,
+            },
+        )
+        .unwrap()
+        .with_policy(Policy::Materialized);
+    let recorded = context.record(request, scope.clone(), vec![]).unwrap();
+    assert_eq!(context.retained_bytes(), 64);
+    assert!(scope.find::<ImageLayout>(&key, |_| true).is_none());
+    drop(recorded);
+    assert_eq!(context.retained_bytes(), 0);
+    assert!(scope.find::<ImageLayout>(&key, |_| true).is_none());
+}
+
+#[test]
+fn submitted_compiler_values_share_retention_with_independent_image_demands() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -229,9 +263,10 @@ fn live_compiler_values_become_optional_retention_only_through_an_image_demand()
         .unwrap();
     assert_eq!(
         context.retained_bytes(),
-        0,
-        "recording a consumer must not select all compiler temporaries for retention"
+        64,
+        "recording reserves cache ownership without publishing unwritten pixels"
     );
+    assert!(scope.find::<ImageLayout>(&key, |_| true).is_none());
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: 64,
@@ -249,8 +284,8 @@ fn live_compiler_values_become_optional_retention_only_through_an_image_demand()
     let live = pollster::block_on(scope.find::<ImageLayout>(&key, |_| true).unwrap()).unwrap();
     assert_eq!(
         context.retained_bytes(),
-        0,
-        "live discovery does not imply optional retention"
+        64,
+        "a submitted immutable materialization is eligible for ordinary retention"
     );
     let selected = pollster::block_on(
         context

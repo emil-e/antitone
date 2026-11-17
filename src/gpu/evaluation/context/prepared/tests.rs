@@ -183,7 +183,7 @@ fn multiple_missing_operands_reserve_storage_or_use_bounded_execution() {
         assert!(matches!(prepared.work, PreparedWork::Produce(_)));
         assert!(prepared.dependencies.is_empty());
         let scope = context.materializations();
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let worker = Worker {
             context: &context,
             queue: &queue,

@@ -176,7 +176,7 @@ fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_rete
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
         let gate = crate::gpu::submission::SubmissionGate::default();
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let region = [0, 0, 8, 4].into();
         let destination = gpu(&device, &[[99.; 4]; 32]);
         let visible = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -266,7 +266,7 @@ fn cancellation_drops_unsubmitted_copies_and_finishes_committed_host_or_gpu_tran
             let scope = context.materializations();
             let gate = crate::gpu::submission::SubmissionGate::default();
             let submissions = Arc::new(AtomicUsize::new(0));
-            let working = HostWorkingSet::default();
+            let working = RunWorkingSet::default();
             let stop = Arc::new(AtomicBool::new(false));
             let cancelled = || stop.load(Ordering::Relaxed);
             let region = [0, 0, 2, 2].into();
@@ -310,6 +310,13 @@ fn cancellation_drops_unsubmitted_copies_and_finishes_committed_host_or_gpu_tran
             stop.store(!committed, Ordering::Relaxed);
             assert!(matches!(copies.flush(&production), Err(Error::Cancelled)));
             assert_eq!(submissions.load(Ordering::Relaxed), usize::from(committed));
+            if committed && !host {
+                let image = weak
+                    .upgrade()
+                    .expect("committed GPU input survives logical cancellation");
+                assert!(working.submitted_owns(&image));
+            }
+            working.finish_gpu().unwrap();
             assert!(weak.upgrade().is_none());
             // A later independent submission must not apply abandoned host writes.
             // Committed work, in contrast, must finish despite owner cancellation.
@@ -339,7 +346,7 @@ fn an_assembly_failure_does_not_cancel_an_independently_joined_unit() {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
         let gate = crate::gpu::submission::SubmissionGate::default();
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let stop = AtomicBool::new(false);
         let cancelled = || stop.load(Ordering::Relaxed);
         let worker = Worker {

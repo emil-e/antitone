@@ -708,6 +708,7 @@ impl Drop for WorkingView {
 
         drop(mailbox);
         drop(retired);
+        self.mailbox.1.notify(usize::MAX);
     }
 }
 
@@ -733,7 +734,7 @@ pub(super) async fn acquire_images(
                 .recipe()
                 .filter(|recipe| !recipe.repairs.is_empty())
             {
-                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = frame.output[0], height = frame.output[1], active_input_bytes = renderer.evaluation().active_input_bytes(), retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
+                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = frame.output[0], height = frame.output[1], retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
             }
         };
         trace("acquisition_started");
@@ -1022,11 +1023,7 @@ impl Acquisition {
         self,
         services: source::Services,
         submissions: crate::platform::SubmissionGate,
-        camera: super::photo_scope::camera::Ready,
     ) -> Result<Option<Completion>, String> {
-        if !camera.wait().await? {
-            return Ok(None);
-        }
         let kernels = self.kernels.clone();
         let prepared = crate::background::run(move |stop| {
             if stop.is_cancelled() {
@@ -1083,27 +1080,6 @@ impl Editor {
                 .acquisition_failed("Working-source services unavailable".into());
             return;
         };
-        let pixels = self
-            .document
-            .visit
-            .working_view
-            .wanted
-            .as_ref()
-            .unwrap()
-            .pixels
-            .clone();
-        let camera = match self.document.visit.camera.prepare(
-            &pixels,
-            services.clone(),
-            self.submissions.clone(),
-            cx,
-        ) {
-            Ok(camera) => camera,
-            Err(error) => {
-                self.document.visit.working_view.acquisition_failed(error);
-                return;
-            }
-        };
         let Some(request) = self.document.visit.working_view.acquisition() else {
             return;
         };
@@ -1114,7 +1090,7 @@ impl Editor {
         let submissions = self.submissions.clone();
         let mailbox = request.mailbox.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let acquisition = request.prepare(services, submissions, camera);
+            let acquisition = request.prepare(services, submissions);
             let support = async {
                 loop {
                     let changed = mailbox.1.listen();

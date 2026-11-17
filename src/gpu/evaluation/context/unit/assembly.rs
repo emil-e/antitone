@@ -20,10 +20,23 @@ impl Copies {
     pub fn flush(&mut self, production: &Production<'_>) -> Result<(), Error> {
         if let Some(encoder) = self.encoder.take() {
             let images = std::mem::take(&mut self.images);
-            self.bytes = 0;
+            let bytes = std::mem::take(&mut self.bytes);
             if (production.cancelled)() {
                 return Err(Error::Cancelled);
             }
+            let gpu_only = bytes <= production.budget.scratch_bytes
+                && images.iter().all(|input| input.image.as_buffer().is_some());
+            let mut resources = Allocations::default();
+            resources.buffer(production.pixels);
+            for input in &images {
+                resources.image(&input.image);
+            }
+            let _active = production.working.activate(resources.clone());
+            production.working.admit_gpu(
+                production.context.device(),
+                0,
+                production.budget.scratch_bytes,
+            )?;
             // Queue writes cannot be withdrawn. Defer host staging until the batch
             // commits, then finish that bounded submission even if its owner retires.
             for input in &images {
@@ -41,12 +54,22 @@ impl Copies {
                     }
                 }
             }
-            let result =
+            if gpu_only {
+                production.working.submit_gpu(
+                    production.context.device(),
+                    (production.queue, production.gate),
+                    encoder,
+                    resources,
+                    (bytes, production.budget.scratch_bytes),
+                    || {},
+                )?;
+            } else {
                 production
                     .context
-                    .submit(production.queue, production.gate, encoder, || false);
+                    .submit(production.queue, production.gate, encoder, || false)?
+                    .ok_or(Error::Cancelled)?;
+            }
             drop(images);
-            result?.ok_or(Error::Cancelled)?;
             if (production.cancelled)() {
                 return Err(Error::Cancelled);
             }

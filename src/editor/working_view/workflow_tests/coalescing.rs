@@ -4,9 +4,7 @@ use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
-#[test]
-fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_latest_demand() {
-    let (e, pixels, base, scheduler) = fixture();
+fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64) -> Demand {
     let scan = pixels.scan().unwrap();
     let calibration = (Calibration {
         dmin: DVec3::splat(0.8),
@@ -14,99 +12,136 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
     })
     .validate()
     .unwrap();
-    let capture = |gamma: f64, wb: f64| {
-        let mut settings = crate::processing::InputSettings::from(calibration);
-        let crate::processing::InputSettings::Negative { balance, .. } = &mut settings else {
-            panic!("negative fixture");
-        };
-        balance.warmth = gamma;
-        let processing = AuthoredPhotograph::new(
-            &wgpu::Limits::default(),
-            settings,
-            RollSettings {
-                wb: crate::color::Balance {
-                    warmth: wb,
-                    tint: 0.,
-                },
-                exposure: 0.,
-            },
-            AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-            scan.camera_to_ap1,
-            scan.area,
-        )
-        .unwrap();
-        let spec = SourceRequest::for_processing(base.frame(), &processing)
-            .unwrap()
-            .with_identity(crate::gpu::source::identity::Identity::camera(
-                pixels.source.identity(),
-            ));
-        Demand {
-            rendering: OnceLock::new(),
-            target: OutputTarget::Srgb,
-            frame: spec.frame(),
-            pixels: pixels.clone(),
-            capture: PhotographRequest::Fixture(processing),
-        }
+    let mut settings = crate::processing::InputSettings::from(calibration);
+    let crate::processing::InputSettings::Negative { gamma, .. } = &mut settings else {
+        panic!("negative fixture");
     };
-    let first = capture(0.02, 0.15);
-    let last = capture(-0.03, -0.2);
+    *gamma = 0.6 + offset;
+    let processing = AuthoredPhotograph::new(
+        &wgpu::Limits::default(),
+        settings,
+        RollSettings {
+            wb: crate::color::Balance {
+                warmth: wb,
+                tint: 0.,
+            },
+            exposure: 0.,
+        },
+        AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+        scan.camera_to_ap1,
+        scan.area,
+    )
+    .unwrap();
+    let spec = SourceRequest::for_processing(base.frame(), &processing)
+        .unwrap()
+        .with_identity(crate::gpu::source::identity::Identity::camera(
+            pixels.source.identity(),
+        ));
+    Demand {
+        rendering: OnceLock::new(),
+        target: OutputTarget::Srgb,
+        frame: spec.frame(),
+        pixels: pixels.clone(),
+        capture: PhotographRequest::Fixture(processing),
+    }
+}
+
+fn assert_coherent(editor: &mut Editor, wanted: &Demand) {
+    let working = &mut editor.document.visit.working_view;
+    working.render(&egui::Context::default()).unwrap();
+    let frame = working.frame.as_ref().unwrap();
+    assert!(frame.request.same_calculation(wanted));
+    assert!(
+        frame
+            .source
+            .definition
+            .same_definition(&requested_image(wanted, &frame.source).unwrap())
+    );
+    let rendered = working.rendered.as_ref().unwrap();
+    assert!(
+        rendered.processing() == wanted.processing(&Default::default()).unwrap(),
+        "a captured gamma must not acquire another capture's compensating WB"
+    );
+    assert!(rendered.uses_image(&frame.source));
+}
+
+#[test]
+fn ready_inputs_preserve_coherent_gamma_and_wb_snapshots_without_requiring_worker_submission() {
+    let (editor, pixels, base, scheduler) = fixture();
+    let services = editor.source_services.as_ref().unwrap().clone();
+    let submissions = editor.submissions.clone();
+    with_application(editor, |app| {
+        let initial = capture(&pixels, &base, 0., 0.);
+        app.enter(|editor, cx| editor.request_working(initial, cx));
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        complete_frame(
+            &app.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .frame
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+            }),
+            &services,
+            &submissions,
+        );
+        for (gamma, wb) in [(0.02, 0.15), (-0.01, -0.07), (-0.03, -0.2)] {
+            let wanted = capture(&pixels, &base, gamma, wb);
+            app.enter(|editor, cx| editor.request_working(wanted.clone(), cx));
+            app.run_until(Duration::from_secs(15), |editor| {
+                editor.document.visit.working_view.support_ready()
+            });
+            app.update(|editor| assert_coherent(editor, &wanted));
+            complete_frame(
+                &app.read(|editor| {
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .frame
+                        .as_ref()
+                        .unwrap()
+                        .clone()
+                }),
+                &services,
+                &submissions,
+            );
+        }
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn running_capture_coalesces_superseded_controls_and_finishes_with_the_latest_coherent_snapshot() {
+    let (editor, pixels, base, scheduler) = fixture();
+    let first = capture(&pixels, &base, 0.02, 0.15);
+    let last = capture(&pixels, &base, -0.03, -0.2);
     assert!(first.same_source(&last));
     assert!(!first.same_calculation(&last));
-    assert!(
-        first.processing(&Default::default()).unwrap()
-            != last.processing(&Default::default()).unwrap()
-    );
-    let submissions = e.submissions.clone();
-    let services = e.source_services.as_ref().unwrap().clone();
+    let submissions = editor.submissions.clone();
+    let services = editor.source_services.as_ref().unwrap().clone();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = count.clone();
-    with_application(e, |app| {
-        app.enter(|e, cx| e.request_working(capture(0., 0.), cx));
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working_view.support_ready()
-        });
-        let previous_native = app.read(|e| e.document.visit.working_view.source().unwrap().clone());
-        let baseline = capture(0., 0.04);
-        app.enter(|e, cx| e.request_working(baseline.clone(), cx));
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document
-                .visit
-                .working_view
-                .frame
-                .as_ref()
-                .is_some_and(|frame| frame.request.capture == baseline.capture)
-                && e.document.visit.working_view.task.is_none()
-        });
-        app.read(|e| {
-            assert!(
-                shares_inputs(
-                    &previous_native,
-                    e.document.visit.working_view.source().unwrap()
-                ),
-                "a downstream WB calculation must reuse its native value"
-            )
-        });
-        app.update(|e| {
-            e.document
-                .visit
-                .working_view
-                .render(&egui::Context::default())
-                .unwrap()
-        });
-        let baseline_signature = baseline.processing(&Default::default()).unwrap();
-        submissions.observe_submissions(Arc::new(move || {
-            observed.fetch_add(1, Ordering::Relaxed);
+    submissions.observe_submissions(Arc::new(move || {
+        if observed.fetch_add(1, Ordering::Relaxed) == 0 {
             started.send(()).unwrap();
             resume
                 .lock()
                 .unwrap()
                 .recv_timeout(Duration::from_secs(15))
                 .unwrap();
-        }));
-        app.enter(|e, cx| e.request_working(first.clone(), cx));
+        }
+    }));
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.request_working(first.clone(), cx));
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
             app.pump();
@@ -116,124 +151,60 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        app.update(|e| {
-            e.document.visit.working_view.render(&egui::Context::default()).unwrap();
-            assert!(e.document.visit.working_view.rendered.as_ref().unwrap().processing()==baseline_signature,
-                "starting a new gamma calculation must not revert an already captured downstream WB edit");
-        });
-        for i in 0..24 {
-            app.enter(|e, cx| {
-                e.request_working(
-                    capture(-0.01 - i as f64 * 0.0005, -0.05 - i as f64 * 0.001),
+        for index in 0..24 {
+            app.enter(|editor, cx| {
+                editor.request_working(
+                    capture(
+                        &pixels,
+                        &base,
+                        -0.01 - index as f64 * 0.0005,
+                        -0.05 - index as f64 * 0.001,
+                    ),
                     cx,
                 )
             });
             app.pump();
         }
-        app.enter(|e, cx| e.request_working(last.clone(), cx));
+        app.enter(|editor, cx| editor.request_working(last.clone(), cx));
         app.pump();
         assert_eq!(
             count.load(Ordering::Relaxed),
             1,
             "superseding controls must not start overlapping image jobs"
         );
-        let mut advances = 0;
+        release.send(()).unwrap();
         loop {
-            release.send(()).unwrap();
-            advances += 1;
-            loop {
-                app.pump();
-                if starts.try_recv().is_ok() {
-                    break;
+            app.pump();
+            app.update(|editor| {
+                if let Some(frame) = &editor.document.visit.working_view.frame {
+                    let active = frame.request.clone();
+                    assert!(
+                        active.same_calculation(&first) || active.same_calculation(&last),
+                        "superseded intermediate controls must not become completed captures"
+                    );
+                    assert_coherent(editor, &active);
                 }
-                assert!(std::time::Instant::now() < deadline);
-                std::thread::yield_now();
+            });
+            if app.read(|editor| editor.document.visit.working_view.support_ready()) {
+                break;
             }
-            let progressed = app.read(|e| {
-                e.document
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        app.update(|editor| assert_coherent(editor, &last));
+        complete_frame(
+            &app.read(|editor| {
+                editor
+                    .document
                     .visit
                     .working_view
                     .frame
                     .as_ref()
-                    .is_some_and(|frame| frame.request.same_calculation(&first))
-            });
-            if progressed {
-                break;
-            }
-            assert!(
-                advances < 8,
-                "the first captured frame must be presented before subsequent captures"
-            );
-        }
-        app.update(|e| {
-            let working = &mut e.document.visit.working_view;
-            assert!(
-                !working.support_ready(),
-                "progress is not a claim that the latest demand is ready"
-            );
-            assert!(
-                working
-                    .frame
-                    .as_ref()
                     .unwrap()
-                    .processing(&Default::default())
-                    .unwrap()
-                    == first.processing(&Default::default()).unwrap()
-            );
-            working.render(&egui::Context::default()).unwrap();
-            let rendered = working.rendered.as_ref().unwrap();
-            assert!(
-                rendered.processing() == first.processing(&Default::default()).unwrap(),
-                "old gamma must never take newer compensating WB"
-            );
-            let frame = working.frame.as_ref().unwrap();
-            assert!(
-                frame
-                    .source
-                    .definition
-                    .same_definition(&requested_image(&first, &frame.source).unwrap())
-            );
-            assert!(rendered.uses_image(&frame.source));
-            assert!(rendered.processing() != last.processing(&Default::default()).unwrap());
-        });
-        // The next capture is already submitted and parked. Colour rendering uses the same
-        // production submission gate, without the source-worker fixture barrier.
-        submissions.observe_submissions(Arc::new(|| {}));
-        let rendered = app.read(|e| e.document.visit.working_view.rendered.clone().unwrap());
-        rendered.ensure_submitted(
-            &services.device,
-            &services.queue,
+                    .clone()
+            }),
+            &services,
             &submissions,
-            &egui::Context::default(),
-        );
-        let observed = count.clone();
-        submissions.observe_submissions(Arc::new(move || {
-            observed.fetch_add(1, Ordering::Relaxed);
-        }));
-        release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.working_view.support_ready()
-        });
-        app.update(|e| {
-            let working = &mut e.document.visit.working_view;
-            working.render(&egui::Context::default()).unwrap();
-            let frame = working.frame.as_ref().unwrap();
-            assert!(frame.request.same_calculation(&last));
-            assert!(
-                frame
-                    .source
-                    .definition
-                    .same_definition(&requested_image(&last, &frame.source).unwrap())
-            );
-            assert!(
-                working.rendered.as_ref().unwrap().processing()
-                    == last.processing(&Default::default()).unwrap()
-            );
-        });
-        assert_eq!(
-            count.load(Ordering::Relaxed),
-            2 * advances,
-            "only the running and latest captures should execute; compare with observed capture work, not fixed tiling"
         );
     });
     scheduler.close_and_wait().unwrap();

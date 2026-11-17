@@ -222,7 +222,7 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let worker = Worker {
         context,
         queue: &queue,
