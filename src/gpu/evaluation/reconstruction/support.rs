@@ -22,6 +22,41 @@ impl Reconstruction {
         })
     }
 
+    /// Cover demand with disjoint slices anchored to the input lattice, not the viewport.
+    pub(super) fn input_slices(&self, demand: Rect, size: [u32; 2]) -> Result<WorkUnits, Error> {
+        tiled_units(self.covering_slices(demand, size)?, size)
+    }
+
+    pub(super) fn covering_slices(&self, demand: Rect, size: [u32; 2]) -> Result<Rect, Error> {
+        let origin = self
+            .input
+            .bounds
+            .map_or([0, 0], |bounds| [bounds.x, bounds.y]);
+        let low = [demand.x, demand.y];
+        let high = [demand.right(), demand.bottom()];
+        let first: [i32; 2] = std::array::from_fn(|axis| {
+            let step = i64::from(size[axis]);
+            let origin = i64::from(origin[axis]);
+            (origin + (i64::from(low[axis]) - origin).div_euclid(step) * step)
+                .max(i64::from(i32::MIN)) as i32
+        });
+        let last: [i32; 2] = std::array::from_fn(|axis| {
+            let step = i64::from(size[axis]);
+            let origin = i64::from(origin[axis]);
+            let end = origin + (i64::from(high[axis]) - origin + step - 1).div_euclid(step) * step;
+            let limit = self
+                .input
+                .bounds
+                .map_or(i32::MAX, |bounds| [bounds.right(), bounds.bottom()][axis]);
+            end.min(i64::from(limit)) as i32
+        });
+        Rect::new(
+            first,
+            std::array::from_fn(|axis| (i64::from(last[axis]) - i64::from(first[axis])) as u32),
+        )
+        .validate()
+    }
+
     pub(super) fn source_parts(&self, part: Rect, output: Rect) -> Vec<Rect> {
         let corners = [
             [output.x, output.y],

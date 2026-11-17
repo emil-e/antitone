@@ -8,6 +8,7 @@ mod tests;
 struct Node {
     value: Value,
     regions: Vec<CellRegion>,
+    source_slices: Vec<CellRegion>,
     parents: HashSet<(usize, usize)>,
     children: HashSet<usize>,
     source_work: bool,
@@ -17,7 +18,7 @@ struct Node {
 struct DependencyDemand {
     value: Value,
     region: CellRegion,
-    source_projection: bool,
+    kind: DependencyKind,
 }
 
 struct Discovery {
@@ -58,10 +59,10 @@ fn discover(
     let mut nodes = Vec::<Node>::new();
     let mut held = Vec::<Arc<ImageValue>>::new();
     let mut exact = HashMap::new();
-    let mut pending = vec![(root.clone(), region, None)];
+    let mut pending = vec![(root.clone(), region, None, false)];
     // Incomplete declarations or bounded discovery fall back to ordinary evaluation.
     let mut remaining = value::MAX_UNIT_VALUES;
-    while let Some((value, region, parent)) = pending.pop() {
+    while let Some((value, region, parent, acquisition)) = pending.pop() {
         remaining = remaining.checked_sub(1)?;
         let index = if let Some(index) = exact.get(&value.pointer()) {
             *index
@@ -79,6 +80,7 @@ fn discover(
                 nodes.push(Node {
                     value: value.clone(),
                     regions: Vec::new(),
+                    source_slices: Vec::new(),
                     parents: HashSet::new(),
                     children: HashSet::new(),
                     source_work: false,
@@ -94,10 +96,17 @@ fn discover(
             nodes[index].parents.insert((parent, input));
             nodes[parent].children.insert(index);
         }
-        if nodes[index].regions.contains(&region) {
+        let new_region = !nodes[index].regions.contains(&region);
+        let new_slice = acquisition && !nodes[index].source_slices.contains(&region);
+        if !new_region && !new_slice {
             continue;
         }
-        nodes[index].regions.push(region);
+        if new_region {
+            nodes[index].regions.push(region);
+        }
+        if new_slice {
+            nodes[index].source_slices.push(region);
+        }
         if let Some(stored) = Stored::find(Some(scope), supplied, &value, region).ok()? {
             nodes[index].source_work = true;
             for image in stored.images() {
@@ -114,7 +123,14 @@ fn discover(
             if !input.domain().contains_region(read.region) {
                 return None;
             }
-            pending.push((input.clone(), read.region, Some((index, read.input))));
+            let acquisition = read.acquisition
+                || acquisition && read.region == region && input.domain().same_grid(value.domain());
+            pending.push((
+                input.clone(),
+                read.region,
+                Some((index, read.input)),
+                acquisition,
+            ));
         }
     }
     let mut children = nodes
@@ -137,7 +153,26 @@ fn discover(
                 input.domain().meaning == node.value.domain().meaning
                     && input.domain().grid != node.value.domain().grid
             });
-        if node.parents.len() > 1 || spatial {
+        let source = !node.source_slices.is_empty()
+            && !node.parents.is_empty()
+            && node.value.operation().source().is_some()
+            && node.value.identity().is_some();
+        if source {
+            // Preserve declared source slices instead of joining them into a padded
+            // rectangle for each output unit. Downstream operations can still fuse.
+            for region in &node.source_slices {
+                if Stored::find(Some(scope), supplied, &node.value, *region)
+                    .ok()?
+                    .is_none()
+                {
+                    common.push(DependencyDemand {
+                        value: node.value.clone(),
+                        region: *region,
+                        kind: DependencyKind::SourceSlice,
+                    });
+                }
+            }
+        } else if node.parents.len() > 1 || spatial {
             let region = node
                 .regions
                 .first()
@@ -147,7 +182,11 @@ fn discover(
                 common.push(DependencyDemand {
                     value: node.value.clone(),
                     region,
-                    source_projection: spatial,
+                    kind: if spatial {
+                        DependencyKind::SourceProjection
+                    } else {
+                        DependencyKind::Shared
+                    },
                 });
             }
         }
@@ -199,7 +238,7 @@ impl Context {
         for DependencyDemand {
             value: image,
             region,
-            source_projection,
+            kind,
         } in demands
         {
             let bytes = u64::from(region.width) * u64::from(region.height) * 16;
@@ -212,8 +251,12 @@ impl Context {
                 continue;
             };
             let own = Budget {
+                tile: if image.operation().source().is_some() {
+                    [region.width, region.height]
+                } else {
+                    budget.tile
+                },
                 scratch_bytes: available,
-                ..budget
             };
             let Ok(request) = self.request(
                 image.clone(),
@@ -230,7 +273,8 @@ impl Context {
             let Ok(mut work) = self.prepare_base(request) else {
                 continue;
             };
-            if matches!(work.work, PreparedWork::Units) && !source_projection {
+            if matches!(work.work, PreparedWork::Units) && kind != DependencyKind::SourceProjection
+            {
                 continue;
             }
             let Some(next) = held
@@ -248,6 +292,7 @@ impl Context {
             };
             supplied.push(SuppliedImage::from_buffer(image, region, pixels.clone())?);
             work.destination = Some(pixels);
+            work.kind = kind;
             dependencies.push(work);
             held = next;
         }
@@ -268,12 +313,43 @@ impl Context {
         if matches!(result.work, PreparedWork::Cached(_)) {
             return Ok(Some(result));
         }
-        if matches!(result.work, PreparedWork::Units)
+        let source_dependencies = evaluation.job.supplied().is_empty()
+            && dependencies
+                .iter()
+                .all(|dependency| dependency.kind == DependencyKind::SourceSlice);
+        // Unit execution can discover published source pixels through the store;
+        // other prepared arguments still need their recorded bindings.
+        if matches!(result.work, PreparedWork::Units) && !source_dependencies
             || held
                 .checked_add(result.scratch_bytes())
                 .is_none_or(|bytes| bytes > budget.scratch_bytes)
         {
             return ordinary();
+        }
+        if matches!(result.work, PreparedWork::Units) {
+            // A deferred consumer has no scratch estimate. Check its ordinary
+            // bounded admission before reserving storage for the source slices.
+            let request = &result.evaluation;
+            let admitted = request
+                .job
+                .image()
+                .operation()
+                .work_units(request.job.region(), request.job.budget())
+                .and_then(|mut regions| {
+                    regions.try_for_each(|region| {
+                        super::super::production::admitted_plans(
+                            request.clone(),
+                            region,
+                            request.job.budget(),
+                            self.device.limits(),
+                            (&|| false, &|| {}),
+                        )
+                        .and_then(|mut plans| plans.try_for_each(|plan| plan.map(|_| ())))
+                    })
+                });
+            if admitted.is_err() {
+                return ordinary();
+            }
         }
         result.dependencies = dependencies;
         result.captured_inputs = inputs;

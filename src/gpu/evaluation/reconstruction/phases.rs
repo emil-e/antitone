@@ -12,7 +12,8 @@ impl Reconstruction {
         budget: Budget,
     ) -> Result<value::Calculation, Error> {
         use value::{Access as InputAccess, Calculation, Operation as Mathematics, Shape};
-        let demand = self.reads(output)?[0].region;
+        let demand = self.input_demand(output)?;
+        let aligned_inputs = self.tiled;
         let cells = u64::from(output.width.checked_mul(output.height).ok_or(
             Error::InvalidParameter("evaluation raster exceeds GPU cell addressing"),
         )?);
@@ -35,41 +36,55 @@ impl Reconstruction {
             })
             .product::<f64>();
 
+        let preferred = if aligned_inputs {
+            [128, 32]
+        } else {
+            SOURCE_TILE
+        };
+        let source_cells = (available / 64).min(u64::from(preferred[0]) * u64::from(preferred[1]));
+        let source_cells = 1u64 << source_cells.ilog2();
+        let extent = match self.input.bounds {
+            Some(bounds) => [bounds.width, bounds.height],
+            None if aligned_inputs => preferred,
+            None => [demand.width, demand.height],
+        };
+        let width = u64::from(extent[0])
+            .min(u64::from(preferred[0]))
+            .min(source_cells) as u32;
+        let height = (source_cells / u64::from(width))
+            .min(u64::from(preferred[1]))
+            .min(u64::from(extent[1])) as u32;
         let whole = if footprint <= 65_536.
             && u64::from(demand.width) * u64::from(demand.height) <= available / 64
             && demand.height as usize <= value::MAX_UNIT_VALUES
         {
-            self.source_window(demand, output)
+            match self.source_window(demand, output) {
+                Some(part) => {
+                    let fetched = if aligned_inputs {
+                        self.covering_slices(part, [width, height])?
+                    } else {
+                        part
+                    };
+                    (u64::from(fetched.width) * u64::from(fetched.height) <= available / 64)
+                        .then_some((fetched, part))
+                }
+                None => None,
+            }
         } else {
             None
         };
-        let source_cells =
-            (available / 64).min(u64::from(SOURCE_TILE[0]) * u64::from(SOURCE_TILE[1]));
-        let source_cells = 1u64 << source_cells.ilog2();
         let bounds = self.input.bounds.unwrap_or(demand);
-        let mut width = u64::from(bounds.width)
-            .min(u64::from(SOURCE_TILE[0]))
-            .min(source_cells) as u32;
-        let mut height = (source_cells / u64::from(width))
-            .min(u64::from(SOURCE_TILE[1]))
-            .min(u64::from(bounds.height)) as u32;
         let align = |start: i32, origin: i32, size: u32| {
             (i64::from(origin)
                 + (i64::from(start) - i64::from(origin)).div_euclid(i64::from(size))
                     * i64::from(size)) as i32
         };
-        let aligned = if let Some(part) = whole {
-            width = part.width;
-            height = part.height;
-            part
-        } else {
-            let x = align(demand.x, bounds.x, width);
-            let y = align(demand.y, bounds.y, height);
-            Rect::new(
-                [x, y],
-                [(demand.right() - x) as u32, (demand.bottom() - y) as u32],
-            )
-        };
+        let x = align(demand.x, bounds.x, width);
+        let y = align(demand.y, bounds.y, height);
+        let aligned = Rect::new(
+            [x, y],
+            [(demand.right() - x) as u32, (demand.bottom() - y) as u32],
+        );
         let arguments = Domain {
             meaning: Meaning::Arguments,
             ..domain
@@ -91,7 +106,14 @@ impl Reconstruction {
         let mut values = 2usize;
         let mut first = true;
         let mut partitions = 0usize;
-        for chunk in tiled_units(aligned, [width, height])? {
+        let chunks: WorkUnits = if let Some((fetched, _)) = whole {
+            Box::new(std::iter::once(fetched))
+        } else if aligned_inputs {
+            self.input_slices(demand, [width, height])?
+        } else {
+            tiled_units(aligned, [width, height])?
+        };
+        for chunk in chunks {
             partitions += 1;
             if partitions > value::MAX_UNIT_VALUES {
                 value::retire_gpu_graph(sum, &[source]);
@@ -99,13 +121,21 @@ impl Reconstruction {
                     "calculation exceeds the unit graph capacity",
                 ));
             }
-            let x = chunk.x.max(demand.x);
-            let y = chunk.y.max(demand.y);
-            let chunk = Rect::new(
-                [x, y],
-                [(chunk.right() - x) as u32, (chunk.bottom() - y) as u32],
-            );
-            if let Some(part) = self.source_window(chunk, output) {
+            let part = if let Some((_, part)) = whole {
+                Some(part)
+            } else if aligned_inputs {
+                // Keep contribution geometry tight, independently of the fetched slice.
+                self.source_window(chunk, output)
+            } else {
+                let x = chunk.x.max(demand.x);
+                let y = chunk.y.max(demand.y);
+                let clipped = Rect::new(
+                    [x, y],
+                    [(chunk.right() - x) as u32, (chunk.bottom() - y) as u32],
+                );
+                self.source_window(clipped, output)
+            };
+            if let Some(part) = part {
                 let Some(affected) = self.affected(part, output) else {
                     continue;
                 };
@@ -151,8 +181,8 @@ impl Reconstruction {
                     }
                     operation = operation.with_table(rows);
                 }
-                let contribution =
-                    Calculation::new(arguments, affected, vec![source.request(part)?], operation)?;
+                let input = source.request(if aligned_inputs { chunk } else { part })?;
+                let contribution = Calculation::new(arguments, affected, vec![input], operation)?;
                 sum = if first && affected == output {
                     contribution
                 } else {

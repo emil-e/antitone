@@ -339,6 +339,67 @@ fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
 }
 
 #[test]
+fn admitted_repairs_keep_partial_views_renderable() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let captured = repair(100, 32);
+    let mut repairs = crate::dust_repair::RepairSet::default();
+    let id = repairs
+        .insert(captured.support, captured.origin, [10000, 32])
+        .unwrap();
+    let active = Plate.domain().finite().unwrap().source().unwrap();
+    assert!(
+        repairs.validate(active).is_err(),
+        "out-of-bounds donors fail image admission, not just the viewport reaching them"
+    );
+    repairs.set_offset(id, captured.offset).unwrap();
+    repairs.validate(active).unwrap();
+    let root = view(repairs.repairs());
+    let read = |bounds| {
+        let query = context
+            .request(
+                root.clone(),
+                Region {
+                    bounds,
+                    grid: root.domain().grid,
+                },
+                Budget {
+                    tile: [128, 128],
+                    scratch_bytes: 16 << 20,
+                },
+            )
+            .unwrap();
+        context.read(
+            &queue,
+            &Default::default(),
+            &query,
+            || false,
+            |region, pixels| {
+                // The plate is affine; Poisson healing restores that plane, and 2x2
+                // reconstruction averages original cell centres before returning it.
+                for (i, pixel) in pixels.iter().enumerate() {
+                    let x = region.x + i as i32 % region.width as i32;
+                    let y = region.y + i as i32 / region.width as i32;
+                    let expected = [
+                        1. + (2. * x as f32 + 0.5) / 512.,
+                        -0.5 - (2. * y as f32 + 0.5) / 256.,
+                        0.25,
+                        0.,
+                    ];
+                    for (actual, expected) in pixel.iter().zip(expected) {
+                        assert!((actual - expected).abs() < 2e-6, "{pixel:?}");
+                    }
+                }
+                Ok(())
+            },
+        )
+    };
+    for region in [[0, 0, 32, 32], [48, 18, 8, 8]] {
+        assert!(read(region.into()).unwrap().is_some());
+    }
+}
+
+#[test]
 fn regional_units_fit_small_allowances_without_changing_demand() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });

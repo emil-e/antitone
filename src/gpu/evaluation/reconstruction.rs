@@ -3,6 +3,8 @@ use super::CellRegion as Rect;
 use super::*;
 use glam::{DMat2, DVec2};
 
+const MAX_UNIT_SIDE: u32 = 256;
+
 #[cfg(test)]
 mod fixture;
 mod phases;
@@ -452,7 +454,7 @@ impl Operation for Reconstruction {
         if !self.tiled {
             return Ok(output);
         }
-        let demand = self.reads(output.region)?[0].region;
+        let demand = self.input_demand(output.region)?;
         let contributing = self.source_parts(demand, output.region);
         Ok(Output::calculated(
             output.domain,
@@ -465,7 +467,9 @@ impl Operation for Reconstruction {
     fn work_units(&self, region: Rect, budget: Budget) -> Result<WorkUnits, Error> {
         if self.tiled {
             region.validate()?;
-            let side = unit_cells(budget).isqrt().clamp(1, 256) as i64;
+            let side = unit_cells(budget)
+                .isqrt()
+                .clamp(1, u64::from(MAX_UNIT_SIDE)) as i64;
             let first = [
                 i64::from(region.x).div_euclid(side) * side,
                 i64::from(region.y).div_euclid(side) * side,
@@ -502,6 +506,49 @@ impl Operation for Reconstruction {
             .map(Some)
     }
     fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+        let demand = self.input_demand(region)?;
+        let slices = self.tiled;
+        if !slices {
+            return Ok(vec![Read::new(0, demand)]);
+        }
+        // Cover an output unit with few source pieces, within the sampler's binding
+        // limits. Powers of two keep the acquisition lattice stable across pans.
+        let minimum = [128, 32];
+        let size = std::array::from_fn(|axis| {
+            let span = self.packed.axes[0][axis].abs() + self.packed.axes[1][axis].abs();
+            let limit = self.input.bounds.map_or(i32::MAX as u32, |bounds| {
+                [bounds.width, bounds.height][axis]
+            });
+            let cells = (f64::from(MAX_UNIT_SIDE) * span + 4.)
+                .ceil()
+                .min(f64::from(limit))
+                .max(1.) as u32;
+            cells.next_power_of_two().max(minimum[axis])
+        });
+        let mut reads = Vec::new();
+        for slice in self.input_slices(demand, size)? {
+            if self.source_parts(slice, region).is_empty() {
+                continue;
+            }
+            if reads.len() >= value::MAX_UNIT_VALUES {
+                return Err(Error::WorkingAllowance(
+                    "reconstruction exceeds the input-slice capacity",
+                ));
+            }
+            reads.push(
+                if region.width > MAX_UNIT_SIDE || region.height > MAX_UNIT_SIDE {
+                    Read::source_slice(0, slice)
+                } else {
+                    Read::new(0, slice)
+                },
+            );
+        }
+        Ok(reads)
+    }
+}
+
+impl Reconstruction {
+    fn input_demand(&self, region: Rect) -> Result<Rect, Error> {
         self.mapping.admit_region(region)?;
         let x = [f64::from(region.x), f64::from(region.right())];
         let y = [f64::from(region.y), f64::from(region.bottom())];
@@ -542,16 +589,13 @@ impl Operation for Reconstruction {
         }
         let low = low.map(|v| v as i32);
         let high = high.map(|v| v as i32);
-        Ok(vec![crate::gpu::evaluation::Read::new(
-            0,
-            Rect::new(
-                low,
-                [
-                    (i64::from(high[0]) - i64::from(low[0])) as u32,
-                    (i64::from(high[1]) - i64::from(low[1])) as u32,
-                ],
-            )
-            .validate()?,
-        )])
+        Rect::new(
+            low,
+            [
+                (i64::from(high[0]) - i64::from(low[0])) as u32,
+                (i64::from(high[1]) - i64::from(low[1])) as u32,
+            ],
+        )
+        .validate()
     }
 }

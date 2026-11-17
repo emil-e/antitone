@@ -1,4 +1,5 @@
 use super::*;
+mod input_slices;
 mod regional;
 
 struct Pixels {
