@@ -1552,7 +1552,6 @@ impl Editor {
             self.document.analysis_operation_mut().unwrap().activity = Some(activity.reporter());
         }
         self.document.analysis_operation_mut().unwrap().phase = Phase::Preparing;
-        self.document.thumbnails.cancel();
 
         self.status = "Preparing per-photo analysis areas…".into();
         activity
@@ -1640,7 +1639,6 @@ impl AnalyzeTool {
             self.operation.activity = Some(activity.reporter());
         }
         self.operation.phase = Phase::Fitting;
-        editor.document.thumbnails.cancel();
         editor.cancel_original_pending();
         activity.progress(0, total);
         editor.status = "Analyzing roll…".into();

@@ -67,7 +67,6 @@ impl Editor {
                     .viewport
                     .reframe(layout, layout.composition, density);
             }
-            self.document.thumbnails.cancel();
             ui::ViewerBar::reset_overlay(context);
         }
         context.memory_mut(|memory| {

@@ -175,6 +175,7 @@ pub(super) struct WorkingView {
     gpu: Option<(wgpu::Device, wgpu::Queue)>,
     intent: Option<(FrameRaster, PhotographRequest, OutputTarget)>,
     revision: u64,
+    #[cfg(test)]
     changed_at: Option<std::time::Instant>,
     mailbox: Arc<Mailbox>,
     pub(super) kernels: Arc<OnceLock<Arc<ViewKernels>>>,
@@ -218,7 +219,10 @@ impl WorkingView {
 
         self.intent = Some(intent);
         self.revision += 1;
-        self.changed_at = Some(std::time::Instant::now());
+        #[cfg(test)]
+        {
+            self.changed_at = Some(std::time::Instant::now());
+        }
         true
     }
 
@@ -236,6 +240,7 @@ impl WorkingView {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn idle(&self) -> bool {
         !self.updating
             && !self.colour_in_flight()
@@ -296,7 +301,10 @@ impl WorkingView {
 
     pub(super) fn clear(&mut self) {
         self.intent = None;
-        self.changed_at = None;
+        #[cfg(test)]
+        {
+            self.changed_at = None;
+        }
         self.retire_support();
     }
 

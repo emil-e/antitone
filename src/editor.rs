@@ -971,7 +971,6 @@ impl Editor {
         self.document.correction = Default::default();
         self.cancel_spatial();
         self.document.hosted_tool = Default::default();
-        self.document.thumbnails.cancel();
         self.id = self.request_id();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
@@ -1562,7 +1561,6 @@ impl host::App for Editor {
         if let Some(developments) = &self.developments {
             developments.close();
         }
-        self.document.thumbnails.cancel();
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)
         {

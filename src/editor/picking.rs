@@ -97,7 +97,6 @@ fn install(
     previous: Option<(crate::viewport::CanvasLayout, f32)>,
 ) {
     let tool = PickTool::new(editor, state.clone(), previous);
-    editor.document.thumbnails.cancel();
     editor
         .document
         .set_hosted_tool(tool::Placement::Photo, Box::new(tool));

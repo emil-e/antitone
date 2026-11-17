@@ -377,11 +377,10 @@ pub(super) struct Thumbnails {
     )>,
     services: Option<Services>,
     backend: Option<Arc<dyn crate::source::SourceProvider>>,
-    demand: Demand,
+    visible: Vec<SourceId>,
     preview: Preview,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
-    pending_render: bool,
     #[cfg(test)]
     pressure_override: Option<memory::Pressure>,
 }
@@ -428,11 +427,10 @@ impl Default for Thumbnails {
             gpu: None,
             services: None,
             backend: None,
-            demand: Demand::None,
+            visible: Vec::new(),
             preview: Preview::default(),
             generation: Arc::default(),
             pending: None,
-            pending_render: false,
             #[cfg(test)]
             pressure_override: Some(memory::Pressure::Normal),
         }
@@ -543,7 +541,7 @@ impl Thumbnails {
     }
 
     pub(super) fn refresh_hidden_memory(&mut self) {
-        self.embedded.request_visible(&[], false);
+        self.embedded.request_visible(&[]);
         self.cache.protect(Vec::new());
         self.visible_keys.clear();
         self.protect_cpu();
@@ -628,6 +626,7 @@ impl Thumbnails {
         self.budgets = budgets;
         if budgets.pressure == memory::Pressure::Critical {
             self.cancel();
+            self.embedded.cancel();
         }
         self.sync_image_budget();
         self.sources.set_budget(self.budgets.sources as u64);
@@ -832,10 +831,8 @@ impl Thumbnails {
             .count()
     }
 
-    pub fn cancel(&mut self) {
+    fn cancel(&mut self) {
         self.pending = None;
-        self.pending_render = false;
-        self.embedded.cancel();
         self.generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -847,7 +844,6 @@ impl Thumbnails {
             .is_some_and(|(ticket, _)| *ticket == outcome.ticket);
         if matching {
             self.pending = None;
-            self.pending_render = false;
         }
         let source_current = document
             .project
@@ -895,7 +891,6 @@ impl Thumbnails {
             .is_some_and(|(pending, _)| *pending == ticket)
         {
             self.pending = None;
-            self.pending_render = false;
             self.cache
                 .insert(key, Err("Thumbnail worker stopped".into()));
         }
@@ -1081,22 +1076,11 @@ impl Editor {
             .map_err(|error| error.to_string())
     }
 
-    fn thumbnail_work_allowed(&self) -> bool {
-        !self.interaction_blocked()
-            && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && !self.picking()
-            && !self.cropping()
-            && !self.masking()
-            && !self.files.pending()
-            && self.document.export.form.is_none()
-            && !self.dialogs.is_open()
-    }
-
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
-        self.document.thumbnails.embedded.cancel();
+        self.document.thumbnails.visible.clear();
         self.document.thumbnails.refresh_hidden_memory();
-        self.document.thumbnails.demand = Demand::Hidden;
         self.advance_thumbnail_demand(cx);
+        self.acquire_embedded(ui.ctx(), cx);
         if self.document.thumbnails.pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
@@ -1157,7 +1141,6 @@ impl Editor {
             .cache
             .retain(|key, _| key.field == field);
         self.document.thumbnails.apply_budgets(budgets);
-        let visible_allowed = self.thumbnail_work_allowed();
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut camera_wanted = Vec::new();
@@ -1496,31 +1479,18 @@ impl Editor {
         if remove {
             self.request_removal(cx);
         }
-        self.document.thumbnails.demand = if select.is_none() && !remove {
-            Demand::Visible(
-                visible
-                    .iter()
-                    .map(|index| self.document.state.project.order[*index])
-                    .collect(),
-            )
-        } else {
-            Demand::None
-        };
+        self.document.thumbnails.visible = visible
+            .iter()
+            .map(|index| self.document.state.project.order[*index])
+            .collect();
         self.document.thumbnails.visible_keys = protected
             .iter()
             .filter_map(|key| key.source.store_key())
             .collect();
         self.document.thumbnails.protect_cpu();
         self.document.thumbnails.protect_images(protected);
-        self.request_embedded_previews(
-            &camera_wanted,
-            visible_allowed && select.is_none() && !remove,
-            ui.ctx(),
-            cx,
-        );
-        if select.is_none() && !remove {
-            self.advance_thumbnail_demand(cx);
-        }
+        self.request_embedded_previews(&camera_wanted, ui.ctx(), cx);
+        self.advance_thumbnail_demand(cx);
         if self.document.thumbnails.pending.is_some() || self.document.thumbnails.embedded.pending()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
@@ -1585,15 +1555,6 @@ impl ThumbnailWork {
     }
 }
 
-/// Visible intent stays lightweight; source/recipe ownership begins with each captured job.
-#[derive(Default)]
-enum Demand {
-    #[default]
-    None,
-    Visible(Vec<SourceId>),
-    Hidden,
-}
-
 impl Editor {
     fn request_thumbnail(
         &mut self,
@@ -1644,7 +1605,6 @@ impl Editor {
             priority,
             previous,
         };
-        self.document.thumbnails.pending_render = render;
         self.document.thumbnails.pending = Some((ticket, key.clone()));
         let fallback_key = key.clone();
 
@@ -1701,22 +1661,10 @@ impl Editor {
     }
 
     pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
-        let (visible, hidden) = match &self.document.thumbnails.demand {
-            Demand::None => return,
-            Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
-            Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
-        };
+        let visible = self.document.thumbnails.visible.clone();
 
-        let allowed = self.thumbnail_work_allowed();
-        let eager =
-            allowed && self.document.thumbnails.budgets.pressure == memory::Pressure::Normal;
-        let idle = allowed
-            && !self.document.visit.canvas.original.refining()
-            && if self.document.visit.working_view.revision().is_some() {
-                self.document.visit.working_view.idle()
-            } else {
-                self.document.visit.canvas.original.idle()
-            };
+        let pressure = self.document.thumbnails.budgets.pressure;
+        let eager = pressure == memory::Pressure::Normal;
         let mut protected = Vec::new();
         for id in &visible {
             if let Ok(source) = self.document.state.project.source(*id)
@@ -1738,7 +1686,6 @@ impl Editor {
             if expected.as_ref() != Some(key)
                 || (!visible
                     && (!eager
-                        || (self.document.thumbnails.pending_render && !idle)
                         || protected
                             .iter()
                             .any(|key| !self.document.thumbnails.cache.contains(key))))
@@ -1765,7 +1712,7 @@ impl Editor {
             }
             return;
         }
-        if !allowed || self.document.thumbnails.pending.is_some() {
+        if pressure == memory::Pressure::Critical || self.document.thumbnails.pending.is_some() {
             return;
         }
         let visible_indices: Vec<_> = self
@@ -1779,19 +1726,7 @@ impl Editor {
         let mut candidates: Vec<_> = (0..self.document.state.project.order.len())
             .filter(|index| visible_indices.contains(index) || eager)
             .collect();
-        if !hidden {
-            candidates.sort_by_key(|index| {
-                (
-                    !visible_indices.contains(index),
-                    visible_indices
-                        .iter()
-                        .map(|visible| index.abs_diff(*visible))
-                        .min()
-                        .unwrap_or(0),
-                    index.abs_diff(self.document.selected),
-                )
-            });
-        }
+        candidates.sort_by_key(|index| !visible_indices.contains(index));
         for index in candidates {
             let id = self.document.state.project.order[index];
             let source = self
@@ -1810,7 +1745,7 @@ impl Editor {
             if self.document.thumbnails.cache.contains(&key) {
                 continue;
             }
-            let render = visible || (!hidden && idle && self.document.thumbnails.can_retain(&key));
+            let render = visible || self.document.thumbnails.can_retain(&key);
             if !render
                 && self
                     .document

@@ -195,7 +195,6 @@ impl Editor {
         if active_removed {
             self.document.visit.current_source = None;
         }
-        self.document.thumbnails.cancel();
         self.document.roll_selection = RollSelection::default();
         if !self.document.state.project.order.is_empty() {
             self.document.selected = index.min(self.document.state.project.order.len() - 1);

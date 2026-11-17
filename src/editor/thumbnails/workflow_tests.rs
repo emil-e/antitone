@@ -53,8 +53,12 @@ fn editor(
     })
 }
 
-fn begin(editor: &mut Editor, access: &crate::application::UiContext<'_, Editor>, demand: Demand) {
-    editor.document.thumbnails.demand = demand;
+fn begin(
+    editor: &mut Editor,
+    access: &crate::application::UiContext<'_, Editor>,
+    visible: Vec<SourceId>,
+) {
+    editor.document.thumbnails.visible = visible;
     editor.advance_thumbnail_demand(access);
 }
 
@@ -93,7 +97,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
     let scheduler = source_loading::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![first])));
+        app.enter(|editor, access| begin(editor, access, vec![first]));
         assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
         app.run_until(Duration::from_secs(30), |editor| {
             !editor.document.thumbnail_work.pending()
@@ -124,72 +128,99 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
 }
 
 #[test]
-fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callbacks() {
-    let (document, _sources) = document(2);
-    let disk = tempfile::tempdir().unwrap();
-    let scheduler = source_loading::SourceLoader::new();
-    let editor = editor(document, disk.path(), scheduler.clone());
-    let context = egui::Context::default();
-    with_application(editor, |app| {
-        for _ in 0..4 {
-            app.enter(|editor, access| {
-                let mut output = context.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(1100., 800.),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| crate::platform::host::App::ui(editor, ui, access),
-                );
-                output.textures_delta.clear();
-            });
-            if app.read(|editor| editor.document.thumbnail_work.pending()) {
-                break;
+fn composed_modal_keeps_processed_card_demand_at_normal_and_narrow_sizes() {
+    for width in [1100., 800.] {
+        let (document, _sources) = document(2);
+        let disk = tempfile::tempdir().unwrap();
+        let scheduler = source_loading::SourceLoader::new();
+        let editor = editor(document, disk.path(), scheduler.clone());
+        let modal = editor
+            .activities
+            .start(crate::editor::ActivityOptions::new("Independent foreground operation").modal());
+        let context = egui::Context::default();
+        with_application(editor, |app| {
+            let frame =
+                |app: &mut crate::application::test_support::TestApplication<'_, Editor>,
+                 events: Vec<egui::Event>| {
+                    let mut output = app.enter(|editor, access| {
+                        context.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    egui::vec2(width, 800.),
+                                )),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| crate::platform::host::App::ui(editor, ui, access),
+                        )
+                    });
+                    output.textures_delta.clear();
+                    output
+                };
+            for _ in 0..4 {
+                frame(app, vec![]);
+                if app.read(|editor| editor.document.thumbnail_work.pending()) {
+                    break;
+                }
             }
-        }
-        assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
-        app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending() && editor.document.embedded_preview.is_none()
-        });
-        app.read(|editor| {
-            assert_eq!(
-                editor
-                    .document
-                    .thumbnails
-                    .ready_count(&editor.document, editor.document.target()),
-                2
-            );
+            assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
+            app.run_until(Duration::from_secs(30), |editor| {
+                !editor.document.thumbnail_work.pending()
+                    && editor.document.embedded_preview.is_none()
+            });
+            app.read(|editor| {
+                assert_eq!(
+                    editor
+                        .document
+                        .thumbnails
+                        .ready_count(&editor.document, editor.document.target()),
+                    2
+                );
+                assert!(
+                    editor.document.visit.canvas.ready.is_none()
+                        && editor.document.visit.pending_preview.is_none()
+                );
+            });
+            let output = frame(app, vec![]);
             assert!(
-                editor.document.visit.canvas.ready.is_none()
-                    && editor.document.visit.pending_preview.is_none()
+                output
+                    .shapes
+                    .iter()
+                    .filter(|shape| matches!(&shape.shape, egui::Shape::Callback(_)))
+                    .count()
+                    >= 2,
+                "both completed cards must supply image callbacks under the modal"
             );
+            let next = || {
+                [true, false]
+                    .map(|pressed| egui::Event::Key {
+                        key: egui::Key::ArrowRight,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .to_vec()
+            };
+            frame(app, next());
+            app.read(|editor| {
+                assert!(editor.interaction_blocked() && editor.workspace_input.is_blocked());
+                assert_eq!(editor.document.selected, 0);
+            });
+            drop(modal);
+            frame(app, vec![]);
+            frame(app, next());
+            app.read(|editor| {
+                assert!(!editor.workspace_input.is_blocked());
+                assert_eq!(
+                    editor.document.selected, 1,
+                    "navigation resumes after input release"
+                );
+            });
         });
-        let mut output = app.enter(|editor, access| {
-            context.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1100., 800.),
-                    )),
-                    ..Default::default()
-                },
-                |ui| crate::platform::host::App::ui(editor, ui, access),
-            )
-        });
-        output.textures_delta.clear();
-        assert!(
-            output
-                .shapes
-                .iter()
-                .filter(|shape| matches!(&shape.shape, egui::Shape::Callback(_)))
-                .count()
-                >= 2,
-            "the two completed cards must supply image callbacks"
-        );
-    });
-    scheduler.close_and_wait().unwrap();
+        scheduler.close_and_wait().unwrap();
+    }
 }
 
 #[test]
@@ -202,7 +233,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Visible(ids[..2].to_vec())));
+        app.enter(|editor, access| begin(editor, access, ids[..2].to_vec()));
         app.pump();
         let submission = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(submission);
@@ -229,7 +260,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
             }
         });
         app.enter(|editor, cx| {
-            editor.document.thumbnails.demand = Demand::Visible(vec![ids[2]]);
+            editor.document.thumbnails.visible = vec![ids[2]];
             editor.advance_thumbnail_demand(cx);
             let key = tests::key(&editor.document, ids[2]);
             assert!(
@@ -256,13 +287,13 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
 }
 
 #[test]
-fn hidden_document_demand_completes_cpu_disk_work_without_gpu_residency_or_paint() {
+fn zero_retention_prepares_offscreen_cpu_disk_work_without_gpu_residency_or_paint() {
     let (document, _sources) = document(3);
     let disk = tempfile::tempdir().unwrap();
     let scheduler = source_loading::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Hidden));
+        app.enter(|editor, access| begin(editor, access, Vec::new()));
         app.run_until(Duration::from_secs(30), |editor| {
             !editor.document.thumbnail_work.pending()
         });
@@ -292,7 +323,7 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![first])));
+        app.enter(|editor, access| begin(editor, access, vec![first]));
         app.pump();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while starts.try_recv().is_err() {
@@ -305,7 +336,7 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
         }
         app.update(|editor| {
             editor.document.thumbnails.cancel();
-            editor.document.thumbnails.demand = Demand::Hidden;
+            editor.document.thumbnails.visible = Vec::new();
             editor.document.thumbnails.refresh_hidden_memory();
         });
         assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
@@ -347,7 +378,7 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
     let editor = editor(first, disk.path(), scheduler.clone());
     let old_store = Arc::downgrade(&editor.document.cache);
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Hidden));
+        app.enter(|editor, access| begin(editor, access, Vec::new()));
         app.pump();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while starts.try_recv().is_err() {
@@ -360,7 +391,7 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
         }
         app.enter(|editor, access| {
             editor.document = editor.document.replacement(second);
-            begin(editor, access, Demand::Hidden);
+            begin(editor, access, Vec::new());
         });
         app.pump();
         assert!(old_store.upgrade().is_none());
@@ -414,7 +445,7 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![id])));
+        app.enter(|editor, access| begin(editor, access, vec![id]));
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 2 {
             app.pump();
@@ -454,7 +485,7 @@ fn application_retirement_drops_waiters_but_running_native_work_finishes_before_
     let editor = editor(document, disk.path(), scheduler.clone());
     let store = Arc::downgrade(&editor.document.cache);
     with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Hidden));
+        app.enter(|editor, access| begin(editor, access, Vec::new()));
         app.pump();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while starts.try_recv().is_err() {

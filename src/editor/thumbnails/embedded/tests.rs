@@ -55,7 +55,7 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
     editor.document.thumbnails.embedded = EmbeddedPreviews::new();
     editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_embedded_previews(&visible, true, &context, cx));
+        app.enter(|editor, cx| editor.request_embedded_previews(&visible, &context, cx));
         assert!(app.read(|editor| editor.document.embedded_preview.is_some()));
         app.run_until(Duration::from_secs(5), |editor| {
             editor.document.embedded_preview.is_none()
@@ -73,13 +73,7 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
             );
         });
         // The proper-thumbnail coordinator removes replaced images from this wanted list.
-        app.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .embedded
-                .request_visible(&[], true)
-        });
+        app.update(|editor| editor.document.thumbnails.embedded.request_visible(&[]));
         app.read(|editor| {
             assert!(
                 editor
@@ -92,7 +86,7 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
             assert!(!editor.document.thumbnails.embedded.pending());
         });
         app.update(|editor| editor.document.thumbnails.embedded.set_budget(0));
-        app.read(|editor| assert!(editor.document.thumbnails.embedded.entries.is_empty()));
+        app.read(|editor| assert_eq!(editor.document.thumbnails.embedded.byte_len(), 0));
     });
 }
 
@@ -204,7 +198,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
     let context = egui::Context::default();
     let mut previews = state();
     let wanted = vec![wanted(&document, 0), wanted(&document, 1)];
-    previews.request_visible(&wanted, true);
+    previews.request_visible(&wanted);
     let first = previews
         .begin(
             &document.state,
@@ -213,7 +207,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         )
         .unwrap()
         .0;
-    previews.request_visible(&wanted, true);
+    previews.request_visible(&wanted);
     assert!(
         previews
             .begin(
@@ -236,7 +230,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         .0;
     complete(&mut previews, second, &document, &context, true);
     assert!(previews.get(&wanted[1].1.source).is_some());
-    previews.request_visible(&wanted[1..], true);
+    previews.request_visible(&wanted[1..]);
     assert!(previews.get(&wanted[0].1.source).is_some());
     previews.set_budget(0);
     assert!(previews.get(&wanted[0].1.source).is_none());
@@ -244,13 +238,14 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
         previews.get(&wanted[1].1.source).is_some(),
         "visible feedback survives zero optional retention"
     );
-    previews.request_visible(&[], true);
-    assert!(previews.entries.is_empty());
+    previews.request_visible(&[]);
+    assert_eq!(previews.byte_len(), 0);
 }
 
 #[test]
 fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_budget() {
-    let document: crate::editor::document_scope::DocumentScope = fixture().into();
+    let mut document: crate::editor::document_scope::DocumentScope = fixture().into();
+    document.project.order.truncate(36);
     let context = egui::Context::default();
     let mut thumbnails = Thumbnails {
         embedded: state(),
@@ -258,7 +253,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
     };
     for index in 0..36 {
         let wanted = vec![wanted(&document, index)];
-        thumbnails.embedded.request_visible(&wanted, true);
+        thumbnails.embedded.request_visible(&wanted);
         let request = thumbnails
             .embedded
             .begin(
@@ -282,7 +277,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
     }
     for index in (0..36).rev().chain(0..36) {
         let wanted = vec![wanted(&document, index)];
-        thumbnails.embedded.request_visible(&wanted, true);
+        thumbnails.embedded.request_visible(&wanted);
         assert!(thumbnails.embedded.get(&wanted[0].1.source).is_some());
         assert!(
             thumbnails
@@ -312,7 +307,12 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
         gpu_bytes: 0,
     });
     assert_eq!(
-        thumbnails.embedded.entries.len(),
+        thumbnails
+            .embedded
+            .entries
+            .iter()
+            .filter(|(_, image)| image.texture().is_some())
+            .count(),
         1,
         "only visible feedback survives zero retention"
     );
@@ -325,21 +325,12 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
 
 #[test]
 fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_demand() {
-    let document: crate::editor::document_scope::DocumentScope = fixture().into();
+    let mut document: crate::editor::document_scope::DocumentScope = fixture().into();
+    document.project.order.truncate(1);
     let context = egui::Context::default();
     let wanted = vec![wanted(&document, 0)];
     let mut previews = state();
-    previews.request_visible(&wanted, false);
-    assert!(
-        previews
-            .begin(
-                &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
-                &document.initialization
-            )
-            .is_none()
-    );
-    previews.request_visible(&wanted, true);
+    previews.request_visible(&wanted);
     let request = previews
         .begin(
             &document.state,
@@ -349,7 +340,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         .unwrap()
         .0;
     complete(&mut previews, request, &document, &context, false);
-    previews.request_visible(&wanted, true);
+    previews.request_visible(&wanted);
     assert!(
         previews
             .begin(
@@ -361,6 +352,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         "missing preview does not loop on each frame"
     );
     previews.entries.clear();
+    previews.request_visible(&wanted);
     let request = previews
         .begin(
             &document.state,
@@ -369,7 +361,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
         )
         .unwrap()
         .0;
-    previews.request_visible(&wanted, false);
+    previews.cancel();
     assert!(previews.pending());
     assert!(
         previews
@@ -383,7 +375,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
     );
     complete(&mut previews, request, &document, &context, true);
     assert!(previews.entries.is_empty());
-    previews.request_visible(&wanted, true);
+    previews.request_visible(&wanted);
     let request = previews
         .begin(
             &document.state,
@@ -417,13 +409,13 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
     };
     thumbnails.embedded.entries.push((
         wanted[0].1.source.clone(),
-        Some(context.load_texture(
+        CameraImage::Ready(context.load_texture(
             "visible-camera",
             egui::ColorImage::filled([2, 1], egui::Color32::RED),
             egui::TextureOptions::LINEAR,
         )),
     ));
-    thumbnails.embedded.request_visible(&wanted, true);
+    thumbnails.embedded.request_visible(&wanted);
     let request = thumbnails
         .embedded
         .begin(
@@ -439,19 +431,10 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
         pressure: memory::Pressure::Critical,
     });
     complete(&mut thumbnails.embedded, request, &document, &context, true);
-    thumbnails.embedded.request_visible(&wanted, false);
+    thumbnails.embedded.request_visible(&wanted);
     assert!(thumbnails.embedded.get(&wanted[0].1.source).is_some());
     assert!(thumbnails.embedded.get(&wanted[1].1.source).is_none());
-    assert!(
-        thumbnails
-            .embedded
-            .begin(
-                &document.state,
-                Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
-                &document.initialization
-            )
-            .is_none()
-    );
+    assert!(!thumbnails.embedded.pending());
 }
 
 #[test]
@@ -467,7 +450,7 @@ fn retired_document_source_and_development_reject_previews() {
         document.capture_source_files().unwrap();
         let wanted = vec![wanted(&document, 0)];
         let mut previews = state();
-        previews.request_visible(&wanted, true);
+        previews.request_visible(&wanted);
         let request = previews
             .begin(
                 &document.state,
@@ -523,7 +506,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                 let mut frame = |time: f64, scroll: f32| {
                     editor.document.thumbnails.embedded.entries = textures
                         .iter()
-                        .map(|(key, texture)| (key.clone(), Some(texture.clone())))
+                        .map(|(key, texture)| (key.clone(), CameraImage::Ready(texture.clone())))
                         .collect();
                     let mut output = context.run_ui(
                         egui::RawInput {
@@ -710,7 +693,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
                 .thumbnails
                 .embedded
                 .entries
-                .push((key.source.clone(), Some(texture.clone())));
+                .push((key.source.clone(), CameraImage::Ready(texture.clone())));
             let frame = |editor: &mut Editor| {
                 let mut output = context.run_ui(
                     egui::RawInput {
@@ -779,7 +762,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     let image_key = key(&editor.document, editor.document.state.project.order[0]);
     editor.document.thumbnails.embedded.entries.push((
         image_key.source.clone(),
-        Some(context.load_texture(
+        CameraImage::Ready(context.load_texture(
             "test-camera",
             egui::ColorImage::filled([8, 4], egui::Color32::RED),
             egui::TextureOptions::LINEAR,

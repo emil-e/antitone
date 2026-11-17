@@ -454,7 +454,6 @@ impl Editor {
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
-        self.document.thumbnails.cancel();
         self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
         self.id = self.request_id();
         self.replace_photo_scope(self.id);

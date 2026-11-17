@@ -83,7 +83,6 @@ impl Services {
 
 struct Projection {
     ticket: u64,
-    key: SourceKey,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -106,13 +105,28 @@ impl Drop for Retire {
     }
 }
 
+enum CameraImage {
+    Unavailable,
+    Ready(egui::TextureHandle),
+    // Keep completion and measured size when optional pixels leave; retry when they fit.
+    Evicted { bytes: usize },
+}
+
+impl CameraImage {
+    fn texture(&self) -> Option<&egui::TextureHandle> {
+        match self {
+            Self::Ready(texture) => Some(texture),
+            Self::Unavailable | Self::Evicted { .. } => None,
+        }
+    }
+}
+
 pub(super) struct EmbeddedPreviews {
-    entries: Vec<(SourceKey, Option<egui::TextureHandle>)>,
+    entries: Vec<(SourceKey, CameraImage)>,
     services: Option<Services>,
     next: u64,
     pending: Option<Projection>,
-    wanted: Vec<(SourceKey, PathBuf)>,
-    allowed: bool,
+    visible: Vec<SourceKey>,
     budget: usize,
 }
 
@@ -132,8 +146,7 @@ impl Default for EmbeddedPreviews {
             services: None,
             next: 0,
             pending: None,
-            wanted: Vec::new(),
-            allowed: false,
+            visible: Vec::new(),
             budget: 16 << 20,
         }
     }
@@ -148,22 +161,22 @@ impl EmbeddedPreviews {
     }
 
     pub(super) fn cancel(&mut self) {
-        self.allowed = false;
         if let Some(pending) = &self.pending {
             pending.cancelled.store(true, Ordering::Relaxed);
         }
     }
 
-    fn entry_bytes(key: &SourceKey, texture: &Option<egui::TextureHandle>) -> usize {
+    fn entry_bytes(key: &SourceKey, image: &CameraImage) -> usize {
+        let Some(texture) = image.texture() else {
+            return 0;
+        };
+        let [width, height] = texture.size();
         std::mem::size_of::<SourceKey>()
             + key.file.path.capacity()
             + key.source.camera_model.capacity()
             + key.source.decode.version().len()
             + 1024
-            + texture.as_ref().map_or(0, |texture| {
-                let [width, height] = texture.size();
-                width * height * 4
-            })
+            + width * height * 4
     }
 
     pub(super) fn byte_len(&self) -> usize {
@@ -184,12 +197,14 @@ impl EmbeddedPreviews {
             let Some(index) = self
                 .entries
                 .iter()
-                .position(|(key, _)| !self.wanted.iter().any(|(wanted, _)| wanted == key))
+                .position(|(key, image)| image.texture().is_some() && !self.visible.contains(key))
             else {
                 break;
             };
-            let (key, texture) = self.entries.remove(index);
-            bytes = bytes.saturating_sub(Self::entry_bytes(&key, &texture));
+            let (key, image) = &mut self.entries[index];
+            let released = Self::entry_bytes(key, image);
+            *image = CameraImage::Evicted { bytes: released };
+            bytes = bytes.saturating_sub(released);
         }
     }
 
@@ -199,20 +214,36 @@ impl EmbeddedPreviews {
         sources: Option<Arc<dyn crate::source::SourceProvider>>,
         initialization: &crate::source::Initialization,
     ) -> Option<(Request, Arc<AtomicBool>)> {
-        if !self.allowed || self.pending.is_some() || self.services.is_none() {
+        if self.pending.is_some() || self.services.is_none() {
             return None;
         }
-        let (key, _path) = self.wanted.iter().find(|(key, _)| {
-            current(key, document) && !self.entries.iter().any(|(candidate, _)| candidate == key)
+        self.entries.retain(|(key, _)| current(key, document));
+        let mut candidates = document.project.order.clone();
+        candidates.sort_by_key(|id| !self.visible.iter().any(|key| key.id == *id));
+        let retained = self.byte_len();
+        let (key, _path) = candidates.into_iter().find_map(|id| {
+            let source = document.project.source(id).ok()?;
+            let path = document.source_path(id).ok()?;
+            let key = SourceKey::for_document(source, document.file_key(&path), document);
+            match self.entries.iter().find(|(candidate, _)| candidate == &key) {
+                None => Some((key, path)),
+                Some((_, CameraImage::Evicted { bytes }))
+                    if self.visible.contains(&key)
+                        || retained.saturating_add(*bytes) <= self.budget =>
+                {
+                    Some((key, path))
+                }
+                Some(_) => None,
+            }
         })?;
+        let physical = document.source_input(key.id, initialization).ok()?;
         #[cfg(test)]
-        let source = key.metadata_record(_path);
+        let source = key.metadata_record(&_path);
         self.next += 1;
         let ticket = self.next;
         let cancelled = Arc::new(AtomicBool::new(false));
         self.pending = Some(Projection {
             ticket,
-            key: key.clone(),
             cancelled: cancelled.clone(),
         });
         Some((
@@ -220,10 +251,10 @@ impl EmbeddedPreviews {
                 ticket,
                 key: key.clone(),
                 #[cfg(test)]
-                path: _path.clone(),
+                path: _path,
                 #[cfg(test)]
                 source,
-                physical: document.source_input(key.id, initialization).ok()?,
+                physical,
                 sources,
             },
             cancelled,
@@ -268,7 +299,11 @@ impl EmbeddedPreviews {
                 None
             }
         };
-        self.entries.push((key, texture));
+        self.entries.retain(|(candidate, _)| candidate != &key);
+        self.entries.push((
+            key,
+            texture.map_or(CameraImage::Unavailable, CameraImage::Ready),
+        ));
         self.trim();
     }
 
@@ -276,10 +311,10 @@ impl EmbeddedPreviews {
         self.entries
             .iter()
             .find(|(candidate, _)| candidate == key)
-            .and_then(|(_, image)| image.as_ref())
+            .and_then(|(_, image)| image.texture())
     }
 
-    pub(super) fn request_visible(&mut self, wanted: &[(usize, ImageKey, PathBuf)], allowed: bool) {
+    pub(super) fn request_visible(&mut self, wanted: &[(usize, ImageKey, PathBuf)]) {
         // Touch visible entries without discarding recently seen navigation feedback.
         for (_, image, _) in wanted {
             if let Some(index) = self
@@ -291,18 +326,9 @@ impl EmbeddedPreviews {
                 self.entries.push(entry);
             }
         }
-        if let Some(pending) = &self.pending
-            && (!allowed
-                || !wanted
-                    .iter()
-                    .any(|(_, image, _)| image.source == pending.key))
-        {
-            pending.cancelled.store(true, Ordering::Relaxed);
-        }
-        self.allowed = allowed;
-        self.wanted = wanted
+        self.visible = wanted
             .iter()
-            .map(|(_, image, path)| (image.source.clone(), path.clone()))
+            .map(|(_, image, _)| image.source.clone())
             .collect();
         self.trim();
     }
@@ -316,20 +342,16 @@ impl Editor {
     pub(super) fn request_embedded_previews(
         &mut self,
         wanted: &[(usize, ImageKey, PathBuf)],
-        allowed: bool,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) {
-        self.document
-            .thumbnails
-            .embedded
-            .request_visible(wanted, allowed);
+        self.document.thumbnails.embedded.request_visible(wanted);
         self.document.thumbnails.sync_image_budget();
         self.acquire_embedded(context, cx);
     }
 
-    fn acquire_embedded(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
-        if self.fullscreen.is_some() || !self.thumbnail_work_allowed() {
+    pub(super) fn acquire_embedded(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
+        if self.document.thumbnails.budgets.pressure == memory::Pressure::Critical {
             self.document.thumbnails.embedded.cancel();
             return;
         }
@@ -372,6 +394,7 @@ impl Editor {
                     &workflow_context,
                 );
                 drop(pending);
+                editor.document.thumbnails.update_memory();
                 editor.document.thumbnails.sync_image_budget();
                 editor.acquire_embedded(&workflow_context, &cx);
             });
