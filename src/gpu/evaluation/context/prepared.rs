@@ -11,8 +11,17 @@ pub(crate) struct Preparation {
     work: PreparedWork,
     destination: Option<BufferImage>,
     dependencies: Vec<Preparation>,
+    kind: DependencyKind,
     // Keep discovered physical versions available until execution takes over their leases.
     captured_inputs: Vec<Arc<ImageValue>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DependencyKind {
+    Shared,
+    SourceProjection,
+    // Acquisition storage belongs to execution, not to the independently completed output.
+    SourceSlice,
 }
 
 enum PreparedWork {
@@ -84,6 +93,45 @@ impl Preparation {
     }
 
     fn produce(self, worker: &Worker<'_>, layout: ImageLayout) -> Result<ProducedImage, Error> {
+        // Recording/submission takes over physical ownership. Discovery is not a
+        // reason to make every input a reusable dependency of the completed image.
+        let _captured_inputs = self.captured_inputs;
+        let mut execution_sources = Vec::new();
+        let mut owners = Vec::new();
+        for dependency in self.dependencies {
+            let kind = dependency.kind;
+            let definition = dependency.evaluation.job.image().clone();
+            let region = dependency.evaluation.job.region();
+            let layout = ImageLayout {
+                domain: definition.domain(),
+                region,
+                format: ImageFormat::Rgba32Float,
+                backing: ImageBacking::Buffer,
+            };
+            let own = Worker {
+                budget: dependency.evaluation.job.budget(),
+                ..*worker
+            };
+            let image = dependency.produce(&own, layout)?;
+            let inputs = if kind == DependencyKind::SourceSlice {
+                &mut execution_sources
+            } else {
+                &mut owners
+            };
+            inputs.extend(image.inputs.iter().cloned());
+            inputs.push(image.image.clone());
+            if let Some(identity) = definition.output(region)?.identity() {
+                worker.scope.publish(
+                    &Image {
+                        identity: identity.clone(),
+                        descriptor: Arc::new(layout),
+                        image: image.image,
+                        inputs: image.inputs,
+                    },
+                    true,
+                );
+            }
+        }
         let plan = match self.work {
             PreparedWork::Cached(image) => {
                 return Ok(ProducedImage {
@@ -118,35 +166,6 @@ impl Preparation {
                 return Ok(image.into());
             }
         };
-        let mut owners = Vec::new();
-        for dependency in self.dependencies {
-            let definition = dependency.evaluation.job.image().clone();
-            let region = dependency.evaluation.job.region();
-            let layout = ImageLayout {
-                domain: definition.domain(),
-                region,
-                format: ImageFormat::Rgba32Float,
-                backing: ImageBacking::Buffer,
-            };
-            let own = Worker {
-                budget: dependency.evaluation.job.budget(),
-                ..*worker
-            };
-            let image = dependency.produce(&own, layout)?;
-            owners.extend(image.inputs.iter().cloned());
-            owners.push(image.image.clone());
-            if let Some(identity) = definition.output(region)?.identity() {
-                worker.scope.publish(
-                    &Image {
-                        identity: identity.clone(),
-                        descriptor: Arc::new(layout),
-                        image: image.image,
-                        inputs: image.inputs,
-                    },
-                    true,
-                );
-            }
-        }
         worker
             .working
             .admit_gpu(worker.context.device(), 0, worker.budget.scratch_bytes)?;
@@ -247,7 +266,11 @@ impl Preparation {
             .executor()
             .prepare(worker.context.device(), plan)?
             .with_request(self.evaluation.job.image(), layout.region);
-        owners.extend(recorded.reusable_inputs());
+        owners.extend(recorded.reusable_inputs().into_iter().filter(|image| {
+            !execution_sources
+                .iter()
+                .any(|source| Arc::ptr_eq(source, image))
+        }));
         let mut encoder = worker
             .context
             .device
@@ -361,6 +384,7 @@ impl Context {
             work,
             destination: None,
             dependencies: Vec::new(),
+            kind: DependencyKind::Shared,
             captured_inputs: Vec::new(),
         })
     }

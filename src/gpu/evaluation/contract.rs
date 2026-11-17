@@ -155,11 +155,26 @@ pub trait Source: Send + Sync {
 pub struct Read {
     pub input: usize,
     pub region: Rect,
+    pub(crate) acquisition: bool,
 }
 
 impl Read {
     pub fn new(input: usize, region: Rect) -> Self {
-        Self { input, region }
+        Self {
+            input,
+            region,
+            acquisition: false,
+        }
+    }
+
+    /// Preserve this window as an upstream source-acquisition unit through
+    /// same-grid, same-window reads, without requiring stored intermediates.
+    pub fn source_slice(input: usize, region: Rect) -> Self {
+        Self {
+            input,
+            region,
+            acquisition: true,
+        }
     }
 }
 
