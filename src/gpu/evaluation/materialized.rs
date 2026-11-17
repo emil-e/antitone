@@ -14,6 +14,31 @@ fn overlap(a: Rect, b: Rect) -> u64 {
     width * height
 }
 
+fn subtract(region: Rect, cover: Rect) -> Vec<Rect> {
+    let x = region.x.max(cover.x);
+    let y = region.y.max(cover.y);
+    let right = region.right().min(cover.right());
+    let bottom = region.bottom().min(cover.bottom());
+    if x >= right || y >= bottom {
+        return vec![region];
+    }
+    [
+        [region.x, region.y, region.width as i32, y - region.y],
+        [
+            region.x,
+            bottom,
+            region.width as i32,
+            region.bottom() - bottom,
+        ],
+        [region.x, y, x - region.x, bottom - y],
+        [right, y, region.right() - right, bottom - y],
+    ]
+    .into_iter()
+    .filter(|rect| rect[2] > 0 && rect[3] > 0)
+    .map(Rect::from)
+    .collect()
+}
+
 pub(super) struct Stored {
     parts: Vec<Part>,
 }
@@ -113,21 +138,37 @@ impl Stored {
             }));
         }
         let mut parts: Vec<Part> = Vec::new();
-        let mut covered = 0;
-        for value in values {
-            let r = value.layout.region;
-            let contribution = overlap(r, region);
-            if contribution == 0 || parts.iter().any(|part| overlap(r, part.layout.region) > 0) {
-                continue;
+        let mut uncovered = vec![region];
+        while parts.len() < MAX_PARTS {
+            let Some((index, contribution)) = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let contribution: u64 = uncovered
+                        .iter()
+                        .map(|remaining| overlap(value.layout.region, *remaining))
+                        .sum();
+                    (index, contribution)
+                })
+                .max_by_key(|(_, contribution)| *contribution)
+            else {
+                break;
+            };
+            if contribution == 0 {
+                break;
             }
-            covered += contribution;
+            let value = values.swap_remove(index);
+            let r = value.layout.region;
+            // Sampling selects the first covering part. Support overlap is valid;
+            // only uncovered cells require another independently stored value.
+            uncovered = uncovered
+                .into_iter()
+                .flat_map(|remaining| subtract(remaining, r))
+                .collect();
             parts.push(value);
-            if covered == u64::from(region.width) * u64::from(region.height) {
+            if uncovered.is_empty() {
                 parts.sort_by_key(|part| (part.layout.region.y, part.layout.region.x));
                 return Ok(Some(Self { parts }));
-            }
-            if parts.len() == MAX_PARTS {
-                break;
             }
         }
         // A partial or incompatible set is a cache miss, not an incomplete image.

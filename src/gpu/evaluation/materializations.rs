@@ -78,7 +78,6 @@ impl Eq for ImageStorage {}
 pub struct ImageValue {
     pub(super) storage: ImageStorage,
     // The charge follows physical image owners, including recorded consumers, not UI retention.
-    admission: std::sync::OnceLock<Arc<cache::Lease>>,
     // Cached outputs can discover a live consumer's inputs without retaining them themselves.
     inputs: Mutex<Weak<Vec<Arc<ImageValue>>>>,
 }
@@ -100,20 +99,12 @@ impl ImageValue {
     fn stored(storage: ImageStorage) -> Arc<Self> {
         Arc::new(Self {
             storage,
-            admission: Default::default(),
             inputs: Default::default(),
         })
     }
     pub fn texture(texture: wgpu::Texture) -> Arc<Self> {
         Self::stored(ImageStorage::Texture(texture))
     }
-    pub(super) fn admit(&self, lease: Arc<cache::Lease>) {
-        let _ = self.admission.set(lease);
-    }
-    pub(super) fn admitted(&self) -> bool {
-        self.admission.get().is_some()
-    }
-
     pub(super) fn reusable_inputs(&self) -> Arc<Vec<Arc<ImageValue>>> {
         self.inputs.lock().unwrap().upgrade().unwrap_or_default()
     }
@@ -194,8 +185,7 @@ impl ProducedImage {
     pub(super) fn new(image: Arc<ImageValue>, inputs: Vec<Arc<ImageValue>>) -> Self {
         let mut unique = Vec::new();
         for input in inputs {
-            if !input.admitted()
-                && !Arc::ptr_eq(&image, &input)
+            if !Arc::ptr_eq(&image, &input)
                 && !unique.iter().any(|prior| Arc::ptr_eq(prior, &input))
             {
                 unique.push(input);
@@ -659,6 +649,7 @@ impl Materializations {
         Some(image)
     }
     #[cfg(feature = "editor")]
+    #[cfg(test)]
     pub(super) fn release_optional(&self, key: &RetainedKey) {
         let mut entries = self.0.entries.lock().unwrap();
         for entry in entries.iter_mut().filter(|entry| entry.key == *key) {
@@ -696,7 +687,7 @@ impl Materializations {
         bytes: u64,
     ) {
         entry.value = EntryState::Complete(Arc::downgrade(image));
-        if !entry.retain || image.admitted() {
+        if !entry.retain {
             entry.lease = None;
         } else if entry.lease.is_none() {
             entry.lease = self.reserve(entries, bytes);
@@ -705,15 +696,8 @@ impl Materializations {
         entries.push_back(entry);
     }
 
-    #[cfg(all(test, feature = "editor"))]
     pub(in crate::gpu::evaluation) fn submitted_image(&self, image: &Image<ImageLayout>) {
         self.publish(image, true);
-    }
-
-    /// Phase inputs stay discoverable through their round owners without displacing
-    /// retained calculation results. An independent retained request keeps its ownership.
-    pub(in crate::gpu::evaluation) fn submitted_input(&self, image: &Image<ImageLayout>) {
-        self.publish(image, false);
     }
 
     pub(in crate::gpu::evaluation) fn publish(&self, image: &Image<ImageLayout>, retain: bool) {
@@ -1062,7 +1046,10 @@ impl Materializations {
         let pending = entries.iter().any(|entry| {
             entry.key == *key && entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)
         });
-        let lease = if pending || !retain {
+        // The matching image request owns its final allocation and retention choice.
+        // Its internal initializer is not an additional cache result.
+        let retain = retain && !pending;
+        let lease = if !retain {
             None
         } else {
             self.reserve(&mut entries, bytes)

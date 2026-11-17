@@ -43,7 +43,6 @@ impl SubmissionGate {
     }
 
     /// Attach completion before a background submitter can advance the queue fence.
-    #[cfg(any(feature = "ui", test))]
     pub(crate) fn submit_with_completion(
         &self,
         queue: &wgpu::Queue,
@@ -53,13 +52,15 @@ impl SubmissionGate {
         #[cfg(test)]
         self.observe_encoded();
         let index = self.exclusive(|| {
-            use std::sync::atomic::Ordering;
-            self.1.fetch_add(1, Ordering::Relaxed);
+            #[cfg(any(feature = "ui", test))]
+            self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(any(feature = "ui", test))]
             let pending = self.1.clone();
             let index = queue.submit(commands);
             queue.on_submitted_work_done(move || {
                 completion();
-                pending.fetch_sub(1, Ordering::Release);
+                #[cfg(any(feature = "ui", test))]
+                pending.fetch_sub(1, std::sync::atomic::Ordering::Release);
             });
             index
         });

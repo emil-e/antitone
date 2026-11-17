@@ -337,7 +337,7 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let production = Production {
             worker: Worker {
                 context: &context,

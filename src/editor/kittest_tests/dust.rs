@@ -2,9 +2,9 @@ use super::*;
 mod history_tests;
 mod latency;
 
-fn camera_image(
+fn camera_images(
     editor: &Editor,
-) -> crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout> {
+) -> Vec<crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout>> {
     let scan = editor.source_context().unwrap().scan().unwrap();
     let camera = crate::gpu::evaluation::camera_source(&scan).unwrap();
     let services = editor.source_services.as_ref().unwrap();
@@ -15,10 +15,7 @@ fn camera_image(
     renderer
         .evaluation()
         .materializations()
-        .find_ready::<crate::gpu::evaluation::ImageLayout>(camera.identity().unwrap(), |layout| {
-            layout.backing == crate::gpu::evaluation::ImageBacking::Texture
-        })
-        .expect("settled photo-owned camera input")
+        .ready::<crate::gpu::evaluation::ImageLayout>(camera.identity().unwrap())
 }
 use crate::{dust_repair::RepairId, editor::history::Direction};
 
@@ -138,7 +135,11 @@ fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigati
         h.read(|editor| assert!(editor.document.visit.dust.brush_size > diameter));
         wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
         // This live consumer protects unchanged camera pixels independently of optional retention.
-        let initial_camera = h.read(camera_image);
+        let initial_camera = h.read(camera_images);
+        assert!(
+            !initial_camera.is_empty(),
+            "settled source has actual GPU materializations"
+        );
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         let sig = h.read(|editor| editor.dust_signature().unwrap());
@@ -153,10 +154,11 @@ fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigati
                 .clone()
         });
         h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &initial_camera.image,
-                &camera_image(editor).image
-            ))
+            assert!(initial_camera.iter().any(|before| {
+                camera_images(editor)
+                    .iter()
+                    .any(|after| Arc::ptr_eq(&before.image, &after.image))
+            }))
         });
         let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let target = layout.screen_point(egui::pos2(96., 32.));
@@ -327,10 +329,11 @@ fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigati
         ready(&mut h, 2);
         h.read(|editor| assert!(same.same_definition(&editor.dust_images()[0])));
         h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &initial_camera.image,
-                &camera_image(editor).image
-            ))
+            assert!(initial_camera.iter().any(|before| {
+                camera_images(editor)
+                    .iter()
+                    .any(|after| Arc::ptr_eq(&before.image, &after.image))
+            }))
         });
         h.read(|editor| {
             assert!(

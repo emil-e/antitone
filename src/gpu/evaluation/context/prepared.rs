@@ -143,16 +143,20 @@ impl Preparation {
                         image: image.image,
                         inputs: image.inputs,
                     },
-                    false,
+                    true,
                 );
             }
         }
+        worker
+            .working
+            .admit_gpu(worker.context.device(), 0, worker.budget.scratch_bytes)?;
         let image = match self.destination {
             Some(BufferImage::Produced(image)) => image.image,
             Some(BufferImage::Submitted(pixels)) => ImageValue::new(pixels),
             None => ImageValue::new(output_buffer(worker.context, layout.region)),
         };
         let pixels = image.as_buffer().expect("prepared buffer destination");
+        let _target = worker.working.activate_buffer(pixels);
         // New operand outputs remain live together, unlike ordinary scratch-slot reuse.
         // Reserve them before giving any nested producer or the final plan its allowance.
         let produced_bytes = plan
@@ -217,6 +221,11 @@ impl Preparation {
             let pixels =
                 producer.materialize_image(&query, input_layout, &mut WorkCounts::default())?;
             if let Some(key) = image.output(output.region)?.identity() {
+                let root = self.evaluation.job.image().output(layout.region)?;
+                let retain = self.evaluation.retain
+                    || output.region != layout.region
+                    || output.domain != layout.domain
+                    || root.identity() != Some(key);
                 worker.scope.publish(
                     &Image {
                         identity: key.clone(),
@@ -224,7 +233,7 @@ impl Preparation {
                         image: pixels.clone(),
                         inputs: pixels.reusable_inputs(),
                     },
-                    false,
+                    retain,
                 );
             }
             owners.extend(pixels.reusable_inputs().iter().cloned());
@@ -262,31 +271,6 @@ fn output_buffer(context: &Context, region: CellRegion) -> wgpu::Buffer {
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
-    })
-}
-
-fn temporary_inputs(plan: &Plan) -> bool {
-    plan.tiles.iter().any(|tile| {
-        tile.fragment
-            .resources
-            .iter()
-            .any(|resource| match resource {
-                Storage::ResidentBuffer(image)
-                | Storage::Image {
-                    pixels: Some(image),
-                    ..
-                } => image.admitted(),
-                _ => false,
-            })
-            || tile.fragment.work.iter().any(|work| {
-                let bindings = match work {
-                    Work::Compute { bindings, .. } | Work::Render { bindings, .. } => bindings,
-                    _ => return false,
-                };
-                bindings.iter().any(|(_, binding)| {
-                matches!(binding, Binding::Shared(Shared::Image { image, .. }) if image.admitted())
-            })
-            })
     })
 }
 
@@ -358,7 +342,7 @@ impl Context {
                                         matches!(work, Work::Produce { .. } | Work::Upload { .. })
                                     },
                                 );
-                            if missing || temporary_inputs(&plan) {
+                            if missing {
                                 PreparedWork::Produce(plan)
                             } else {
                                 PreparedWork::Gpu(plan)
@@ -421,7 +405,7 @@ impl Context {
             backing: ImageBacking::Buffer,
         };
         let retain = evaluation.retain;
-        let working = HostWorkingSet::default();
+        let working = RunWorkingSet::default();
         let scope = self.materializations();
         let worker = Worker {
             context: self,
@@ -434,6 +418,7 @@ impl Context {
             progress: &|| {},
         };
         let value = preparation.produce(&worker, layout)?;
+        working.finish_gpu()?;
         let image = Image {
             identity,
             descriptor: Arc::new(layout),
@@ -484,7 +469,7 @@ impl Context {
                 let progress = Arc::new(futures_util::task::AtomicWaker::new());
                 let wake = progress.clone();
                 let mut job = Box::pin(crate::background::run(move |stop| {
-                    let working = HostWorkingSet::default();
+                    let working = RunWorkingSet::default();
                     let cancelled = || stop.is_cancelled();
                     let progress = || wake.wake();
                     if missing.len() > 1
@@ -518,6 +503,7 @@ impl Context {
                                 progress: &progress,
                             };
                             if let Some(images) = worker.materialize_units_many(&selected)? {
+                                working.finish_gpu()?;
                                 return Ok(images.into_iter().map(ProducedImage::from).collect());
                             }
                         }
@@ -567,6 +553,7 @@ impl Context {
                         );
                         images.push(image);
                     }
+                    working.finish_gpu()?;
                     Ok(images)
                 }));
                 futures_util::future::poll_fn(|cx| {

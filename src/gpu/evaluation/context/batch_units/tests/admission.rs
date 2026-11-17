@@ -170,7 +170,7 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let worker = Worker {
         context: &context,
         queue: &queue,

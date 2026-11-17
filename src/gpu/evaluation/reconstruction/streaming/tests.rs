@@ -464,7 +464,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
             gate: &gate,
             scope: &scope,
             budget,
-            working: &HostWorkingSet::default(),
+            working: &RunWorkingSet::default(),
             cancelled: &|| stopped.load(Ordering::SeqCst),
             progress: &|| {},
         },

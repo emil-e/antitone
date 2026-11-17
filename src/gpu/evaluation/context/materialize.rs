@@ -58,19 +58,6 @@ impl Context {
         format: ImageFormat,
         backing: ImageBacking,
     ) -> Result<ImageFuture<ImageLayout>, Error> {
-        self.materialize_into(queue, gate, scope, evaluation, (format, backing), None)
-    }
-
-    pub(in crate::gpu::evaluation) fn materialize_into(
-        &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
-        scope: &Materializations,
-        evaluation: Evaluation,
-        storage: (ImageFormat, ImageBacking),
-        admission: Option<Arc<cache::Lease>>,
-    ) -> Result<ImageFuture<ImageLayout>, Error> {
-        let (format, backing) = storage;
         if backing == ImageBacking::Host {
             return Err(Error::InvalidParameter(
                 "host values are produced by declared CPU units",
@@ -248,7 +235,7 @@ impl Context {
                                     Ok(())
                                 })();
                                 // Queued uploads own storage until completion, including cancellation
-                                // and a later read failure. Keep the source admission charged through it.
+                                // and a later read failure.
                                 if submitted {
                                     context.submit(
                                         &queue,
@@ -262,7 +249,7 @@ impl Context {
                             }
                         }
                     } else {
-                        let working = HostWorkingSet::default();
+                        let working = RunWorkingSet::default();
                         let worker = Worker {
                             context: &context,
                             queue: &queue,
@@ -273,11 +260,14 @@ impl Context {
                             cancelled: &|| stop.is_cancelled(),
                             progress: &|| wake.wake(),
                         };
-                        worker.materialize_image(&evaluation, layout, &mut WorkCounts::default())?
+                        let image = worker.materialize_image(
+                            &evaluation,
+                            layout,
+                            &mut WorkCounts::default(),
+                        )?;
+                        working.finish_gpu()?;
+                        image
                     };
-                    if let Some(admission) = admission {
-                        image.admit(admission);
-                    }
                     if stop.is_cancelled() {
                         return Err(Error::Cancelled);
                     }

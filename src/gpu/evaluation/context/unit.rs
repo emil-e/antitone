@@ -195,6 +195,8 @@ impl Worker<'_> {
                 Err(error) => return Err(error),
             }
         }
+        self.working
+            .admit_gpu(self.context.device(), 0, self.budget.scratch_bytes)?;
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(layout.bytes());
         let pixels = self
@@ -209,6 +211,7 @@ impl Worker<'_> {
                 mapped_at_creation: false,
             });
         counts.buffers_allocated(1);
+        let _target = self.working.activate_buffer(&pixels);
         let worker = Production {
             worker: *self,
             layout,
@@ -312,6 +315,16 @@ impl Worker<'_> {
                 "work-unit result exceeds the working allowance",
             ));
         }
+        let required = match &unit.work {
+            UnitWork::Gpu(work) => work
+                .state
+                .iter()
+                .try_fold(bytes, |sum, bytes| sum.checked_add(*bytes))
+                .ok_or(Error::InvalidParameter("unit state size overflows"))?,
+            _ => bytes,
+        };
+        self.working
+            .admit_gpu(self.context.device(), required, self.budget.scratch_bytes)?;
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(bytes);
         let output = self
@@ -326,6 +339,7 @@ impl Worker<'_> {
                 mapped_at_creation: false,
             });
         counts.buffers_allocated(1);
+        let _target = self.working.activate_buffer(&output);
         if matches!(&unit.work, UnitWork::Gpu(_)) {
             let evaluation = self.query(node.clone(), unit.output, self.budget.scratch_bytes)?;
             let plan = evaluation.job.probe(unit.output)?;

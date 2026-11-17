@@ -145,7 +145,7 @@ fn declared_gpu_phases_keep_accumulator_state_across_disconnected_upstream_reads
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
     let gate = crate::gpu::submission::SubmissionGate::default();
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let allowance = Budget {
         tile: [4, 1],
         scratch_bytes: 1 << 20,
@@ -201,7 +201,9 @@ fn declared_gpu_phases_keep_accumulator_state_across_disconnected_upstream_reads
 }
 struct ObservedRamp {
     scope: Materializations,
+    working: RunWorkingSet,
     reads: Arc<Mutex<Vec<CellRegion>>>,
+    retention: bool,
 }
 impl Source for ObservedRamp {
     fn domain(&self) -> Domain {
@@ -211,13 +213,20 @@ impl Source for ObservedRamp {
         Some(RetainedKey::new("round-owned batch ramp"))
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, crate::Error> {
-        if region.x == 400 {
+        if region.x == 400 && !self.retention {
+            let value = source(Arc::new(Self {
+                scope: self.scope.clone(),
+                working: self.working.clone(),
+                reads: self.reads.clone(),
+                retention: self.retention,
+            }));
             assert!(
                 self.scope
-                    .ready::<ImageLayout>(&self.identity().unwrap())
+                    .ready::<ImageLayout>(value.identity().unwrap())
                     .iter()
-                    .all(|image| image.descriptor.region.x != 0),
-                "the previous shared read must retire before the next source round, while this job is still running"
+                    .all(|image| image.descriptor.region.x != 0
+                        || self.working.submitted_owns(&image.image)),
+                "previous-round inputs without optional retention must be owned by submitted GPU work"
             );
         }
         self.reads.lock().unwrap().push(region);
@@ -226,16 +235,19 @@ impl Source for ObservedRamp {
 }
 
 #[test]
-fn related_declared_units_share_containing_reads_and_release_them_between_rounds() {
+fn related_declared_units_share_containing_reads_and_release_them_after_completion() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     for generated_bytes in [0, 1 << 20] {
         let context = Context::new(&device, CachePolicy { generated_bytes });
         let scope = context.materializations();
         scope.set_test_pressure(crate::sys::MemoryPressure::Normal);
         let reads = Arc::new(Mutex::new(Vec::new()));
+        let working = RunWorkingSet::default();
         let input = source(Arc::new(ObservedRamp {
             scope: scope.clone(),
+            working: working.clone(),
             reads: reads.clone(),
+            retention: generated_bytes != 0,
         }));
         // Narrow first: sharing must follow read geometry, not the caller's root order.
         let evaluations = [2, 4]
@@ -266,7 +278,6 @@ fn related_declared_units_share_containing_reads_and_release_them_between_rounds
             tile: [4, 1],
             scratch_bytes: 64 << 10,
         };
-        let working = HostWorkingSet::default();
         let gate = crate::gpu::submission::SubmissionGate::default();
         let worker = Worker {
             context: &context,
@@ -304,6 +315,7 @@ fn related_declared_units_share_containing_reads_and_release_them_between_rounds
             .materialize_targets(targets, total, allowance.scratch_bytes)
             .unwrap()
             .unwrap();
+        working.finish_gpu().unwrap();
         for (image, width) in images.iter().zip([2, 4]) {
             let expected = (0..width)
                 .map(|x| [800. + 3. * x as f32, 20., 0., 0.])
@@ -321,11 +333,12 @@ fn related_declared_units_share_containing_reads_and_release_them_between_rounds
             ],
             "one source traversal per round, independently of optional retention"
         );
-        assert!(
+        assert_eq!(
             scope
                 .ready::<ImageLayout>(input.identity().unwrap())
                 .is_empty(),
-            "completed roots must not retain phase inputs"
+            generated_bytes == 0,
+            "phase inputs use the same optional budget as other materializations"
         );
         if generated_bytes == 0 {
             assert_eq!(context.retained_bytes(), 0);
@@ -335,5 +348,12 @@ fn related_declared_units_share_containing_reads_and_release_them_between_rounds
                 "selected root outputs must actually use optional retention in the positive-cache arm"
             );
         }
+        scope.set_retention_enabled(false);
+        assert!(
+            scope
+                .ready::<ImageLayout>(input.identity().unwrap())
+                .is_empty(),
+            "completed roots do not hide phase-input owners outside optional retention"
+        );
     }
 }

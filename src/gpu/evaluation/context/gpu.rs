@@ -11,6 +11,7 @@ pub(super) struct GpuExecution {
     pub(super) phases: Box<dyn Iterator<Item = Result<GpuPhase, Error>> + Send>,
     pub(super) held: u64,
     has_output: bool,
+    _active: Arc<Allocations>,
 }
 impl GpuExecution {
     pub(super) fn new(
@@ -34,6 +35,9 @@ impl GpuExecution {
             .ok_or(Error::WorkingAllowance(
                 "unit state exceeds the working allowance",
             ))?;
+        worker
+            .working
+            .admit_gpu(worker.context.device(), held, worker.budget.scratch_bytes)?;
         let states = work
             .state
             .into_iter()
@@ -63,6 +67,12 @@ impl GpuExecution {
             })
             .collect::<Result<Vec<_>, Error>>()?;
         counts.buffers_allocated(states.len());
+        let mut resources = Allocations::default();
+        resources.buffer(output);
+        for state in &states {
+            resources.buffer(state);
+        }
+        let active = worker.working.activate(resources);
         Ok(Self {
             inputs,
             states,
@@ -70,6 +80,7 @@ impl GpuExecution {
             phases: work.phases,
             held,
             has_output: false,
+            _active: active,
         })
     }
 
@@ -99,6 +110,11 @@ impl GpuExecution {
             .ok_or(Error::WorkingAllowance(
                 "unit state exceeds the working allowance",
             ))?;
+        let mut live_reads = Allocations::default();
+        for image in reads_owner.iter() {
+            live_reads.image(image);
+        }
+        let mut active_reads = vec![worker.working.activate(live_reads)];
         let mut reads = Vec::with_capacity(phase.reads.len());
         let mut captures = Vec::<(value::Value, CellRegion, Arc<ImageValue>)>::new();
         for read in phase.reads {
@@ -157,8 +173,11 @@ impl GpuExecution {
             };
             let query = input.query(upstream.clone(), read.region, available)?;
             let image = input.materialize_image(&query, layout, counts)?;
+            let mut resources = Allocations::default();
+            resources.image(&image);
+            active_reads.push(worker.working.activate(resources));
             if let Some(identity) = output.identity() {
-                worker.scope.submitted_input(&Image {
+                worker.scope.submitted_image(&Image {
                     inputs: Default::default(),
                     identity: identity.clone(),
                     descriptor: Arc::new(layout),

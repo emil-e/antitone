@@ -122,7 +122,7 @@ fn retire_batch(independent_consumer: bool) {
     let mut futures = scope.obtain_many_for(requests, move |missing| async move {
         crate::background::run(move |stop| {
             let gate = crate::gpu::submission::SubmissionGate::default();
-            let working = HostWorkingSet::default();
+            let working = RunWorkingSet::default();
             let cancelled = || stop.is_cancelled();
             let worker = Worker {
                 context: &owned_context,

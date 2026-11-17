@@ -12,9 +12,7 @@ mod authoring_tests;
 #[cfg(all(test, feature = "editor"))]
 mod boundary_tests;
 
-#[cfg(feature = "editor")]
 mod allocations;
-#[cfg(feature = "editor")]
 pub(crate) use allocations::Allocations;
 
 mod cache;
@@ -31,7 +29,7 @@ mod unit;
 pub mod value;
 mod working;
 pub use unit::*;
-pub use working::HostWorkingSet;
+pub use working::RunWorkingSet;
 
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
@@ -61,13 +59,9 @@ mod grain;
 mod halation;
 pub(crate) use halation::halation;
 
-#[cfg(feature = "editor")]
-mod inputs;
 mod materializations;
 mod materialized;
 mod supplied;
-#[cfg(feature = "editor")]
-pub(crate) use inputs::ActiveInput;
 use materialized::Stored;
 pub(crate) use supplied::SuppliedImage;
 

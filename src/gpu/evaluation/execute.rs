@@ -217,6 +217,12 @@ impl Programs {
     }
 }
 
+pub(super) struct Encoded {
+    pub counts: WorkCounts,
+    pub resources: Allocations,
+    pub working_bytes: u64,
+}
+
 pub struct Sink<E, S> {
     pub encode: E,
     pub submitted: S,
@@ -235,7 +241,8 @@ pub struct Executor {
     retained: Vec<Arc<RetainedBuffer>>,
     used_images: Vec<Arc<ImageValue>>,
     scope: Materializations,
-    pub(super) working: HostWorkingSet,
+    pub(super) working: RunWorkingSet,
+    active: Option<Arc<Allocations>>,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     pub timestamps: Option<(wgpu::QuerySet, u32)>,
 }
@@ -272,13 +279,14 @@ impl Executor {
             retained: Vec::new(),
             used_images: Vec::new(),
             scope,
-            working: HostWorkingSet::default(),
+            working: RunWorkingSet::default(),
+            active: None,
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             timestamps: None,
         }
     }
 
-    pub(super) fn with_working(mut self, working: HostWorkingSet) -> Self {
+    pub(super) fn with_working(mut self, working: RunWorkingSet) -> Self {
         self.working = working;
         self
     }
@@ -632,10 +640,13 @@ impl Executor {
             (queue, gate),
             plan,
             cancelled,
-            Sink {
-                encode: sink,
-                submitted: || {},
-            },
+            (
+                Sink {
+                    encode: sink,
+                    submitted: || {},
+                },
+                None,
+            ),
             |_, _, _| {
                 Err(Error::InvalidParameter(
                     "evaluation requires bounded worker production",
@@ -654,7 +665,7 @@ impl Executor {
         (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         plan: &Plan,
         cancelled: impl Fn() -> bool,
-        mut sink: Sink<E, S>,
+        (mut sink, destination): (Sink<E, S>, Option<&wgpu::Buffer>),
         mut produce: impl FnMut(
             &value::Value,
             PlannedImage,
@@ -680,6 +691,7 @@ impl Executor {
         }
 
         timed!(Setup, self.compile(device, plan))?;
+        let _target = destination.map(|buffer| self.working.activate_buffer(buffer));
         let mut stats = WorkCounts::default();
 
         for tile in &plan.tiles {
@@ -739,10 +751,32 @@ impl Executor {
             }
 
             stats.submitted();
-            submit(device, queue, gate, encoder, || {
-                self.submitted();
-                (sink.submitted)()
-            })?;
+            let gpu_only = destination.is_some()
+                && !tile
+                    .fragment
+                    .work
+                    .iter()
+                    .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }));
+            if gpu_only {
+                let mut resources = self.resources(&tile.fragment);
+                resources.buffer(destination.unwrap());
+                self.working.submit_gpu(
+                    device,
+                    (queue, gate),
+                    encoder,
+                    resources,
+                    (self.pool_bytes(), plan.scratch_budget),
+                    || {
+                        self.submitted();
+                        (sink.submitted)()
+                    },
+                )?;
+            } else {
+                submit(device, queue, gate, encoder, || {
+                    self.submitted();
+                    (sink.submitted)()
+                })?;
+            }
         }
         if cancelled() {
             return Ok(None);
@@ -957,7 +991,7 @@ impl Executor {
         for value in &self.retained {
             value.submitted();
         }
-        self.scope.used_many(
+        self.scope.submitted_values(
             self.used_images
                 .iter()
                 .chain(self.retained.iter().map(|value| value.image())),
@@ -1001,6 +1035,38 @@ impl Executor {
         })
     }
 
+    fn resources(&self, fragment: &Fragment) -> Allocations {
+        let mut resources = Allocations::default();
+        for allocation in self.pool.iter().flatten() {
+            match allocation {
+                Allocation::Buffer { buffer, .. } => resources.buffer(buffer),
+                Allocation::Retained(value) => resources.image(value.image()),
+                Allocation::Resident(image) => resources.image(image),
+                Allocation::Texture(texture, _) => resources.texture(texture, allocation.bytes()),
+                Allocation::RenderTarget(texture, _) => resources.texture(
+                    texture,
+                    u64::from(texture.width()) * u64::from(texture.height()) * 16,
+                ),
+                Allocation::Input { .. } => {}
+            }
+        }
+        for image in &self.used_images {
+            resources.image(image);
+        }
+        for work in &fragment.work {
+            let bindings = match work {
+                Work::Compute { bindings, .. } | Work::Render { bindings, .. } => bindings,
+                _ => continue,
+            };
+            for (_, binding) in bindings {
+                if let Binding::Shared(resource) = binding {
+                    resources.shared(resource);
+                }
+            }
+        }
+        resources
+    }
+
     fn materialize(
         &mut self,
         device: &wgpu::Device,
@@ -1009,6 +1075,7 @@ impl Executor {
         stats: &mut WorkCounts,
         mode: Materialization,
     ) -> Result<(), Error> {
+        self.active = None;
         self.pool.truncate(tile.slots.len());
         let retained: u64 = tile
             .slots
@@ -1046,6 +1113,26 @@ impl Executor {
         for (index, storage) in tile.slots.iter().enumerate() {
             if self.pool[index]
                 .as_ref()
+                .is_some_and(|allocation| !allocation.can_hold(storage))
+            {
+                self.pool[index] = None;
+            }
+        }
+        self.active = Some(self.working.activate(self.resources(&tile.fragment)));
+        let required = tile
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(index, storage)| {
+                self.pool[index]
+                    .as_ref()
+                    .map_or_else(|| storage.bytes(), Allocation::bytes)
+            })
+            .sum();
+        self.working.admit_gpu(device, required, budget)?;
+        for (index, storage) in tile.slots.iter().enumerate() {
+            if self.pool[index]
+                .as_ref()
                 .is_some_and(|a| a.can_hold(storage))
             {
                 if let Some(Allocation::Retained(value)) = &self.pool[index] {
@@ -1054,8 +1141,6 @@ impl Executor {
                 continue;
             }
 
-            // The preceding tile completed; drop its incompatible slot before replacement.
-            self.pool[index] = None;
             if mode == Materialization::Capture
                 && matches!(storage, Storage::Buffer(_) | Storage::Texture(_))
             {
@@ -1133,10 +1218,8 @@ impl Executor {
                             image.clone(),
                         ))
                     } else {
-                        // Execution owns these intermediates; image/unit demands choose retention.
-                        let Some(value) = self
-                            .scope
-                            .generated_image(device, key, *layout, false, true)
+                        let Some(value) =
+                            self.scope.generated_image(device, key, *layout, true, true)
                         else {
                             continue;
                         };
@@ -1185,6 +1268,7 @@ impl Executor {
                 }
             });
         }
+        self.active = Some(self.working.activate(self.resources(&tile.fragment)));
         Ok(())
     }
 }
@@ -1200,6 +1284,10 @@ pub(crate) struct Recorded {
 }
 
 impl Recorded {
+    pub(super) fn plan_budget(&self) -> u64 {
+        self.plan.scratch_budget
+    }
+
     #[cfg(feature = "editor")]
     pub(super) fn with_prerequisites(
         mut self,
@@ -1258,6 +1346,16 @@ impl Recorded {
         destination: &wgpu::Buffer,
     ) -> Result<WorkCounts, Error> {
         self.encode_buffers(device, encoder, &[], destination)
+            .map(|encoded| encoded.counts)
+    }
+
+    pub(super) fn encode_result_owned(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        destination: &wgpu::Buffer,
+    ) -> Result<Encoded, Error> {
+        self.encode_buffers(device, encoder, &[], destination)
     }
 
     fn encode_buffers(
@@ -1266,7 +1364,7 @@ impl Recorded {
         encoder: &mut wgpu::CommandEncoder,
         inputs: &[&wgpu::Buffer],
         destination: &wgpu::Buffer,
-    ) -> Result<WorkCounts, Error> {
+    ) -> Result<Encoded, Error> {
         let tile = &self.plan.tiles[0];
         if matches!(
             tile.fragment.resources[tile.result.resource.0],
@@ -1300,7 +1398,8 @@ impl Recorded {
             ));
         }
         let mut execution =
-            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone());
+            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone())
+                .with_working(self.executor.working.clone());
         execution.pool = self.executor.pool.clone();
         execution.retained = self.executor.retained.clone();
         let output_slot = tile.assignment[tile.result.resource.0];
@@ -1323,15 +1422,16 @@ impl Recorded {
             &mut stats,
             Materialization::Record,
         )?;
+        let mut resources = Allocations::default();
         #[cfg(feature = "editor")]
         for prerequisite in &self.prerequisites {
             if let Some(commands) = &prerequisite.commands {
-                stats.include(commands.encode_result_counts(
-                    device,
-                    encoder,
-                    &prerequisite.pixels,
-                )?);
+                let encoded =
+                    commands.encode_result_owned(device, encoder, &prerequisite.pixels)?;
+                stats.include(encoded.counts);
+                resources.extend(&encoded.resources);
             }
+            resources.buffered(&prerequisite.pixels);
         }
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(device, None, encoder, tile, &mut stats, &inputs)?;
@@ -1353,7 +1453,15 @@ impl Recorded {
                 u64::from(tile.result.cells()) * 16,
             );
         }
-        Ok(stats)
+        resources.extend(&execution.resources(&tile.fragment));
+        for input in inputs {
+            resources.buffer(input);
+        }
+        Ok(Encoded {
+            counts: stats,
+            resources,
+            working_bytes: execution.pool_bytes(),
+        })
     }
 
     pub(crate) fn encode_work(
@@ -1362,8 +1470,19 @@ impl Recorded {
         encoder: &mut wgpu::CommandEncoder,
         inputs: &[&wgpu::Buffer],
     ) -> Result<WorkCounts, Error> {
+        self.encode_work_owned(device, encoder, inputs)
+            .map(|encoded| encoded.counts)
+    }
+
+    pub(super) fn encode_work_owned(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: &[&wgpu::Buffer],
+    ) -> Result<Encoded, Error> {
         let mut execution =
-            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone());
+            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone())
+                .with_working(self.executor.working.clone());
         execution.pool = self.executor.pool.clone();
         execution.retained = self.executor.retained.clone();
         let tile = &self.plan.tiles[0];
@@ -1376,7 +1495,15 @@ impl Recorded {
             Materialization::Record,
         )?;
         execution.encode_tile(device, None, encoder, tile, &mut stats, inputs)?;
-        Ok(stats)
+        let mut resources = execution.resources(&tile.fragment);
+        for input in inputs {
+            resources.buffer(input);
+        }
+        Ok(Encoded {
+            counts: stats,
+            resources,
+            working_bytes: execution.pool_bytes(),
+        })
     }
 
     #[cfg(test)]
@@ -1412,7 +1539,7 @@ impl Recorded {
             .chain(self.executor.retained.iter().map(|value| value.image()))
         {
             for input in std::iter::once(image).chain(image.reusable_inputs().iter()) {
-                if !input.admitted() && !images.iter().any(|prior| Arc::ptr_eq(prior, input)) {
+                if !images.iter().any(|prior| Arc::ptr_eq(prior, input)) {
                     images.push(input.clone());
                 }
             }

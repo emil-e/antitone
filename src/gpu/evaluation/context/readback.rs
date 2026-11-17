@@ -32,7 +32,7 @@ impl Context {
             (queue, gate),
             evaluation,
             (&cancelled, &|| {}),
-            HostWorkingSet::default(),
+            RunWorkingSet::default(),
             consume,
         )
     }
@@ -42,7 +42,7 @@ impl Context {
         (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         evaluation: &Evaluation,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
-        working: HostWorkingSet,
+        working: RunWorkingSet,
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
         let scope = evaluation
@@ -99,6 +99,7 @@ impl Worker<'_> {
         mut total: WorkCounts,
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
+        self.working.finish_gpu()?;
         let (queue, gate) = (self.queue, self.gate);
         let (cancelled, progress) = (self.cancelled, self.progress);
         let mut executor = Executor::with_scope(self.context.programs.clone(), self.scope.clone())
@@ -153,35 +154,38 @@ impl Worker<'_> {
                 (queue, gate),
                 &plan,
                 (cancelled, progress),
-                Sink {
-                    encode: |encoder: &mut wgpu::CommandEncoder,
-                             image: PlannedImage,
-                             pixels: &wgpu::Buffer| {
-                        if image.region != plan.region {
-                            return Err(Error::InvalidParameter(
-                                "host delivery differs from its evaluation block",
-                            ));
-                        }
-                        if pixels.size() < bytes
-                            || !pixels.usage().contains(wgpu::BufferUsages::COPY_SRC)
-                        {
-                            return Err(Error::InvalidParameter(
-                                "host float delivery requires a readable RGBA buffer",
-                            ));
-                        }
+                (
+                    Sink {
+                        encode: |encoder: &mut wgpu::CommandEncoder,
+                                 image: PlannedImage,
+                                 pixels: &wgpu::Buffer| {
+                            if image.region != plan.region {
+                                return Err(Error::InvalidParameter(
+                                    "host delivery differs from its evaluation block",
+                                ));
+                            }
+                            if pixels.size() < bytes
+                                || !pixels.usage().contains(wgpu::BufferUsages::COPY_SRC)
+                            {
+                                return Err(Error::InvalidParameter(
+                                    "host float delivery requires a readable RGBA buffer",
+                                ));
+                            }
 
-                        encoder.copy_buffer_to_buffer(pixels, 0, buffer, 0, bytes);
-                        Ok(())
+                            encoder.copy_buffer_to_buffer(pixels, 0, buffer, 0, bytes);
+                            Ok(())
+                        },
+                        submitted: || {
+                            let send = send.clone();
+                            buffer
+                                .slice(..bytes)
+                                .map_async(wgpu::MapMode::Read, move |result| {
+                                    let _ = send.send(result);
+                                });
+                        },
                     },
-                    submitted: || {
-                        let send = send.clone();
-                        buffer
-                            .slice(..bytes)
-                            .map_async(wgpu::MapMode::Read, move |result| {
-                                let _ = send.send(result);
-                            });
-                    },
-                },
+                    None,
+                ),
             )?
             else {
                 return Ok(None);

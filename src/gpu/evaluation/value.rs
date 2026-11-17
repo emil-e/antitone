@@ -416,10 +416,12 @@ pub(super) fn parameters<T: std::any::Any>(key: &RetainedKey) -> Option<&T> {
     key.get::<Arguments>()?.parameters.get::<T>()
 }
 
-pub(super) fn pixel_kernel(calculation: &Calculation) -> bool {
+pub(super) fn pixel_materialization(calculation: &Calculation) -> bool {
     calculation.primitive().is_some_and(|primitive| {
-        matches!(primitive.operation.body.as_ref(), Body::Gpu(_))
-            && primitive.shape() == Shape::Pixel
+        matches!(
+            primitive.operation.body.as_ref(),
+            Body::Gpu(_) | Body::Source(_)
+        ) && primitive.shape() == Shape::Pixel
     })
 }
 

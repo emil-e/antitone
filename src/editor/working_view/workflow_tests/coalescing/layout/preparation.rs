@@ -7,7 +7,6 @@ use std::{
 
 #[derive(Default)]
 struct Wakes(AtomicUsize);
-
 impl Wake for Wakes {
     fn wake(self: Arc<Self>) {
         self.0.fetch_add(1, Ordering::Relaxed);
@@ -15,17 +14,17 @@ impl Wake for Wakes {
 }
 
 #[test]
-fn viewport_replacement_keeps_an_inflight_camera_preparation_alive() {
+fn viewport_replacement_retires_old_publication_without_dropping_submitted_work() {
     preparation_survives_view_change(false);
 }
 
 #[test]
-fn retiring_the_view_does_not_retire_photo_preparation_or_its_completed_pixels() {
+fn retiring_a_view_wakes_waiters_and_a_new_view_can_use_common_materializations() {
     preparation_survives_view_change(true);
 }
 
 #[test]
-fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inputs() {
+fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_the_cache() {
     for replace_visit in [false, true] {
         let (editor, pixels, base, scheduler) = fixture();
         let old_source = Arc::downgrade(&pixels.source);
@@ -60,13 +59,7 @@ fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inp
         };
         let original = camera_source(&scan).unwrap();
         let new_key = original.identity().unwrap().clone();
-        assert_ne!(
-            old_key, new_key,
-            "replacement must have distinct camera mathematics"
-        );
-        let bytes = u64::from(scan.area.width)
-            * u64::from(scan.area.height)
-            * original.source().unwrap().storage_format().pixel_bytes();
+        assert_ne!(old_key, new_key);
         let services = editor.source_services.as_ref().unwrap().clone();
         let renderer = services
             .renderers
@@ -79,7 +72,7 @@ fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inp
         let resume = Mutex::new(resume);
         let first = std::sync::atomic::AtomicBool::new(true);
         editor.submissions.observe_submissions(Arc::new(move || {
-            if first.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if first.swap(false, Ordering::Relaxed) {
                 started.send(()).unwrap();
                 resume
                     .lock()
@@ -90,7 +83,6 @@ fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inp
         }));
         with_application(editor, |app| {
             app.enter(|editor, cx| request_working(editor, base, pixels, cx));
-            let ready = app.read(|editor| editor.document.visit.camera.ready().unwrap());
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
             loop {
                 app.pump();
@@ -100,37 +92,26 @@ fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inp
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::yield_now();
             }
-            assert!(!ready.finished());
-            let mut waiting = Box::pin(ready.wait());
+            let mailbox = app.read(|editor| editor.document.visit.working_view.mailbox.clone());
+            let mut waiting = Box::pin(mailbox.1.listen());
             let wakes = Arc::new(Wakes::default());
             let waker = Waker::from(wakes.clone());
             let mut task = Context::from_waker(&waker);
             assert!(waiting.as_mut().poll(&mut task).is_pending());
-            assert_eq!(wakes.0.load(Ordering::Relaxed), 0);
             app.enter(|editor, cx| {
                 if replace_visit {
                     editor.replace_photo_scope(8);
-                    editor
-                        .document
-                        .visit
-                        .camera
-                        .pressure(memory::Pressure::Normal);
                 }
-                request_working(editor, next, input, cx);
+                request_working(editor, next.clone(), input.clone(), cx);
             });
             assert!(
                 wakes.0.load(Ordering::Relaxed) > 0,
-                "retirement must deliver the registered wake before cleanup is released"
+                "retirement must wake logical waiters before physical cleanup is released"
             );
-            assert!(
-                !pollster::block_on(futures_lite::future::poll_once(waiting.as_mut()))
-                    .expect("retired preparation left its waiter pending")
-                    .unwrap(),
-                "retired preparation must wake and release weak waiters before physical cleanup"
-            );
+            assert!(waiting.as_mut().poll(&mut task).is_ready());
             assert!(
                 old_source.upgrade().is_some(),
-                "submitted work must still own the source after logical retirement"
+                "submitted work keeps its captured source through cleanup"
             );
             release.send(()).unwrap();
             app.run_until(Duration::from_secs(15), |editor| {
@@ -143,45 +124,53 @@ fn source_and_visit_replacement_retire_preparation_without_leaking_submitted_inp
                 }
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "retired physical work leaked its source"
+                    "retired work leaked its source"
                 );
                 std::thread::yield_now();
             }
+            app.read(|editor| {
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .frame
+                        .as_ref()
+                        .unwrap()
+                        .request
+                        .pixels
+                        .source
+                        .identity()
+                        == input.source.identity()
+                )
+            });
             assert!(
                 scope
                     .find_ready::<ImageLayout>(&old_key, |_| true)
                     .is_none()
             );
-            assert!(
-                scope
-                    .find_ready::<ImageLayout>(&new_key, |layout| layout.backing
-                        == ImageBacking::Texture)
-                    .is_some()
-            );
-            assert_eq!(renderer.evaluation().active_input_bytes(), bytes);
+            assert_eq!(renderer.evaluation().retained_bytes(), 0);
         });
         scheduler.close_and_wait().unwrap();
     }
 }
 
 #[test]
-fn pressure_releases_a_waiting_view_to_bounded_execution_and_retires_only_preparation() {
+fn pressure_retires_optional_ownership_without_withdrawing_pending_frame_publication() {
     let (editor, pixels, base, scheduler) = fixture();
     let services = editor.source_services.as_ref().unwrap().clone();
     let renderer = services
         .renderers
         .get(&services.device, &services.queue)
         .unwrap();
-    renderer
-        .evaluation()
-        .materializations()
-        .set_retention_enabled(false);
+    let scope = renderer.evaluation().materializations();
+    scope.set_test_pressure(memory::Pressure::Normal);
     let (started, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let first = std::sync::atomic::AtomicBool::new(true);
     editor.submissions.observe_submissions(Arc::new(move || {
-        if first.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        if first.swap(false, Ordering::Relaxed) {
             started.send(()).unwrap();
             resume
                 .lock()
@@ -192,7 +181,6 @@ fn pressure_releases_a_waiting_view_to_bounded_execution_and_retires_only_prepar
     }));
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, base, pixels, cx));
-        let ready = app.read(|editor| editor.document.visit.camera.ready().unwrap());
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
             app.pump();
@@ -202,36 +190,17 @@ fn pressure_releases_a_waiting_view_to_bounded_execution_and_retires_only_prepar
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        assert!(!ready.finished());
-        assert!(renderer.evaluation().active_input_bytes() > 0);
-        let wakes = Arc::new(Wakes::default());
-        let waker = Waker::from(wakes.clone());
-        let mut task = Context::from_waker(&waker);
-        let mut waiting = Box::pin(ready.wait());
-        assert!(waiting.as_mut().poll(&mut task).is_pending());
-        assert_eq!(wakes.0.load(Ordering::Relaxed), 0);
-        app.update(|editor| {
-            editor
-                .document
-                .visit
-                .camera
-                .pressure(memory::Pressure::Warning)
+        scope.set_test_pressure(memory::Pressure::Warning);
+        assert_eq!(renderer.evaluation().retained_bytes(), 0);
+        app.read(|editor| {
+            assert!(!editor.document.visit.working_view.support_ready());
+            assert!(editor.document.visit.working_view.task.is_some());
         });
-        assert!(
-            wakes.0.load(Ordering::Relaxed) > 0,
-            "pressure must deliver the wake of an already parked view"
-        );
-        assert!(
-            pollster::block_on(futures_lite::future::poll_once(waiting.as_mut()))
-                .expect("pressure left its view waiter pending")
-                .unwrap(),
-            "pressure must wake the view rather than withdraw its publication rights"
-        );
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
             editor.document.visit.working_view.support_ready()
         });
-        assert_eq!(renderer.evaluation().active_input_bytes(), 0);
+        assert_eq!(renderer.evaluation().retained_bytes(), 0);
         app.read(|editor| assert!(editor.document.visit.working_view.error.is_none()));
     });
     scheduler.close_and_wait().unwrap();
@@ -239,12 +208,6 @@ fn pressure_releases_a_waiting_view_to_bounded_execution_and_retires_only_prepar
 
 fn preparation_survives_view_change(retire_view: bool) {
     let (editor, pixels, base, scheduler) = fixture();
-    let scan = pixels.scan().unwrap();
-    let original = camera_source(&scan).unwrap();
-    let key = original.identity().unwrap().clone();
-    let bytes = u64::from(scan.area.width)
-        * u64::from(scan.area.height)
-        * original.source().unwrap().storage_format().pixel_bytes();
     let make = |low, high| {
         base.clone()
             .with_frame(
@@ -266,14 +229,13 @@ fn preparation_survives_view_change(retire_view: bool) {
         .get(&services.device, &services.queue)
         .unwrap();
     let scope = renderer.evaluation().materializations();
-    scope.set_retention_enabled(false);
-    let gate = editor.submissions.clone();
+    scope.set_test_pressure(memory::Pressure::Normal);
     let (started, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let first_submission = std::sync::atomic::AtomicBool::new(true);
-    gate.observe_submissions(Arc::new(move || {
-        if first_submission.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    editor.submissions.observe_submissions(Arc::new(move || {
+        if first_submission.swap(false, Ordering::Relaxed) {
             started.send(()).unwrap();
             resume
                 .lock()
@@ -284,7 +246,6 @@ fn preparation_survives_view_change(retire_view: bool) {
     }));
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, first, pixels.clone(), cx));
-        let ready = app.read(|editor| editor.document.visit.camera.ready().unwrap());
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
             app.pump();
@@ -293,47 +254,32 @@ fn preparation_survives_view_change(retire_view: bool) {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "camera preparation did not submit"
+                "production did not submit"
             );
             std::thread::yield_now();
         }
-        assert_eq!(renderer.evaluation().active_input_bytes(), bytes);
-        assert!(!ready.finished(), "the upload must genuinely be in flight");
-        assert!(pollster::block_on(futures_lite::future::poll_once(ready.wait())).is_none());
-        let before = if retire_view {
+        if retire_view {
+            let mailbox = app.read(|editor| editor.document.visit.working_view.mailbox.clone());
+            let mut waiting = Box::pin(mailbox.1.listen());
+            let wakes = Arc::new(Wakes::default());
+            let waker = Waker::from(wakes.clone());
+            let mut task = Context::from_waker(&waker);
+            assert!(waiting.as_mut().poll(&mut task).is_pending());
             app.update(|editor| editor.document.visit.working_view.clear());
+            assert!(wakes.0.load(Ordering::Relaxed) > 0);
+            assert!(waiting.as_mut().poll(&mut task).is_ready());
             app.read(|editor| {
                 assert!(editor.document.visit.working_view.task.is_none());
                 assert!(editor.document.visit.working_view.acquisition().is_none());
             });
-            release.send(()).unwrap();
-            app.run_until(Duration::from_secs(15), |_| ready.finished());
-            assert!(pollster::block_on(ready.wait()).unwrap());
-            Some(
-                scope
-                    .find_ready::<ImageLayout>(&key, |layout| {
-                        layout.backing == ImageBacking::Texture
-                    })
-                    .unwrap(),
-            )
-        } else {
-            None
-        };
-        app.enter(|editor, cx| request_working(editor, latest.clone(), pixels, cx));
-        let after = app.read(|editor| editor.document.visit.camera.ready().unwrap());
-        assert!(
-            ready.same_preparation(&after),
-            "view changes must not replace photo preparation"
-        );
-        if !retire_view {
-            assert!(!ready.finished());
-            release.send(()).unwrap();
         }
+        app.enter(|editor, cx| request_working(editor, latest.clone(), pixels, cx));
+        release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
             editor.document.visit.working_view.support_ready()
         });
         app.read(|editor| {
-            assert!(
+            assert_eq!(
                 editor
                     .document
                     .visit
@@ -342,20 +288,14 @@ fn preparation_survives_view_change(retire_view: bool) {
                     .as_ref()
                     .unwrap()
                     .request
-                    .frame
-                    == latest.frame()
-            );
+                    .frame,
+                latest.frame()
+            )
         });
-        let after = scope
-            .find_ready::<ImageLayout>(&key, |layout| layout.backing == ImageBacking::Texture)
-            .unwrap();
-        if let Some(before) = before {
-            assert!(
-                Arc::ptr_eq(&before.image, &after.image),
-                "the photo's completed allocation must remain discoverable across view reacquisition at zero optional retention"
-            );
-        }
-        assert_eq!(renderer.evaluation().active_input_bytes(), bytes);
+        assert!(
+            renderer.evaluation().retained_bytes()
+                <= renderer.evaluation().cache_policy().generated_bytes
+        );
     });
     scheduler.close_and_wait().unwrap();
 }

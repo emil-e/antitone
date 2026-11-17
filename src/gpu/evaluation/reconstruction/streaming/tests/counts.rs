@@ -89,7 +89,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                     gate: &gate,
                     scope: &context.materializations(),
                     budget,
-                    working: &HostWorkingSet::default(),
+                    working: &RunWorkingSet::default(),
                     cancelled: &|| false,
                     progress: &|| {},
                 },

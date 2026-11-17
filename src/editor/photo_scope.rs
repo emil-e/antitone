@@ -1,6 +1,5 @@
 use super::{Editor, WorkingView};
 
-pub(super) mod camera;
 #[cfg(test)]
 mod tests;
 
@@ -24,7 +23,6 @@ pub(super) struct PhotoInput {
     pub dust: super::dust::PhotoState,
     pub masks: super::mask_editor::MaskEditor,
     pub working_view: WorkingView,
-    pub camera: camera::State,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
     pub return_notice: Option<String>,
     pub picker: super::picking::State,

@@ -366,8 +366,11 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                     meaning: original.domain().meaning,
                 };
                 let root = crate::gpu::evaluation::reconstruct(original, domain).unwrap();
-                let evaluation = renderer
-                    .evaluation()
+                let cold = crate::gpu::evaluation::Context::new(
+                    &device,
+                    crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },
+                );
+                let evaluation = cold
                     .request(
                         root,
                         crate::gpu::evaluation::Region {
@@ -381,15 +384,9 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                     )
                     .unwrap();
                 assert!(
-                    renderer
-                        .evaluation()
-                        .record(
-                            evaluation,
-                            renderer.evaluation().materializations(),
-                            Vec::new()
-                        )
+                    cold.record(evaluation, cold.materializations(), Vec::new())
                         .is_err(),
-                    "control: this aperture must require worker production rather than an ordinary recorded dispatch"
+                    "cold source inputs require production even when earlier warm apertures were reusable"
                 );
             }
             let actual = crate::refinement::refine(

@@ -99,7 +99,7 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
         }
     }));
     let scope = context.test_materializations(false);
-    let working = HostWorkingSet::default();
+    let working = RunWorkingSet::default();
     let cancelled = || stopped.load(Ordering::SeqCst);
     let worker = Worker {
         context: &context,
