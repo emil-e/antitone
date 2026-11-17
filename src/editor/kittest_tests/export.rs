@@ -245,7 +245,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
 }
 
 #[test]
-fn export_blocks_unfinished_numeric_input_and_uses_the_explicitly_committed_value() {
+fn export_is_available_during_private_text_input_and_uses_completed_values() {
     fixture_editor(|mut harness, _| {
         stage(&mut harness, "Photo");
         let role = egui::accesskit::Role::SpinButton;
@@ -257,15 +257,18 @@ fn export_blocks_unfinished_numeric_input_and_uses_the_explicitly_committed_valu
         harness.step();
         harness.event(egui::Event::Text("1.25".into()));
         harness.step();
-        open(&mut harness);
         harness.read(|editor| {
-            assert!(editor.editing());
-            assert!(editor.document.export.form.is_none());
+            assert!(
+                !editor.editing(),
+                "private text reserves no mutation authority"
+            );
             assert_eq!(editor.photo_settings().exposure, 0.);
         });
-        harness.key_press(egui::Key::Enter);
+        open(&mut harness);
+        harness.read(|editor| assert!(editor.document.export.form.is_some()));
+        harness.get_by_label("Cancel").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.editing());
+        super::workflow::enter_numeric(&mut harness, "Exposure", "1.25");
         open(&mut harness);
         harness.read(|editor| {
             assert_eq!(editor.photo_settings().exposure, 1.25);

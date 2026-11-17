@@ -565,7 +565,7 @@ fn a_layer_action_rejects_overlap_then_records_its_own_edit_after_completion() {
 }
 
 #[test]
-fn photo_draft_keeps_accepted_state_until_one_exact_history_commit() {
+fn photo_controls_accept_short_updates_with_one_exact_history_entry() {
     let mut editor = controller();
     let original = editor.history_snapshot();
     let source = editor.document.visit.current_source.unwrap();
@@ -592,8 +592,9 @@ fn photo_draft_keeps_accepted_state_until_one_exact_history_commit() {
         move |v| *v = adjustment,
     );
     assert_eq!(editor.photo_settings().exposure, 7.123456789012345);
-    assert_eq!(editor.document.state.project, original);
-    assert!(editor.document.history.undo.is_empty());
+    assert_ne!(editor.document.state.project, original);
+    assert!(!editor.editing(), "input retains no mutation authority");
+    assert_eq!(editor.document.history.undo.len(), 1);
     editor.photo_control(
         ui::ControlResponse {
             active: false,

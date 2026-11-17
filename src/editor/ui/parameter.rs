@@ -1,7 +1,7 @@
 use super::{
     ControlResponse, INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH,
     PARAMETER_SLIDER_HEIGHT, PARAMETER_UNIT_WIDTH, icons,
-    interaction::{control_active, record_control_interaction},
+    interaction::{control_active, control_started, record_control_interaction},
     numeric_cancelled,
 };
 use egui::{Response, Ui};
@@ -317,6 +317,7 @@ fn parameter_row(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64) -> Parame
         let mut response = ControlResponse {
             id: selected.id,
             active: control_active(ui, selected),
+            started: control_started(ui, selected),
             enabled: selected.enabled(),
             cancelled: number && cancelled,
             changed: false,

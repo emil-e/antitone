@@ -158,7 +158,6 @@ impl Editor {
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
         if target != self.adjustment_layer_target() {
-            self.document.visit.controls_edit = None;
             self.finish_mask(false);
         }
         if self
@@ -214,7 +213,6 @@ impl Editor {
 
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.interaction_blocked()
-            && !self.controls_pending()
             && self.document.project.input.ready()
             && !self.tool_interacting()
             && !self.dialogs.is_open()
@@ -488,7 +486,7 @@ impl Editor {
             return;
         };
         if response.changed {
-            let candidate = edit.values.update(|project| -> Result<Source, Error> {
+            let candidate = edit.update(|project| -> Result<Source, Error> {
                 let source = project.source_mut(source)?;
                 let record = source
                     .adjustment_layers
@@ -504,7 +502,7 @@ impl Editor {
                 return;
             }
         }
-        self.retain_control(edit, response, true);
+        self.commit_control(edit, response);
     }
 
     fn photographic_controls(
@@ -1008,14 +1006,13 @@ impl Editor {
                 },
             )
             .inner;
-        if let Some((id, invert)) = invert_action {
-            self.cancel_control_edit();
-            if let Err(error) = self.edit_adjustment_layers(|layers| {
+        if let Some((id, invert)) = invert_action
+            && let Err(error) = self.edit_adjustment_layers(|layers| {
                 record_mut(layers, id)?.adjustment.invert = invert;
                 Ok(())
-            }) {
-                self.status = format!("Adjustment edit rejected: {error}");
-            }
+            })
+        {
+            self.status = format!("Adjustment edit rejected: {error}");
         }
         if let Some(rename) = rename_finish {
             self.apply_adjustment_layer_action(rename, cx);
@@ -1036,7 +1033,6 @@ impl Editor {
         }
 
         if let Some(radial) = self.document.visit.adjustment_layers.creation.take() {
-            self.cancel_control_edit();
             if radial {
                 self.begin_radial_mask(None);
             } else {

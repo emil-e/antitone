@@ -1451,7 +1451,6 @@ impl Editor {
                                 .copied()
                                 .filter(|id| self.document.roll_selection.contains(*id))
                                 .collect();
-                            self.cancel_control_edit();
                             self.review_crop_proposals(photos, "Entry selection", cx);
                             ui.close();
                         }

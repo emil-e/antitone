@@ -173,14 +173,13 @@ impl Editor {
     }
 
     pub(super) fn tool_start_available(&self) -> bool {
-        !self.workspace_input.is_blocked() && !self.controls_pending()
+        !self.workspace_input.is_blocked()
     }
 
     pub(super) fn prepare_tool(&mut self) -> bool {
         if !self.tool_start_available() {
             return false;
         }
-        self.cancel_control_edit();
         self.document.visit.interaction_action = None;
         self.cancel_active_tool();
         self.canvas_frame = Default::default();

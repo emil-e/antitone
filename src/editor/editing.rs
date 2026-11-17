@@ -1,5 +1,5 @@
 use super::*;
-use crate::{processing::InputSettings, project::Project};
+use crate::project::Project;
 use std::{
     cell::RefCell,
     future::Future,
@@ -169,9 +169,6 @@ impl<T> Edit<T> {
             values: Rc::downgrade(&self.values),
         }
     }
-    pub(in crate::editor) fn rename(&mut self, label: &'static str) {
-        self.label = label;
-    }
     pub(super) fn description(&self) -> (&'static str, Option<crate::project::SourceId>) {
         (self.label, self.photo)
     }
@@ -275,6 +272,14 @@ impl Editor {
     }
 
     pub(in crate::editor) fn commit_project(&mut self, edit: ProjectEdit) -> Result<(), Error> {
+        self.commit_project_in_group(edit, None)
+    }
+
+    fn commit_project_in_group(
+        &mut self,
+        edit: ProjectEdit,
+        group: Option<egui::Id>,
+    ) -> Result<(), Error> {
         let preview = edit.preview();
         let current = if self.document.project_preview.active() {
             &self.document.project_preview
@@ -292,22 +297,8 @@ impl Editor {
         let project = self.document.state.project.updated(edit.into_snapshot());
         let before = std::mem::replace(&mut self.document.state.project, project);
         self.observe_gamma_pivot();
-        self.record_edit(before, label, photo);
+        self.record_edit_in_group(before, label, photo, group);
         Ok(())
-    }
-}
-
-pub(super) struct ControlEdit {
-    pub values: ProjectEdit,
-    pub input: egui::Id,
-    pub gamma_request: Option<InputSettings>,
-    pub calculation: Option<async_executor::Task<()>>,
-    pub finished: bool,
-}
-
-impl ControlEdit {
-    pub fn finished(&self) -> bool {
-        self.finished
     }
 }
 
@@ -401,105 +392,71 @@ impl Editor {
             || self.document.visit.project_preview.active()
     }
 
-    pub(super) fn controls_pending(&self) -> bool {
-        self.document
-            .controls_edit
-            .as_ref()
-            .is_some_and(|edit| edit.calculation.is_some())
-    }
-
-    pub(super) fn cancel_control_edit(&mut self) {
-        self.document.controls_edit = None;
-        self.document.visit.controls_edit = None;
-    }
-
-    pub(super) fn retire_control_input(&mut self) {
-        self.document.visit.controls_edit = None;
-        if self
-            .document
-            .controls_edit
-            .as_ref()
-            .is_some_and(|edit| !edit.finished())
-        {
-            self.document.controls_edit = None;
+    pub(super) fn control_initial(
+        &self,
+        response: ui::ControlResponse,
+        photo: bool,
+    ) -> ProjectVersion {
+        if response.started {
+            return self.document.state.project.clone();
         }
+        let photo = photo
+            .then_some(self.document.visit.current_source)
+            .flatten();
+        self.document
+            .history
+            .control_initial(response.id, photo, &self.document.state.project)
+            .unwrap_or_else(|| self.document.state.project.clone())
     }
 
     pub(super) fn begin_control(
         &mut self,
         response: ui::ControlResponse,
         photo: bool,
-    ) -> Option<ControlEdit> {
-        let slot = if photo {
-            &mut self.document.visit.controls_edit
-        } else {
-            &mut self.document.controls_edit
-        };
-        let owned = slot.as_ref().is_some_and(|edit| edit.input == response.id);
+    ) -> Option<ProjectEdit> {
+        if response.started {
+            self.document.history.finish_group();
+        }
         if response.cancelled {
-            if owned {
-                *slot = None;
+            if let Some(initial) = self.document.history.control_initial(
+                response.id,
+                photo
+                    .then_some(self.document.visit.current_source)
+                    .flatten(),
+                &self.document.state.project,
+            ) {
+                let edit = if photo {
+                    self.edit_photo("Photo settings")
+                } else {
+                    self.edit_project("Roll settings")
+                };
+                if let Ok(mut edit) = edit {
+                    edit.replace_snapshot(initial.snapshot());
+                    self.commit_control(edit, response);
+                }
             }
+            self.document.history.finish_control(response.id);
             return None;
-        }
-        if !response.enabled {
-            return None;
-        }
-        if owned {
-            if slot.as_ref().unwrap().finished {
-                return None;
-            }
-            return slot.take();
         }
         if !response.active && !response.changed {
+            self.document.history.finish_control(response.id);
+        }
+        if !response.enabled || !response.changed {
             return None;
         }
-        let values = if photo {
-            self.edit_photo("Photo settings")
+        if photo {
+            self.edit_photo("Photo settings").ok()
         } else {
-            self.edit_project("Roll settings")
-        };
-        match values {
-            Ok(values) => Some(ControlEdit {
-                values,
-                input: response.id,
-                gamma_request: None,
-                calculation: None,
-                finished: false,
-            }),
-            Err(_) => None,
+            self.edit_project("Roll settings").ok()
         }
     }
 
-    pub(super) fn retain_control(
-        &mut self,
-        mut edit: ControlEdit,
-        response: ui::ControlResponse,
-        photo: bool,
-    ) {
-        edit.finished = !response.active;
-        if edit.finished && edit.calculation.is_none() {
-            if let Err(error) = self.commit_project(edit.values) {
-                self.status = format!("Edit rejected: {error}");
-            }
-        } else if photo {
-            self.document.visit.controls_edit = Some(edit);
-        } else {
-            self.document.controls_edit = Some(edit);
+    pub(super) fn commit_control(&mut self, edit: ProjectEdit, response: ui::ControlResponse) {
+        if let Err(error) = self.commit_project_in_group(edit, Some(response.id)) {
+            self.status = format!("Edit rejected: {error}");
         }
-    }
-
-    pub(super) fn finish_document_controls(&mut self) {
-        if self
-            .document
-            .controls_edit
-            .as_ref()
-            .is_some_and(|edit| edit.finished && edit.calculation.is_none())
-        {
-            let edit = self.document.controls_edit.take().unwrap();
-            if let Err(error) = self.commit_project(edit.values) {
-                self.status = format!("Edit rejected: {error}");
-            }
+        if !response.active {
+            self.document.history.finish_control(response.id);
         }
     }
 }

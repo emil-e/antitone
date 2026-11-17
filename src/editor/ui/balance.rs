@@ -1,7 +1,7 @@
 use super::{
     ControlResponse, ParameterRow, SectionTool,
     icons::Icon,
-    interaction::{control_active, record_control_interaction},
+    interaction::{control_active, control_started, record_control_interaction},
 };
 use crate::color::{Balance, ap1_to_cones, opponent, opponent_coordinates};
 use egui::{Color32, Response, Ui};
@@ -246,6 +246,7 @@ impl BalanceControl {
                 let wheel = ControlResponse {
                     id: response.id,
                     active: control_active(ui, &response),
+                    started: control_started(ui, &response),
                     enabled: response.enabled(),
                     cancelled: false,
                     changed: *value != before,

@@ -97,7 +97,6 @@ pub(super) struct DocumentScope {
     pub thumbnails: super::Thumbnails,
     pub document_preview: super::editing::Preview<Document>,
     pub project_preview: super::editing::Preview<crate::project::Project>,
-    pub controls_edit: Option<super::editing::ControlEdit>,
     pub gamma_pivot: super::gamma_pivot::State,
 
     #[cfg(test)]
@@ -236,9 +235,6 @@ impl DocumentScope {
         self.document_preview = Default::default();
         self.project_preview = Default::default();
         self.visit.project_preview = Default::default();
-        self.controls_edit = None;
-
-        self.visit.controls_edit = None;
     }
 
     pub fn install(&mut self, document: Document) {
@@ -338,7 +334,6 @@ impl From<Document> for DocumentScope {
             document_preview: Default::default(),
             project_preview: Default::default(),
 
-            controls_edit: None,
             correction: Default::default(),
             correction_restore: None,
             flat_correction: None,

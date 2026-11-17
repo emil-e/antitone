@@ -2,7 +2,7 @@ use super::workflow::enter_numeric;
 use super::*;
 
 #[test]
-fn numeric_text_stays_private_and_opening_crop_can_retire_it_without_corrupting_the_project() {
+fn numeric_text_is_private_and_tool_start_preserves_other_accepted_values() {
     for complete in [false, true] {
         setup(|mut h| {
             let original = h.read(|editor| editor.document.project.clone());
@@ -68,7 +68,7 @@ fn numeric_text_stays_private_and_opening_crop_can_retire_it_without_corrupting_
 }
 
 #[test]
-fn a_wheel_previews_and_accepts_from_a_completed_numeric_baseline_with_separate_undo() {
+fn a_wheel_updates_from_a_completed_numeric_baseline_with_separate_undo() {
     setup(|mut h| {
         let original = h.read(|editor| editor.document.project.clone());
         enter_numeric(&mut h, "Warmth", "0.25");
@@ -99,7 +99,8 @@ fn a_wheel_previews_and_accepts_from_a_completed_numeric_baseline_with_separate_
         h.step();
         h.step();
         h.read(|editor| {
-            assert_eq!(editor.document.project, first_accepted);
+            assert_ne!(editor.document.project, first_accepted);
+            assert!(!editor.editing());
             assert_ne!(
                 editor.photo_settings().wb,
                 Balance {
@@ -125,7 +126,7 @@ fn a_wheel_previews_and_accepts_from_a_completed_numeric_baseline_with_separate_
 }
 
 #[test]
-fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
+fn dragging_a_numeric_value_uses_short_updates_and_one_undo_through_a_pause() {
     setup(|mut h| {
         let original = h.read(|editor| editor.document.project.clone());
         let numeric = egui::accesskit::Role::SpinButton;
@@ -149,20 +150,21 @@ fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
                 0.,
                 "the numeric drag actually changes the preview"
             );
-            assert_eq!(editor.document.project, original);
-            assert!(editor.editing());
-            assert!(!editor.document_command_available());
+            assert_ne!(editor.document.project, original);
+            assert!(!editor.editing());
+            assert!(editor.document_command_available());
             editor.photo_settings().exposure
         });
+        let held = h.read(|editor| editor.document.project.clone());
         for _ in 0..3 {
             h.step();
         }
         h.read(|editor| {
             assert_eq!(editor.photo_settings().exposure, preview);
-            assert_eq!(editor.document.project, original);
+            assert_eq!(editor.document.project, held);
             assert!(
-                editor.editing(),
-                "stationary pointer still owns the same edit"
+                !editor.editing(),
+                "stationary input reserves no mutation authority"
             );
         });
         let end = middle + egui::vec2(12., 0.);
@@ -170,7 +172,7 @@ fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
         h.step();
         let preview = h.read(|editor| {
             assert!(editor.photo_settings().exposure > preview);
-            assert_eq!(editor.document.project, original);
+            assert_ne!(editor.document.project, original);
             editor.photo_settings().exposure
         });
         h.event(egui::Event::PointerButton {
@@ -182,10 +184,7 @@ fn dragging_a_numeric_value_keeps_one_edit_through_a_pause_and_release() {
         h.step();
         let accepted = h.read(|editor| {
             assert_eq!(editor.photo_settings().exposure, preview);
-            assert!(
-                !editor.editing(),
-                "release completes the numeric-owned edit"
-            );
+            assert!(!editor.editing(), "release leaves no mutation authority");
             assert!(editor.document_command_available());
             editor.document.project.clone()
         });
@@ -233,7 +232,8 @@ fn a_precision_track_preserves_a_completed_numeric_baseline_and_has_its_own_undo
                 editor.photo_settings().exposure > 1.25,
                 "rightward fine travel increases the baseline"
             );
-            assert_eq!(editor.document.project, first_accepted);
+            assert_ne!(editor.document.project, first_accepted);
+            assert!(!editor.editing());
         });
         h.event(egui::Event::PointerButton {
             pos: end,
@@ -373,7 +373,7 @@ fn numeric_focus_transfer_accepts_each_field_with_independent_undo_in_both_paint
 }
 
 #[test]
-fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_undo() {
+fn a_track_drag_after_numeric_completion_has_live_updates_and_separate_undo() {
     for (label, fraction) in [("Contrast", 0.8), ("Exposure", 0.8), ("Exposure", 0.5)] {
         setup(|mut h| {
             let original = h.read(|editor| editor.document.project.clone());
@@ -383,6 +383,7 @@ fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_und
             h.get_by_role_and_label(role, "Exposure").click();
             h.step();
             enter_numeric(&mut h, "Exposure", "1.25");
+            let first_accepted = h.read(|editor| editor.document.project.clone());
             h.get_by_role_and_label(egui::accesskit::Role::Slider, label)
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
@@ -398,26 +399,11 @@ fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_und
                 modifiers: egui::Modifiers::NONE,
             });
             h.step();
-            let first_accepted = h.read(|editor| {
-                let id = editor.document.visit.current_source.unwrap();
-                let values = editor
-                    .document
-                    .project
-                    .source(id)
-                    .unwrap()
-                    .adjustment_layers
-                    .as_ref()
-                    .unwrap()
-                    .layers[0]
-                    .adjustment
-                    .photo;
-                assert_eq!(values.exposure, 1.25);
-                assert_eq!(values.contrast, 1.);
-                assert!(editor.editing());
+            let clicked = h.read(|editor| {
+                assert!(!editor.editing());
                 assert_ne!(
-                    editor.photo_settings(),
-                    values,
-                    "the admitted track must supply a distinct preview"
+                    editor.document.project, first_accepted,
+                    "the admitted track changes accepted values"
                 );
                 editor.document.project.clone()
             });
@@ -430,7 +416,7 @@ fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_und
             h.step();
             h.read(|editor| {
                 assert!(!editor.editing());
-                assert_ne!(editor.document.project, first_accepted);
+                assert_eq!(editor.document.project, clicked);
             });
             shortcut(&mut h, false);
             h.read(|editor| assert_eq!(editor.document.project, first_accepted));
@@ -438,6 +424,37 @@ fn a_track_drag_after_numeric_completion_has_separate_preview_acceptance_and_und
             h.read(|editor| assert_eq!(editor.document.project, original));
         });
     }
+}
+
+#[test]
+fn narrow_controls_keep_grouped_undo_without_reserving_workspace_commands() {
+    setup(|mut h| {
+        set_layout(&mut h, egui::vec2(800., 600.), 270.);
+        let original = h.read(|editor| editor.document.project.clone());
+        enter_numeric(&mut h, "Exposure", "1.25");
+        let numeric = h.read(|editor| {
+            assert!(!editor.editing());
+            assert!(editor.document_command_available());
+            editor.document.project.clone()
+        });
+        h.get_by_role_and_label(egui::accesskit::Role::Slider, "Contrast")
+            .scroll_to_me();
+        h.try_run_realtime().unwrap();
+        let track = h
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Contrast")
+            .rect();
+        let start = egui::pos2(track.left() + 0.6 * track.width(), track.center().y);
+        drag(&mut h, start, start + egui::vec2(10., 0.));
+        h.read(|editor| {
+            assert_ne!(editor.photo_settings().contrast, 1.);
+            assert!(!editor.editing());
+            assert!(editor.document_command_available());
+        });
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, numeric));
+        shortcut(&mut h, false);
+        h.read(|editor| assert_eq!(editor.document.project, original));
+    });
 }
 
 fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {

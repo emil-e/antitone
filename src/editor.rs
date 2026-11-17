@@ -422,59 +422,36 @@ impl Editor {
         cx: &UiContext<'_, Self>,
         write: impl FnOnce(&mut crate::project::Project),
     ) {
+        self.gamma_control_response(response);
+        if !response.changed && self.gamma_input_pending(response) {
+            return;
+        }
+        let (starting_input, starting_wb) = self.gamma_control_initial(response);
         let Some(mut edit) = self.begin_control(response, false) else {
             return;
         };
-        if response.changed {
-            let starting = edit.values.initial();
-            let previous_request = edit
-                .gamma_request
-                .unwrap_or_else(|| edit.values.preview().snapshot().unwrap().input);
-            let proposed = edit.values.update(|project| {
-                let previous = project.input;
-                write(project);
-                let proposed = project.input;
-                project.input = previous;
-                proposed
-            });
-            if proposed != previous_request {
-                edit.calculation = None;
-                if self.gamma_compensation_required(starting.input, proposed) {
-                    edit.gamma_request = Some(proposed);
-                    edit.values.rename("Gamma & balance");
-                } else {
-                    edit.gamma_request = None;
-                    edit.values.update(|project| {
-                        project.input = proposed;
-                        if proposed == starting.input {
-                            project.roll.wb = starting.roll.wb;
-                        }
-                    });
-                }
-            }
-            let validation = if let Some(input) = edit.gamma_request {
-                input
-                    .negative_input()
-                    .map(|input| input.parameters())
-                    .transpose()
-                    .map(|_| ())
-            } else {
-                self.validate_roll_values(&edit.values.preview().snapshot().unwrap())
-            };
-            if let Err(error) = validation {
-                self.status = format!("Edit rejected: {error}");
-                return;
+        let accepted = self.document.state.project.clone();
+        edit.update(write);
+        let proposed = edit.preview().snapshot().unwrap().input;
+        if !gamma_pivot::same_gamma(accepted.input, proposed)
+            && self.gamma_compensation_required(starting_input, proposed)
+        {
+            drop(edit);
+            self.compensate_gamma((starting_input, starting_wb), proposed, response, cx);
+            return;
+        }
+        if !gamma_pivot::same_gamma(accepted.input, proposed) || self.gamma_input_pending(response)
+        {
+            self.clear_gamma_proposal();
+            if proposed == starting_input {
+                edit.update(|project| project.roll.wb = starting_wb);
             }
         }
-        let calculate = edit.gamma_request.is_some() && edit.calculation.is_none();
-        // The calculation is feature-owned; it retains the edit until its result is ready.
-        if calculate {
-            edit.finished = !response.active;
-            self.document.controls_edit = Some(edit);
-            self.compensate_control_edit(cx);
-        } else {
-            self.retain_control(edit, response, false);
+        if let Err(error) = self.validate_roll_values(&edit.preview().snapshot().unwrap()) {
+            self.status = format!("Edit rejected: {error}");
+            return;
         }
+        self.commit_control(edit, response);
     }
 
     fn output_control(
@@ -485,18 +462,16 @@ impl Editor {
         let Some(mut edit) = self.begin_control(response, false) else {
             return;
         };
-        if response.changed {
-            let result = edit.values.update(|project| {
-                write(&mut project.output);
-                project.output.grain.validate()?;
-                project.output.halation.validate()
-            });
-            if let Err(error) = result {
-                self.status = format!("Edit rejected: {error}");
-                return;
-            }
+        let result = edit.update(|project| {
+            write(&mut project.output);
+            project.output.grain.validate()?;
+            project.output.halation.validate()
+        });
+        if let Err(error) = result {
+            self.status = format!("Edit rejected: {error}");
+            return;
         }
-        self.retain_control(edit, response, false);
+        self.commit_control(edit, response);
     }
 
     fn grain_preset_controls(&mut self, ui: &mut egui::Ui) {
@@ -993,11 +968,7 @@ impl Editor {
         use ui::SectionHeader;
 
         let grade = self.document.project_snapshot();
-        let requested_input = self
-            .document
-            .controls_edit
-            .as_ref()
-            .and_then(|edit| edit.gamma_request);
+        let requested_input = self.document.gamma_pivot.requested_input();
         let mut stage_target = None;
         let mut toggle_pivot = false;
         let previous_orientation = (self.document.project.orientation, self.photo_orientation());
@@ -1026,11 +997,8 @@ impl Editor {
             self.photo_tool_shelf(ui, cx);
         }
 
-        let gamma_pending = self.controls_pending();
-        let editable = !self.interaction_blocked()
-            && !self.tool_interacting()
-            && !gamma_pending
-            && grade.input.ready();
+        let editable =
+            !self.interaction_blocked() && !self.tool_interacting() && grade.input.ready();
         let can_pick = self.tool_start_available() && self.selected_area().is_some();
         let mut start_pick: Option<editing::Interaction> = None;
 
@@ -1157,10 +1125,7 @@ impl Editor {
                                     self.gamma_pivot_tool(can_pick),
                                     |ui| {
                                         ui.add_enabled_ui(
-                                            editable
-                                                || gamma_pending
-                                                    && !self.interaction_blocked()
-                                                    && !self.tool_interacting(),
+                                            editable,
                                             |ui| {
                                                 let response = ui::ParameterRow::new(
                                                     "gamma",
@@ -1183,10 +1148,7 @@ impl Editor {
                                             },
                                         );
                                         ui.add_enabled_ui(
-                                            editable
-                                                || gamma_pending
-                                                    && !self.interaction_blocked()
-                                                    && !self.tool_interacting(),
+                                            editable,
                                             |ui| {
                                                 for response in ui::BalanceControl::new(
                                                     "balance",
@@ -1378,9 +1340,7 @@ impl Editor {
                     }
                 } else {
                     if grade.input.capabilities().grain {
-                        let allowed = !self.interaction_blocked()
-                            && !self.tool_interacting()
-                            && !self.controls_pending();
+                        let allowed = !self.interaction_blocked() && !self.tool_interacting();
                         ui.add_enabled_ui(allowed, |ui| {
                             ui::section(
                                 ui,
@@ -1404,7 +1364,7 @@ impl Editor {
                         });
                     }
                     self.look_controls(ui, cx);
-                    ui.add_enabled_ui(!self.tool_interacting() && !self.controls_pending(), |ui| {
+                    ui.add_enabled_ui(!self.tool_interacting(), |ui| {
                         let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
                         let (_, action) = ui::section(
                             ui,
@@ -1479,21 +1439,16 @@ impl Editor {
         if previous_orientation != (self.document.project.orientation, self.photo_orientation()) {
             self.document.visit.canvas.viewport.fit();
         }
-        if self.tab != 1 {
-            self.document.visit.controls_edit = None;
-        }
         if let Some(target) = stage_target {
-            self.cancel_control_edit();
             self.request_input(target, cx);
         }
         if toggle_pivot {
             self.toggle_gamma_pivot(cx);
         }
-        if let Some(start) = start_pick {
-            self.cancel_control_edit();
-            if let Err(error) = self.start_interaction(cx, start) {
-                self.status = error;
-            }
+        if let Some(start) = start_pick
+            && let Err(error) = self.start_interaction(cx, start)
+        {
+            self.status = error;
         }
         self.tab = next_tab;
         scope_slot
