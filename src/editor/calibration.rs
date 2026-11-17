@@ -210,6 +210,7 @@ pub(super) fn set_dmax(editor: &mut Editor, value: DVec3) -> Result<(), String> 
 }
 
 pub(super) fn set_gamma_balance(editor: &mut Editor, value: Balance) -> Result<(), String> {
+    value.validate().map_err(|error| error.to_string())?;
     change_input(editor, |candidate| {
         let InputSettings::Negative { balance, .. } = candidate else {
             return Err("Gamma balance requires a scan input".into());
@@ -231,16 +232,6 @@ fn change_input(
         .map_err(|error| error.to_string())?;
     let mut candidate = editor.document.project.input;
     change(&mut candidate)?;
-    if let Some(calibration) = candidate.calibration() {
-        calibration.validate().map_err(|error| error.to_string())?;
-        editor
-            .validate_processing(
-                candidate,
-                editor.document.project.roll,
-                editor.photo_settings(),
-            )
-            .map_err(|error| error.to_string())?;
-    }
     let became_ready = !editor.document.project.input.ready() && candidate.ready();
     draft.update(|project| project.input = candidate);
     editor

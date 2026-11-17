@@ -357,10 +357,9 @@ fn correction_leaves_inversion_parameters_and_captured_layer_stacks_unchanged() 
 }
 
 #[test]
-fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacing_state() {
+fn offscreen_unrenderable_layer_does_not_veto_calibration_picks() {
     pollster::block_on(async {
         let (mut editor, device, _) = fixture().await;
-        let accepted = positive(&editor);
         let id = editor.document.visit.current_source.unwrap();
         let mut other = editor.document.state.project.source(id).unwrap().clone();
         other.id = SourceId(editor.document.state.project.next_source_id);
@@ -401,67 +400,54 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         editor.document.state.project.sources.push(other.clone());
         editor.document.state.project.order.push(other.id);
         editor.document.state.project.next_source_id += 1;
-        let before = (
-            editor.document.project.roll,
-            editor.photo_settings(),
-            editor.dmin(),
-            editor.dmax(),
-            editor.document.state.project.clone(),
-        );
-        let generation = editor.document.visit.canvas.original.continuation();
         assert!(
             editor
                 .validate_processing(
-                    editor.document.project.input,
-                    RollSettings {
-                        exposure: 1.,
-                        ..editor.document.project.roll
-                    },
-                    editor.photo_settings()
-                )
-                .is_err()
-        );
-        picking::preview(&mut editor, PickerCase::Gamma.display());
-        assert!(
-            (calibration::set_gamma_balance(
-                &mut editor,
-                Balance {
-                    warmth: 0.1,
-                    tint: -0.1,
-                }
-            ))
-            .is_err()
-        );
-        editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(
-            (
-                editor.document.project.roll,
-                editor.photo_settings(),
-                editor.dmin(),
-                editor.dmax(),
-                editor.document.state.project.clone()
-            ),
-            before
-        );
-        assert_eq!(
-            editor.document.visit.canvas.original.continuation(),
-            generation
-        );
-        assert_eq!(accepted.clone(), positive(&editor).clone());
-        let proposed_cal = Calibration {
-            dmin: editor.calibration().unwrap().dmin * 1.1,
-            ..editor.calibration().unwrap()
-        };
-        assert!(
-            editor
-                .validate_processing(
-                    proposed_cal,
+                    editor.input(),
                     editor.document.project.roll,
                     editor.photo_settings()
                 )
                 .is_err()
         );
-        assert_eq!(accepted.clone(), positive(&editor).clone());
+        let mut expected = editor.document.state.project.clone();
+        let balance = Balance {
+            warmth: 0.1,
+            tint: -0.1,
+        };
+        let dmin = editor.dmin().unwrap() * 1.1;
+        let dmax = editor.dmax().unwrap() * 0.9;
+        if let InputSettings::Negative {
+            dmin: reference_min,
+            dmax: reference_max,
+            balance: gamma_balance,
+            ..
+        } = &mut expected.input
+        {
+            *reference_min = Some(dmin);
+            *reference_max = Some(dmax);
+            *gamma_balance = balance;
+        }
+        calibration::set_dmin(&mut editor, dmin).unwrap();
+        calibration::set_dmax(&mut editor, dmax).unwrap();
+        calibration::set_gamma_balance(&mut editor, balance).unwrap();
+        assert_eq!(editor.document.state.project, expected);
+        assert!(
+            validate_source(
+                Some(&device),
+                editor.input(),
+                editor.document.project.roll,
+                editor.document.state.project.source(other.id).unwrap()
+            )
+            .is_err(),
+            "the offscreen layer still cannot render"
+        );
+        editor
+            .positive_processing(
+                editor.input(),
+                editor.document.project.roll,
+                editor.photo_settings(),
+            )
+            .unwrap();
     });
 }
 

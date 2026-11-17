@@ -2,7 +2,7 @@
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::Balance,
-    processing::{DEFAULT_GAMMA, InputSettings, Response},
+    processing::{Calibration, DEFAULT_GAMMA, InputSettings, Response},
     project::*,
 };
 use glam::DVec3;
@@ -791,16 +791,33 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
         };
         assert!(partial.validate().is_err());
     }
-    let mut ordering = project.clone();
-    if let InputSettings::Negative { dmin, dmax, .. } = &mut ordering.input {
-        *dmax = *dmin;
-    }
-    assert!(ordering.validate().is_err());
     let mut uncalibrated = project.clone();
     if let InputSettings::Negative { dmax, .. } = &mut uncalibrated.input {
         *dmax = None;
     }
     uncalibrated.validate().unwrap();
+}
+
+#[test]
+fn incompatible_reference_pairs_roundtrip_without_admitting_undefined_inversion() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, _, _) = fixture(dir.path());
+    let path = dir.path().join("recalibration.antitone");
+    for (index, (dmin, dmax)) in [(0.1, 0.1), (0.1, 0.2), (0.1, 0.1 - 1e-9)]
+        .into_iter()
+        .enumerate()
+    {
+        let calibration = Calibration {
+            dmin: DVec3::splat(dmin),
+            dmax: DVec3::splat(dmax),
+        };
+        project.input = InputSettings::negative(calibration);
+        assert!(antitone::processing::Inversion::new(calibration).is_err());
+        project
+            .save(&path, if index == 0 { Save::New } else { Save::Replace })
+            .unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+    }
 }
 
 fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) -> Source {

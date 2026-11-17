@@ -207,8 +207,7 @@ fn gamma_picker_survives_history_and_captures_the_restored_stage_at_apply() {
 }
 
 #[test]
-fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_next_pick_can_apply()
-{
+fn incompatible_measured_reference_is_retained_and_undoable_until_its_companion_is_replaced() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = setup(file.path().to_str().unwrap());
     editor.load_input(
@@ -235,29 +234,40 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         });
         app.read(|editor| {
             assert!(editor.test_pick().is_none());
-            assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.history_label(Direction::Undo), undo.as_deref());
-        });
-        app.enter(|editor, cx| {
-            editor.set_dmax(Some(DVec3::splat(0.005)));
-
-            editor.begin_test_picker(PickerCase::Dmin, cx);
-        });
-        app.pump();
-        app.enter(|editor, cx| {
-            editor.set_test_pick_region(Some(region));
-            editor.apply_pick(cx);
-        });
-        app.run_until(Duration::from_secs(5), |editor| {
-            !editor.interaction_blocked()
-        });
-        app.read(|editor| {
             assert_eq!(editor.dmin(), Some(expected));
+            assert_eq!(editor.dmax(), Some(DVec3::ONE));
             assert_eq!(
                 editor.history_label(Direction::Undo),
                 Some("Calibration pick")
             );
-            assert!(editor.test_pick().is_none());
+            assert!(
+                editor
+                    .positive_processing(
+                        editor.input(),
+                        editor.document.project.roll,
+                        editor.photo_settings()
+                    )
+                    .is_err()
+            );
+        });
+        app.enter(|editor, cx| {
+            editor.restore_history(Direction::Undo, cx);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.history_label(Direction::Undo), undo.as_deref());
+            editor.restore_history(Direction::Redo, cx);
+            assert_eq!(editor.dmin(), Some(expected));
+            set_dmax(editor, DVec3::splat(0.005)).unwrap();
+        });
+        app.read(|editor| {
+            assert_eq!(editor.dmin(), Some(expected));
+            assert_eq!(editor.dmax(), Some(DVec3::splat(0.005)));
+            editor
+                .positive_processing(
+                    editor.input(),
+                    editor.document.project.roll,
+                    editor.photo_settings(),
+                )
+                .unwrap();
         });
     });
 }
