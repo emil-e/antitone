@@ -99,7 +99,7 @@ fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission(
         )
         .unwrap(),
     ));
-    request.document.project.require_runtime().unwrap();
+    serde_json::to_value(&request.document.project).unwrap();
     assert!(
         crate::gpu::lut3d::Lut::require_limits(
             &device.limits(),
@@ -208,6 +208,44 @@ fn cancelling_review_assembly_does_not_return_partial_areas_or_discard_detection
     assert_eq!(count.load(Ordering::Relaxed), 2);
     assert_eq!(request.document.project, before);
     assert_eq!(request.document.spatial_metadata, ready);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn review_checks_a_saved_shared_picture_prior_only_when_it_is_consumed() {
+    let (mut request, directory, device, queue) = request();
+    let (scheduler, _) = observed();
+    detect(&mut request, &scheduler, &device, &queue);
+    request.document.project.analysis_area = Some([96, 96, 320, 320]);
+    assert!(
+        assemble_review(&request, || false, |_, _| {})
+            .unwrap()
+            .is_some()
+    );
+    request.document.project.analysis_area = Some([96, 96, 640, 640]);
+    let before = request.document.project.clone();
+    let saved = request
+        .document
+        .save(
+            &directory.path().join("retained-prior.antitone"),
+            crate::project::Save::New,
+        )
+        .unwrap();
+    assert_eq!(
+        Document::open(saved.path.as_deref().unwrap())
+            .unwrap()
+            .project,
+        before
+    );
+    let error = match assemble_review(&request, || false, |_, _| {}) {
+        Err(error) => error,
+        Ok(_) => panic!("out-of-source shared picture prior must not be sampled"),
+    };
+    assert!(
+        error.to_string().contains("analysis area is outside"),
+        "{error}"
+    );
+    assert_eq!(request.document.project, before);
     scheduler.close_and_wait().unwrap();
 }
 

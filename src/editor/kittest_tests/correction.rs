@@ -724,7 +724,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                     Ok(())
                 })
                 .unwrap();
-            editor.document.project.require_runtime().unwrap();
+            serde_json::to_value(&editor.document.project).unwrap();
         });
         if harness.read(|editor| editor.document.source) {
             harness.get_by_label("View source").click();
@@ -950,7 +950,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             let reapplied = editor.document.state.project.flat_field().cloned().unwrap();
             assert_eq!(reapplied.reference_name, settings.reference_name);
             expected.set_flat_field(Some(reapplied)).unwrap();
-            expected.validate().unwrap();
+            serde_json::to_value(&expected).unwrap();
             assert_eq!(editor.document.state.project, expected);
         });
         std::fs::remove_file(&reference).unwrap();

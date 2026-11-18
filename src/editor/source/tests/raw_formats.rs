@@ -65,7 +65,7 @@ fn authored_capture_balance_is_per_source_across_input_stage_switches() {
                 expected
             );
         }
-        document.project.require_runtime().unwrap();
+        serde_json::to_value(&document.project).unwrap();
         if input.is_negative() {
             document.project.require_scan_sources().unwrap();
         }

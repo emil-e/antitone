@@ -261,7 +261,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         }
         editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(ids[0]));
 
-        editor.document.project.require_runtime().unwrap();
+        serde_json::to_value(&editor.document.project).unwrap();
     });
     harness.step();
     let before = harness.read(|editor| editor.document.state.project.clone());

@@ -80,13 +80,12 @@ fn capture(
     out: &Path,
     monitor: &crate::cache_observation::Monitor,
 ) -> Result<()> {
-    // Validate every requested path/runtime before creating output or opening a native source.
+    // Validate every requested path before creating output or opening a native source.
     let mut originals = vec![];
     for case in cases {
         if case.spec.windows.is_empty() {
             return Err("capture requires independently supplied windows for every case".into());
         }
-        case.project.require_runtime()?;
         let locator = case
             .project
             .resolve_path(case.spec.source, &case.project_path)?;

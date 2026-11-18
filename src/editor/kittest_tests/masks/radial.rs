@@ -123,7 +123,7 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             };
             assert_eq!(feather, 0.);
             harness.read(|editor| assert!(!editor.masking()));
-            harness.read(|editor| editor.document.project.require_runtime().unwrap());
+            harness.read(|editor| serde_json::to_value(&editor.document.project).unwrap());
         }
     });
 }

@@ -38,7 +38,7 @@ fn digital(gain: f64) -> Project {
 fn accepted_wb_roundtrips_without_capture_metadata_or_grade_changes() {
     for gain in [1., 2., 3.5, 4.] {
         let project = digital(gain);
-        project.require_runtime().unwrap();
+        serde_json::to_value(&project).unwrap();
         let json = serde_json::to_string(&project).unwrap();
         assert!(!json.contains("pre_applied_wb"));
         assert_eq!(
@@ -48,7 +48,7 @@ fn accepted_wb_roundtrips_without_capture_metadata_or_grade_changes() {
         );
         let loaded: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, project);
-        loaded.require_runtime().unwrap();
+        serde_json::to_value(&loaded).unwrap();
         assert!(!json.contains("precision_floor"));
         assert_eq!(loaded.roll.exposure, -0.5);
         assert_eq!(
@@ -73,21 +73,21 @@ fn accepted_wb_requires_representable_gains_and_the_selected_backend_basis() {
     ] {
         let mut invalid = project.clone();
         invalid.sources[0].development.decode.white_balance[0] = value;
-        assert!(invalid.validate().is_err(), "gain {value}");
+        assert!(serde_json::to_value(&invalid).is_err(), "gain {value}");
     }
     let mut sdk = project.clone();
     sdk.sources[0].development.decode.backend = Developer::DngSdk;
     sdk.sources[0].development.decode.white_balance = [4., 1., 2., 1.];
-    sdk.validate().unwrap();
+    serde_json::to_value(&sdk).unwrap();
     for wb in [[4., 1., 2., 2.], [8., 2., 4., 2.], [257., 1., 2., 1.]] {
         let mut invalid = sdk.clone();
         invalid.sources[0].development.decode.white_balance = wb;
-        invalid.validate().unwrap();
+        serde_json::to_value(&invalid).unwrap();
     }
     let mut negative = project;
     negative.input = InputSettings::default();
     negative.sources[0].development.decode.white_balance = [2., 1., 1., 1.];
-    negative.validate().unwrap();
+    serde_json::to_value(&negative).unwrap();
     assert!(
         negative
             .image_recipe(negative.order[0])
@@ -106,7 +106,7 @@ fn accepted_wb_requires_representable_gains_and_the_selected_backend_basis() {
     );
     negative.sources[0].development_mode = DevelopmentMode::Unity;
     assert!(
-        negative.validate().is_err(),
+        serde_json::to_value(&negative).is_err(),
         "a registered Unity baseline must contain actual unity WB"
     );
 }

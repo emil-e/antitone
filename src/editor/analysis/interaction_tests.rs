@@ -195,7 +195,7 @@ fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inpu
                         let mut document = editor.document.capture();
                         document.project.roll.exposure += 0.75;
                         document.project.analysis_regions = reviewed.entries;
-                        document.project.require_runtime().unwrap();
+                        serde_json::to_value(&document.project).unwrap();
                         let proposed = document.project.clone();
                         editor.document.analysis_fit_work = Some(held_work(
                             sources,

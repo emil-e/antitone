@@ -126,7 +126,7 @@ fn selected_cold_export_ignores_unselected_render_failure_and_all_scope_reports_
             .source_mut(bad)
             .unwrap()
             .adjustment_layers = Some(layers);
-        editor.document.project.require_runtime().unwrap();
+        serde_json::to_value(&editor.document.project).unwrap();
         assert!(
             crate::editor::tests::photograph(
                 &editor.document.capture(),

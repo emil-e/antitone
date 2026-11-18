@@ -38,9 +38,9 @@ fn ap0_project_schemas_and_models_reject_without_reinterpreting_calibration() {
         value["processing_model"] = model.into();
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(Project::load(&path).is_err());
-        let mut incompatible = project();
-        incompatible.processing_model = model;
-        assert!(incompatible.validate().is_err());
+        let mut incompatible = serde_json::to_value(project()).unwrap();
+        incompatible["processing_model"] = model.into();
+        assert!(serde_json::from_value::<Project>(incompatible).is_err());
     }
 }
 
@@ -49,7 +49,10 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("film.antitone.json");
     let mut film = project();
-    assert_eq!(film.processing_model, antitone::PROCESSING_MODEL_VERSION);
+    assert_eq!(
+        serde_json::to_value(&film).unwrap()["processing_model"],
+        antitone::PROCESSING_MODEL_VERSION
+    );
     assert_eq!(
         match negative(&film) {
             InputSettings::Negative { response, .. } => *response,
@@ -101,7 +104,7 @@ fn project_validation_checks_controls_without_rejecting_low_gamma_shoulder_combi
         *gamma = DEFAULT_GAMMA;
         *balance = Balance::default();
     }
-    assert!(p.validate().is_err());
+    assert!(serde_json::to_value(&p).is_err());
     if let InputSettings::Negative {
         response,
         gamma,
@@ -119,10 +122,10 @@ fn project_validation_checks_controls_without_rejecting_low_gamma_shoulder_combi
             tint: 1.,
         };
     }
-    p.validate().unwrap();
+    serde_json::to_value(&p).unwrap();
     if let InputSettings::Negative { gamma, balance, .. } = &mut p.input {
         *gamma = 0.65;
         *balance = Balance::default();
     }
-    p.validate().unwrap();
+    serde_json::to_value(&p).unwrap();
 }

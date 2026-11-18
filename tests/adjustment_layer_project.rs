@@ -111,7 +111,7 @@ fn initial_global_layer_is_serialized_as_an_ordinary_layer_and_empty_stacks_roun
         .layers
         .clear();
     let loaded: Project = serde_json::from_value(serde_json::to_value(&project).unwrap()).unwrap();
-    loaded.validate().unwrap();
+    serde_json::to_value(&loaded).unwrap();
     assert!(
         loaded
             .source(id)
@@ -264,9 +264,14 @@ fn malformed_local_state_rejects_and_failed_save_preserves_existing_project() {
     ] {
         let mut json = original.clone();
         *json.pointer_mut(pointer).unwrap() = bad;
-        let invalid: Project = serde_json::from_value(json).unwrap();
-        assert!(invalid.validate().is_err(), "accepted {pointer}");
-        assert!(invalid.save(&path, Save::Replace).is_err());
+        assert!(
+            serde_json::from_value::<Project>(json.clone()).is_err(),
+            "accepted {pointer}"
+        );
+        let mut invalid = project.clone();
+        invalid.sources[0].adjustment_layers =
+            Some(serde_json::from_value(json["sources"][0]["adjustment_layers"].clone()).unwrap());
+        assert!(invalid.save(&path, Save::Replace).is_err(), "{pointer}");
         assert_eq!(std::fs::read(&path).unwrap(), saved_bytes);
     }
     for pointer in [

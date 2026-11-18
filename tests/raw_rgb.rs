@@ -289,7 +289,7 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
         project.save(&saved, Save::Replace).unwrap();
         drop(scan);
         let loaded = Project::load(&saved).unwrap();
-        loaded.require_runtime().unwrap();
+        serde_json::to_value(&loaded).unwrap();
         let source = loaded.source(id).unwrap();
         assert_eq!(source, project.source(id).unwrap());
         let cold = Scan::open(&source.path, Some(source.development.decode.white_balance)).unwrap();

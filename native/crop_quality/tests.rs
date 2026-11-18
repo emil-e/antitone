@@ -115,7 +115,7 @@ fn censored_labels_flag_proposals_but_do_not_override_the_normal_evidence_gate()
     areas.picture_observed[2] = false;
     areas.picture_geometry.as_mut().unwrap().sides[2] = None;
     areas.picture_constraints.remove(2);
-    cases[0].project.validate().unwrap();
+    serde_json::to_value(&cases[0].project).unwrap();
     let result = report(&cases, &margins).unwrap();
     let proposal = &result["cases"][0]["proposals"][0];
     assert_eq!(proposal["status"], "abstain");
@@ -131,7 +131,7 @@ fn retained_evidence_does_not_make_a_removed_photo_a_proposal() {
     let id = cases[0].spec.source;
     assert!(proposal(&cases[0]).is_ok());
     cases[0].project.remove_from_filmstrip(id).unwrap();
-    cases[0].project.validate().unwrap();
+    serde_json::to_value(&cases[0].project).unwrap();
     assert!(cases[0].project.source(id).is_err());
     assert!(proposal(&cases[0]).is_err());
     assert!(

@@ -195,12 +195,7 @@ fn malformed_embedded_assets_in_either_slot_are_rejected_at_their_actual_fields(
     project.output.lut = Some(lut(LookOrigin::Imported));
     project.output.film_and_paper = Some(material());
     let value = serde_json::to_value(project).unwrap();
-    assert!(
-        serde_json::from_value::<Project>(value.clone())
-            .unwrap()
-            .validate()
-            .is_ok()
-    );
+    assert!(serde_json::from_value::<Project>(value.clone()).is_ok());
     for slot in ["lut", "film_and_paper"] {
         for (field, new) in [
             ("contract", serde_json::json!("rec709-drt")),
@@ -221,10 +216,10 @@ fn malformed_embedded_assets_in_either_slot_are_rejected_at_their_actual_fields(
 fn material_and_imported_asset_roles_cannot_be_silently_swapped() {
     let mut project = Project::default();
     project.output.lut = Some(material());
-    assert!(project.validate().is_err());
+    assert!(serde_json::to_value(&project).is_err());
     project.output.lut = None;
     project.output.film_and_paper = Some(lut(LookOrigin::Imported));
-    assert!(project.validate().is_err());
+    assert!(serde_json::to_value(&project).is_err());
     project.output.film_and_paper = Some(material());
-    assert!(project.validate().is_ok());
+    assert!(serde_json::to_value(&project).is_ok());
 }

@@ -261,6 +261,9 @@ impl Fit {
         sampler: &crate::gpu::analysis::CameraSampler<'_>,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
+        if let Some(picture) = self.picture {
+            require_picture_bounds(picture, active)?;
+        }
         let frame_areas = self.request.areas.as_ref().map(|a| &a.entries[index].areas);
         let regions = self
             .request
@@ -447,18 +450,18 @@ impl Fit {
                 .extend(approved.entries.clone());
         }
         analysis::verify(request)?;
-        candidate.project.require_runtime()?;
         for id in &project.order {
             if cancelled() {
                 return Ok(None);
             }
             let record = candidate.project.source(*id)?;
-            super::super::processing::validate_source_with_matrix(
-                Some(&self.device),
+            crate::gpu::photograph::admission::prepare(
+                &self.device.limits(),
                 candidate.project.input,
                 candidate.project.roll,
-                record,
+                &record.grade_snapshot()?,
                 self.matrix,
+                record.development.active_area.into(),
             )?;
             if let Some(correction) = &self.correction {
                 correction

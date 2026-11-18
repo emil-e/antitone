@@ -117,15 +117,18 @@ fn analysis_area_roundtrips_without_changing_processing_and_old_documents_defaul
     );
     let before = p.clone();
     p.analysis_area = Some([40, 30, 820, 540]);
-    p.validate().unwrap();
+    serde_json::to_value(&p).unwrap();
     let saved = serde_json::to_string(&p).unwrap();
     assert_eq!(serde_json::from_str::<Project>(&saved).unwrap(), p);
     assert_eq!(p.roll, before.roll);
     assert_eq!(p.sources, before.sources);
     assert_eq!(p.calibration().unwrap(), before.calibration().unwrap());
-    for area in [[40, 30, 7, 540], [0, 0, 901, 600], [u32::MAX, 0, 8, 8]] {
+    p.analysis_area = Some([0, 0, 901, 600]);
+    let encoded = serde_json::to_string(&p).unwrap();
+    assert_eq!(serde_json::from_str::<Project>(&encoded).unwrap(), p);
+    for area in [[40, 30, 7, 540], [u32::MAX, 0, 8, 8]] {
         p.analysis_area = Some(area);
-        assert!(p.validate().is_err());
+        assert!(serde_json::to_value(&p).is_err());
     }
 }
 
@@ -140,7 +143,7 @@ fn roll_wb_roundtrips_defaults_missing_optional_values_to_zero_and_rejects_inval
         warmth: -0.25,
         tint: 0.15,
     };
-    p.validate().unwrap();
+    serde_json::to_value(&p).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
     p.save(&path, Save::New).unwrap();
@@ -153,7 +156,7 @@ fn roll_wb_roundtrips_defaults_missing_optional_values_to_zero_and_rejects_inval
             } else {
                 invalid.roll.wb.warmth = value;
             }
-            assert!(invalid.validate().is_err());
+            assert!(serde_json::to_value(&invalid).is_err());
             assert!(invalid.save(&path, Save::Replace).is_err());
             assert_eq!(Project::load(&path).unwrap(), p);
         }
@@ -179,7 +182,7 @@ fn incompatible_scans_reject_at_registration_and_consumption_but_roundtrip_as_sa
         intent.input = InputSettings::Digital;
         let id = intent.add_source(incompatible).unwrap();
         intent.input = before.input;
-        intent.validate().unwrap();
+        serde_json::to_value(&intent).unwrap();
         assert!(intent.require_scan_sources().is_err());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("incompatible-photo.antitone");
@@ -200,7 +203,7 @@ fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip(
     let basis = project.scan.clone();
     project.sources.clear();
     project.order.clear();
-    project.validate().unwrap();
+    serde_json::to_value(&project).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("roll.antitone.json");
     project.save(&path, Save::New).unwrap();
@@ -216,7 +219,7 @@ fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip(
     restored
         .add_source(source("camera A", DMat3::IDENTITY))
         .unwrap();
-    restored.validate().unwrap();
+    serde_json::to_value(&restored).unwrap();
     let mut corrupt = restored.clone();
     let mut invalid = source("camera A", DMat3::ZERO);
     let id = SourceId(corrupt.next_source_id);
@@ -225,7 +228,7 @@ fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip(
     corrupt.order.push(id);
     corrupt.next_source_id += 1;
     assert!(
-        corrupt.validate().is_err(),
+        serde_json::to_value(&corrupt).is_err(),
         "a structurally valid source list must still reject an invalid camera matrix"
     );
 }

@@ -3,10 +3,9 @@ use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::color::Balance;
 use crate::{
     Error, PROCESSING_MODEL_VERSION,
-    color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
-    processing::{Calibration, RollSettings, exposure_multiplier},
+    processing::{Calibration, RollSettings},
 };
 use glam::DMat3;
 #[cfg(test)]
@@ -20,11 +19,22 @@ use std::{
 };
 
 mod json;
+mod stored;
 
 pub const SCHEMA_VERSION: u32 = 21;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersion;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessingModel;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct OutputContract;
+
 type Result<T> = std::result::Result<T, Error>;
 
 fn failure(error: impl std::fmt::Display) -> Error {
@@ -230,8 +240,7 @@ fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
     SourceRegion::from(area).contains_region(SourceRegion::from(region))
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Source {
     pub id: SourceId,
     pub path: PathBuf,
@@ -240,11 +249,8 @@ pub struct Source {
     pub development_mode: DevelopmentMode,
 
     pub repairs: crate::dust_repair::RepairSet,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjustment_layers: Option<AdjustmentLayers>,
-    #[serde(default, skip_serializing_if = "PhotoOrientation::is_identity")]
     pub orientation: PhotoOrientation,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<Crop>,
 }
 
@@ -283,25 +289,14 @@ pub enum ExrPrecision {
     Full,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Output {
-    pub contract: String,
+    pub contract: OutputContract,
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::grain::GrainSettings::is_default"
-    )]
     pub grain: crate::grain::GrainSettings,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::halation::HalationSettings::is_default"
-    )]
     pub halation: crate::halation::HalationSettings,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lut: Option<std::sync::Arc<crate::looks::LookAsset>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub film_and_paper: Option<std::sync::Arc<crate::looks::LookAsset>>,
 }
 
@@ -317,7 +312,7 @@ impl Output {
 impl Default for Output {
     fn default() -> Self {
         Self {
-            contract: OUTPUT_CONTRACT.into(),
+            contract: OutputContract,
             tiff: TiffTarget::DisplayP3,
             exr: ExrPrecision::Half,
             grain: Default::default(),
@@ -392,12 +387,10 @@ impl ScanSetup {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Project {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: u32,
-    pub processing_model: u32,
+    pub schema: SchemaVersion,
+    pub processing_model: ProcessingModel,
     pub next_source_id: u64,
     pub sources: Vec<Source>,
     // Filmstrip order, containing every registered photo exactly once.
@@ -405,41 +398,21 @@ pub struct Project {
     pub roll: RollSettings,
     /// How source samples become a positive (per stage; owns the negative calibration).
     pub input: crate::processing::InputSettings,
-    #[serde(default, skip_serializing_if = "RollOrientation::is_identity")]
     pub orientation: RollOrientation,
     pub output: Output,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<ScanSetup>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_area: Option<[u32; 4]>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_regions: Vec<SourceAnalysis>,
     /// Resolved source initialization accompanies a write without becoming an accepted edit.
-    #[serde(
-        default,
-        deserialize_with = "crate::exposure_metadata::read_cached",
-        skip_serializing_if = "crate::exposure_metadata::empty_or_invalid"
-    )]
     pub exposure_metadata: Option<crate::exposure_metadata::Metadata>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub development_metadata: Option<crate::development_metadata::Metadata>,
-}
-
-fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<u32, D::Error> {
-    let schema = u32::deserialize(deserializer)?;
-    if schema != SCHEMA_VERSION {
-        return Err(serde::de::Error::custom("unsupported project schema"));
-    }
-    Ok(schema)
 }
 
 impl Default for Project {
     fn default() -> Self {
         Self {
-            schema: SCHEMA_VERSION,
-            processing_model: PROCESSING_MODEL_VERSION,
+            schema: SchemaVersion,
+            processing_model: ProcessingModel,
             next_source_id: 1,
             sources: Vec::new(),
             order: Vec::new(),
@@ -735,117 +708,9 @@ impl Project {
             .filter(|field| self.input.capabilities().flat_field && field.enabled)
     }
 
-    pub fn validate(&self) -> Result<()> {
-        require(self.schema == SCHEMA_VERSION, "unsupported project schema")?;
-        require(
-            self.processing_model == PROCESSING_MODEL_VERSION,
-            "unsupported processing model; no automatic migration",
-        )?;
-        self.input.validate_controls()?;
-        self.output.grain.validate()?;
-        self.output.halation.validate()?;
-        require(
-            self.output
-                .lut
-                .as_ref()
-                .is_none_or(|asset| matches!(asset.origin(), crate::looks::LookOrigin::Imported)),
-            "LUT slot requires an imported asset",
-        )?;
-        require(
-            self.output.film_and_paper.as_ref().is_none_or(|asset| {
-                matches!(
-                    asset.origin(),
-                    crate::looks::LookOrigin::Photochemical { .. }
-                        | crate::looks::LookOrigin::Renderer { .. }
-                )
-            }),
-            "Film & paper slot requires material provenance",
-        )?;
-        wb_matrix(self.roll.wb)?;
-        exposure_multiplier(self.roll.exposure)?;
-        require(
-            !self.output.contract.is_empty(),
-            "missing output transform identity",
-        )?;
-        let mut ids = HashSet::new();
-        for source in &self.sources {
-            require(
-                source.id.0 > 0 && source.id.0 < self.next_source_id && ids.insert(source.id),
-                "duplicate/invalid source ID allocator",
-            )?;
-            source.validate()?;
-        }
-        if let Some(metadata) = &self.development_metadata {
-            metadata.validate(self)?;
-        }
-        let mut ordered = HashSet::new();
-        for id in &self.order {
-            require(
-                ids.contains(id) && ordered.insert(*id),
-                "invalid/duplicate ordered source ID",
-            )?;
-        }
-        require(
-            ordered.len() == ids.len(),
-            "source is absent from filmstrip",
-        )?;
-        if let Some(region) = self.analysis_area {
-            require(
-                region[2] >= 8 && region[3] >= 8,
-                "analysis area is smaller than a capture footprint",
-            )?;
-            for id in &self.order {
-                require(
-                    contains(self.source(*id)?.development.active_area, region),
-                    "analysis area is outside a roll source",
-                )?;
-            }
-        }
-        let mut analysis_ids = HashSet::new();
-        for entry in &self.analysis_regions {
-            require(
-                analysis_ids.insert(entry.source),
-                "duplicate source analysis support",
-            )?;
-            entry
-                .areas
-                .validate(self.source(entry.source)?.development.active_area.into())?;
-            require(entry.areas.ready(), "incomplete accepted analysis support")?;
-        }
-        require(self.next_source_id > 0, "invalid source ID allocator")?;
-        if let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &self.input {
-            for reference in [*dmin, *dmax].into_iter().flatten() {
-                require(
-                    reference
-                        .to_array()
-                        .iter()
-                        .all(|v| v.is_finite() && *v > 0.),
-                    "invalid stored reference RGB",
-                )?;
-            }
-        }
-        if let Some(scan) = &self.scan {
-            scan.basis.validate()?;
-            if let Some(field) = &scan.flat_field {
-                field.validate()?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn require_runtime(&self) -> Result<()> {
-        self.validate()?;
-        require(
-            self.output.contract == OUTPUT_CONTRACT,
-            "output transform contract differs from this runtime",
-        )
-    }
-
     pub fn load(path: &Path) -> Result<Self> {
         let input = BufReader::new(json::bounded_strings(File::open(path).map_err(failure)?));
-        let project: Self = serde_json::from_reader(input).map_err(failure)?;
-        project.validate()?;
-        Ok(project)
+        serde_json::from_reader(input).map_err(failure)
     }
 
     pub fn save(&self, path: &Path, policy: Save) -> Result<()> {
@@ -873,7 +738,6 @@ impl Project {
         policy: Save,
         #[cfg(all(test, feature = "editor"))] observer: Option<&WriteObserver>,
     ) -> Result<()> {
-        self.validate()?;
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())

@@ -299,6 +299,39 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
 }
 
 #[test]
+fn applying_measured_crops_does_not_consume_the_shared_analyze_picture_prior() {
+    let (mut editor, directory) = fixture();
+    let prior = [1000, 1000, 64, 64];
+    editor.document.state.project.analysis_area = Some(prior);
+    let mut expected = editor.document.state.project.clone();
+    let ids = expected.order.clone();
+    editor.begin_auto_crop_review(ids.clone(), "Whole roll");
+    for id in ids {
+        let crop = preview(&editor, id).expect("measured proposal");
+        let source = expected.source_mut(id).unwrap();
+        crop.region(source.development.active_area.into()).unwrap();
+        source.crop = Some(crop);
+    }
+    apply(&mut editor);
+    assert_eq!(editor.document.state.project, expected, "{}", editor.status);
+    assert_eq!(editor.document.state.project.analysis_area, Some(prior));
+    let saved = editor
+        .document
+        .capture()
+        .save(
+            &directory.path().join("measured-crops.antitone"),
+            crate::project::Save::New,
+        )
+        .unwrap();
+    assert_eq!(
+        Document::open(saved.path.as_deref().unwrap())
+            .unwrap()
+            .project,
+        expected
+    );
+}
+
+#[test]
 fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
     let (e, _directory) = fixture();
     crate::application::test_support::with_application(e, |app| {

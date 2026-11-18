@@ -24,8 +24,4 @@ impl FlatFieldSettings {
             map,
         }
     }
-
-    pub(super) fn validate(&self) -> Result<()> {
-        self.map.validate()
-    }
 }

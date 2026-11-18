@@ -78,7 +78,7 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
         .is_err(),
         "the captured photograph must really fail shader-constant admission"
     );
-    document.project.require_runtime().unwrap();
+    serde_json::to_value(&document.project).unwrap();
     let before = document.project.clone();
     let prepared = Correction::prepare(&device, &document, None)
         .unwrap()
@@ -169,7 +169,7 @@ fn reusing_a_map_checks_new_source_compatibility_before_returning_the_resource()
         .unwrap()
         .development
         .camera_to_ap1[0][0] *= 2.;
-    document.project.require_runtime().unwrap();
+    serde_json::to_value(&document.project).unwrap();
     let before = document.project.clone();
     assert!(
         Correction::prepare(device, &document, Some(&prepared)).is_err(),
@@ -192,7 +192,7 @@ fn correction_rejects_overflow_of_an_individually_representable_map_and_matrix_a
         .unwrap();
     let mut candidate = document.clone();
     set_map(&mut candidate, 1e30);
-    candidate.project.require_runtime().unwrap();
+    serde_json::to_value(&candidate.project).unwrap();
     GpuFlatField::new(
         &device,
         candidate.project.active_flat_field().unwrap().map.clone(),
