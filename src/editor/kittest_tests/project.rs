@@ -198,7 +198,7 @@ fn interpretation_numeric_edits_accept_extreme_valid_processing_and_reject_inval
                 shoulder: 0.02,
             };
             editor
-                .validate_processing(
+                .positive_processing(
                     editor.document.project.input,
                     editor.document.project.roll,
                     editor.photo_settings(),

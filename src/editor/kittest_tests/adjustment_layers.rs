@@ -83,12 +83,16 @@ pub(super) fn install_layers(editor: &mut Editor) -> [AdjustmentLayerId; 2] {
 
     editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(sky));
     editor
-        .validate_source_candidate(editor.document.state.project.source(source).unwrap())
+        .positive_processing(
+            editor.input(),
+            editor.document.project.roll,
+            editor.photo_settings(),
+        )
         .unwrap();
     [sky, ground]
 }
 
-fn click(harness: &mut Harness<'_, Editor>, name: &str) {
+pub(super) fn click(harness: &mut Harness<'_, Editor>, name: &str) {
     let name = if name == "Layers" {
         header_label(harness)
     } else {

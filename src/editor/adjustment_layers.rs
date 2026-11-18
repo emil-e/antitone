@@ -212,10 +212,7 @@ impl Editor {
     }
 
     fn adjustment_layer_actions_available(&self) -> bool {
-        !self.interaction_blocked()
-            && self.document.project.input.ready()
-            && !self.tool_interacting()
-            && !self.dialogs.is_open()
+        !self.interaction_blocked() && !self.tool_interacting() && !self.dialogs.is_open()
     }
 
     pub(super) fn edit_adjustment_layers(
@@ -247,7 +244,6 @@ impl Editor {
                 .get_or_insert_with(Default::default),
         )?;
         let after = candidate.grade_snapshot()?;
-        self.validate_source_candidate(&candidate)?;
         draft.update(|project| {
             project
                 .source_mut(id)
@@ -486,7 +482,7 @@ impl Editor {
             return;
         };
         if response.changed {
-            let candidate = edit.update(|project| -> Result<Source, Error> {
+            let result = edit.update(|project| -> Result<(), Error> {
                 let source = project.source_mut(source)?;
                 let record = source
                     .adjustment_layers
@@ -494,10 +490,9 @@ impl Editor {
                     .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
                     .ok_or(Error::InvalidParameter("selected layer is unavailable"))?;
                 write(&mut record.adjustment);
-                Ok(source.clone())
+                record.adjustment.validate().map(|_| ())
             });
-            if let Err(error) = candidate.and_then(|source| self.validate_source_candidate(&source))
-            {
+            if let Err(error) = result {
                 self.status = format!("Edit rejected: {error}");
                 return;
             }
@@ -757,7 +752,7 @@ impl Editor {
                             if ui::icons::button(
                                 ui,
                                 ui::icons::Icon::AddGlobalAdjustmentLayer,
-                                available && !self.document.source,
+                                available,
                                 "Add global",
                                 "Add a whole-image adjustment layer",
                             )

@@ -61,27 +61,6 @@ impl Editor {
         crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
     }
 
-    pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
-        let recipe = self.capture_recipe(
-            source,
-            self.input(),
-            self.document.project_snapshot().roll,
-            source.grade_snapshot()?,
-        )?;
-        if recipe.neutral.input.ready() {
-            recipe.validate(
-                &self
-                    .document
-                    .visit
-                    .working_view
-                    .device()
-                    .map(wgpu::Device::limits)
-                    .unwrap_or_default(),
-            )?;
-        }
-        Ok(())
-    }
-
     pub(super) fn positive_recipe_for_source(
         &self,
         input: impl Into<InputSettings>,
@@ -185,32 +164,6 @@ impl Editor {
             ),
             None => Err(Error::UnusableSample("no photographic source selected")),
         }
-    }
-
-    /// Roll/input candidates must support every source, without replacing accepted resources.
-    pub(super) fn validate_processing(
-        &self,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        photo: AdjustmentLayerSettings,
-    ) -> Result<(), Error> {
-        let input = input.into();
-        photo.validate()?;
-        for source in &self.document.state.project.sources {
-            let recipe = self.positive_recipe_for_source(input, roll, source, photo)?;
-            if input.ready() {
-                recipe.validate(
-                    &self
-                        .document
-                        .visit
-                        .working_view
-                        .device()
-                        .map(wgpu::Device::limits)
-                        .unwrap_or_default(),
-                )?;
-            }
-        }
-        Ok(())
     }
 }
 

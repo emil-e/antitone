@@ -2139,7 +2139,11 @@ fn export_captures_accepted_settings_while_photographic_construction_rejects_unr
         .adjustment_layers = Some(layers);
     editor.refresh_adjustment_layer_selection();
     let rejection = editor
-        .validate_source_candidate(editor.document.state.project.source(id).unwrap())
+        .positive_processing(
+            editor.input(),
+            editor.document.project.roll,
+            editor.photo_settings(),
+        )
         .unwrap_err()
         .to_string();
     assert!(

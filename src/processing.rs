@@ -177,14 +177,22 @@ impl From<Calibration> for NegativeInput {
 
 impl NegativeInput {
     pub fn channel_gammas(self) -> Result<DVec3, Error> {
-        self.response.shape()?;
-        if !self.gamma.is_finite() || !(MIN_GAMMA..=MAX_GAMMA).contains(&self.gamma) {
-            return Err(Error::InvalidParameter(
-                "global gamma must be within 0.1..3",
-            ));
-        }
-        Ok(self.balance.offsets()?.exp() * self.gamma)
+        negative_channel_gammas(self.response, self.gamma, self.balance)
     }
+}
+
+fn negative_channel_gammas(
+    response: Response,
+    gamma: f64,
+    balance: Balance,
+) -> Result<DVec3, Error> {
+    response.shape()?;
+    if !gamma.is_finite() || !(MIN_GAMMA..=MAX_GAMMA).contains(&gamma) {
+        return Err(Error::InvalidParameter(
+            "global gamma must be within 0.1..3",
+        ));
+    }
+    Ok(balance.offsets()?.exp() * gamma)
 }
 
 /// How source samples become a scene-referred positive. Per input stage: Negative inverts
@@ -211,6 +219,19 @@ pub enum InputSettings {
 }
 
 impl InputSettings {
+    /// Validate curve controls independently of measured anchors or execution resources.
+    pub fn validate_controls(&self) -> Result<(), Error> {
+        match *self {
+            Self::Negative {
+                response,
+                gamma,
+                balance,
+                ..
+            } => negative_channel_gammas(response, gamma, balance).map(|_| ()),
+            Self::Digital => Ok(()),
+        }
+    }
+
     /// Negative preserves unbalanced camera light; Digital resolves the RAW's as-shot WB.
     pub fn development_wb(&self) -> Option<[f64; 4]> {
         self.is_negative().then_some([1.; 4])

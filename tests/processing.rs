@@ -40,6 +40,51 @@ fn inp(cal: Calibration, gamma: f64, balance: Balance) -> InputSettings {
 }
 
 #[test]
+fn curve_control_validation_is_independent_of_anchor_availability_and_compatibility() {
+    for anchors in [
+        (None, None),
+        (Some(DVec3::splat(0.1)), Some(DVec3::splat(0.2))),
+    ] {
+        let input = InputSettings::Negative {
+            dmin: anchors.0,
+            dmax: anchors.1,
+            response: Response::film(),
+            gamma: DEFAULT_GAMMA,
+            balance: Balance::default(),
+        };
+        input.validate_controls().unwrap();
+        for (gamma, balance, response) in [
+            (0., Balance::default(), Response::film()),
+            (
+                DEFAULT_GAMMA,
+                Balance {
+                    warmth: 2.,
+                    tint: 0.,
+                },
+                Response::film(),
+            ),
+            (
+                DEFAULT_GAMMA,
+                Balance::default(),
+                Response {
+                    toe: f64::NAN,
+                    shoulder: 0.,
+                },
+            ),
+        ] {
+            let invalid = InputSettings::Negative {
+                dmin: anchors.0,
+                dmax: anchors.1,
+                response,
+                gamma,
+                balance,
+            };
+            assert!(invalid.validate_controls().is_err());
+        }
+    }
+}
+
+#[test]
 fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion_and_signed_hdr() {
     let cal = calibration();
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));

@@ -400,15 +400,6 @@ fn offscreen_unrenderable_layer_does_not_veto_calibration_picks() {
         editor.document.state.project.sources.push(other.clone());
         editor.document.state.project.order.push(other.id);
         editor.document.state.project.next_source_id += 1;
-        assert!(
-            editor
-                .validate_processing(
-                    editor.input(),
-                    editor.document.project.roll,
-                    editor.photo_settings()
-                )
-                .is_err()
-        );
         let mut expected = editor.document.state.project.clone();
         let balance = Balance {
             warmth: 0.1,
