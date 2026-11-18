@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod prefetch;
+
 struct Plane(Arc<AtomicUsize>);
 impl Source for Plane {
     fn domain(&self) -> Domain {
