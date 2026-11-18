@@ -2,7 +2,8 @@
 """Export spektrafilm's nonspatial functions/data for the native application.
 
 Run in the pinned upstream environment. Upstream is a generation dependency only.
-No photograph inputs, fitted colour transforms or runtime Python are involved.
+No photograph inputs or runtime Python are involved. Paper-only formation uses
+Antitone's versioned, offline-calibrated reference matrices.
 """
 
 from pathlib import Path
@@ -20,7 +21,7 @@ import zlib
 from build import LOCK, REVISION, verify_environment
 from characteristic import PARAMETERS
 from positive import expose, prepare
-from reference import NEGATIVE as REFERENCE_NEGATIVE
+from reference import NEGATIVE as REFERENCE_NEGATIVE, source as reference_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,7 +35,6 @@ def main():
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scanner-size", type=int, default=65, choices=[17, 33, 65])
-    parser.add_argument("--apd-responsivities", type=Path, required=True)
     args = parser.parse_args()
     cache = ROOT / ".cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -182,7 +182,7 @@ def export(args, scratch):
     values = np.linspace(0, 1, n)
     tc_cells = np.stack(np.meshgrid(values, values, indexing="ij"), axis=-1)
     catalog = {
-        "schema": 1,
+        "schema": 2,
         "revision": REVISION,
         "spectra_size": n,
         "wavelengths": 81,
@@ -269,13 +269,14 @@ def export(args, scratch):
     output_validation = {}
     for name in paper_ids:
         p = params("kodak_portra_400", name)
+        paper_profile = p.print
         pipe = Pipeline(p)
-        stage = pipe._printing_stage
-        scanner = pipe._scanning_stage
+        stage = paper_stage = pipe._printing_stage
+        scanner = paper_scanner = pipe._scanning_stage
         axis = np.asarray(p.print.data.log_exposure)
         curves = stage.develop(np.repeat(axis[:, None], 3, axis=1).reshape(1, -1, 3)).reshape(-1, 3)
 
-        def read_h(h):
+        def read_h(h, stage=stage, scanner=scanner):
             return scanner.scan(stage.develop(np.array(h).reshape(1, -1, 3))).reshape(-1, 3)
 
         initial = stage.expose(
@@ -293,10 +294,6 @@ def export(args, scratch):
             name,
             result.message,
         )
-        driver = prepare(
-            p.print, params(REFERENCE_NEGATIVE, name).film, args.apd_responsivities, result.x
-        )
-        positive_drivers[name] = driver
         nscan = args.scanner_size
         lo = curves.min(axis=0)
         hi = curves.max(axis=0)
@@ -327,26 +324,6 @@ def export(args, scratch):
                 "scanner_max": hi.tolist(),
                 "scanner_file": filename,
                 "positive_gray_logH": result.x.tolist(),
-            }
-        )
-        catalog["paper"][-1]["positive_driver"] = {
-            key: driver[key] for key in ["input_luminance", "reference", "print_log_h"]
-        }
-        paper_h = expose(probes, driver)
-        out = read_h(paper_h)
-        density = stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
-        fixtures["paper_only"].append(
-            {
-                "paper": name,
-                "input": probes.tolist(),
-                "photometry": source_photometry(p.print),
-                "paper_h": paper_h.tolist(),
-                "paper_density": density.tolist(),
-                "reference_rgb": out.tolist(),
-                # Undo the scanner's numeric log-zero epsilon for physical photometry.
-                "physical_y": (
-                    10 ** scanner.cmy_to_log_xyz(density.reshape(1, -1, 3))[0, :, 1] - 1e-10
-                ).tolist(),
             }
         )
         for film in negative_ids:
@@ -402,6 +379,31 @@ def export(args, scratch):
                     "reference_rgb": out.tolist(),
                 }
             )
+        reference_film = next(f for f in catalog["negative"] if f["id"] == REFERENCE_NEGATIVE)
+        reference_pair = next(
+            pair
+            for pair in catalog["pairs"]
+            if pair["negative"] == REFERENCE_NEGATIVE and pair["paper"] == name
+        )
+        driver = prepare(reference_film, reference_pair, result.x)
+        positive_drivers[name] = driver.source()
+        paper_h = np.asarray(expose(probes, driver))
+        out = read_h(paper_h)
+        density = paper_stage.develop(paper_h.reshape(1, -1, 3)).reshape(-1, 3)
+        fixtures["paper_only"].append(
+            {
+                "paper": name,
+                "input": probes.tolist(),
+                "photometry": source_photometry(paper_profile),
+                "paper_h": paper_h.tolist(),
+                "paper_density": density.tolist(),
+                "reference_rgb": out.tolist(),
+                # Undo the scanner's numeric log-zero epsilon for physical photometry.
+                "physical_y": (
+                    10 ** paper_scanner.cmy_to_log_xyz(density.reshape(1, -1, 3))[0, :, 1] - 1e-10
+                ).tolist(),
+            }
+        )
         print(name, "complete", flush=True)
     raw = json.dumps(catalog, separators=(",", ":"), allow_nan=False).encode()
     (output / "catalog.json.z").write_bytes(zlib.compress(raw, 9))
@@ -430,7 +432,7 @@ def export(args, scratch):
         "source": "https://github.com/andreavolpato/spektrafilm",
         "author": "Andrea Volpato",
         "revision": REVISION,
-        "modification": "Antitone evaluates and factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff for every colour medium, calibrates print time on neutral0.18 toY0.1 through that finish, and adds a shared forward characteristic curve and convex reference-negative spectral entry with fixed printing calibration, boundary-only radial mapping and inverse authoring DRT; coloured luminance follows the spectral reference and medium response, without photographic fitting. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3. Historical Academy reference-derived functional coefficients rely on the source's implementation non-enforcement covenant; original notices retained in NOTICE-Academy-APD.txt.",
+        "modification": "Antitone factors the nonspatial model, uses a common wide-reference CAM16-UCS finish without separate lightness rolloff, and calibrates print time on neutral0.18 toY0.1. Paper-only uses calibrated pre/post matrices around the shared forward characteristic, peak-normalized signed250D effective dyes, fixed neutral filtration/reciprocal lamp scaling, and fixed per-medium printing. The matrices fit standardized colours jointly through three papers, not photographs. The hypothetical negative is a rendering reference, not recovered negative-film chemistry. Spektrafilm data derivatives CC BY-SA4.0; native algorithm ports GPLv3.",
         "source_code_sha256": sources,
         "environment_lock_sha256": sha(LOCK),
         "build_tool_sha256": sha(ROOT / "scripts/spektrafilm/build.py"),
@@ -448,6 +450,7 @@ def export(args, scratch):
         "reference_driver_sha256": sha(Path(__file__).with_name("reference.py")),
         "characteristic_sha256": sha(Path(__file__).with_name("characteristic.py")),
         "characteristic_definition_sha256": sha(ROOT / "assets/looks/reference-negative.json"),
+        "paper_reference": reference_source(),
         "positive_drivers": positive_drivers,
         "paper_output_validation": output_validation,
         "output_finishing": {

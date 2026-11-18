@@ -1,32 +1,45 @@
-//! Reference-negative printing with fixed per-medium exposure and colour balance.
+//! Fixed printing of the calibrated paper-only reference negative.
 mod reference;
-use crate::{Error, looks::require};
+use super::data;
+use crate::{
+    Error,
+    looks::{failure, require},
+};
 use glam::DVec3;
-use serde::Deserialize;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+pub(super) use reference::DEFINITION;
+
 pub(super) struct Driver {
-    pub input_luminance: DVec3,
-    reference: reference::Reference,
+    reference: &'static reference::Reference,
+    pair: &'static data::Pair,
     print_log_h: DVec3,
 }
 
 impl Driver {
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn new(paper: &'static data::Paper) -> Result<Self, Error> {
+        let reference = reference::reference()?;
+        let pair = data::catalog()
+            .pairs
+            .iter()
+            .find(|p| p.negative == reference.definition.negative && p.paper == paper.id)
+            .ok_or_else(|| failure("missing paper-reference printing calibration"))?;
+        let gray = crate::looks::characteristic::reference().gray;
+        let print_log_h = paper.positive_gray_log_h - reference.expose(DVec3::splat(gray), pair);
         require(
-            self.input_luminance.is_finite()
-                && self.input_luminance.min_element() > 0.
-                && (self.input_luminance.element_sum() - 1.).abs() < 1e-10
-                && self.print_log_h.is_finite(),
-            "invalid paper reference calibration",
+            print_log_h.is_finite(),
+            "invalid paper-reference printing balance",
         )?;
-        self.reference.validate(self.input_luminance)
+        Ok(Self {
+            reference,
+            pair,
+            print_log_h,
+        })
     }
 
     pub fn expose(&self, rgb: DVec3) -> Result<DVec3, Error> {
-        let brightness = self.input_luminance.dot(rgb);
-        Ok(self.print_log_h + self.reference.expose(rgb, brightness)?)
+        let result = self.print_log_h + self.reference.expose(rgb, self.pair);
+        require(result.is_finite(), "nonfinite paper-reference exposure")?;
+        Ok(result)
     }
 }
 

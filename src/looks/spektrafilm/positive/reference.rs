@@ -1,257 +1,140 @@
-//! Convex APD-action spectral selection and adapter-local reference-record mapping.
-use crate::{
-    Error,
-    looks::{failure, require},
-};
-use glam::{DMat2, DMat3, DVec2, DVec3};
+//! Calibrated exposure records and effective dyes for the paper-only negative.
+use super::super::{data, matrix};
+use crate::{Error, looks::require};
+use glam::{DMat3, DVec3};
 use serde::Deserialize;
 use std::sync::OnceLock;
 
-const GAIN: DVec3 = DVec3::new(1., 0.92, 0.95);
-const CDD_TO_CID: [[f64; 3]; 3] = [
-    [0.75573, 0.22197, 0.02230],
-    [0.05901, 0.96928, -0.02829],
-    [0.16134, 0.07406, 0.76460],
-];
-
-fn matrix(rows: [[f64; 3]; 3]) -> DMat3 {
-    DMat3::from_cols_array_2d(&rows).transpose()
-}
+pub(in super::super) const DEFINITION: &[u8] =
+    include_bytes!("../../../../assets/looks/paper-reference.json");
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Sample {
-    response: DVec3,
-    log_prior: f64,
-    receiver: DVec3,
+pub(super) struct Definition {
+    schema: u32,
+    pub negative: String,
+    exposure_rows: [[f64; 3]; 3],
+    dye_rows: [[f64; 3]; 3],
+    density_gain: f64,
+    pub base_density_offset: f64,
 }
 
-struct Prepared {
-    to_records: DMat3,
-    white: DVec3,
-    inverse_cdd: DMat3,
-    prior_response: DVec3,
+impl Definition {
+    fn validate(&self) -> Result<(), Error> {
+        require(
+            self.schema == 1
+                && !self.negative.is_empty()
+                && self.density_gain.is_finite()
+                && self.density_gain > 0.
+                && self.base_density_offset.is_finite()
+                && self.base_density_offset >= 0.
+                && 10_f64.powf(self.base_density_offset).is_finite(),
+            "invalid paper-reference definition",
+        )?;
+        for rows in [self.exposure_rows, self.dye_rows] {
+            let m = matrix(rows);
+            require(
+                m.is_finite()
+                    && m.determinant().abs() > 1e-10
+                    && (m * DVec3::ONE - DVec3::ONE).abs().max_element() < 1e-12,
+                "invalid neutral-preserving paper-reference matrix",
+            )?;
+        }
+        Ok(())
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+fn definition() -> &'static Definition {
+    static VALUE: OnceLock<Definition> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let value: Definition = serde_json::from_slice(DEFINITION).expect("paper reference");
+        value.validate().expect("valid paper reference");
+        value
+    })
+}
+
+pub(super) struct Sample {
+    pub index: usize,
+    pub base: f64,
+    pub dyes: DVec3,
+}
+
 pub(super) struct Reference {
-    to_records: [[f64; 3]; 3],
-    flux0: DVec3,
-    samples: Vec<Sample>,
-    #[serde(skip)]
-    prepared: OnceLock<Prepared>,
+    pub definition: &'static Definition,
+    exposure: DMat3,
+    dye_basis: DMat3,
+    lamp_scale: f64,
+    pub samples: Vec<Sample>,
 }
 
-struct Moments {
-    log_partition: f64,
-    mean: DVec3,
-    covariance: DMat2,
+pub(super) fn reference() -> Result<&'static Reference, Error> {
+    static VALUE: OnceLock<Result<Reference, Error>> = OnceLock::new();
+    VALUE
+        .get_or_init(|| Reference::new(data::catalog()))
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 impl Reference {
-    pub fn validate(&self, luminance: DVec3) -> Result<(), Error> {
-        let m = matrix(self.to_records);
+    fn new(catalog: &data::Catalog) -> Result<Self, Error> {
+        let definition = definition();
+        let film = catalog
+            .negative
+            .iter()
+            .find(|f| f.id == definition.negative)
+            .ok_or_else(|| crate::looks::failure("missing paper-reference dye basis"))?;
+        let peaks = film
+            .dyes
+            .iter()
+            .zip(&film.support)
+            .filter(|(_, supported)| **supported)
+            .fold(DVec3::ZERO, |peak, (dyes, _)| peak.max(*dyes));
         require(
-            m.is_finite() && m.determinant().abs() > 1e-10,
-            "invalid reference exposure matrix",
+            peaks.min_element() > 0.,
+            "invalid paper-reference dye peaks",
         )?;
+        let samples = film
+            .support
+            .iter()
+            .enumerate()
+            .filter(|(_, supported)| **supported)
+            .map(|(index, _)| Sample {
+                index,
+                base: film.base[index] + definition.base_density_offset,
+                dyes: film.dyes[index] / peaks,
+            })
+            .collect::<Vec<_>>();
         require(
-            (m * DVec3::ONE).min_element() > 0.
-                && (m.inverse().transpose() * luminance).min_element() > 0.
-                && self.flux0.is_finite()
-                && self.flux0.min_element() > 0.,
-            "invalid reference photometric basis",
+            !samples.is_empty(),
+            "empty paper-reference spectral support",
         )?;
-        require(
-            self.samples.len() >= 3
-                && self.samples.iter().all(|s| {
-                    s.response.is_finite()
-                        && s.response.min_element() >= 0.
-                        && (s.response.element_sum() - 1.).abs() < 1e-12
-                        && s.log_prior.is_finite()
-                        && s.log_prior.exp() > 0.
-                        && s.receiver.is_finite()
-                        && s.receiver.min_element() >= 0.
-                }),
-            "invalid reference spectral sample",
-        )?;
-        let mass = self.samples.iter().map(|s| s.log_prior.exp()).sum::<f64>();
-        let receiver = self.samples.iter().map(|s| s.receiver).sum::<DVec3>();
-        require(
-            (mass - 1.).abs() < 1e-12 && receiver.min_element() > 0.,
-            "invalid reference prior or receiver",
-        )?;
-        // Pure-channel columns establish the full positive measurement cone.
-        for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
-            require(
-                self.samples.iter().any(|s| s.response == axis),
-                "incomplete reference measurement cone",
-            )?;
-        }
-        let p = self.prepared();
-        require(
-            p.prior_response.is_finite() && p.prior_response.min_element() > 0.,
-            "invalid prepared reference prior",
-        )
-    }
-
-    fn prepared(&self) -> &Prepared {
-        self.prepared.get_or_init(|| {
-            let to_records = matrix(self.to_records);
-            Prepared {
-                to_records,
-                white: to_records * DVec3::ONE,
-                inverse_cdd: matrix(CDD_TO_CID).inverse(),
-                prior_response: self
-                    .samples
-                    .iter()
-                    .map(|s| s.response * s.log_prior.exp())
-                    .sum(),
-            }
+        Ok(Self {
+            definition,
+            exposure: matrix(definition.exposure_rows),
+            dye_basis: matrix(definition.dye_rows),
+            lamp_scale: 10_f64.powf(definition.base_density_offset),
+            samples,
         })
     }
 
-    fn features(sample: &Sample, kept: [usize; 2]) -> DVec2 {
-        DVec2::new(sample.response[kept[0]], sample.response[kept[1]])
-    }
-
-    fn moments(&self, theta: DVec2, kept: [usize; 2]) -> Moments {
-        let mut maximum = f64::NEG_INFINITY;
-        for s in &self.samples {
-            let value =
-                s.log_prior + (theta.x * s.response[kept[0]] + theta.y * s.response[kept[1]]);
-            maximum = maximum.max(value);
-        }
-        let (mut mass, mut x, mut y, mut z) = (0., 0., 0., 0.);
-        let (mut xx, mut xy, mut yy) = (0., 0., 0.);
-        // Scalar moments avoid constructing a matrix for every wavelength in
-        // every Newton iteration, including unoptimized interactive builds.
-        for s in &self.samples {
-            let a = s.response[kept[0]];
-            let b = s.response[kept[1]];
-            let p = (s.log_prior + (theta.x * a + theta.y * b) - maximum).exp();
-            mass += p;
-            x += s.response.x * p;
-            y += s.response.y * p;
-            z += s.response.z * p;
-            xx += a * a * p;
-            xy += a * b * p;
-            yy += b * b * p;
-        }
-        let inverse_mass = mass.recip();
-        let mean = DVec3::new(x * inverse_mass, y * inverse_mass, z * inverse_mass);
-        let a = mean[kept[0]];
-        let b = mean[kept[1]];
-        let cross = xy * inverse_mass - a * b;
-        Moments {
-            log_partition: maximum + mass.ln(),
-            mean,
-            covariance: DMat2::from_cols(
-                DVec2::new(xx * inverse_mass - a * a, cross),
-                DVec2::new(cross, yy * inverse_mass - b * b),
-            ),
-        }
-    }
-
-    fn solve(&self, q: DVec3, kept: [usize; 2], omitted: usize) -> Result<(DVec2, Moments), Error> {
-        let prior = self.prepared().prior_response;
-        let target = DVec2::new(q[kept[0]], q[kept[1]]);
-        let mut theta = DVec2::from_array(
-            kept.map(|c| (q[c] / q[omitted]).ln() - (prior[c] / prior[omitted]).ln()),
-        );
-        let mut at = self.moments(theta, kept);
-        for _ in 0..64 {
-            let residual = (at.mean / q).map(f64::ln).abs().max_element();
-            if residual < 2e-13 {
-                return Ok((theta, at));
-            }
-            require(
-                at.covariance.is_finite() && at.covariance.determinant() > 0.,
-                "singular reference moment covariance",
-            )?;
-            let gradient = DVec2::new(at.mean[kept[0]], at.mean[kept[1]]) - target;
-            let step = at.covariance.inverse() * gradient;
-            require(step.is_finite(), "nonfinite reference moment step")?;
-            let objective = at.log_partition - theta.dot(target);
-            let directional = gradient.dot(step);
-            let mut scale = 1.;
-            let mut accepted = None;
-            for _ in 0..32 {
-                let candidate = theta - step * scale;
-                let next = self.moments(candidate, kept);
-                let value = next.log_partition - candidate.dot(target);
-                // Merit-function roundoff allowance never relaxes the flux residual.
-                if value
-                    <= objective - 1e-4 * scale * directional
-                        + 8. * f64::EPSILON * objective.abs().max(1.)
-                {
-                    accepted = Some((candidate, next));
-                    break;
-                }
-                scale *= 0.5;
-            }
-            let next = accepted
-                .ok_or_else(|| failure("reference moment solve did not decrease objective"))?;
-            theta = next.0;
-            at = next.1;
-        }
-        Err(failure("reference moment solve did not converge"))
-    }
-
-    fn target(&self, records: DVec3) -> DVec3 {
+    pub fn amounts(&self, rgb: DVec3) -> DVec3 {
+        let records = self.exposure * rgb;
         let curve = crate::looks::characteristic::reference();
-        self.prepared().inverse_cdd * records.map(|x| curve.density(x)) / GAIN
+        // Coefficients are peak-OD contributions in an effective signed basis,
+        // not concentrations. Total spectral density determines transmission.
+        self.dye_basis * records.map(|x| curve.density(x)) * self.definition.density_gain
     }
 
-    fn field(&self, records: DVec3) -> Result<DVec3, Error> {
-        let target = self.target(records);
-        let log_flux = self.flux0.map(f64::ln) - target * std::f64::consts::LN_10;
-        let maximum = log_flux.max_element();
-        let flux = (log_flux - DVec3::splat(maximum)).map(f64::exp);
-        let q = flux / flux.element_sum();
-        let log_total = maximum + flux.element_sum().ln();
-        let omitted = if q.x >= q.y && q.x >= q.z {
-            0
-        } else if q.y >= q.z {
-            1
-        } else {
-            2
-        };
-        let kept = match omitted {
-            0 => [1, 2],
-            1 => [0, 2],
-            _ => [0, 1],
-        };
-        let (theta, at) = self.solve(q, kept, omitted)?;
-        let mut receiver = DVec3::ZERO;
-        for s in &self.samples {
-            let feature = Self::features(s, kept);
-            let p = (s.log_prior + theta.dot(feature) - at.log_partition).exp();
-            receiver += s.receiver * p;
+    pub fn expose(&self, rgb: DVec3, pair: &data::Pair) -> DVec3 {
+        let amounts = self.amounts(rgb);
+        let mut raw = DVec3::ZERO;
+        for sample in &self.samples {
+            let density = sample.base + sample.dyes.dot(amounts);
+            raw += pair.weights[sample.index] * self.lamp_scale * 10_f64.powf(-density);
         }
-        let result = (DVec3::splat(log_total) + receiver.map(f64::ln)) / std::f64::consts::LN_10;
-        require(result.is_finite(), "nonfinite reference receiver exposure")?;
-        Ok(result)
-    }
-
-    fn project(&self, rgb: DVec3, brightness: f64) -> DVec3 {
-        let r = self.prepared().to_records * rgb;
-        if r.min_element() >= 0. {
-            return r;
-        }
-        let neutral = self.prepared().white * brightness;
-        let distance = ((neutral - r) / neutral).max_element();
-        (neutral + (r - neutral) / distance).max(DVec3::ZERO)
-    }
-
-    pub fn expose(&self, rgb: DVec3, brightness: f64) -> Result<DVec3, Error> {
-        let records = if brightness <= 0. {
-            DVec3::ZERO
-        } else {
-            self.project(rgb, brightness)
-        };
-        self.field(records)
+        // Fixed neutral filtration and reciprocal lamp scaling preserve paper
+        // dose before preflash and both upstream epsilon additions.
+        super::super::print_log_exposure(raw, pair)
     }
 }
 
