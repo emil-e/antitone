@@ -594,7 +594,12 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .clone()
         });
         let hold = crate::background::testing::pause();
-        open_project(&mut h, directory.path().join("missing.antitone"));
+        h.enter(|editor, cx| {
+            editor.guard_transition(
+                files::Transition::Open(directory.path().join("missing.antitone")),
+                cx,
+            )
+        });
         for _ in 0..5 {
             h.step();
             h.read(|editor| assert!(editor.files.opening()));

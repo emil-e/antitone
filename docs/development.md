@@ -78,7 +78,7 @@ Exercise before-first-poll, queued and running work at observed execution bounda
 
 ### Shared editor UI checks
 
-Use [shared presentation](editor.md#build-ui-from-shared-presentation) and check both component and composed feature. Fixtures must run production startup, bring controls into view before input, and execute admitted commands through the live application. Known chooser results are fixture inputs, not substitutes for controllers or workers. Supply explicit resource budgets/pressure rather than relying on the host's current state.
+Use [shared presentation](editor.md#build-ui-from-shared-presentation) and check both component and composed feature. Fixtures must run production startup, bring controls into view before input, and execute admitted commands through the live application. Wait for the consumed operation result, control layout or rendered image; unrelated background repaint activity is not a readiness condition. Known chooser results are fixture inputs, not substitutes for controllers or workers. Supply explicit resource budgets/pressure rather than relying on the host's current state.
 
 #### Framework UI regressions
 
