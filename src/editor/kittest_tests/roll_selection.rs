@@ -246,9 +246,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });
         open_project(&mut harness, project_path);
-        wait_for(&mut harness, |e| {
-            !e.interaction_blocked() && !e.document.visit.source.pending()
-        });
+        wait_for(&mut harness, |e| !e.document.correction.pending());
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
         harness.read(|editor| {

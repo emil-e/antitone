@@ -3,16 +3,24 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 
 mod ownership;
 
-fn show_confirmation(harness: &mut Harness<'_, Editor>) {
+pub(super) fn click_analyze(harness: &mut Harness<'_, Editor>) {
     harness.step();
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Analyze")
         .scroll_to_me();
-    harness.try_run_realtime().unwrap();
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Analyze")
-        .click();
     harness.step();
+    let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Analyze");
+    assert!(!button.accesskit_node().is_disabled());
+    assert!(
+        harness.ctx.content_rect().contains_rect(button.rect()),
+        "Analyze shelf button must be in view before clicking"
+    );
+    button.click();
+    harness.step();
+}
+
+fn show_confirmation(harness: &mut Harness<'_, Editor>) {
+    click_analyze(harness);
     harness.step();
     wait_for(harness, |editor| {
         editor.document.analysis_review().is_some() || !editor.interaction_blocked()
@@ -26,6 +34,13 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     });
     harness.read(|editor| assert!(!editor.analysis_fitting()));
     harness.read(|editor| assert!(!editor.interaction_blocked()));
+    wait_for(harness, |editor| {
+        editor.document.visit.canvas.ready.is_some()
+            && editor.document.visit.canvas.original.wanted.is_some()
+            && editor
+                .scope_request()
+                .is_ok_and(|input| input.view.capture.is_inspection())
+    });
     harness.read(|editor| {
         let source =
             AuthoredPhotograph::from(editor.source_parameters(editor.source_exposure).unwrap());

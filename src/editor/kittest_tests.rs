@@ -35,6 +35,7 @@ mod progress;
 mod project;
 mod roll_changes;
 mod roll_selection;
+mod settling;
 mod shared_controls;
 mod snapshots;
 mod tool_browsing;
@@ -806,10 +807,32 @@ fn wait_for_with_timeout(
     }
     if harness.read(|editor| editor.dialogs.is_open()) {
         // Newly submitted dialogs need their measured layout before control discovery.
-        harness.try_run_realtime().unwrap();
+        wait_dialog_layout(harness);
     } else {
         harness.step();
     }
+}
+
+#[track_caller]
+fn wait_dialog_layout(harness: &mut Harness<'_, Editor>) {
+    let mut previous = None;
+    for _ in 0..UI_MAX_STEPS {
+        harness.step();
+        let ready = harness.ctx.memory(|memory| {
+            let layer = memory.top_modal_layer()?;
+            memory
+                .area_rect(layer.id)
+                .filter(|rect| {
+                    rect.is_positive() && memory.layer_id_at(rect.center()) == Some(layer)
+                })
+                .map(|rect| (layer, rect))
+        });
+        if ready.is_some() && ready == previous {
+            return;
+        }
+        previous = ready;
+    }
+    panic!("dialog did not produce a stable interactive layout");
 }
 
 fn editor_harness<R>(test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>) -> R) -> R {
@@ -1117,10 +1140,17 @@ fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
     });
 }
 
-// Supply the native chooser's result; exercise the real transition guard and worker.
+// Await the chooser result's metadata/decision outcome, not independent photo/view work.
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
     harness.enter(|editor, cx| editor.guard_transition(files::Transition::Open(path), cx));
-    harness.try_run_realtime().unwrap();
+    harness.run_until(Duration::from_secs(60), |editor| {
+        !editor.files.pending() || editor.dialogs.is_open()
+    });
+    if harness.read(|editor| editor.dialogs.is_open()) {
+        wait_dialog_layout(harness);
+    } else {
+        harness.step();
+    }
 }
 
 fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
