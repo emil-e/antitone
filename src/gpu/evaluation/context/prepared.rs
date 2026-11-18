@@ -37,6 +37,17 @@ pub(crate) struct RecordedImage {
 }
 
 impl Preparation {
+    fn new(evaluation: Evaluation, work: PreparedWork) -> Self {
+        Self {
+            evaluation,
+            work,
+            destination: None,
+            dependencies: Vec::new(),
+            kind: DependencyKind::Shared,
+            captured_inputs: Vec::new(),
+        }
+    }
+
     pub(crate) fn can_record(&self) -> bool {
         matches!(self.work, PreparedWork::Cached(_) | PreparedWork::Gpu(_))
             && self.dependencies.iter().all(Self::can_record)
@@ -46,6 +57,16 @@ impl Preparation {
         match &self.work {
             PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan.peak_scratch_bytes,
             _ => 0,
+        }
+    }
+
+    fn held_scratch_bytes(&self) -> u64 {
+        if self.kind == DependencyKind::SourceSlice && !self.can_record() {
+            // Worker acquisition completes first: its scratch is a producer
+            // peak, not storage held throughout consumer execution.
+            0
+        } else {
+            self.scratch_bytes()
         }
     }
 
@@ -113,13 +134,14 @@ impl Preparation {
                 ..*worker
             };
             let image = dependency.produce(&own, layout)?;
-            let inputs = if kind == DependencyKind::SourceSlice {
-                &mut execution_sources
+            if kind == DependencyKind::SourceSlice {
+                // Keep acquired pixels through consumer execution, not the
+                // completed producer's reusable upstream allocations.
+                execution_sources.push(image.image.clone());
             } else {
-                &mut owners
-            };
-            inputs.extend(image.inputs.iter().cloned());
-            inputs.push(image.image.clone());
+                owners.extend(image.inputs.iter().cloned());
+                owners.push(image.image.clone());
+            }
             if let Some(identity) = definition.output(region)?.identity() {
                 worker.scope.publish(
                     &Image {
@@ -322,13 +344,10 @@ impl Context {
         self.prepare_base(evaluation)
     }
 
-    fn prepare_base(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
-        let evaluation = evaluation.with_materializations(self.materializations());
-        let root = evaluation.job.image();
-        let region = evaluation.job.region();
+    fn prepared_layout(&self, evaluation: &Evaluation) -> Result<ImageLayout, Error> {
         let layout = ImageLayout {
-            domain: root.domain(),
-            region,
+            domain: evaluation.job.image().domain(),
+            region: evaluation.job.region(),
             format: ImageFormat::Rgba32Float,
             backing: ImageBacking::Buffer,
         };
@@ -340,6 +359,15 @@ impl Context {
                 "prepared image exceeds GPU storage",
             ));
         }
+        Ok(layout)
+    }
+
+    fn prepare_base(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
+        let evaluation = evaluation.with_materializations(self.materializations());
+        let root = evaluation.job.image();
+        let region = evaluation.job.region();
+        let layout = self.prepared_layout(&evaluation)?;
+        let limits = self.device.limits();
         self.products.requested(root, region);
         let cached = root.output(region)?.identity().and_then(|key| {
             self.products
@@ -379,14 +407,7 @@ impl Context {
                 Err(error) => return Err(error),
             }
         };
-        Ok(Preparation {
-            evaluation,
-            work,
-            destination: None,
-            dependencies: Vec::new(),
-            kind: DependencyKind::Shared,
-            captured_inputs: Vec::new(),
-        })
+        Ok(Preparation::new(evaluation, work))
     }
 
     pub(crate) fn prepare_images(

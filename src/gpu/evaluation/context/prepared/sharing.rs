@@ -211,10 +211,28 @@ fn discover(
 }
 
 impl Context {
+    fn admit_prefetched_units(
+        &self,
+        evaluation: &Evaluation,
+        original_budget: Budget,
+    ) -> Result<(), Error> {
+        let node = evaluation.job.image();
+        let budget = evaluation.job.budget();
+        for region in node
+            .operation()
+            .work_units(evaluation.job.region(), original_budget)?
+        {
+            super::super::super::unit::plan(node, region, budget)?
+                .admit_for(budget, &self.device.limits())?;
+        }
+        Ok(())
+    }
+
     pub(super) fn prepare_dependencies(
         &self,
         evaluation: &Evaluation,
     ) -> Result<Option<Preparation>, Error> {
+        self.prepared_layout(evaluation)?;
         let Some(Discovery { demands, inputs }) = discover(
             evaluation.job.image(),
             evaluation.job.region(),
@@ -277,6 +295,7 @@ impl Context {
             {
                 continue;
             }
+            work.kind = kind;
             let Some(next) = held
                 .checked_add(bytes)
                 .and_then(|held| held.checked_add(work.scratch_bytes()))
@@ -292,67 +311,85 @@ impl Context {
             };
             supplied.push(SuppliedImage::from_buffer(image, region, pixels.clone())?);
             work.destination = Some(pixels);
-            work.kind = kind;
+            held = next - work.scratch_bytes() + work.held_scratch_bytes();
             dependencies.push(work);
-            held = next;
         }
-        if dependencies.is_empty() {
-            return ordinary();
-        }
-        let mut request = evaluation.clone();
-        request.job = request
-            .job
-            .with_budget(Budget {
-                scratch_bytes: budget.scratch_bytes.saturating_sub(held).max(1),
-                ..budget
-            })
-            .with_supplied(supplied.into());
-        let Ok(mut result) = self.prepare_base(request) else {
-            return ordinary();
-        };
-        if matches!(result.work, PreparedWork::Cached(_)) {
-            return Ok(Some(result));
-        }
-        let source_dependencies = evaluation.job.supplied().is_empty()
+        let source_prefetch = evaluation.job.supplied().is_empty()
+            && !dependencies.is_empty()
             && dependencies
                 .iter()
                 .all(|dependency| dependency.kind == DependencyKind::SourceSlice);
-        // Unit execution can discover published source pixels through the store;
-        // other prepared arguments still need their recorded bindings.
-        if matches!(result.work, PreparedWork::Units) && !source_dependencies
-            || held
-                .checked_add(result.scratch_bytes())
-                .is_none_or(|bytes| bytes > budget.scratch_bytes)
-        {
-            return ordinary();
-        }
-        if matches!(result.work, PreparedWork::Units) {
-            // A deferred consumer has no scratch estimate. Check its ordinary
-            // bounded admission before reserving storage for the source slices.
-            let request = &result.evaluation;
-            let admitted = request
-                .job
-                .image()
-                .operation()
-                .work_units(request.job.region(), request.job.budget())
-                .and_then(|mut regions| {
-                    regions.try_for_each(|region| {
-                        super::super::production::admitted_plans(
-                            request.clone(),
-                            region,
-                            request.job.budget(),
-                            self.device.limits(),
-                            (&|| false, &|| {}),
-                        )
-                        .and_then(|mut plans| plans.try_for_each(|plan| plan.map(|_| ())))
+        while !dependencies.is_empty() {
+            let consumer = (|| {
+                let available = budget.scratch_bytes.checked_sub(held)?;
+                // Every destination already exists during worker production.
+                // Check each producer peak against the final retained set.
+                if dependencies.iter().any(|dependency| {
+                    dependency.scratch_bytes() > available + dependency.held_scratch_bytes()
+                }) {
+                    return None;
+                }
+                let mut request = evaluation.clone();
+                request.job = request
+                    .job
+                    .with_budget(Budget {
+                        scratch_bytes: available,
+                        ..budget
                     })
-                });
-            if admitted.is_err() {
-                return ordinary();
+                    .with_supplied(supplied.clone().into());
+                let result = if source_prefetch {
+                    // Acquire slices and execute consumer units on the worker;
+                    // admission need not expand a whole-image plan.
+                    self.admit_prefetched_units(&request, budget).ok()?;
+                    self.products
+                        .requested(request.job.image(), request.job.region());
+                    Preparation::new(request, PreparedWork::Units)
+                } else {
+                    self.prepare_base(request).ok()?
+                };
+                if matches!(result.work, PreparedWork::Cached(_)) {
+                    return Some(result);
+                }
+                let source_dependencies = evaluation.job.supplied().is_empty()
+                    && dependencies
+                        .iter()
+                        .all(|dependency| dependency.kind == DependencyKind::SourceSlice);
+                // Deferred execution can discover published source slices; other
+                // prepared arguments still need their recorded bindings.
+                if matches!(result.work, PreparedWork::Units) && !source_dependencies
+                    || held.checked_add(result.scratch_bytes())? > budget.scratch_bytes
+                {
+                    return None;
+                }
+                if matches!(result.work, PreparedWork::Units) && !source_prefetch {
+                    // Prefetch must leave the original work units admissible,
+                    // not force a search for smaller units to make itself fit.
+                    self.admit_prefetched_units(&result.evaluation, budget)
+                        .ok()?;
+                }
+                Some(result)
+            })();
+            if let Some(mut result) = consumer {
+                if !matches!(result.work, PreparedWork::Cached(_)) {
+                    for dependency in &mut dependencies {
+                        let mut own = dependency.evaluation.job.budget();
+                        own.scratch_bytes =
+                            budget.scratch_bytes - held + dependency.held_scratch_bytes();
+                        dependency.evaluation.job =
+                            dependency.evaluation.job.clone().with_budget(own);
+                    }
+                    result.dependencies = dependencies;
+                    result.captured_inputs = inputs;
+                }
+                return Ok(Some(result));
             }
+            // Keep a dependency prefix: later preparations may bind earlier outputs.
+            let dependency = dependencies.pop().unwrap();
+            let region = dependency.evaluation.job.region();
+            held -= u64::from(region.width) * u64::from(region.height) * 16
+                + dependency.held_scratch_bytes();
+            supplied.pop();
         }
-        result.dependencies = dependencies;
-        result.captured_inputs = inputs;
-        Ok(Some(result))
+        ordinary()
     }
 }
