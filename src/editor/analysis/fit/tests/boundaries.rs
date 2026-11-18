@@ -47,11 +47,43 @@ fn proposal(fit: &Fit) -> roll_analysis::Proposal {
 }
 
 #[test]
+fn direct_fitting_checks_its_picture_bounds_without_a_project_wide_gate() {
+    let (mut request, _directory, device, queue) = request();
+    request.picture = Some(rect([96, 96, 320, 320]));
+    let before = request.document.project.clone();
+    let (loader, _) = observed();
+    let resources = Resources {
+        sources: loader.provider(None),
+        sampling_inputs: Default::default(),
+        initialization: Arc::default(),
+        device,
+        queue,
+        renderers: Arc::default(),
+    };
+    let mut fit = resources.fit(request, None).unwrap();
+    fit.geometry().unwrap();
+    assert!(
+        fit.sample_input(0, fit.cameras[0].clone(), || false)
+            .unwrap()
+    );
+    fit.picture = Some(rect([96, 96, 640, 640]));
+    let error = fit
+        .sample_input(0, fit.cameras[0].clone(), || false)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("analysis area is outside"),
+        "{error}"
+    );
+    assert_eq!(fit.request.document.project, before);
+    loader.close_and_wait().unwrap();
+}
+
+#[test]
 fn malformed_proposals_fail_at_the_fitting_boundary_without_modifying_captured_state() {
     let (fit, _directory, loader) = sampled();
     let before = fit.request.document.project.clone();
     assert!(fit.propose(proposal(&fit), || false).unwrap().is_some());
-    for case in 0..5 {
+    for case in 0..7 {
         let mut proposal = proposal(&fit);
         match case {
             0 => {
@@ -72,6 +104,14 @@ fn malformed_proposals_fail_at_the_fitting_boundary_without_modifying_captured_s
             }
             4 => {
                 proposal.photos.last_mut().unwrap().contrast = f64::NAN;
+            }
+            5 | 6 => {
+                if let InputSettings::Negative { dmax, gamma, .. } = &mut proposal.input {
+                    *dmax = None;
+                    if case == 5 {
+                        *gamma = f64::NAN;
+                    }
+                }
             }
             _ => unreachable!(),
         }
@@ -99,7 +139,7 @@ fn proposed_domain_checks_use_the_captured_matrix_instead_of_the_registered_conv
     proposed.photos.last_mut().unwrap().exposure = 16.;
     let candidate =
         proposed_document(&fit.request.document, proposed.clone(), fit.picture).unwrap();
-    candidate.project.require_runtime().unwrap();
+    serde_json::to_value(&candidate.project).unwrap();
     let last = *candidate.project.order.last().unwrap();
     super::super::super::super::processing::validate_source_with_matrix(
         Some(&fit.device),
@@ -169,7 +209,7 @@ fn actual_fit_and_acceptance_ignore_unrelated_look_capacity_and_replace_old_grad
         }
         source.adjustment_layers = Some(layers);
     }
-    document.project.require_runtime().unwrap();
+    serde_json::to_value(&document.project).unwrap();
     let mut previous = None;
     for warm in [false, true] {
         let (loader, developments) = observed();

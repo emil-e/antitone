@@ -66,6 +66,64 @@ fn metadata_import_needs_no_services_and_display_failure_stays_with_the_accepted
 }
 
 #[test]
+fn import_keeps_an_unusable_shared_analysis_prior_without_gating_metadata_or_save() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
+    let large = directory.path().join("large.dng");
+    std::fs::copy(root.join("roll-0.dng"), &large).unwrap();
+    let small = copy_photo(directory.path(), "small.dng");
+    let mut document = Document::default();
+    document.import(&[large]).unwrap();
+    let prior = [96, 96, 320, 320];
+    document.project.analysis_area = Some(prior);
+    let first = document.project.sources[0].clone();
+    let mut editor = Editor::state();
+    editor.document.install(document);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.add_raws(vec![small.clone()], cx));
+        wait(app);
+        app.read(|editor| {
+            assert_eq!(
+                editor.document.project.sources.len(),
+                2,
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.document.project.sources[0], first);
+            assert_eq!(editor.document.project.analysis_area, Some(prior));
+            let id = editor.document.project.order[1];
+            assert_eq!(editor.document.source_path(id).unwrap(), small);
+            let active = editor
+                .document
+                .project
+                .source(id)
+                .unwrap()
+                .development
+                .active_area;
+            assert!(!crate::geometry::SourceRegion::from(active).contains_region(prior.into()));
+            assert_eq!(
+                editor.history_label(history::Direction::Undo),
+                Some("Import photos")
+            );
+            let saved = editor
+                .document
+                .capture()
+                .save(
+                    &directory.path().join("larger-roll.antitone"),
+                    crate::project::Save::New,
+                )
+                .unwrap();
+            assert_eq!(
+                Document::open(saved.path.as_deref().unwrap())
+                    .unwrap()
+                    .project,
+                saved.project
+            );
+        });
+    });
+}
+
+#[test]
 fn duplicate_paths_are_no_ops_even_when_the_original_file_is_now_missing() {
     let directory = tempfile::tempdir().unwrap();
     let photo = copy_photo(directory.path(), "photo.dng");
@@ -382,7 +440,7 @@ fn loading_completion_before_import_publication_keeps_matching_viewing_metadata(
                 .unwrap()
                 .development
                 .camera_to_ap1[0][0] *= 1.1;
-            changed.project.validate().unwrap();
+            serde_json::to_value(&changed.project).unwrap();
             e.document.install(changed);
             assert_eq!(
                 e.document

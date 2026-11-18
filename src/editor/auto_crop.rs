@@ -305,8 +305,6 @@ impl Editor {
                 }
                 candidate.source_mut(entry.source)?.crop = entry.draft;
             }
-            failed_source = None;
-            candidate.validate()?;
             Ok(candidate)
         })()
         .map_err(|error| (failed_source, error))?;

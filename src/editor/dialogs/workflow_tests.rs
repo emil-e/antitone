@@ -188,7 +188,7 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
                     map,
                 )))
                 .unwrap();
-            rejected.project.require_runtime().unwrap();
+            serde_json::to_value(&rejected.project).unwrap();
             editor.start_correction(rejected, cx);
             assert!(editor.interaction_blocked() && editor.document.flat_correction.is_some());
         });

@@ -1028,7 +1028,10 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
             AdjustmentLayerSettings::default()
         );
         assert_eq!(snapshot.roll, roll);
-        assert_eq!(snapshot.processing_model, crate::PROCESSING_MODEL_VERSION);
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["processing_model"],
+            crate::PROCESSING_MODEL_VERSION
+        );
     });
 }
 

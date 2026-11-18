@@ -87,7 +87,7 @@ fn exact_instructions_survive_single_file_roundtrip_and_deleted_ids_are_not_reus
         )
         .unwrap();
     assert_eq!(next, RepairId(3));
-    reopened.validate().unwrap();
+    serde_json::to_value(&reopened).unwrap();
 }
 
 #[test]
@@ -164,9 +164,16 @@ fn malformed_and_unsupported_repairs_reject_without_replacing_an_existing_file()
     for (pointer, value) in changes {
         let mut wire = baseline.clone();
         *wire.pointer_mut(pointer).unwrap() = value;
-        if let Ok(candidate) = serde_json::from_value::<Project>(wire) {
-            assert!(candidate.validate().is_err(), "{pointer}");
-            assert!(candidate.save(&path, Save::Replace).is_err(), "{pointer}");
+        assert!(
+            serde_json::from_value::<Project>(wire.clone()).is_err(),
+            "{pointer}"
+        );
+        if pointer != "/schema"
+            && let Ok(repairs) = serde_json::from_value(wire["sources"][0]["repairs"].clone())
+        {
+            let mut invalid = project.clone();
+            invalid.sources[0].repairs = repairs;
+            assert!(invalid.save(&path, Save::Replace).is_err(), "{pointer}");
         }
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
@@ -237,7 +244,7 @@ fn exhausted_allocator_is_retained_but_cannot_wrap_or_reuse_an_id() {
     let mut wire = serde_json::to_value(&project).unwrap();
     wire["sources"][0]["repairs"]["last_id"] = json!(u64::MAX);
     let mut loaded: Project = serde_json::from_value(wire).unwrap();
-    loaded.validate().unwrap();
+    serde_json::to_value(&loaded).unwrap();
     let before = loaded.clone();
     assert!(
         loaded
@@ -269,7 +276,7 @@ fn stored_offset_reproduces_donors_and_f32_bits() {
 
     let wire = serde_json::to_vec(&project).unwrap();
     let loaded: Project = serde_json::from_slice(&wire).unwrap();
-    loaded.validate().unwrap();
+    serde_json::to_value(&loaded).unwrap();
     let source = loaded.source(id).unwrap();
     assert_eq!(source.repairs.repairs()[0].offset, offset);
     let after = evaluate(

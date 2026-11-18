@@ -275,7 +275,7 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
     if let InputSettings::Negative { dmax, .. } = &mut low_light.input {
         *dmax = Some(DVec3::splat(CAMERA_INPUT_FLOOR));
     }
-    low_light.validate().unwrap();
+    serde_json::to_value(&low_light).unwrap();
     scan.set_flat_field(None);
     assert_eq!(scan.effective_floor(), developed_floor);
 }

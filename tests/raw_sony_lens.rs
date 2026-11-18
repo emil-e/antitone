@@ -474,7 +474,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     let path = directory.path().join("sony.antitone");
     project.save(&path, Save::New).unwrap();
     let reopened = Project::load(&path).unwrap();
-    reopened.require_runtime().unwrap();
+    serde_json::to_value(&reopened).unwrap();
     let recipe = reopened.image_recipe(id).unwrap();
     assert_eq!(recipe, project.image_recipe(id).unwrap());
     recipe.neutral.require_scan(&scan).unwrap();
@@ -487,7 +487,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     let mut old = reopened;
     old.set_flat_field(None).unwrap();
     old.sources[0].development.decode.backend_version = "older LibRaw release".into();
-    old.require_runtime().unwrap();
+    serde_json::to_value(&old).unwrap();
 }
 
 #[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]

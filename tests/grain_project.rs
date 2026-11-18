@@ -23,7 +23,7 @@ fn projects_without_film_settings_keep_the_clean_plate_and_custom_disabled_value
         };
         // Digital-only visibility must not become a saved/processing-stage restriction.
         assert!(project.input.is_negative());
-        project.validate().unwrap();
+        serde_json::to_value(&project).unwrap();
         let original = directory
             .path()
             .join(format!("original-{enabled}.antitone"));
@@ -88,5 +88,5 @@ fn unsupported_or_malformed_film_settings_reject_instead_of_silently_changing_ap
     }
     project.output.grain.enabled = false;
     project.output.grain.amount = f64::NAN;
-    assert!(project.validate().is_err());
+    assert!(serde_json::to_value(&project).is_err());
 }

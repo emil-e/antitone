@@ -31,7 +31,7 @@ fn absent_settings_keep_old_output_and_custom_disabled_values_survive_save_open(
         };
         assert!(project.input.is_negative());
         assert!(!project.output.grain.enabled);
-        project.validate().unwrap();
+        serde_json::to_value(&project).unwrap();
         let path = directory
             .path()
             .join(format!("halo-{enabled}-{size}.antitone"));
@@ -75,5 +75,5 @@ fn malformed_or_unknown_contract_rejects_even_when_disabled() {
     }
     project.output.halation.enabled = false;
     project.output.halation.size = f64::NAN;
-    assert!(project.validate().is_err());
+    assert!(serde_json::to_value(&project).is_err());
 }

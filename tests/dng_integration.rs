@@ -246,7 +246,7 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
     let path = directory.path().join("sdk.antitone");
     project.save(&path, Save::New).unwrap();
     let loaded = Project::load(&path).unwrap();
-    loaded.require_runtime().unwrap();
+    serde_json::to_value(&loaded).unwrap();
     let reopened = Scan::open(
         &loaded.source(id).unwrap().path,
         Some(loaded.source(id).unwrap().development.decode.white_balance),
@@ -428,7 +428,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         );
         drop(scan);
         let loaded = Project::load(&destination).unwrap();
-        loaded.require_runtime().unwrap();
+        serde_json::to_value(&loaded).unwrap();
         let source = loaded.source(id).unwrap();
         let reopened = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
         assert_eq!(record(&path, &reopened).development, source.development);
@@ -479,7 +479,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     project.save(&destination, Save::New).unwrap();
     drop(scan);
     let loaded = Project::load(&destination).unwrap();
-    loaded.require_runtime().unwrap();
+    serde_json::to_value(&loaded).unwrap();
     let source = loaded.source(id).unwrap();
     let scan = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
     assert_eq!(record(path, &scan).development, source.development);

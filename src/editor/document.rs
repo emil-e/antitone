@@ -348,7 +348,6 @@ impl Document {
             #[cfg(test)]
             write_observer: None,
         };
-        document.project.require_runtime()?;
         // Best-effort cache freshness only: missing files do not reject metadata.
         document.capture_source_files()?;
         Ok(document)
@@ -398,7 +397,6 @@ impl Document {
         if cancelled.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        self.project.require_runtime()?;
         Ok(previews)
     }
 
@@ -442,7 +440,6 @@ impl Document {
                 "project destination must use an .antitone extension",
             ));
         }
-        self.project.require_runtime()?;
         let mut candidate = self.clone();
         for source in &mut candidate.project.sources {
             let resolved = self.source_path(source.id)?;

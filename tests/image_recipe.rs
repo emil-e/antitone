@@ -149,7 +149,7 @@ fn recipe_capture_uses_the_requested_photo_and_deleted_photos_leave_only_correct
     project.remove_from_filmstrip(second).unwrap();
     assert!(project.image_recipe(second).is_err());
     assert_eq!(project.flat_field(), Some(&field));
-    project.validate().unwrap();
+    serde_json::to_value(&project).unwrap();
 }
 
 #[test]

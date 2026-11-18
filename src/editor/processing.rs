@@ -19,6 +19,7 @@ pub(super) fn validate_source(
     )
 }
 
+#[cfg(test)]
 pub(super) fn validate_source_with_matrix(
     device: Option<&wgpu::Device>,
     input: InputSettings,

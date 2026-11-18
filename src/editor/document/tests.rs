@@ -422,7 +422,7 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         if input.is_negative() {
             bad.project.reset_scan_basis();
         }
-        bad.project.validate().unwrap();
+        serde_json::to_value(&bad.project).unwrap();
         let bad_path = directory.path().join(format!("{index}-bad.antitone"));
         bad.project.save(&bad_path, Save::New).unwrap();
         let reopened = Document::open(&bad_path).unwrap();
@@ -689,9 +689,9 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
     assert_eq!(opened.project, saved.project);
     assert!(opened.project.flat_field().is_some());
     assert!(!opened.dirty());
-    let mut incompatible = saved.project;
-    incompatible.output.contract = "different output".into();
-    incompatible.save(&path, Save::Replace).unwrap();
+    let mut incompatible = serde_json::to_value(&saved.project).unwrap();
+    incompatible["output"]["contract"] = "different output".into();
+    std::fs::write(&path, serde_json::to_vec(&incompatible).unwrap()).unwrap();
     assert!(Document::open(&path).is_err());
 }
 

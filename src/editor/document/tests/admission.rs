@@ -109,7 +109,7 @@ fn photographic_construction_is_read_only_and_requires_calibration_only_for_posi
         let mut uncalibrated = document.clone();
         uncalibrated.project.set_dmin(None);
         uncalibrated.project.set_dmax(None);
-        uncalibrated.project.require_runtime().unwrap();
+        serde_json::to_value(&uncalibrated.project).unwrap();
         assert!(
             crate::editor::tests::photograph(&uncalibrated, id, &device.limits()).is_err(),
             "valid saved layer intent cannot fabricate a calibrated positive"
@@ -120,7 +120,7 @@ fn photographic_construction_is_read_only_and_requires_calibration_only_for_posi
             .unwrap()
             .layers
             .clear();
-        uncalibrated.project.require_runtime().unwrap();
+        serde_json::to_value(&uncalibrated.project).unwrap();
     });
 }
 
@@ -133,7 +133,7 @@ fn per_photo_construction_is_scoped_and_inactive_records_still_obey_data_integri
         let good = document.project.order[0];
         let bad = document.project.order[1];
         document.project.source_mut(bad).unwrap().adjustment_layers = Some(unsupported_locals());
-        document.project.require_runtime().unwrap();
+        serde_json::to_value(&document.project).unwrap();
         let before = document.project.clone();
         crate::editor::tests::photograph(&document, good, &device.limits()).unwrap();
         assert!(crate::editor::tests::photograph(&document, bad, &device.limits()).is_err());
@@ -161,7 +161,7 @@ fn per_photo_construction_is_scoped_and_inactive_records_still_obey_data_integri
             .adjustment
             .strength = f64::NAN;
         assert!(
-            document.project.require_runtime().is_err(),
+            serde_json::to_value(&document.project).is_err(),
             "inactive records must still obey the persisted control contract"
         );
     });
@@ -184,14 +184,15 @@ fn correction_retains_calibration_and_project_integrity_checks_processing_choice
     let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field);
     document.project.set_flat_field(Some(settings)).unwrap();
     assert_eq!(Some(calibration), document.project.calibration().unwrap());
-    document.project.require_runtime().unwrap();
+    serde_json::to_value(&document.project).unwrap();
     let before = document.project.clone();
     document.project.development_mut().unwrap().white_balance[0] = 2.;
-    assert!(document.project.require_runtime().is_err());
+    assert!(serde_json::to_value(&document.project).is_err());
     document.project = before;
-    document.project.processing_model = 3;
+    let mut incompatible = serde_json::to_value(&document.project).unwrap();
+    incompatible["processing_model"] = 3.into();
     assert!(
-        document.project.require_runtime().is_err(),
+        serde_json::from_value::<Project>(incompatible).is_err(),
         "metadata integrity must retain strict model/runtime compatibility"
     );
 }

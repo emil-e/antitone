@@ -91,7 +91,7 @@ fn incomplete_calibration_still_validates_its_curve_controls() {
             *dmax = None;
             *value = gamma;
         }
-        assert_eq!(project.require_runtime().is_ok(), supported);
+        assert_eq!(serde_json::to_value(&project).is_ok(), supported);
     }
 }
 
@@ -103,7 +103,7 @@ fn libraw_release_provenance_does_not_gate_project_or_source_compatibility() {
     for version in ["0.22.0", "0.22.3", "future decoder", ""] {
         let mut changed = project.clone();
         changed.sources[0].development.decode.backend_version = version.into();
-        changed.require_runtime().unwrap();
+        serde_json::to_value(&changed).unwrap();
         assert!(basis.same_processing(&changed.sources[0].development));
         if version != basis.decode.backend_version {
             assert_ne!(
@@ -118,7 +118,7 @@ fn libraw_release_provenance_does_not_gate_project_or_source_compatibility() {
         .unwrap()
         .remove("backend_version");
     let unrecorded: Project = serde_json::from_value(encoded).unwrap();
-    unrecorded.require_runtime().unwrap();
+    serde_json::to_value(&unrecorded).unwrap();
     assert!(
         unrecorded.sources[0]
             .development
@@ -157,13 +157,13 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
     duplicate
         .analysis_regions
         .push(duplicate.analysis_regions[0].clone());
-    assert!(duplicate.validate().is_err());
+    assert!(serde_json::to_value(&duplicate).is_err());
     let mut unknown = project.clone();
     unknown.analysis_regions[0].source = SourceId(999);
-    assert!(unknown.validate().is_err());
+    assert!(serde_json::to_value(&unknown).is_err());
     let mut draft = project.clone();
     draft.analysis_regions[0].areas.picture = None;
-    assert!(draft.validate().is_err());
+    assert!(serde_json::to_value(&draft).is_err());
     let mut malformed = serde_json::to_value(&project).unwrap();
     malformed["analysis_regions"][0]["areas"]["unknown_support"] = true.into();
     assert!(serde_json::from_value::<Project>(malformed).is_err());
@@ -186,7 +186,7 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
         .as_mut()
         .unwrap()
         .sides[0] = Some(1.);
-    assert!(invalid.validate().is_err());
+    assert!(serde_json::to_value(&invalid).is_err());
     let mut legacy = serde_json::to_value(&project).unwrap();
     let a = legacy["analysis_regions"][0]["areas"]
         .as_object_mut()
@@ -197,16 +197,19 @@ fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_associati
     let legacy: Project = serde_json::from_value(legacy).unwrap();
     assert!(!legacy.analysis_regions[0].areas.opening_shared);
     assert!(legacy.analysis_regions[0].areas.picture_geometry.is_none());
-    legacy.validate().unwrap();
+    serde_json::to_value(&legacy).unwrap();
 }
 
 #[test]
 fn load_rejects_nonordered_source_records() {
     let directory = tempfile::tempdir().unwrap();
     let (mut project, kept, removed) = fixture(directory.path());
+    let mut malformed = serde_json::to_value(&project).unwrap();
+    malformed["order"] = serde_json::json!([kept]);
     project.order = vec![kept];
+    assert!(serde_json::to_value(&project).is_err());
     let path = directory.path().join("nonordered.antitone");
-    std::fs::write(&path, serde_json::to_vec_pretty(&project).unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec_pretty(&malformed).unwrap()).unwrap();
     assert!(Project::load(&path).is_err());
     project.sources.retain(|source| source.id != removed);
     project.save(&path, Save::Replace).unwrap();
@@ -289,7 +292,7 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         }
     }
     let old: Project = serde_json::from_value(json).unwrap();
-    old.validate().unwrap();
+    serde_json::to_value(&old).unwrap();
     assert_eq!(
         old.source(id)
             .unwrap()
@@ -311,7 +314,7 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         .adjustment
         .photo
         .contrast = 2.;
-    assert!(project.validate().is_err());
+    assert!(serde_json::to_value(&project).is_err());
 }
 
 #[test]
@@ -507,7 +510,7 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
         },
     ] {
         project.source_mut(one).unwrap().crop = Some(invalid);
-        assert!(project.validate().is_err());
+        assert!(serde_json::to_value(&project).is_err());
     }
     // Zero angle keeps the literal old centre/extent representation.
     assert!(
@@ -541,7 +544,7 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
         },
     ] {
         rotated_project.source_mut(one).unwrap().crop = Some(invalid);
-        assert!(rotated_project.validate().is_err());
+        assert!(serde_json::to_value(&rotated_project).is_err());
     }
     let mut replacement = restored.clone();
     let before = replacement.source(one).unwrap().clone();
@@ -551,7 +554,7 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
         ..before.development.clone()
     };
     replacement.source_mut(one).unwrap().development = small;
-    assert!(replacement.validate().is_err());
+    assert!(serde_json::to_value(&replacement).is_err());
     assert_eq!(restored.source(one).unwrap(), &before);
     let mut value = serde_json::to_value(&restored).unwrap();
     value["sources"][0]["crop"]["basis"] = serde_json::json!(1.);
@@ -635,7 +638,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     .unwrap();
     assert_eq!(after, before);
     assert_eq!(restored.order, vec![dmax_source_id]);
-    assert!(restored.require_runtime().is_ok());
+    assert!(serde_json::to_value(&restored).is_ok());
 }
 
 #[test]
@@ -664,7 +667,7 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     assert!(serde_json::from_value::<Project>(value).is_err());
     project.sources.clear();
     project.order.clear();
-    project.validate().unwrap();
+    serde_json::to_value(&project).unwrap();
     assert_eq!(project.calibration().unwrap(), calibration);
     let path = dir.path().join("without-sources.antitone.json");
     project.save(&path, Save::New).unwrap();
@@ -682,16 +685,17 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     assert!(serde_json::from_value::<Project>(value).is_err());
     let path = dir.path().join("legacy.antitone.json");
     for schema in 1..antitone::project::SCHEMA_VERSION {
-        let mut legacy = project.clone();
-        legacy.schema = schema;
-        assert!(legacy.validate().is_err());
+        let mut legacy = serde_json::to_value(&project).unwrap();
+        legacy["schema"] = schema.into();
+        assert!(serde_json::from_value::<Project>(legacy.clone()).is_err());
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         assert!(Project::load(&path).is_err());
     }
-    let mut legacy = project;
-    legacy.output.contract = "ocio-2.6.0-aces2-100nit-antitone-srgb-prophoto-v1".into();
-    legacy.validate().unwrap();
-    assert!(legacy.require_runtime().is_err());
+    let mut legacy = serde_json::to_value(&project).unwrap();
+    legacy["output"]["contract"] = "ocio-2.6.0-aces2-100nit-antitone-srgb-prophoto-v1".into();
+    assert!(serde_json::from_value::<Project>(legacy.clone()).is_err());
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(Project::load(&path).is_err());
 }
 
 #[test]
@@ -722,19 +726,21 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
     assert_eq!(project.source(dmin_source_id).unwrap().path, moved);
     let calibration = project.calibration().unwrap();
     project.sources[0].development.decode.backend_version = "different decoder release".into();
-    project.require_runtime().unwrap();
+    serde_json::to_value(&project).unwrap();
     assert_eq!(project.calibration().unwrap(), calibration);
-    project.processing_model += 1;
-    assert!(project.require_runtime().is_err());
+    let mut incompatible = serde_json::to_value(&project).unwrap();
+    incompatible["processing_model"] = (antitone::PROCESSING_MODEL_VERSION + 1).into();
+    assert!(serde_json::from_value::<Project>(incompatible).is_err());
 }
 
 #[test]
 fn prior_processing_models_are_rejected_instead_of_reinterpreting_saved_grades() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut project, _, _) = fixture(dir.path());
-    project.processing_model = antitone::PROCESSING_MODEL_VERSION - 1;
+    let (project, _, _) = fixture(dir.path());
+    let mut encoded = serde_json::to_value(&project).unwrap();
+    encoded["processing_model"] = (antitone::PROCESSING_MODEL_VERSION - 1).into();
     let path = dir.path().join("prior-model.antitone");
-    std::fs::write(&path, serde_json::to_vec(&project).unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&encoded).unwrap()).unwrap();
     let error = Project::load(&path).unwrap_err().to_string();
     assert!(error.contains("unsupported processing model"), "{error}");
 }
@@ -759,9 +765,10 @@ fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
     }
     project.save(&path, Save::Replace).unwrap();
     assert_eq!(Project::load(&path).unwrap(), project);
-    project.schema += 1;
-    assert!(project.validate().is_err());
-    std::fs::write(&path, serde_json::to_vec(&project).unwrap()).unwrap();
+    let mut unsupported = serde_json::to_value(&project).unwrap();
+    unsupported["schema"] = (antitone::project::SCHEMA_VERSION + 1).into();
+    assert!(serde_json::from_value::<Project>(unsupported.clone()).is_err());
+    std::fs::write(&path, serde_json::to_vec(&unsupported).unwrap()).unwrap();
     assert!(Project::load(&path).is_err());
 }
 
@@ -771,7 +778,7 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
     let (project, source_id, _) = fixture(dir.path());
     let mut duplicate = project.clone();
     duplicate.order.push(source_id);
-    assert!(duplicate.validate().is_err());
+    assert!(serde_json::to_value(&duplicate).is_err());
     let mut identity = serde_json::to_value(&project).unwrap();
     identity["sources"][0]["fingerprint"] =
         serde_json::json!({"bytes": 1, "blake3": "a".repeat(64)});
@@ -788,14 +795,14 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
         .photo
         .wb
         .warmth = f64::INFINITY;
-    assert!(numeric.validate().is_err());
+    assert!(serde_json::to_value(&numeric).is_err());
     let mut dimensions = project.clone();
     dimensions
         .source_mut(source_id)
         .unwrap()
         .development
         .active_area = [u32::MAX, 0, u32::MAX, 1];
-    assert!(dimensions.validate().is_err());
+    assert!(serde_json::to_value(&dimensions).is_err());
     for rgb in [[f64::NAN, 0.1, 0.1], [0., 0.1, 0.1], [-1e-8, 0.1, 0.1]] {
         let mut partial = project.clone();
         partial.input = InputSettings::Negative {
@@ -805,13 +812,13 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
             gamma: DEFAULT_GAMMA,
             balance: Balance::default(),
         };
-        assert!(partial.validate().is_err());
+        assert!(serde_json::to_value(&partial).is_err());
     }
     let mut uncalibrated = project.clone();
     if let InputSettings::Negative { dmax, .. } = &mut uncalibrated.input {
         *dmax = None;
     }
-    uncalibrated.validate().unwrap();
+    serde_json::to_value(&uncalibrated).unwrap();
 }
 
 #[test]
@@ -921,7 +928,7 @@ fn digital_recipes_and_unresolved_negative_intent_preserve_mixed_camera_baseline
 
     let baselines = project.sources.clone();
     project.input = InputSettings::default();
-    project.validate().unwrap();
+    serde_json::to_value(&project).unwrap();
     for id in [first, second] {
         let recipe = project.image_recipe(id).unwrap();
         assert!(recipe.neutral.input.is_negative());

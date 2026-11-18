@@ -158,6 +158,15 @@ fn picture_area(explicit: Option<Rect>, support: Option<Rect>) -> Result<Rect, E
         ))
 }
 
+fn require_picture_bounds(picture: Rect, active: Rect) -> Result<(), Error> {
+    if !active.contains_region(picture) {
+        return Err(Error::UnusableSample(
+            "analysis area is outside a roll source",
+        ));
+    }
+    Ok(())
+}
+
 fn proposed_document(
     document: &Document,
     proposal: roll_analysis::Proposal,
@@ -1273,7 +1282,9 @@ fn review_windows(
         );
     }
     if let Some(explicit) = project.analysis_area {
-        areas.edit_picture(Coverage::rectangle(analysis::rect(explicit)));
+        let picture = analysis::rect(explicit);
+        require_picture_bounds(picture, active)?;
+        areas.edit_picture(Coverage::rectangle(picture));
         if areas.opening.is_none() {
             areas.opening = Some(Coverage::rectangle(active).corners().map(|p| p.0));
         }
