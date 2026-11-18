@@ -1,159 +1,180 @@
 use super::*;
 
-fn diagonal() -> Reference {
-    Reference {
-        to_records: DMat3::IDENTITY.to_cols_array_2d(),
-        flux0: DVec3::ONE,
+fn diagonal() -> (Reference, data::Pair) {
+    static DEFINITION: OnceLock<Definition> = OnceLock::new();
+    let definition = DEFINITION.get_or_init(|| Definition {
+        schema: 1,
+        negative: "analytic".into(),
+        exposure_rows: DMat3::IDENTITY.to_cols_array_2d(),
+        dye_rows: DMat3::IDENTITY.to_cols_array_2d(),
+        density_gain: 1.,
+        base_density_offset: 1.25,
+    });
+    let reference = Reference {
+        definition,
+        exposure: DMat3::IDENTITY,
+        dye_basis: DMat3::IDENTITY,
+        lamp_scale: 10_f64.powf(definition.base_density_offset),
         samples: [DVec3::X, DVec3::Y, DVec3::Z]
             .into_iter()
             .enumerate()
-            .map(|(c, response)| Sample {
-                response,
-                log_prior: [0.2_f64, 0.3, 0.5][c].ln(),
-                receiver: response * [2., 3., 4.][c],
+            .map(|(index, dyes)| Sample {
+                index,
+                base: [0.2, 0.3, 0.4][index] + 1.25,
+                dyes,
             })
             .collect(),
-        prepared: OnceLock::new(),
-    }
+    };
+    let pair = data::Pair {
+        negative: "analytic".into(),
+        paper: "analytic".into(),
+        weights: vec![DVec3::X * 2., DVec3::Y * 3., DVec3::Z * 4.],
+        preflash: DVec3::new(0.1, 0.2, 0.3),
+        print_exposure: 2.5,
+    };
+    (reference, pair)
 }
 
 #[test]
-fn catalogue_reference_places_gray_at_the_academy_density_anchor() {
+fn separate_dye_bands_match_analytic_exposure_including_base_and_preflash() {
+    let (r, pair) = diagonal();
     let curve = crate::looks::characteristic::reference();
-    for paper in &crate::looks::spektrafilm::data::catalog().paper {
-        let reference = &paper.positive_driver.reference;
-        let records = reference.project(DVec3::splat(curve.gray), curve.gray);
-        let cid = matrix(CDD_TO_CID) * (reference.target(records) * GAIN);
-        // The published exposure matrix is rounded to five decimal places.
-        assert!(
-            (cid - DVec3::splat(0.7)).abs().max_element() < 4e-6,
-            "{}: {cid}",
-            paper.id
-        );
-    }
-}
-
-#[test]
-fn separate_measuring_bands_fix_the_unique_spectrum_and_receiver_flux() {
-    let r = diagonal();
-    r.validate(DVec3::new(0.2, 0.7, 0.1)).unwrap();
-    for q in [
-        DVec3::new(0.2, 0.3, 0.5),
-        DVec3::new(0.999, 0.0003, 0.0007),
-        DVec3::splat(1. / 3.),
+    for rgb in [
+        DVec3::ZERO,
+        DVec3::new(0.003, 0.02, 0.18),
+        DVec3::new(4., 0.008, 0.03),
     ] {
-        let (theta, at) = r.solve(q, [0, 1], 2).unwrap();
-        assert!((at.mean - q).abs().max_element() < 1e-13);
-        for (i, s) in r.samples.iter().enumerate() {
-            let p =
-                (s.log_prior + theta.dot(Reference::features(s, [0, 1])) - at.log_partition).exp();
-            assert!((p - q[i]).abs() < 1e-13);
+        let actual = r.expose(rgb, &pair);
+        for c in 0..3 {
+            let raw = [2., 3., 4.][c] * 10_f64.powf(-[0.2, 0.3, 0.4][c] - curve.density(rgb[c]))
+                + pair.preflash[c];
+            let expected = ((raw + 1e-10) * 2.5 + 1e-10).log10();
+            assert!((actual[c] - expected).abs() < 1e-13);
         }
     }
-    for records in [DVec3::new(0.2, 0.7, 0.3), DVec3::new(40., 0.08, 0.3)] {
-        let target = r.target(records);
-        let expected = DVec3::new(2., 3., 4.).map(f64::log10) - target;
-        assert!((r.field(records).unwrap() - expected).abs().max_element() < 1e-12);
-    }
 }
 
 #[test]
-fn black_and_low_positive_records_use_the_curve_without_a_query_floor() {
-    let r = diagonal();
-    for records in [
-        DVec3::ZERO,
-        DVec3::new(0., 0.002, 0.004),
-        DVec3::new(0.003, 0., 0.02),
-    ] {
-        let expected = DVec3::new(2., 3., 4.).map(f64::log10) - r.target(records);
-        assert!((r.field(records).unwrap() - expected).abs().max_element() < 1e-12);
-    }
-    assert!(
-        (r.field(DVec3::splat(0.003)).unwrap() - r.field(DVec3::ZERO).unwrap())
-            .abs()
-            .max_element()
-            > 0.01
-    );
-}
-
-#[test]
-fn reference_record_projection_preserves_linear_y_and_neutral_ray_inside_identity() {
-    let r = diagonal();
-    let w = DVec3::new(0.2, 0.7, 0.1);
-    for input in [
-        DVec3::new(-0.1, 0.2, 0.05),
-        DVec3::new(0.8, -0.02, 0.2),
-        DVec3::new(-100., 1., 1024.),
-    ] {
-        let y = w.dot(input);
-        assert!(y > 0.);
-        let projected = r.project(input, y);
-        assert!(projected.min_element() >= -1e-12);
-        assert!((w.dot(projected) - y).abs() < 1e-12);
-        assert!(
-            (projected - DVec3::splat(y))
-                .cross(input - DVec3::splat(y))
-                .length()
-                < 1e-10
-        );
-        assert!(
-            (r.project(input * 4., y * 4.) - projected * 4.)
-                .abs()
-                .max_element()
-                < 1e-12
-        );
-    }
-    let input = DVec3::new(0.3, 0.1, 0.05);
-    assert_eq!(r.project(input, w.dot(input)), input);
-    assert_eq!(
-        r.expose(DVec3::new(1., -0.5, 0.), 0.).unwrap(),
-        r.field(DVec3::ZERO).unwrap()
-    );
-    assert_eq!(
-        r.expose(DVec3::new(1., -0.5, 0.), -0.1).unwrap(),
-        r.field(DVec3::ZERO).unwrap()
-    );
-}
-
-#[test]
-fn common_flux_scale_moves_only_common_exposure_and_coordinate_choice_is_not_colour() {
-    let r = diagonal();
-    let q = DVec3::splat(1. / 3.);
-    let (a, aa) = r.solve(q, [0, 1], 2).unwrap();
-    let (b, bb) = r.solve(q, [1, 2], 0).unwrap();
+fn signed_dye_coordinates_and_spectra_are_retained_in_total_density() {
+    let (mut r, pair) = diagonal();
+    r.dye_basis = matrix([[2., -1., 0.], [0., 1., 0.], [0., 0., 1.]]);
+    r.samples[1].dyes.x = -0.1;
+    let rgb = DVec3::new(0.003, 0.18, 0.02);
+    let a = r.amounts(rgb);
+    assert!(a.x < 0.);
+    let mut raw = pair.preflash;
     for s in &r.samples {
-        let p = (s.log_prior + a.dot(Reference::features(s, [0, 1])) - aa.log_partition).exp();
-        let other = (s.log_prior + b.dot(Reference::features(s, [1, 2])) - bb.log_partition).exp();
-        assert!((p - other).abs() < 1e-13);
+        let density = s.base + s.dyes.dot(a);
+        assert!(density > 0.);
+        raw += pair.weights[s.index] * 10_f64.powf(1.25 - density);
     }
-    let records = DVec3::new(0.2, 0.7, 0.3);
-    let h = r.field(records).unwrap();
-    let mut scaled = diagonal();
-    scaled.flux0 *= 4.;
-    assert!(
-        (scaled.field(records).unwrap() - h - DVec3::splat(4_f64.log10()))
-            .abs()
-            .max_element()
-            < 1e-12
-    );
+    let expected = ((raw + DVec3::splat(1e-10)) * 2.5 + DVec3::splat(1e-10)).map(f64::log10);
+    assert!((r.expose(rgb, &pair) - expected).abs().max_element() < 1e-13);
 }
 
 #[test]
-fn invalid_spectra_matrices_and_incomplete_measurement_cones_reject() {
-    let w = DVec3::splat(1. / 3.);
-    let mut r = diagonal();
-    r.to_records = [[0.; 3]; 3];
-    assert!(r.validate(w).is_err());
-    let mut r = diagonal();
-    r.flux0.x = 0.;
-    assert!(r.validate(w).is_err());
-    let mut r = diagonal();
-    r.samples[0].log_prior = 0.;
-    assert!(r.validate(w).is_err());
-    let mut r = diagonal();
-    r.samples[0].receiver.x = -1.;
-    assert!(r.validate(w).is_err());
-    let mut r = diagonal();
-    r.samples[0].response = DVec3::new(0.5, 0.5, 0.);
-    assert!(r.validate(w).is_err());
+fn pre_and_post_matrices_have_distinct_roles_around_the_shared_curve() {
+    let (mut r, _) = diagonal();
+    r.exposure = matrix([[0.5, 0.5, 0.], [0., 1., 0.], [0., 0., 1.]]);
+    r.dye_basis = matrix([[2., -1., 0.], [0., 1., 0.], [0., 0., 1.]]);
+    let rgb = DVec3::new(0.03, 0.003, 0.18);
+    let curve = crate::looks::characteristic::reference();
+    let expected = 2. * curve.density(0.0165) - curve.density(0.003);
+    assert!((r.amounts(rgb).x - expected).abs() < 1e-14);
+    let collapsed = (r.dye_basis * r.exposure * rgb).map(|v| curve.density(v));
+    assert!((r.amounts(rgb).x - collapsed.x).abs() > 0.01);
+}
+
+#[test]
+fn catalogue_neutrals_share_one_curve_and_density_gain_across_papers() {
+    let r = reference().unwrap();
+    let curve = crate::looks::characteristic::reference();
+    for ev in -12..=12 {
+        let x = curve.gray * 2_f64.powi(ev);
+        let expected = DVec3::splat(curve.density(x) * r.definition.density_gain);
+        assert!((r.amounts(DVec3::splat(x)) - expected).abs().max_element() < 1e-12);
+    }
+}
+
+#[test]
+fn calibrated_filter_is_passive_over_the_complete_authored_input_cube() {
+    let r = reference().unwrap();
+    let curve = crate::looks::characteristic::reference();
+    let qmin = crate::looks::authoring::DOMAIN_MIN;
+    let qmax = crate::looks::authoring::domain_max();
+    let mut boxes = vec![(DVec3::splat(qmin), DVec3::splat(qmax))];
+    let rows = r.exposure.transpose().to_cols_array_2d();
+    let mut visited = 0;
+    while let Some((lo, hi)) = boxes.pop() {
+        visited += 1;
+        assert!(
+            visited < 100_000,
+            "passive-domain interval verification did not finish"
+        );
+        let low = lo.map(crate::photographic::decode);
+        let high = hi.map(crate::photographic::decode);
+        let emin = DVec3::from_array(std::array::from_fn(|c| {
+            (0..3)
+                .map(|k| rows[c][k] * if rows[c][k] >= 0. { low[k] } else { high[k] })
+                .sum()
+        }));
+        let emax = DVec3::from_array(std::array::from_fn(|c| {
+            (0..3)
+                .map(|k| rows[c][k] * if rows[c][k] >= 0. { high[k] } else { low[k] })
+                .sum()
+        }));
+        let fmin = emin.map(|x| curve.density(x));
+        let fmax = emax.map(|x| curve.density(x));
+        let bound = r
+            .samples
+            .iter()
+            .map(|s| {
+                let q = r.dye_basis.transpose() * s.dyes * r.definition.density_gain;
+                s.base
+                    + (0..3)
+                        .map(|i| q[i] * if q[i] >= 0. { fmin[i] } else { fmax[i] })
+                        .sum::<f64>()
+            })
+            .fold(f64::INFINITY, f64::min);
+        if bound >= 1e-8 {
+            continue;
+        }
+        let midpoint = ((lo + hi) * 0.5).map(crate::photographic::decode);
+        let a = r.amounts(midpoint);
+        for s in &r.samples {
+            assert!(s.base + s.dyes.dot(a) >= bound - 1e-10);
+            assert!(s.base + s.dyes.dot(a) >= 0.);
+        }
+        let span = hi - lo;
+        let axis = (0..3).max_by(|&i, &j| span[i].total_cmp(&span[j])).unwrap();
+        let mid = (lo[axis] + hi[axis]) * 0.5;
+        let mut left = hi;
+        left[axis] = mid;
+        let mut right = lo;
+        right[axis] = mid;
+        boxes.push((lo, left));
+        boxes.push((right, hi));
+    }
+    assert!(visited > 1);
+}
+
+#[test]
+fn malformed_definitions_reject_without_prohibiting_signed_effective_matrices() {
+    let make = || serde_json::from_slice::<Definition>(DEFINITION).unwrap();
+    make().validate().unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(DEFINITION).unwrap();
+    value["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<Definition>(value).is_err());
+    let mut d = make();
+    d.exposure_rows[0][0] += 0.1;
+    assert!(d.validate().is_err());
+    let mut d = make();
+    d.dye_rows = [[1., 0., 0.]; 3];
+    assert!(d.validate().is_err());
+    let mut d = make();
+    d.density_gain = f64::NAN;
+    assert!(d.validate().is_err());
+    let mut d = make();
+    d.base_density_offset = -1.;
+    assert!(d.validate().is_err());
 }

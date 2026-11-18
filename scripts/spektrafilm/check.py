@@ -8,6 +8,13 @@ from pathlib import Path
 import struct
 import zlib
 
+if __package__:
+    from .positive import prepare
+    from .reference import NEGATIVE, source as reference_source
+else:
+    from positive import prepare
+    from reference import NEGATIVE, source as reference_source
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -45,6 +52,8 @@ def validate(folder, files=None):
         if len(data) != record["bytes"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
             raise ValueError("component identity changed: " + name)
     catalog = json.loads(zlib.decompress(files["catalog.json.z"]))
+    if catalog["schema"] != 2:
+        raise ValueError("unsupported catalogue schema")
     labels = json.loads(files["selection.json"])
     if catalog["revision"] != provenance["revision"] or labels["revision"] != catalog["revision"]:
         raise ValueError("source pin mismatch")
@@ -72,11 +81,15 @@ def validate(folder, files=None):
         or set(provenance["paper_output_validation"]) != paper
     ):
         raise ValueError("incomplete reference entry/finishing coverage")
+    if provenance["paper_reference"] != reference_source():
+        raise ValueError("paper-reference definition/calibration changed")
+    basis = next(f for f in catalog["negative"] if f["id"] == NEGATIVE)
     for medium in catalog["paper"]:
-        if medium["positive_driver"] != {
-            key: provenance["positive_drivers"][medium["id"]][key]
-            for key in ["input_luminance", "reference", "print_log_h"]
-        }:
+        pair = next(
+            p for p in catalog["pairs"] if p["negative"] == NEGATIVE and p["paper"] == medium["id"]
+        )
+        driver = prepare(basis, pair, medium["positive_gray_logH"])
+        if driver.source() != provenance["positive_drivers"][medium["id"]]:
             raise ValueError("reference driver/provenance mismatch")
         values = zlib.decompress(files[medium["scanner_file"]])
         if len(values) != size**3 * 12:

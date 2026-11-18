@@ -1,11 +1,13 @@
 Historical Academy APD/ADX reference
 
-Antitone's colour paper-only adapter uses derived functional coefficients from
-S-2008-002, Academy Density Exchange Encoding (ADX) and the Spectral
-Responsivities Defining Academy Printing Density (APD), Version 1.1,
-November 18, 2010. This implementation relies on the source's IP
-non-enforcement covenant below. It does not claim Academy endorsement or
-conformance to a later SMPTE revision.
+Antitone's paper-only runtime uses calibrated effective-dye matrices, not an
+Academy APD spectral selector. Its frozen contrast-calibration target descends
+from an earlier adapter using derived functional coefficients from S-2008-002,
+Academy Density Exchange Encoding (ADX) and the Spectral Responsivities Defining
+Academy Printing Density (APD), Version 1.1, November 18, 2010. The original
+notices and IP non-enforcement covenant below are retained for this calibration
+ancestry and earlier distributed coefficients. No Academy endorsement or
+conformance to a later SMPTE revision is claimed.
 
 Source:
 https://github.com/aces-aswf/aces-core/blob/v1.0.3/documents/LaTeX/TB-2014-005/S-2008-002.pdf

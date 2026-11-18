@@ -1,6 +1,6 @@
 use super::*;
-use crate::looks::spektrafilm::{Model, Paper, Selection, develop_print_morph};
-use crate::{looks::spektrafilm::data, photographic};
+use crate::looks::spektrafilm::{Input, Model, Paper, Selection, develop_print_morph};
+use crate::photographic;
 use std::sync::atomic::AtomicBool;
 
 fn model(paper: Paper) -> Model {
@@ -18,9 +18,11 @@ fn models() -> impl Iterator<Item = Model> {
 }
 
 #[test]
-fn fixed_printing_calibration_preserves_gray_and_all_inputs_take_the_same_reference_path() {
+fn printing_balance_is_fixed_and_all_inputs_use_the_same_spectral_reference() {
     for m in models() {
-        let driver = &m.paper.positive_driver;
+        let Input::Reference(driver) = &m.input else {
+            panic!("paper-only reference");
+        };
         let gray = crate::looks::characteristic::reference().gray;
         assert!(
             (m.paper_exposure(DVec3::splat(gray)).unwrap() - m.paper.positive_gray_log_h)
@@ -36,10 +38,7 @@ fn fixed_printing_calibration_preserves_gray_and_all_inputs_take_the_same_refere
             DVec3::splat(4.),
             DVec3::new(0.3, 0.1, 0.02),
         ] {
-            let reference = driver
-                .reference
-                .expose(rgb, driver.input_luminance.dot(rgb))
-                .unwrap();
+            let reference = driver.reference.expose(rgb, driver.pair);
             assert!(
                 (m.paper_exposure(rgb).unwrap() - reference - driver.print_log_h)
                     .abs()
@@ -47,8 +46,6 @@ fn fixed_printing_calibration_preserves_gray_and_all_inputs_take_the_same_refere
                     < 1e-12
             );
         }
-        // Equal scalar density increments do not force equal receiver log-exposure
-        // increments: the retained density basis and paper spectra remain active.
         let low = m.paper_exposure(DVec3::splat(0.03)).unwrap();
         let high = m.paper_exposure(DVec3::splat(0.3)).unwrap();
         let change = high - low;
@@ -96,10 +93,10 @@ fn complete_neutral_trajectory_is_finite_monotone_and_continuous_at_black() {
 
 #[test]
 fn signed_and_hdr_colours_remain_finite_without_disabling_colour() {
+    let luminance = crate::color::AP1_TO_XYZ.row(1);
+    let direction = DVec3::new(0.7, -0.4, 1.2);
+    let opponent = direction - DVec3::splat(luminance.dot(direction));
     for m in models() {
-        let c = &m.paper.positive_driver;
-        let direction = DVec3::new(0.7, -0.4, 1.2);
-        let opponent = direction - DVec3::splat(c.input_luminance.dot(direction));
         for brightness in [-0.1, 0., 0.002, 0.02, 0.18, 0.8, 4., 1024.] {
             for amount in [-2., -0.05, 0., 0.03, 2.] {
                 let input = DVec3::splat(brightness) + opponent * amount;
@@ -122,17 +119,19 @@ fn signed_and_hdr_colours_remain_finite_without_disabling_colour() {
 }
 
 #[test]
-fn nonpositive_input_y_uses_black_endpoint_and_former_fold_queries_remain_defined() {
+fn only_nonpositive_exposure_records_share_black_and_warm_hdr_queries_remain_defined() {
     for m in models() {
-        let c = &m.paper.positive_driver;
-        for input in [DVec3::new(0.01, -0.05, 0.02), DVec3::new(-1., -0.2, 0.5)] {
-            let y = c.input_luminance.dot(input);
-            assert!(y < 0.);
-            assert_eq!(
-                m.paper_exposure(input).unwrap(),
-                m.paper_exposure(DVec3::ZERO).unwrap()
-            );
-        }
+        let black = m.paper_exposure(DVec3::ZERO).unwrap();
+        assert_eq!(m.paper_exposure(DVec3::splat(-1.)).unwrap(), black);
+        // Negative input luminance does not discard independently positive records.
+        let signed = DVec3::new(0.01, -0.05, 0.02);
+        assert!((crate::color::AP1_TO_XYZ * signed).y < 0.);
+        assert!(
+            (m.paper_exposure(signed).unwrap() - black)
+                .abs()
+                .max_element()
+                > 1e-4
+        );
         for input in [
             DVec3::new(32., 17.6, 0.2),
             DVec3::new(22.255227981125067, 12.411862377076536, -0.05435413775647024),
@@ -199,26 +198,4 @@ fn captured_sites_match_source_exposure_density_and_spectral_y() {
     assert!(raw < 1e-9);
     assert!(density < 1e-9);
     assert!(luminance < 2e-12);
-}
-
-#[test]
-fn reference_driver_rejects_unknown_fields_and_invalid_luminance() {
-    let catalog: serde_json::Value =
-        serde_json::from_slice(&data::decompress("catalog.json.z").unwrap()).unwrap();
-    let bytes = serde_json::to_vec(&catalog["paper"][0]["positive_driver"]).unwrap();
-    let make = || serde_json::from_slice::<Driver>(&bytes).unwrap();
-    make().validate().unwrap();
-    let mut unknown: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    unknown["unexpected"] = serde_json::json!(true);
-    assert!(serde_json::from_value::<Driver>(unknown).is_err());
-    for invalid in [
-        DVec3::new(-0.1, 0.6, 0.5),
-        DVec3::ZERO,
-        DVec3::ONE,
-        DVec3::splat(f64::NAN),
-    ] {
-        let mut driver = make();
-        driver.input_luminance = invalid;
-        assert!(driver.validate().is_err());
-    }
 }

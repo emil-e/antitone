@@ -2,7 +2,7 @@
   "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
   "inputs": {
     "scripts/spektrafilm/monochrome.py": "2c586df14e701e4aec3f6930f7cb7091ff892e81fdefa33d3d3eb285810cab95",
-    "scripts/spektrafilm/build.py": "f2b537f9dda4516e8d97bfac058d648f85c4bc2db7bacab30cc0511c53473104",
+    "scripts/spektrafilm/build.py": "b48a7bd12bf29025c0de3643610e9e7dc805aa51dab67fc6f0cb75c26a7b999a",
     "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
     "scripts/spektrafilm/characteristic.py": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
     "assets/looks/reference-negative.json": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b",

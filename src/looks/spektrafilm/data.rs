@@ -68,7 +68,6 @@ pub(super) struct Paper {
     pub scanner_file: String,
     #[serde(rename = "positive_gray_logH")]
     pub positive_gray_log_h: DVec3,
-    pub positive_driver: super::positive::Driver,
     #[serde(skip)]
     pub scanner: OnceLock<Result<Arc<CubicGrid>, Error>>,
 }
@@ -136,7 +135,7 @@ pub(super) fn catalog() -> &'static Catalog {
 fn load_catalog() -> Result<Catalog, Error> {
     let value: Catalog = serde_json::from_slice(&decompress("catalog.json.z")?).map_err(failure)?;
     require(
-        value.schema == 1
+        value.schema == 2
             && value.revision == super::REVISION
             && value.wavelengths == 81
             && (4..=513).contains(&value.spectra_size)
@@ -186,7 +185,6 @@ fn load_catalog() -> Result<Catalog, Error> {
     }
     for p in &value.paper {
         validate_curve(&p.log_exposure, &p.density_curves)?;
-        p.positive_driver.validate()?;
         require(
             p.scanner_min.is_finite()
                 && p.scanner_max.is_finite()

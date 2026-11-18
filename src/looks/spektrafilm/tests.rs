@@ -1,6 +1,8 @@
 use super::*;
 use crate::photographic;
 use serde::Deserialize;
+#[cfg(feature = "ocio-reference")]
+mod calibration;
 #[cfg(feature = "gpu")]
 mod gpu;
 
@@ -183,13 +185,13 @@ fn every_media_reference_preserves_gray_and_allows_colour_dependent_luminance() 
             &AtomicBool::new(false),
         )
         .unwrap();
-        assert!(model.film.is_none());
-        let driver = &model.paper.positive_driver;
+        assert!(matches!(&model.input, Input::Reference(_)));
+        let luminance = crate::color::AP1_TO_XYZ.row(1);
         let gray = model.paper_exposure(DVec3::splat(0.18)).unwrap();
         assert!((gray - model.paper.positive_gray_log_h).abs().max_element() < 2e-12);
         for colour in [DVec3::new(0.32, 0.16, 0.10), DVec3::new(0.05, 0.18, 0.30)] {
             let neutral = model
-                .paper_exposure(DVec3::splat(driver.input_luminance.dot(colour)))
+                .paper_exposure(DVec3::splat(luminance.dot(colour)))
                 .unwrap();
             let actual = model.paper_exposure(colour).unwrap();
             assert!(
@@ -224,17 +226,17 @@ fn every_media_reference_preserves_gray_and_allows_colour_dependent_luminance() 
 }
 
 #[test]
-fn every_media_record_requires_its_reference_driver() {
+fn every_media_record_requires_its_fixed_gray_exposure_target() {
     let mut value: serde_json::Value =
         serde_json::from_slice(&data::decompress("catalog.json.z").unwrap()).unwrap();
     for i in 0..value["paper"].as_array().unwrap().len() {
         let driver = value["paper"][i]
             .as_object_mut()
             .unwrap()
-            .remove("positive_driver")
+            .remove("positive_gray_logH")
             .unwrap();
         assert!(serde_json::from_value::<data::Catalog>(value.clone()).is_err());
-        value["paper"][i]["positive_driver"] = driver;
+        value["paper"][i]["positive_gray_logH"] = driver;
     }
 }
 

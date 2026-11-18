@@ -111,6 +111,7 @@ fn fingerprint() -> &'static str {
             include_bytes!("spektrafilm.rs").as_slice(),
             include_bytes!("characteristic.rs").as_slice(),
             super::characteristic::DEFINITION,
+            positive::DEFINITION,
             include_bytes!("authoring.rs").as_slice(),
             include_bytes!("sampling.rs").as_slice(),
             include_bytes!("spektrafilm/data.rs").as_slice(),
@@ -214,15 +215,24 @@ fn film_cmy_to_print_log_raw(film: &data::Film, pair: &data::Pair, d: DVec3) -> 
             raw += *weights * 10_f64.powf(-density);
         }
     }
+    print_log_exposure(raw, pair)
+}
+
+fn print_log_exposure(mut raw: DVec3, pair: &data::Pair) -> DVec3 {
     raw += pair.preflash;
     // Preserve upstream's two epsilon additions, including at the print-exposure boundary.
     ((raw.max(DVec3::ZERO) + DVec3::splat(EPSILON)) * pair.print_exposure + DVec3::splat(EPSILON))
         .map(f64::log10)
 }
 
+enum Input {
+    Negative(Filming),
+    Reference(positive::Driver),
+}
+
 pub struct Model {
     selection: Selection,
-    film: Option<Filming>,
+    input: Input,
     paper: &'static data::Paper,
     scanner: Arc<CubicGrid>,
 }
@@ -231,18 +241,18 @@ impl Model {
         let paper = &data::catalog().paper[selection.paper.0];
         Ok(Self {
             selection,
-            film: selection
-                .negative
-                .map(|f| Filming::new(f, selection.paper, cancel))
-                .transpose()?,
+            input: match selection.negative {
+                Some(negative) => Input::Negative(Filming::new(negative, selection.paper, cancel)?),
+                None => Input::Reference(positive::Driver::new(paper)?),
+            },
             paper,
             scanner: data::scanner(paper)?,
         })
     }
     fn paper_exposure(&self, rgb: DVec3) -> Result<DVec3, Error> {
-        match &self.film {
-            Some(film) => Ok(film.printing.sample(film.formation.density(rgb))),
-            None => self.paper.positive_driver.expose(rgb),
+        match &self.input {
+            Input::Negative(film) => Ok(film.printing.sample(film.formation.density(rgb))),
+            Input::Reference(driver) => driver.expose(rgb),
         }
     }
     pub fn encoded(&self, rgb: DVec3) -> Result<DVec3, Error> {
