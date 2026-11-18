@@ -8,7 +8,7 @@ fn snapshot_failures_leave_search_publication_and_existing_destinations_intact()
         std::fs::write(&path, b"existing destination").unwrap();
         let mut editor = authored_editor();
         if exporting {
-            editor.export_services = None;
+            editor.output_services = None;
         }
         with_search(editor, |app, gate| {
             let stroke = app.enter(|editor, cx| {

@@ -3,18 +3,23 @@ use egui::{Response, Ui};
 
 const HEADER_HEIGHT: f32 = 32.;
 
-pub(in crate::editor) fn app_header<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
+pub(in crate::editor) fn app_header(
+    ui: &mut Ui,
+    identity: impl FnOnce(&mut Ui),
+    actions: impl FnOnce(&mut Ui),
+) {
     egui::Panel::top("header")
         .exact_size(HEADER_HEIGHT)
         .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(12, 2)))
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 wordmark(ui);
-                contents(ui)
-            })
-            .inner
-        })
-        .inner
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    actions(ui);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), identity);
+                });
+            });
+        });
 }
 
 fn wordmark(ui: &mut Ui) -> Response {

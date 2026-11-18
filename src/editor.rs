@@ -61,6 +61,8 @@ use fullscreen::FullscreenView;
 mod thumbnails;
 use thumbnails::Thumbnails;
 mod adjustment_layers;
+pub mod external_edit;
+pub mod integrations;
 mod look;
 mod processing;
 use adjustment_layers::AdjustmentLayerEditor;
@@ -76,10 +78,11 @@ use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
 #[cfg(test)]
 use analysis::AnalyzeTool;
+mod correction;
 mod dust;
 mod flat;
 mod spatial;
-use flat::Correction;
+use correction::Correction;
 #[cfg(test)]
 use flat::FlatEdit;
 mod auto_crop;
@@ -100,6 +103,7 @@ mod kittest_tests;
 mod measurement;
 mod memory;
 mod navigation;
+mod output;
 mod photo_scope;
 mod photo_ui;
 mod picking;
@@ -266,7 +270,7 @@ pub struct Editor {
     document: DocumentScope,
 
     next_request: u64,
-    export_services: Option<export::Services>,
+    output_services: Option<output::Services>,
     files: files::State,
     allow_close: bool,
     developments: Option<source_loading::SourceLoader>,
@@ -305,7 +309,7 @@ impl Editor {
             device: device.clone(),
             queue: queue.clone(),
         });
-        editor.export_services = Some(export::Services::new(
+        editor.output_services = Some(output::Services::new(
             renderers,
             device,
             queue,
@@ -322,6 +326,58 @@ impl Editor {
         editor.preferences.cache_limits = Some(editor.document.thumbnails.limits);
         editor.scopes = scopes;
         editor
+    }
+
+    fn install_project(&mut self, document: Document) {
+        self.cancel_active_tool();
+        self.document = self.document.replacement(document);
+        self.id = self.request_id();
+        self.document.visit.view = self.id;
+        self.source_epoch
+            .store(self.id, std::sync::atomic::Ordering::Relaxed);
+        self.canvas_frame = Default::default();
+        self.remember_imported_look();
+        self.invalidate_original();
+        self.status = "Project ready".into();
+    }
+
+    fn activate_project(
+        &mut self,
+        document: Document,
+        selected: Option<SourceId>,
+        cx: &UiContext<'_, Self>,
+    ) {
+        self.install_project(document);
+        self.restore_correction(cx);
+        if let Some(id) = selected.or_else(|| self.document.project.order.first().copied())
+            && let Ok(path) = self.document.source_path(id)
+        {
+            self.document.selected = self
+                .document
+                .project
+                .order
+                .iter()
+                .position(|source| *source == id)
+                .expect("ordered photograph");
+            self.document.visit.current_source = Some(id);
+            self.load(path, cx);
+        }
+    }
+
+    fn accept_external(&mut self, opened: external_edit::Opened, cx: &UiContext<'_, Self>) {
+        let selected = opened.session.selected();
+        self.activate_project(opened.document, Some(selected), cx);
+        self.document.external_edit.session = Some(Arc::new(opened.session));
+    }
+
+    fn complete_external(&mut self) {
+        if !self.document.dirty() && self.document_command_available() {
+            self.allow_close = true;
+        } else {
+            self.status =
+                "Snapshot returned. Resolve remaining edits or dialogs, then close this window."
+                    .into();
+        }
     }
 
     fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -382,7 +438,7 @@ impl Editor {
 
             document,
             next_request: 0,
-            export_services: None,
+            output_services: None,
             files: Default::default(),
             allow_close: false,
         }

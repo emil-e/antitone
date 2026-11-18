@@ -66,6 +66,7 @@ jobs:
           name: release-macos
           path: |
             .cache/app/Antitone-macos-arm64.zip
+            .cache/app/Antitone-Lightroom.zip
             .cache/app/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
@@ -108,4 +109,5 @@ jobs:
             --generate-notes \
             .cache/release/Antitone-macos-arm64.zip \
             .cache/release/Antitone-windows-x64.zip \
+            .cache/release/Antitone-Lightroom.zip \
             .cache/release/SHA256SUMS

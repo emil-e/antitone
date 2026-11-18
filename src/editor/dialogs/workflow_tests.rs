@@ -57,7 +57,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
 }
 
 #[test]
-fn unavailable_export_services_report_failure_and_keep_accepted_state() {
+fn unavailable_output_services_report_failure_and_keep_accepted_state() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let before = editor.document.state.project.clone();

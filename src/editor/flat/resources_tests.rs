@@ -70,7 +70,7 @@ fn export_and_source_acquisition_await_the_captured_correction_without_live_ui()
     let (resources, _started, release) = hold_preparation(&mut editor);
     let request = editor.capture_export(&draft(directory.path())).unwrap();
     let mut source = Box::pin(editor.capture_source_context().unwrap());
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     let settings = editor.document.project.active_flat_field().unwrap().clone();
     // Readers retain their captured resource dependency, not the live editor or a UI waiter.
     drop(editor);
@@ -104,7 +104,7 @@ fn cancelling_export_while_it_awaits_correction_preserves_another_consumers_depe
     let (resources, started, release) = hold_preparation(&mut editor);
     let request = editor.capture_export(&draft(directory.path())).unwrap();
     let source = editor.capture_source_context().unwrap();
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     pollster::block_on(async {
         let cancelled = Cancellation::default();

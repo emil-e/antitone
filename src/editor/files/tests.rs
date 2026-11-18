@@ -695,7 +695,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             expected.recipe.composition.crop(),
             editor.photo_crop().unwrap()
         );
-        let services = editor.export_services.as_ref().unwrap().clone();
+        let services = editor.output_services.as_ref().unwrap().clone();
         let mut draft = export::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
         match format {
             OutputFormat::Tiff(target) => draft.target = target,

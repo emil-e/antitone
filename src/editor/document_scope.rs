@@ -108,7 +108,7 @@ pub(super) struct DocumentScope {
     pub export: super::export::State,
     pub importing: Option<async_executor::Task<()>>,
     pub input_change: Option<async_executor::Task<()>>,
-    pub correction: super::flat::Resources,
+    pub correction: super::correction::Resources,
     pub correction_restore: Option<async_executor::Task<()>>,
     pub flat_correction: Option<async_executor::Task<()>>,
     pub hosted_tool: super::tool::Slot,
@@ -130,6 +130,7 @@ pub(super) struct DocumentScope {
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
+    pub external_edit: super::external_edit::State,
     pub lut: super::look::lut::State,
     pub film_and_paper: super::look::film_and_paper::State,
     pub dialog_action: Option<async_executor::Task<()>>,
@@ -226,6 +227,9 @@ impl DocumentScope {
     }
 
     pub fn accept_save(&mut self, saved: Document) {
+        if let Some(path) = &saved.path {
+            self.external_edit.saved(path);
+        }
         self.history
             .rebase(self.state.path.as_deref(), saved.path.as_deref());
         self.state.accept_save(saved);
@@ -363,6 +367,7 @@ impl From<Document> for DocumentScope {
             embedded_preview: None,
             thumbnail_work: Default::default(),
             write: super::save::State::default(),
+            external_edit: super::external_edit::State::default(),
             lut: Default::default(),
             film_and_paper: Default::default(),
             dialog_action: None,

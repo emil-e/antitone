@@ -10,6 +10,7 @@ import zipfile
 
 
 PACKAGES = ("Antitone-macos-arm64.zip", "Antitone-windows-x64.zip")
+LIGHTROOM = "Antitone-Lightroom.zip"
 
 
 def validate_tag(tag: str, manifest: Path) -> None:
@@ -18,15 +19,24 @@ def validate_tag(tag: str, manifest: Path) -> None:
         raise ValueError(f"Tag {tag!r} does not match Cargo.toml version {version}")
 
 
-def verify_package(directory: Path, name: str) -> str:
-    """Require the named platform's manifest, matching bytes and an intact ZIP container."""
-    fields = (directory / "SHA256SUMS").read_text(encoding="ascii").split()
-    if len(fields) != 2 or fields[1] != name:
-        raise ValueError(f"Expected exactly one checksum for {name} in {directory}")
+def read_checksums(directory: Path, expected: tuple[str, ...]) -> dict[str, str]:
+    rows = [
+        line.split() for line in (directory / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+    ]
+    if any(len(row) != 2 for row in rows):
+        raise ValueError(f"Invalid checksum manifest in {directory}")
+    checksums = {name: digest for digest, name in rows}
+    if len(rows) != len(expected) or set(checksums) != set(expected):
+        raise ValueError(f"Expected exactly one checksum for each of {expected} in {directory}")
+    return checksums
+
+
+def verify_package(directory: Path, name: str, digest: str) -> str:
+    """Require matching bytes and an intact ZIP container."""
     path = directory / name
     with path.open("rb") as stream:
         actual = hashlib.file_digest(stream, "sha256").hexdigest()
-    if fields[0] != actual:
+    if digest != actual:
         raise ValueError(f"SHA-256 mismatch for {name}")
     with zipfile.ZipFile(path) as archive:
         if not archive.namelist():
@@ -40,14 +50,21 @@ def verify_package(directory: Path, name: str) -> str:
 def assemble(macos: Path, windows: Path, output: Path) -> None:
     # Validate both inputs before creating anything publishable. A fresh output directory prevents
     # stale assets from an earlier run from being picked up by a release upload.
-    inputs = list(zip((macos, windows), PACKAGES, strict=True))
-    hashes = [verify_package(directory, name) for directory, name in inputs]
+    mac_checksums = read_checksums(macos, (PACKAGES[0], LIGHTROOM))
+    win_checksums = read_checksums(windows, (PACKAGES[1],))
+    inputs = [(macos, PACKAGES[0]), (macos, LIGHTROOM), (windows, PACKAGES[1])]
+    hashes = [
+        verify_package(
+            directory, name, (mac_checksums if directory == macos else win_checksums)[name]
+        )
+        for directory, name in inputs
+    ]
     output.mkdir(parents=True, exist_ok=False)
     try:
         for directory, name in inputs:
             shutil.copyfile(directory / name, output / name)
         checksums = "".join(
-            f"{digest}  {name}\n" for digest, name in zip(hashes, PACKAGES, strict=True)
+            f"{digest}  {name}\n" for digest, (_, name) in zip(hashes, inputs, strict=True)
         )
         (output / "SHA256SUMS").write_text(checksums, encoding="ascii")
     except Exception:

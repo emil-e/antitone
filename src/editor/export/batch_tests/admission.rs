@@ -52,7 +52,7 @@ fn cold_editor(limits: wgpu::Limits) -> (Editor, Arc<Mutex<Vec<PathBuf>>>) {
         renderers: renderers.clone(),
     };
     editor.source_services = Some(sources.clone());
-    editor.export_services = Some(Services::new(
+    editor.output_services = Some(Services::new(
         renderers,
         device,
         queue,

@@ -48,6 +48,62 @@ fn brand_assets_have_the_expected_sizes_and_self_contained_wordmarks() {
 }
 
 #[test]
+fn header_actions_stay_at_the_right_edge_and_reserve_room_before_identity_truncates() {
+    for scale in [1., 2.] {
+        for width in [640., 1100.] {
+            for enabled in [false, true] {
+                let context = Context::default();
+                let mut action = None;
+                let mut identity = None;
+                let mut input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 200.))),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let mut output = context.run_ui(input, |ui| {
+                    configure_branding(ui);
+                    app_header(
+                        ui,
+                        |ui| {
+                            identity = Some(
+                                ui.add(
+                                    egui::Label::new("A very long project filename ".repeat(12))
+                                        .truncate(),
+                                )
+                                .rect,
+                            );
+                        },
+                        |ui| {
+                            let right = ui.max_rect().right();
+                            let response = TextAction::new("Save Back to Lightroom")
+                                .enabled(enabled)
+                                .show(ui);
+                            action = Some((response.rect, response.enabled(), right));
+                        },
+                    );
+                });
+                output.textures_delta.clear();
+                let (rect, actual_enabled, right) = action.unwrap();
+                assert_eq!(actual_enabled, enabled);
+                assert!(
+                    (rect.right() - right).abs() < 0.1,
+                    "action must hug the header's trailing edge"
+                );
+                assert!(rect.left() > 0. && rect.right() <= width);
+                assert!(
+                    identity.unwrap().right() < rect.left(),
+                    "long names must truncate before the action"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn app_header_keeps_branding_and_menus_visible_without_taking_keyboard_focus() {
     for scale in [1., 2.] {
         for width in [320., 720., 1100.] {
@@ -72,20 +128,24 @@ fn app_header_keeps_branding_and_menus_visible_without_taking_keyboard_focus() {
                     let surface = ui.visuals().panel_fill;
                     assert!(surface.r().abs_diff(surface.g()) <= 4);
                     assert!(surface.g().abs_diff(surface.b()) <= 4);
-                    app_header(ui, |ui| {
-                        let file = ui.menu_button("File", |_| ());
-                        let export = ui.menu_button("Export", |_| ());
-                        let name = ui.add(
-                            egui::Label::new("A very long project filename.antitone.json")
-                                .truncate(),
-                        );
-                        assert!(
-                            name.rect.right() <= width,
-                            "name {:?}, screen {width}, scale {scale}",
-                            name.rect
-                        );
-                        buttons = Some([file.response, export.response]);
-                    });
+                    app_header(
+                        ui,
+                        |ui| {
+                            let file = ui.menu_button("File", |_| ());
+                            let export = ui.menu_button("Export", |_| ());
+                            let name = ui.add(
+                                egui::Label::new("A very long project filename.antitone.json")
+                                    .truncate(),
+                            );
+                            assert!(
+                                name.rect.right() <= width,
+                                "name {:?}, screen {width}, scale {scale}",
+                                name.rect
+                            );
+                            buttons = Some([file.response, export.response]);
+                        },
+                        |_| {},
+                    );
                 });
                 output.textures_delta.clear();
                 output

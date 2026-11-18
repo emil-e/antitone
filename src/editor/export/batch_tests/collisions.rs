@@ -32,7 +32,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
                 std::fs::write(&competing, b"competing writer").unwrap();
             }
         }));
-        let services = editor.export_services.take().unwrap();
+        let services = editor.output_services.take().unwrap();
         drop(editor);
         let summary =
             pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
@@ -60,7 +60,7 @@ fn a_photo_specific_numerical_rejection_does_not_abort_later_exports() {
     invalid.roll.exposure = f64::MAX;
     let source = request.photos[0].recipe.neutral.source;
     request.photos[0].recipe = invalid.image_recipe(source).unwrap();
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
@@ -81,7 +81,7 @@ fn completed_photos_release_their_originals_before_the_batch_finishes() {
         panic!("first photo must have a captured ready lease");
     };
     let first = Arc::downgrade(&first.source);
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let mut checked = false;
     let summary =
@@ -166,7 +166,7 @@ fn filesystem_equivalent_unicode_names_never_replace_an_earlier_batch_output() {
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;
     let request = editor.capture_export(&settings).unwrap();
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
@@ -207,7 +207,7 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
         request.photos[1].path,
         directory.path().join("frame (2).exr")
     );
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));

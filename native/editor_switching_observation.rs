@@ -207,7 +207,7 @@ fn workload(
         device: device.clone(),
         queue: queue.clone(),
     });
-    editor.export_services = Some(export::Services::new(
+    editor.output_services = Some(output::Services::new(
         renderers.clone(),
         device.clone(),
         queue.clone(),

@@ -23,8 +23,13 @@ class ReleaseTests(unittest.TestCase):
         self.macos = self.root / "macos"
         self.windows = self.root / "windows"
         self.output = self.root / "release"
-        for directory, name in zip((self.macos, self.windows), release.PACKAGES, strict=True):
-            directory.mkdir()
+        self.inputs = [
+            (self.macos, release.PACKAGES[0]),
+            (self.macos, release.LIGHTROOM),
+            (self.windows, release.PACKAGES[1]),
+        ]
+        for directory, name in self.inputs:
+            directory.mkdir(exist_ok=True)
             with zipfile.ZipFile(directory / name, "w") as archive:
                 archive.writestr("package/application", name.encode())
             self.checksum(directory, name)
@@ -32,12 +37,16 @@ class ReleaseTests(unittest.TestCase):
     @staticmethod
     def checksum(directory, name):
         digest = hashlib.sha256((directory / name).read_bytes()).hexdigest()
-        (directory / "SHA256SUMS").write_text(f"{digest}  {name}\n", encoding="ascii")
+        manifest = directory / "SHA256SUMS"
+        rows = manifest.read_text().splitlines() if manifest.exists() else []
+        rows = [row for row in rows if row.split()[1] != name]
+        manifest.write_text("\n".join([*rows, f"{digest}  {name}"]) + "\n", encoding="ascii")
 
     def test_both_platforms_are_preserved_with_a_combined_verifiable_manifest(self):
         release.assemble(self.macos, self.windows, self.output)
         self.assertEqual(
-            set(p.name for p in self.output.iterdir()), {*release.PACKAGES, "SHA256SUMS"}
+            set(p.name for p in self.output.iterdir()),
+            {*release.PACKAGES, release.LIGHTROOM, "SHA256SUMS"},
         )
         recorded = dict(
             (name, digest)
@@ -45,7 +54,7 @@ class ReleaseTests(unittest.TestCase):
                 line.split() for line in (self.output / "SHA256SUMS").read_text().splitlines()
             )
         )
-        for directory, name in zip((self.macos, self.windows), release.PACKAGES, strict=True):
+        for directory, name in self.inputs:
             source = (directory / name).read_bytes()
             self.assertEqual((self.output / name).read_bytes(), source)
             self.assertEqual(recorded[name], hashlib.sha256(source).hexdigest())
@@ -56,8 +65,14 @@ class ReleaseTests(unittest.TestCase):
             release.assemble(self.macos, self.windows, self.output)
         self.assertFalse(self.output.exists())
 
+    def test_missing_plugin_archive_prevents_publishing_an_incomplete_pair(self):
+        (self.macos / release.LIGHTROOM).unlink()
+        with self.assertRaises(FileNotFoundError):
+            release.assemble(self.macos, self.windows, self.output)
+        self.assertFalse(self.output.exists())
+
     def test_changed_archive_is_rejected_even_when_it_is_still_a_valid_zip(self):
-        for directory, name in zip((self.macos, self.windows), release.PACKAGES, strict=True):
+        for directory, name in self.inputs:
             with self.subTest(platform=name):
                 original = (directory / name).read_bytes()
                 with zipfile.ZipFile(directory / name, "a") as archive:

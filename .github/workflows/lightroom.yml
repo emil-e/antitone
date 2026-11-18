@@ -1,0 +1,26 @@
+name: Lightroom plug-in
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lua:
+    name: Lua 5.1 SDK mocks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install open-source Lua runtime
+        run: sudo apt-get update && sudo apt-get install -y liblua5.1-0
+      - name: Exercise the plug-in without Lightroom
+        run: python3 scripts/test-lightroom-plugin.py

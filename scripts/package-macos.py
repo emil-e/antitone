@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 
+from lightroom_package import ARCHIVE_NAME as LIGHTROOM_ARCHIVE, package_plugin, verify_plugin
+
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / ".cache" / "app"
 APP = OUTPUT / "Antitone.app"
@@ -290,13 +292,24 @@ def verify_bundle(bundle, version):
             raise RuntimeError(f"Unexpected packaged executable response: {result.stdout!r}")
         if str(runtime) not in result.stderr:
             raise RuntimeError("Loader did not report the bundled OpenMP runtime")
+        protocol = run(
+            binary,
+            "--lightroom-protocol-version",
+            cwd=home,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return int(protocol.stdout.strip())
 
 
 def verify_archive(version):
     # Relocate outside the checkout, including when its path contains spaces.
     with tempfile.TemporaryDirectory(prefix="Antitone package ", dir="/private/tmp") as temporary:
         run("ditto", "-x", "-k", ARCHIVE, temporary)
-        verify_bundle(Path(temporary) / "Antitone.app", version)
+        protocol = verify_bundle(Path(temporary) / "Antitone.app", version)
+        verify_plugin(OUTPUT / LIGHTROOM_ARCHIVE, version, protocol)
     print(f"Verified relocated package: {ARCHIVE}")
 
 
@@ -368,7 +381,7 @@ def package(data):
         (resources / "build-info.json").write_text(json.dumps(provenance, indent=2) + "\n")
         for path in [runtime, bundle]:
             run("codesign", "--force", "--sign", "-", "--timestamp=none", path)
-        verify_bundle(bundle, item["version"])
+        protocol = verify_bundle(bundle, item["version"])
         if APP.exists():
             shutil.rmtree(APP)
         bundle.rename(APP)
@@ -377,8 +390,12 @@ def package(data):
         staged_archive.unlink()
     run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, staged_archive)
     staged_archive.replace(ARCHIVE)
+    plugin = package_plugin(ROOT, OUTPUT, item["version"], protocol)
     (OUTPUT / "SHA256SUMS").write_text(
-        f"{hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()}  {ARCHIVE.name}\n"
+        "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+            for path in (ARCHIVE, plugin)
+        )
     )
     print(APP)
     print(ARCHIVE)
