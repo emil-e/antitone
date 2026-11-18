@@ -210,7 +210,6 @@ fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_rea
     let native = glam::DMat3::from_cols_array_2d(&offscreen.development.camera_to_ap1);
     assert!(((normalized.x_axis.length() / native.x_axis.length()).log2() - 2.25).abs() < 0.03);
     let before = editor.document.state.project.clone();
-    editor.validate_source_candidate(&offscreen).unwrap();
     let mut candidate = editor.document.capture();
     candidate.project.source_mut(id).unwrap().adjustment_layers = offscreen.adjustment_layers;
     crate::editor::tests::photograph(&candidate, id, &device.limits()).unwrap();

@@ -404,15 +404,10 @@ impl Editor {
         }
     }
 
-    fn validate_roll_values(&self, project: &crate::project::Project) -> Result<(), Error> {
+    fn validate_roll_values(project: &crate::project::Project) -> Result<(), Error> {
+        project.input.validate_controls()?;
         crate::processing::exposure_multiplier(project.roll.exposure)?;
         crate::color::wb_matrix(project.roll.wb)?;
-        if let Some(input) = project.input.negative_input() {
-            input.parameters()?;
-        }
-        if project.input.ready() && !project.sources.is_empty() {
-            self.validate_processing(project.input, project.roll, self.photo_settings())?;
-        }
         Ok(())
     }
 
@@ -447,7 +442,7 @@ impl Editor {
                 edit.update(|project| project.roll.wb = starting_wb);
             }
         }
-        if let Err(error) = self.validate_roll_values(&edit.preview().snapshot().unwrap()) {
+        if let Err(error) = Self::validate_roll_values(&edit.preview().snapshot().unwrap()) {
             self.status = format!("Edit rejected: {error}");
             return;
         }
@@ -997,8 +992,7 @@ impl Editor {
             self.photo_tool_shelf(ui, cx);
         }
 
-        let editable =
-            !self.interaction_blocked() && !self.tool_interacting() && grade.input.ready();
+        let editable = !self.interaction_blocked() && !self.tool_interacting();
         let can_pick = self.tool_start_available() && self.selected_area().is_some();
         let mut start_pick: Option<editing::Interaction> = None;
 

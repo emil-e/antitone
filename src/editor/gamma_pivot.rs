@@ -289,8 +289,7 @@ impl Editor {
                         project.input = candidate;
                         project.roll.wb = wb;
                     });
-                    editor
-                        .validate_roll_values(&edit.preview().snapshot().unwrap())
+                    Editor::validate_roll_values(&edit.preview().snapshot().unwrap())
                         .map_err(|error| error.to_string())?;
                     editor.commit_control(edit, pending.response);
                     Ok(())

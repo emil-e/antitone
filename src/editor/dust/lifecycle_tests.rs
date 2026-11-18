@@ -520,20 +520,31 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
 }
 
 #[test]
-fn film_and_grade_candidates_preserve_authored_repairs_without_preparing_pixels() {
+fn film_and_grade_edits_preserve_authored_repairs_without_preparing_pixels() {
     let e = gpu_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, _cx| {
             let source = e.document.visit.current_source.unwrap();
             let repairs = e.dust_repairs(source).unwrap().clone();
-            let before = e.document.state.project.clone();
-            let mut candidate = before.source(source).unwrap().clone();
-            candidate.adjustment_layers.as_mut().unwrap().layers[0]
-                .adjustment
-                .photo
-                .exposure = 16.;
-            e.validate_source_candidate(&candidate).unwrap();
-            assert_eq!(e.document.state.project, before);
+            e.edit_adjustment_layers(|layers| {
+                layers.layers[0].adjustment.photo.exposure = 16.;
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(
+                e.document
+                    .project
+                    .source(source)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo
+                    .exposure,
+                16.
+            );
             let mut edit = e.edit_project("Rendering settings").unwrap();
             edit.update(|project| project.output.grain = GrainPreset::ThirtyFiveMm.settings());
             e.commit_project(edit).unwrap();

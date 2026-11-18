@@ -10,6 +10,8 @@ use std::{
 };
 
 #[cfg(test)]
+mod authoring_tests;
+#[cfg(test)]
 mod tests;
 
 /// An immutable model version shared by accepted state, readers and undo history.

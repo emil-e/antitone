@@ -32,6 +32,77 @@ fn start(editor: &mut Editor) -> AdjustmentLayerId {
 }
 
 #[test]
+fn gradient_refinement_does_not_require_an_executable_image() {
+    pollster::block_on(async {
+        for bad_calibration in [true, false] {
+            let (mut editor, _, _) = processing::tests::fixture().await;
+            let source = editor.document.visit.current_source.unwrap();
+            if bad_calibration {
+                if let InputSettings::Negative { dmin, dmax, .. } =
+                    &mut editor.document.project.input
+                {
+                    *dmax = *dmin;
+                }
+            } else {
+                let layer = &mut editor
+                    .document
+                    .project
+                    .source_mut(source)
+                    .unwrap()
+                    .adjustment_layers
+                    .as_mut()
+                    .unwrap()
+                    .layers[1]
+                    .adjustment;
+                if let AdjustmentLayerCoverage::Radial { radii, .. } = &mut layer.mask {
+                    radii[0] = f64::MIN_POSITIVE;
+                } else {
+                    panic!("fixture has a radial layer");
+                }
+            }
+            assert!(
+                editor
+                    .positive_processing(
+                        editor.input(),
+                        editor.document.project.roll,
+                        editor.photo_settings()
+                    )
+                    .is_err()
+            );
+            let before = editor.document.state.project.clone();
+            let id = start(&mut editor);
+            let mask = editor.document.visit.masks.gesture().unwrap().mask.unwrap();
+            editor.finish_mask(true);
+            let mut expected = before.clone();
+            expected
+                .source_mut(source)
+                .unwrap()
+                .adjustment_layers
+                .as_mut()
+                .unwrap()
+                .layers
+                .iter_mut()
+                .find(|layer| layer.id == id)
+                .unwrap()
+                .adjustment
+                .mask = mask;
+            assert_eq!(editor.document.state.project, expected);
+            assert!(
+                editor
+                    .positive_processing(
+                        editor.input(),
+                        editor.document.project.roll,
+                        editor.photo_settings()
+                    )
+                    .is_err()
+            );
+            editor.restore_history(history::Direction::Undo, &UiContext::render_only());
+            assert_eq!(editor.document.state.project, before);
+        }
+    });
+}
+
+#[test]
 fn visit_retirement_and_layer_selection_discard_only_the_unfinished_refinement() {
     pollster::block_on(async {
         for depart in [false, true] {

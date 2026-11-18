@@ -4,8 +4,23 @@ use crate::{editor::PickerCase, raw::Rect};
 use glam::DVec3;
 use std::time::Duration;
 
+fn unrenderable_layer() -> crate::adjustment_layers::AdjustmentLayer {
+    crate::adjustment_layers::AdjustmentLayer {
+        mask: crate::adjustment_layers::AdjustmentLayerCoverage::Radial {
+            center: crate::geometry::SourcePoint([8., 8.]),
+            radii: [f64::MIN_POSITIVE, 1.],
+            angle: 0.,
+            feather: 0.5,
+        },
+        ..crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 1.,
+            ..Default::default()
+        })
+    }
+}
+
 #[test]
-fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layers() {
+fn roll_wb_feature_measures_before_its_existing_balance_and_unrenderable_adjustment_layers() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
     editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
@@ -48,6 +63,21 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
     // The independent f64 path checks the captured prefix; production evaluates f32 pixels.
     assert!((expected.warmth - reference.warmth).abs() < 1e-6);
     assert!((expected.tint - reference.tint).abs() < 1e-6);
+    editor
+        .edit_adjustment_layers(|layers| {
+            layers.add("Unrenderable".into(), unrenderable_layer())?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        editor
+            .positive_processing(
+                editor.input(),
+                editor.document.project.roll,
+                editor.photo_settings()
+            )
+            .is_err()
+    );
     let input = editor.document.project.input;
     let photo = editor.photo_settings();
     assert_ne!(expected, editor.document.project.roll.wb);
@@ -106,16 +136,7 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         )
         .unwrap();
     layers
-        .add(
-            "Downstream".into(),
-            AdjustmentLayer::global(AdjustmentLayerSettings {
-                wb: Balance {
-                    warmth: -0.7,
-                    tint: 0.6,
-                },
-                ..AdjustmentLayerSettings::default()
-            }),
-        )
+        .add("Unrenderable downstream".into(), unrenderable_layer())
         .unwrap();
     editor
         .document
@@ -171,6 +192,17 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
     assert!(
         (actual.tint - expected.tint).abs() < 2e-6,
         "{actual:?} != {expected:?}"
+    );
+    set_layer(&mut editor, actual, (source, Target::Layer(selected))).unwrap();
+    assert_eq!(editor.photo_settings().wb, actual);
+    assert!(
+        editor
+            .positive_processing(
+                editor.input(),
+                editor.document.project.roll,
+                editor.photo_settings()
+            )
+            .is_err()
     );
 }
 

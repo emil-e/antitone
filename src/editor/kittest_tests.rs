@@ -8,6 +8,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 mod activity;
 mod adjustment_layers;
 mod analyze;
+mod authoring;
 mod auto_crop;
 mod correction;
 mod crop;

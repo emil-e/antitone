@@ -741,9 +741,7 @@ impl Project {
             self.processing_model == PROCESSING_MODEL_VERSION,
             "unsupported processing model; no automatic migration",
         )?;
-        if let Some(negative) = self.input.negative_input() {
-            negative.channel_gammas()?;
-        }
+        self.input.validate_controls()?;
         self.output.grain.validate()?;
         self.output.halation.validate()?;
         require(

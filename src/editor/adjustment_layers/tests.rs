@@ -458,7 +458,7 @@ fn source_calibration_picking_does_not_lock_unrelated_layer_selection() {
 }
 
 #[test]
-fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
+fn malformed_mask_edit_preserves_grade_view_revision_and_allocator() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let accepted = editor
@@ -481,11 +481,11 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             }
             adjustment.mask = AdjustmentLayerCoverage::Radial {
                 center: crate::geometry::SourcePoint([0., 0.]),
-                radii: [f64::MIN_POSITIVE, 1.],
+                radii: [0., 1.],
                 angle: 0.,
                 feather: 0.5,
             };
-            layers.add("Unrepresentable mask".into(), adjustment)?;
+            layers.add("Zero-radius mask".into(), adjustment)?;
             Ok(())
         });
         assert!(result.is_err());

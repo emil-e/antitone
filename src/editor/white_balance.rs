@@ -1,5 +1,5 @@
 use super::{
-    AdjustmentLayerSettings, Balance, Editor, RollSettings, SourceId, UiContext,
+    Balance, Editor, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
     measurement,
     picking::{self, Display, View},
@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, scan::Scan};
 #[cfg(test)]
-use crate::{adjustment_layers::AdjustmentLayer, processing::InputSettings};
+use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
+    processing::InputSettings,
+};
 
 mod query;
 
@@ -209,7 +212,9 @@ pub(super) fn set_roll(editor: &mut Editor, value: Balance) -> Result<(), String
         wb: value,
         ..editor.document.project.roll
     };
-    validate(editor, candidate, editor.photo_settings())?;
+    value
+        .validate()
+        .map_err(|error| format!("Pick rejected: {error}"))?;
     draft.update(|project| project.roll = candidate);
     editor
         .commit_project(draft)
@@ -243,19 +248,5 @@ pub(super) fn set_layer(
         })
         .map_err(|error| format!("Pick rejected: {error}"))?;
     editor.status = "Wb neutral correction applied".into();
-    Ok(())
-}
-
-fn validate(
-    editor: &Editor,
-    roll: RollSettings,
-    photo: AdjustmentLayerSettings,
-) -> Result<(), String> {
-    crate::color::wb_matrix(roll.wb).map_err(|error| format!("Pick rejected: {error}"))?;
-    if editor.document.project.input.ready() {
-        editor
-            .validate_processing(editor.document.project.input, roll, photo)
-            .map_err(|error| format!("Pick rejected: {error}"))?;
-    }
     Ok(())
 }

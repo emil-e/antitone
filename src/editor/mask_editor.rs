@@ -369,7 +369,6 @@ impl Editor {
         self.document.source = false;
         let result = (|| {
             let source = self.mask_source()?;
-            self.validate_source_candidate(&source)?;
             let mask = id
                 .map(|id| {
                     source
@@ -466,7 +465,6 @@ impl Editor {
             None,
         )
         .ok()?;
-        self.validate_source_candidate(&source).ok()?;
         Some(source)
     }
 

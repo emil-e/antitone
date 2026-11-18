@@ -80,6 +80,22 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
 }
 
 #[test]
+fn incomplete_calibration_still_validates_its_curve_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut project, _, _) = fixture(directory.path());
+    for (gamma, supported) in [(DEFAULT_GAMMA, true), (0., false)] {
+        if let InputSettings::Negative {
+            dmax, gamma: value, ..
+        } = &mut project.input
+        {
+            *dmax = None;
+            *value = gamma;
+        }
+        assert_eq!(project.require_runtime().is_ok(), supported);
+    }
+}
+
+#[test]
 fn libraw_release_provenance_does_not_gate_project_or_source_compatibility() {
     let directory = tempfile::tempdir().unwrap();
     let (project, _, _) = fixture(directory.path());

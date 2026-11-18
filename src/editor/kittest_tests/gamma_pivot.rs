@@ -2,7 +2,7 @@ use super::workflow::enter_numeric;
 use super::*;
 
 #[test]
-fn gamma_calculation_preserves_independent_control_updates() {
+fn gamma_calculation_preserves_independent_control_updates_with_an_unrenderable_layer() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         pin(&mut h);
@@ -18,6 +18,45 @@ fn gamma_calculation_preserves_independent_control_updates() {
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
             .click();
         h.try_run_realtime().unwrap();
+        let unrenderable = h.update(|editor| {
+            let source = editor.document.visit.current_source.unwrap();
+            let id = editor
+                .document
+                .project
+                .source_mut(source)
+                .unwrap()
+                .adjustment_layers
+                .as_mut()
+                .unwrap()
+                .add(
+                    "Unrenderable".into(),
+                    crate::adjustment_layers::AdjustmentLayer {
+                        mask: crate::adjustment_layers::AdjustmentLayerCoverage::Radial {
+                            center: crate::geometry::SourcePoint([216., 88.]),
+                            radii: [f64::MIN_POSITIVE, 1.],
+                            angle: 0.,
+                            feather: 0.5,
+                        },
+                        ..crate::adjustment_layers::AdjustmentLayer::global(
+                            AdjustmentLayerSettings {
+                                exposure: 1.,
+                                ..Default::default()
+                            },
+                        )
+                    },
+                )
+                .unwrap();
+            assert!(
+                editor
+                    .positive_processing(
+                        editor.input(),
+                        editor.document.project.roll,
+                        editor.photo_settings()
+                    )
+                    .is_err()
+            );
+            id
+        });
         let before = h.read(|editor| editor.document.project.clone());
         let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
@@ -58,6 +97,12 @@ fn gamma_calculation_preserves_independent_control_updates() {
             wait_for(&mut h, |editor| !editor.interaction_blocked());
             h.read(|editor| assert_eq!(editor.document.project, expected));
         }
+        h.update(|editor| {
+            editor
+                .edit_adjustment_layers(|layers| layers.remove(unrenderable))
+                .unwrap()
+        });
+        workflow::wait_settled(&mut h);
     });
 }
 
