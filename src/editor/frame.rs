@@ -5,6 +5,7 @@ pub(super) struct Actions {
     pub(super) menu: Option<MenuAction>,
     pub(super) file: Option<FileAction>,
     pub(super) export: bool,
+    pub(super) external_return: bool,
 }
 
 impl Editor {
@@ -85,6 +86,7 @@ impl Editor {
         Actions {
             file: menu.and_then(|action| self.menu_file_action(action)),
             export: menu == Some(MenuAction::Export),
+            external_return: false,
             menu,
         }
     }
@@ -267,9 +269,21 @@ impl Editor {
     ) {
         if self.fullscreen.is_none() {
             // The menu bar belongs to the platform; the header keeps the project identity.
-            ui::app_header(ui, |ui| self.project_identity(ui));
+            ui::app_header(
+                ui,
+                |ui| self.project_identity(ui),
+                |ui| {
+                    if let Some(presentation) = self.document.external_edit.presentation() {
+                        actions.external_return = ui::TextAction::new(presentation.action)
+                            .enabled(self.external_return_available())
+                            .show(ui)
+                            .clicked();
+                    }
+                },
+            );
         }
         if actions.file.is_some()
+            || actions.external_return
             || actions
                 .menu
                 .is_some_and(|action| !self.menu_targets_text(action))
@@ -375,6 +389,12 @@ impl Editor {
         }
         if let Some(action) = actions.file {
             self.file_action(action, cx);
+        } else if actions.external_return {
+            if let Some(task) = cx.spawn(|cx| async move {
+                cx.update(|editor| editor.return_external(&cx));
+            }) {
+                task.detach();
+            }
         } else if actions.export {
             self.open_export_dialog();
         } else if let Some(action) = actions.menu {

@@ -17,6 +17,7 @@ mod dust;
 mod export;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
+mod external_edit;
 mod flat_view;
 mod fullscreen;
 mod gamma_pivot;
@@ -24,6 +25,7 @@ mod grain;
 mod guide_shots;
 mod halation;
 mod history;
+mod lightroom;
 mod looks;
 mod masks;
 mod menus;

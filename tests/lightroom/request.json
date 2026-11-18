@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "mode": "new",
+  "project": "/photos/röll 'one'.antitone",
+  "photos": [
+    {
+      "uuid": "b",
+      "path": "/photos/second/twö\tline\nframe.ARW"
+    },
+    {
+      "uuid": "a",
+      "path": "/photos/one 'frame'.ARW"
+    }
+  ]
+}

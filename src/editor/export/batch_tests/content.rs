@@ -75,7 +75,7 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
         .adjustment
         .photo
         .exposure = -2.;
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));

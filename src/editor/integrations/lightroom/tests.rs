@@ -1,0 +1,377 @@
+use super::*;
+use serde_json::{Value, json};
+
+fn wire(project: &Path, existing: bool, paths: &[PathBuf]) -> Value {
+    json!({
+        "version": PROTOCOL_VERSION,
+        "mode": if existing { "open" } else { "new" },
+        "project": project,
+        "photos": paths.iter().enumerate().map(|(index, path)| json!({
+            "uuid": format!("photo-{index}"), "path": path,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn request(project: &Path, receipt: &Path, existing: bool, paths: &[PathBuf]) -> Request {
+    Request::parse(
+        &wire(project, existing, paths).to_string(),
+        receipt.to_owned(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn json_preserves_unicode_spaces_and_control_characters_in_locators() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("röll 'one'.antitone");
+    let source = directory.path().join("frame\twith\nnewline.ARW");
+    let parsed = request(
+        &project,
+        &directory.path().join("result.json"),
+        true,
+        std::slice::from_ref(&source),
+    );
+    assert_eq!(parsed.project, project);
+    assert_eq!(parsed.photos[0].path, source);
+    assert_eq!(parsed.photos[0].uuid, "photo-0");
+    assert_eq!(parsed.mode, Mode::Open);
+
+    // The Lua writer is independently compared with this fixture by its runner.
+    let fixture = Request::parse(
+        include_str!("../../../../tests/lightroom/request.json"),
+        directory.path().join("result.json"),
+    )
+    .unwrap();
+    assert_eq!(fixture.mode, Mode::New);
+    assert_eq!(fixture.photos[0].uuid, "b");
+    assert!(
+        fixture.photos[0]
+            .path
+            .to_str()
+            .unwrap()
+            .contains("twö\tline\nframe")
+    );
+}
+
+#[test]
+fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let receipt = directory.path().join("result.json");
+    let valid = wire(
+        &directory.path().join("roll.antitone"),
+        false,
+        &[directory.path().join("raw.ARW")],
+    );
+    assert!(Request::parse(&valid.to_string(), receipt.clone()).is_ok());
+    let changes = [
+        ("photos", json!([])),
+        ("photos", json!([valid["photos"][0], valid["photos"][0]])),
+        (
+            "photos",
+            json!([{"uuid":"", "path":directory.path().join("raw.ARW")}]),
+        ),
+        ("photos", json!([{"uuid":"uuid", "path":"relative.ARW"}])),
+        (
+            "photos",
+            json!([{"uuid":1, "path":directory.path().join("raw.ARW")}]),
+        ),
+        (
+            "photos",
+            json!([{"uuid":"uuid", "path":directory.path().join("raw.ARW"), "extra":true}]),
+        ),
+        ("photos", Value::Null),
+        ("output", json!(directory.path())),
+        ("receipt", json!(receipt)),
+        (
+            "photos",
+            json!([
+                {"uuid":"same", "path":directory.path().join("a.ARW")},
+                {"uuid":"same", "path":directory.path().join("b.ARW")},
+            ]),
+        ),
+        (
+            "photos",
+            json!([
+                {"uuid":"a", "path":directory.path().join("same.ARW")},
+                {"uuid":"b", "path":directory.path().join("same.ARW")},
+            ]),
+        ),
+        ("mode", json!("unknown")),
+        ("version", json!(999)),
+        ("version", json!("2")),
+        ("relocated_from", json!("relative.antitone")),
+        (
+            "relocated_from",
+            json!(directory.path().join("old.antitone")),
+        ),
+        ("project", json!("relative.antitone")),
+        ("project", json!(directory.path().join("image.tif"))),
+    ];
+    for (key, value) in changes {
+        let mut invalid = valid.clone();
+        invalid[key] = value;
+        assert!(
+            Request::parse(&invalid.to_string(), receipt.clone()).is_err(),
+            "accepted {invalid}"
+        );
+    }
+    for invalid in [
+        valid
+            .to_string()
+            .replace("\"version\":3", "\"version\":3,\"version\":3"),
+        valid.to_string() + " true",
+        "{}".into(),
+    ] {
+        assert!(
+            Request::parse(&invalid, receipt.clone()).is_err(),
+            "accepted {invalid}"
+        );
+    }
+    assert!(Request::parse(&valid.to_string(), PathBuf::from("result.json")).is_err());
+}
+
+#[test]
+fn opening_a_saved_roll_rejects_any_requested_source_outside_that_roll() {
+    use external_edit::Input as _;
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("roll.antitone");
+    let mut editor = crate::editor::tests::fixture();
+    crate::editor::tests::with_camera_basis(&mut editor);
+    let mut source = editor.document.project.sources[0].clone();
+    let mut document = Document::default();
+    for name in ["a.ARW", "b.ARW", "c.ARW"] {
+        source.path = directory.path().join(name);
+        document.register(source.clone()).unwrap();
+    }
+    document.save(&project, crate::project::Save::New).unwrap();
+    let before = std::fs::read(&project).unwrap();
+    let receipt = directory.path().join("result.json");
+    let request = request(
+        &project,
+        &receipt,
+        true,
+        &[
+            directory.path().join("a.ARW"),
+            directory.path().join("d.ARW"),
+        ],
+    );
+    let error = Box::new(request)
+        .prepare(
+            &crate::cancellation::Cancellation::default(),
+            &mut |_, _| {},
+        )
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("photo is not in this saved roll"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&project).unwrap(), before);
+    assert!(!receipt.exists());
+}
+
+#[test]
+fn locating_a_moved_project_preserves_relative_originals_and_saved_grading() {
+    use external_edit::Input as _;
+    let directory = tempfile::tempdir().unwrap();
+    let old_folder = directory.path().join("old");
+    let new_folder = directory.path().join("moved");
+    std::fs::create_dir(&old_folder).unwrap();
+    std::fs::create_dir(&new_folder).unwrap();
+    let old = old_folder.join("roll.antitone");
+    let moved = new_folder.join("renamed.antitone");
+    let originals = [old_folder.join("a.ARW"), old_folder.join("b.ARW")];
+    let mut editor = crate::editor::tests::fixture();
+    crate::editor::tests::with_camera_basis(&mut editor);
+    let mut source = editor.document.project.sources[0].clone();
+    let mut document = Document::default();
+    document.path = Some(old.clone());
+    for (index, path) in originals.iter().enumerate() {
+        std::fs::write(path, "original").unwrap();
+        source.path = PathBuf::from(if index == 0 { "a.ARW" } else { "b.ARW" });
+        document.register(source.clone()).unwrap();
+    }
+    document.project.roll.exposure = 0.75;
+    document.save(&old, crate::project::Save::New).unwrap();
+    assert!(
+        crate::project::Project::load(&old).unwrap().sources[0]
+            .path
+            .is_relative()
+    );
+    std::fs::rename(&old, &moved).unwrap();
+    let receipt = directory.path().join("result.json");
+    let plain = request(&moved, &receipt, true, &originals[..1]);
+    assert!(
+        Box::new(plain)
+            .prepare(&Default::default(), &mut |_, _| {})
+            .is_err()
+    );
+    let mut value = wire(&moved, true, &originals[..1]);
+    value["relocated_from"] = json!(old);
+    let input = Request::parse(&value.to_string(), receipt).unwrap();
+    let opened = Box::new(input)
+        .prepare(&Default::default(), &mut |_, _| {})
+        .unwrap();
+    assert_eq!(opened.document.project.roll.exposure, 0.75);
+    assert_eq!(opened.document.project.order.len(), 2);
+    for (id, path) in opened.document.project.order.iter().zip(&originals) {
+        assert_eq!(
+            opened
+                .document
+                .source_path(*id)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            path.canonicalize().unwrap()
+        );
+    }
+    assert!(opened.document.dirty(), "rebased locators need a real Save");
+    assert!(
+        !old.exists(),
+        "recovery never recreates the missing project silently"
+    );
+    let saved = opened
+        .document
+        .save(&moved, crate::project::Save::Replace)
+        .unwrap();
+    let reopened = Document::open(&moved).unwrap();
+    assert_eq!(reopened.project.roll, saved.project.roll);
+    assert!(
+        reopened.find_source(&originals[1]).is_some(),
+        "unrequested roll members also retain their locators"
+    );
+}
+
+#[test]
+fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_copy() {
+    use external_edit::Destination as _;
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("roll.antitone");
+    let copy = directory.path().join("copy.antitone");
+    let destination = Destination::new(request(
+        &project,
+        &directory.path().join("result.json"),
+        false,
+        &[directory.path().join("source.ARW")],
+    ));
+    let document = destination.save(&Document::default()).unwrap();
+    assert_eq!(document.path.as_ref(), Some(&project));
+    assert!(!document.dirty());
+    assert!(project.is_file());
+    let mut document = document;
+    document.project.roll.exposure = 0.5;
+    let mut document = document.save(&copy, crate::project::Save::New).unwrap();
+    document.project.roll.exposure = 0.75;
+    let saved = destination.save(&document).unwrap();
+    assert_eq!(saved.path.as_ref(), Some(&project));
+    assert!(!saved.dirty());
+    assert_eq!(
+        crate::project::Project::load(&project)
+            .unwrap()
+            .roll
+            .exposure,
+        0.75
+    );
+    assert_eq!(
+        crate::project::Project::load(&copy).unwrap().roll.exposure,
+        0.5
+    );
+}
+
+#[test]
+fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it() {
+    use external_edit::Destination as _;
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("roll.antitone");
+    let destination = Destination::new(request(
+        &project,
+        &directory.path().join("result.json"),
+        false,
+        &[directory.path().join("source.ARW")],
+    ));
+    std::fs::write(&project, "unrelated file created while editing").unwrap();
+    assert!(destination.save(&Document::default()).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&project).unwrap(),
+        "unrelated file created while editing"
+    );
+    std::fs::remove_file(&project).unwrap();
+    let saved = Document::default()
+        .save(&project, crate::project::Save::New)
+        .unwrap();
+    destination.saved(saved.path.as_ref().unwrap());
+    let mut copy = saved
+        .save(
+            &directory.path().join("copy.antitone"),
+            crate::project::Save::New,
+        )
+        .unwrap();
+    copy.project.roll.exposure = 0.5;
+    assert!(
+        destination.save(&copy).is_ok(),
+        "ordinary canonical Save grants replacement even after Save As"
+    );
+}
+
+#[test]
+fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut editor = crate::editor::tests::fixture();
+    crate::editor::tests::with_camera_basis(&mut editor);
+    let mut source = editor.document.project.sources[0].clone();
+    let mut document = Document::default();
+    source.path = directory.path().join("a.ARW");
+    let a = document.register(source.clone()).unwrap();
+    source.path = directory.path().join("b.ARW");
+    let b = document.register(source).unwrap();
+    let large = crate::project::SourceId(u64::MAX);
+    document.project.source_mut(b).unwrap().id = large;
+    *document
+        .project
+        .order
+        .iter_mut()
+        .find(|id| **id == b)
+        .unwrap() = large;
+    let b = large;
+    document.path = Some(directory.path().join("roll.antitone"));
+    let request = request(
+        document.path.as_ref().unwrap(),
+        &directory.path().join("result.json"),
+        true,
+        &[directory.path().join("b.ARW")],
+    );
+    let rendered = external_edit::Rendered {
+        source: b,
+        path: directory.path().join("positive.tif"),
+    };
+    request
+        .receipt(&document, std::slice::from_ref(&rendered))
+        .unwrap();
+    let text = std::fs::read_to_string(&request.receipt).unwrap();
+    let receipt: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(receipt["version"], PROTOCOL_VERSION);
+    assert_eq!(receipt["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(receipt["sources"][0]["id"], a.0.to_string());
+    assert_eq!(receipt["sources"][1]["id"], b.0.to_string());
+    assert_eq!(
+        receipt["renders"],
+        json!([{"uuid":"photo-0", "source": b.0.to_string(), "path": rendered.path}])
+    );
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../../tests/lightroom/result.json")).unwrap();
+    assert_eq!(fixture["sources"][1]["id"], receipt["sources"][1]["id"]);
+    assert!(
+        request
+            .receipt(
+                &document,
+                &[external_edit::Rendered {
+                    source: b,
+                    path: directory.path().join("different.tif")
+                }]
+            )
+            .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(&request.receipt).unwrap(), text);
+}

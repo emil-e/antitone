@@ -17,3 +17,6 @@ target/
 
 # Local agent configuration; shared procedures stay tracked
 .pi/settings.json
+
+# Per-install Lightroom executable location
+/integrations/lightroom/Antitone.lrplugin/Config.local.lua

@@ -38,7 +38,7 @@ fn save_feedback_is_owned_by_the_document_write_not_its_callers_waiter() {
 
 #[test]
 
-fn unavailable_export_services_and_analysis_device_leave_no_working_feedback() {
+fn unavailable_output_services_and_analysis_device_leave_no_working_feedback() {
     for export in [true, false] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);

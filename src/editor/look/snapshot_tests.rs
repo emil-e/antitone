@@ -88,7 +88,7 @@ fn export_form_captures_only_the_asset_accepted_at_confirmation_and_frozen_outpu
         let accepted = tests::asset(0.2);
         let chosen = tests::asset(0.7);
         editor.document.project.output.lut = Some(accepted.clone());
-        let services = editor.export_services.as_ref().unwrap().clone();
+        let services = editor.output_services.as_ref().unwrap().clone();
         let directory = tempfile::tempdir().unwrap();
         let mut draft =
             super::super::export::Draft::new(OutputTarget::Srgb, directory.path().to_owned());

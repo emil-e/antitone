@@ -88,7 +88,7 @@ fn filenames_preserve_dotted_stems_and_do_not_accept_path_injection() {
 
 #[test]
 fn captured_multisource_batch_finishes_without_paint_after_live_selection_changes() {
-    let mut editor = fixture();
+    let editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let request = editor.capture_export(&draft(directory.path())).unwrap();
     assert!(
@@ -154,7 +154,7 @@ fn per_photo_acquisition_failure_does_not_discard_later_success() {
     let mut unavailable = editor.source_input(directory.path().join("missing.dng"));
     unavailable.sources = None;
     request.photos[0].input = Input::Acquire(Box::new(unavailable));
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
@@ -179,7 +179,7 @@ fn skipping_an_existing_destination_does_not_require_its_original() {
     let mut unavailable = editor.source_input(directory.path().join("missing.dng"));
     unavailable.sources = None;
     request.photos[0].input = Input::Acquire(Box::new(unavailable));
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =
         pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
@@ -203,7 +203,7 @@ fn cancellation_between_photos_preserves_published_output_and_reports_unattempte
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let request = editor.capture_export(&draft(directory.path())).unwrap();
-    let services = editor.export_services.take().unwrap();
+    let services = editor.output_services.take().unwrap();
     let cancellation = Cancellation::default();
     let stop = cancellation.clone();
     drop(editor);
@@ -230,7 +230,7 @@ fn cancellation_between_photos_preserves_published_output_and_reports_unattempte
 
 #[test]
 fn keep_both_and_skip_preserve_existing_destinations() {
-    let mut editor = fixture();
+    let editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     for collision in [Collision::KeepBoth, Collision::Skip] {
         let folder = directory.path().join(format!("{collision:?}"));
@@ -240,7 +240,7 @@ fn keep_both_and_skip_preserve_existing_destinations() {
         let mut settings = draft(&folder);
         settings.collision = collision;
         let request = editor.capture_export(&settings).unwrap();
-        let summary = pollster::block_on(editor.export_services.clone().unwrap().export_batch(
+        let summary = pollster::block_on(editor.output_services.clone().unwrap().export_batch(
             request,
             Cancellation::default(),
             |_, _| {},

@@ -1,6 +1,6 @@
 # Local build and delivery
 
-The [build and run](build-and-run.md) guide owns prerequisites and commands. Local packaging produces a macOS `.app` and ZIP on Apple Silicon and a portable ZIP on Windows x64; Linux packaging is not implemented. [Continuous integration](#continuous-integration) verifies both platforms, and tagging publishes both packages.
+The [build and run](build-and-run.md) guide owns prerequisites and commands. Local packaging produces a macOS `.app` and ZIP on Apple Silicon and a portable ZIP on Windows x64; Linux packaging is not implemented. [Continuous integration](#continuous-integration) verifies both platforms, and tagging publishes the application packages and matching macOS Lightroom plug-in.
 
 ## Build ownership
 
@@ -30,6 +30,8 @@ On macOS, `package` first builds the production editor, then creates the bundle 
 
 The bundle includes version/toolchain/source-state metadata and a production Cargo dependency-license inventory. Archive SHA-256 is written beside the ZIP. `verify-package` extracts the ZIP under a new path outside the checkout, checks libraries/search paths and the code signature, then executes it with an isolated home/current directory and no inherited loader overrides. Loader diagnostics must identify the bundled OpenMP library. Packaging tests also exercise real compiled/signed fixture bundles, path names containing spaces and rejection of an external search path or missing runtime.
 
+The macOS package also produces `Antitone-Lightroom.zip`: an allowlisted `.lrplugin` bundle with matching application version, transport version, component checksums and licence notices. Local executable overrides are excluded. Relocated verification checks the app's protocol query and the plug-in archive's version/integrity; native Lightroom installation and chooser behavior still need a catalogue trial. The app and plug-in share the macOS `SHA256SUMS` manifest. [Lightroom setup](../integrations/lightroom/README.md) owns installation and returning images.
+
 Ad-hoc signing permits local execution; it provides neither Developer ID identity nor notarization/Gatekeeper distribution approval. The package identifier is still development-local and file associations are not configured.
 
 ## Fresh-checkout exercise
@@ -40,7 +42,7 @@ Re-run after preparation to check that setup/building is repeatable. A separate 
 
 ## Continuous integration
 
-Development is pull-request based: change work happens on task branches, opens a PR into `main`, and two workflows gate it — [macos.yml](../.github/workflows/macos.yml) on `macos-15` (Apple Silicon) and [windows.yml](../.github/workflows/windows.yml) on `windows-latest` x64. Both also run on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
+Development is pull-request based: change work happens on task branches, opens a PR into `main`. Platform workflows [macos.yml](../.github/workflows/macos.yml) on `macos-15` (Apple Silicon) and [windows.yml](../.github/workflows/windows.yml) on `windows-latest` x64 cover the application; [lightroom.yml](../.github/workflows/lightroom.yml) exercises Lua 5.1 SDK mocks on Linux without Lightroom. They also run on pushes to `main` and manual dispatch.
 
 CI covers the hardware-independent subset only. The split of responsibility:
 
@@ -48,11 +50,12 @@ CI covers the hardware-independent subset only. The split of responsibility:
 | --- | --- |
 | Authored-source formatting, documentation links, packaging/format-tool unit tests | macOS `checks` job, hosted (`cargo xtask tools` first) |
 | Numerical-core tests | macOS `checks` job, hosted |
-| Native setup, vendored-SDK adapter tests, production and all-features clippy | macOS `editor-checks` job, hosted (Metal-free stages) |
+| Native setup, vendored-SDK adapter tests, Lightroom protocol/CLI tests, production and all-features clippy | macOS `editor-checks` job, hosted (Metal-free stages) |
 | Native setup, package build, relocated ZIP verification and ZIP artifact | macOS `package` job, hosted |
 | Windows formatting, clippy, numerical-core and direct-SDK tests | Windows `lint-and-tests` job, hosted |
 | Windows editor build and portable ZIP artifact | Windows `package` job, hosted |
-| Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |
+| Lightroom Lua SDK mocks using an open-source Lua 5.1 runtime | Linux `lua` job in the Lightroom workflow, hosted |
+| Other editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |
 | Photographic, physical-input, native-window acceptance | Unchanged: manual/local exercise, never CI |
 
 The all-features clippy compiles the reference and `ui-tests` configurations without running them, so that test-harness code stays buildable in CI even though only a local run can execute it.
@@ -65,7 +68,7 @@ GitHub's runner images change over time (Xcode and tool versions drift); the pin
 
 Pushing a `v*` tag publishes both platforms: [release.yml](../.github/workflows/release.yml) first validates that the tag matches the crate version in `Cargo.toml`, then builds macOS ARM64 and Windows x64 in separate jobs. macOS runs native setup, direct-SDK adapter tests, `cargo xtask package` and relocated-package verification; Windows reuses the [Windows workflow](../.github/workflows/windows.yml), including its tests and package smoke checks.
 
-Only after both jobs succeed does publication download the artifacts, verify each platform's SHA-256 manifest and ZIP integrity with [release assembly](../scripts/prepare-release.py), and create one GitHub Release containing both ZIPs and a combined `SHA256SUMS`. Publishing is direct rather than draft because pushing a tag is a deliberate act. Device-dependent suites remain the local pre-merge responsibility. Before tagging, complete the license review and clean-machine acceptance under [before public distribution](#before-public-distribution).
+Only after both jobs succeed does publication download the artifacts, verify each platform's SHA-256 manifest and ZIP integrity with [release assembly](../scripts/prepare-release.py), and create one GitHub Release containing both application ZIPs, the matching Lightroom plug-in ZIP and a combined `SHA256SUMS`. Publishing is direct rather than draft because pushing a tag is a deliberate act. Device-dependent suites remain the local pre-merge responsibility. Before tagging, complete the license review and clean-machine acceptance under [before public distribution](#before-public-distribution).
 
 ## Before public distribution
 

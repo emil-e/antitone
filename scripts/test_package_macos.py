@@ -275,9 +275,10 @@ class RelocatedBundle(unittest.TestCase):
             runtime.parent.mkdir(parents=True)
             (root / "runtime.c").write_text("int fixture_value(void) { return 7; }\n")
             (root / "main.c").write_text(
-                "#include <stdio.h>\nint fixture_value(void);\n"
-                "int main(void) { if (fixture_value() != 7) return 1; "
-                'puts("Antitone fixture"); return 0; }\n'
+                "#include <stdio.h>\n#include <string.h>\nint fixture_value(void);\n"
+                "int main(int argc, char **argv) { if (fixture_value() != 7) return 1; "
+                'if (argc == 2 && strcmp(argv[1], "--lightroom-protocol-version") == 0) puts("2"); '
+                'else puts("Antitone fixture"); return 0; }\n'
             )
 
             def run(*args):
@@ -311,7 +312,7 @@ class RelocatedBundle(unittest.TestCase):
                 )
             run("codesign", "--force", "--sign", "-", runtime)
             run("codesign", "--force", "--sign", "-", bundle)
-            packager.verify_bundle(bundle, "fixture")
+            self.assertEqual(packager.verify_bundle(bundle, "fixture"), 2)
             run("install_name_tool", "-add_rpath", str(root / "checkout"), binary)
             with self.assertRaisesRegex(RuntimeError, "search paths"):
                 packager.verify_bundle(bundle, "fixture")

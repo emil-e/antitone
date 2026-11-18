@@ -379,7 +379,7 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
             (
                 editor.capture_source_context().unwrap(),
                 editor.capture_export(&draft).unwrap(),
-                editor.export_services.clone().unwrap(),
+                editor.output_services.clone().unwrap(),
                 editor.document.correction.error().unwrap().to_owned(),
             )
         });

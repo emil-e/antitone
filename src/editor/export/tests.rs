@@ -634,7 +634,7 @@ fn captured_service_writes_after_ui_ownership_ends_and_preserves_destinations_on
             )
             .unwrap()
             .unwrap();
-        let services = editor.export_services.take().unwrap();
+        let services = editor.output_services.take().unwrap();
         drop(editor);
         let result =
             pollster::block_on(services.write(request, Arc::new(AtomicBool::new(stopped))));
