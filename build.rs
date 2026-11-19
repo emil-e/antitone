@@ -97,36 +97,34 @@ fn build_raw() {
     } else {
         "openmp".to_owned()
     };
-    let root = std::env::var_os("LIBRAW_SOURCE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            cache.join(format!(
-                "LibRaw-0.22.3-{}-rawspeed-{platform}",
-                &revision[..12]
-            ))
-        })
-        .canonicalize()
-        .expect("Run scripts/build-libraw.sh (macOS) or scripts/build-libraw.ps1 (Windows)");
+    // Clang include paths need ordinary Win32 paths, not canonicalize's verbatim prefixes.
+    let root = dunce::canonicalize(
+        std::env::var_os("LIBRAW_SOURCE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                cache.join(format!(
+                    "LibRaw-0.22.3-{}-rawspeed-{platform}",
+                    &revision[..12]
+                ))
+            }),
+    )
+    .expect("Run scripts/build-libraw.sh (macOS) or scripts/build-libraw.ps1 (Windows)");
     let speed_platform = if windows {
         format!("windows-{arch}")
     } else {
         "macos-arm64".to_owned()
     };
-    let speed = cache
-        .join(format!(
-            "rawspeed-{}-{speed_platform}",
-            &speed_revision[..12]
-        ))
-        .canonicalize()
-        .expect("Run the checkout's LibRaw build script to prepare RawSpeed");
+    let speed = dunce::canonicalize(cache.join(format!(
+        "rawspeed-{}-{speed_platform}",
+        &speed_revision[..12]
+    )))
+    .expect("Run the checkout's LibRaw build script to prepare RawSpeed");
     let omp_directory = if windows {
         format!("openmp-{omp_version}-windows-{arch}-install")
     } else {
         format!("openmp-{omp_version}-install")
     };
-    let openmp = cache
-        .join(omp_directory)
-        .canonicalize()
+    let openmp = dunce::canonicalize(cache.join(omp_directory))
         .expect("Run the checkout's LibRaw build script to prepare LLVM OpenMP");
     let features = root.join("antitone-features.txt");
     assert_eq!(
