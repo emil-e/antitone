@@ -19,12 +19,13 @@ Get-PinnedNativeSource -Archive (Join-Path $cache "$member.tar.xz") `
     -Sha256 $pins.sha256 -Destination $source -Marker 'openmp/CMakeLists.txt' `
     -Members @("$member/openmp", "$member/cmake", "$member/llvm/cmake", "$member/LICENSE.TXT")
 $build = Join-Path $cache "openmp-$version-windows-$Arch-build"
-$clang = $tools.Clang
-$c = Join-Path (Split-Path -Parent $clang) 'clang.exe'
+# OpenMP derives KMP_MSVC_COMPAT from CMake's MSVC frontend detection, not the target ABI.
+$clang = Join-Path (Split-Path -Parent $tools.Clang) 'clang-cl.exe'
+if (-not (Test-Path $clang)) { throw 'LLVM OpenMP requires Visual Studio clang-cl.exe.' }
 $configure = @(
     "`"$($tools.CMake)`"", "-S `"$source/openmp`"", "-B `"$build`"", '-G Ninja',
     '-DCMAKE_BUILD_TYPE=Release', "-DCMAKE_MAKE_PROGRAM=`"$($tools.Ninja)`"",
-    "-DCMAKE_C_COMPILER=`"$c`"",
+    "-DCMAKE_C_COMPILER=`"$clang`"",
     "-DCMAKE_CXX_COMPILER=`"$clang`"",
     "-DCMAKE_C_COMPILER_TARGET=$($tools.Target)",
     "-DCMAKE_CXX_COMPILER_TARGET=$($tools.Target)",
