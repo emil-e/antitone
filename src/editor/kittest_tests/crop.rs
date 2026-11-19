@@ -2,6 +2,7 @@ use super::*;
 use glam::DMat3;
 
 mod grading;
+mod rendering;
 mod resizing;
 mod stability;
 

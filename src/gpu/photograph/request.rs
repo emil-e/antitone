@@ -223,17 +223,6 @@ impl PhotographRequest {
         Ok(request)
     }
 
-    pub fn has_repairs(&self) -> bool {
-        match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
-                recipe.repairs.iter().any(|repair| repair.enabled)
-            }
-            Self::Inspection(_) => false,
-            #[cfg(test)]
-            Self::Fixture(input) => !input.repairs.is_empty() || !input.replacements.is_empty(),
-        }
-    }
-
     pub fn input_transform(&self) -> Result<crate::gpu::interpretation::InputTransform, Error> {
         match self {
             Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
