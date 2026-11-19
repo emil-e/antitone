@@ -200,13 +200,23 @@ impl tool::Tool for PickTool {
         let state = self.state.borrow();
         tool::Presentation {
             identity: ui::ToolIdentity {
-                icon: if state.display.area { ui::icons::Icon::Crop } else { ui::icons::Icon::Pick },
+                icon: if state.display.area {
+                    ui::icons::Icon::Crop
+                } else {
+                    ui::icons::Icon::Pick
+                },
                 title: state.display.label,
             },
-            primary: Some(tool::Primary { label: "Apply", enabled: state.region.is_some() && !editor.interaction_blocked() }),
+            primary: Some(tool::Primary {
+                label: "Apply",
+                enabled: state.region.is_some() && !editor.interaction_blocked(),
+            }),
             dismiss: "Cancel",
             warning: None,
-            help: state.display.help.unwrap_or("Click a patch or drag an area; drag its edges/corners to resize.\nEnter applies · Escape cancels"),
+            help: state
+                .display
+                .help
+                .unwrap_or("Click a patch or drag an area; drag its edges/corners to resize."),
             navigation_help: None,
             fit_label: "Fit",
         }
@@ -221,7 +231,7 @@ impl tool::Tool for PickTool {
     }
 
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if editor.fullscreen.is_some() || self.state.borrow().display.view == View::Working {
+        if self.state.borrow().display.view == View::Working {
             &mut editor.document.visit.canvas.viewport
         } else {
             &mut self.viewport
@@ -235,22 +245,16 @@ impl tool::Tool for PickTool {
         cx: &UiContext<'_, Editor>,
     ) -> Option<CanvasLayout> {
         let source = self.state.borrow().display.view != View::Working;
-        let fullscreen = editor.fullscreen.is_some();
         viewer.show(
             self,
             editor,
             cx,
             move |editor, ui, navigating| {
-                if fullscreen {
-                    editor.photograph_controls(ui, navigating);
-                } else if source {
+                if source {
                     editor.source_controls(ui, navigating);
                 }
             },
             |tool, surface, editor, cx| {
-                if editor.fullscreen.is_some() {
-                    return surface.photograph(editor, cx);
-                }
                 let mut canvas = surface.selected()?;
                 let composition = tool.composition(canvas.composition);
                 let rect = canvas.response.rect;

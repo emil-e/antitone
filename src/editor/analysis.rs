@@ -444,7 +444,6 @@ pub(super) struct AnalyzeTool {
     pub(super) drag: Option<PickDrag>,
     pub(super) viewport: Viewport,
     pub(super) visit: Option<u64>,
-    fullscreen_viewport: Option<Viewport>,
 }
 
 impl AnalyzeTool {
@@ -455,7 +454,6 @@ impl AnalyzeTool {
             drag: None,
             viewport: Viewport::default(),
             visit: None,
-            fullscreen_viewport: None,
         }
     }
     pub fn fitting(&self) -> bool {
@@ -465,7 +463,6 @@ impl AnalyzeTool {
         if self.visit != Some(editor.document.visit.view) {
             self.visit = Some(editor.document.visit.view);
             self.viewport.fit();
-            self.fullscreen_viewport = None;
             self.drag = None;
         }
     }
@@ -542,12 +539,7 @@ impl tool::Tool for AnalyzeTool {
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
         if self.review.is_some() {
             self.observe_visit(editor);
-            if editor.fullscreen.is_some() {
-                self.fullscreen_viewport.get_or_insert(self.viewport)
-            } else {
-                self.fullscreen_viewport = None;
-                &mut self.viewport
-            }
+            &mut self.viewport
         } else {
             &mut editor.document.visit.canvas.viewport
         }
@@ -581,15 +573,12 @@ impl tool::Tool for AnalyzeTool {
                 let relayout =
                     |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
                 let mut response = canvas.response.clone();
-                if editor.fullscreen.is_none() {
-                    navigation::consume_primary(&mut response);
-                }
+                navigation::consume_primary(&mut response);
                 let viewport = tool.viewport(editor);
                 let layout = canvas.layout(viewport, relayout);
                 let (layout, panning) =
                     navigation::navigate_view(viewport, canvas.ui, &response, layout, relayout);
-                if editor.fullscreen.is_none()
-                    && canvas.ui.is_enabled()
+                if canvas.ui.is_enabled()
                     && !editor.interaction_blocked()
                     && !panning
                     && !canvas.ui.input(|input| input.key_down(egui::Key::Space))
@@ -625,9 +614,7 @@ impl tool::Tool for AnalyzeTool {
                     tool.drag = None;
                 }
                 canvas.paint_sample(editor, layout, true, cx);
-                if editor.fullscreen.is_none() {
-                    tool.paint_review_areas(editor, canvas.ui, layout, layout.canvas);
-                }
+                tool.paint_review_areas(editor, canvas.ui, layout, layout.canvas);
                 Some(layout)
             },
         )

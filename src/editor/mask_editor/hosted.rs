@@ -75,7 +75,7 @@ impl tool::Tool for MaskTool {
             help: if editor.tab != 1 {
                 "Return to Photo to edit the gradient. Grading remains available on each stage."
             } else if edit.creating() {
-                "Draw a gradient; release creates the layer and continues editing. Escape cancels creation.\nSpace-drag / middle-drag pans before drawing."
+                "Draw a gradient; release creates the layer and continues editing.\nSpace-drag / middle-drag pans before drawing."
             } else {
                 edit.kind.help()
             },
@@ -120,7 +120,7 @@ impl tool::Tool for MaskTool {
             cx,
             Editor::photograph_controls,
             |tool, surface, editor, cx| {
-                if !current || editor.fullscreen.is_some() {
+                if !current {
                     tool.edit.borrow_mut().cancel_gesture();
                     return surface.photograph(editor, cx);
                 }

@@ -696,12 +696,8 @@ impl tool::Tool for CropTool {
             .expect("valid Crop draft")
     }
 
-    fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if editor.fullscreen.is_some() {
-            &mut editor.document.visit.canvas.viewport
-        } else {
-            &mut self.viewport
-        }
+    fn viewport<'a>(&'a mut self, _editor: &'a mut Editor) -> &'a mut Viewport {
+        &mut self.viewport
     }
 
     fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
@@ -748,9 +744,6 @@ impl tool::Tool for CropTool {
             cx,
             Editor::photograph_controls,
             |tool, surface, editor, cx| {
-                if editor.fullscreen.is_some() {
-                    return surface.photograph(editor, cx);
-                }
                 let mut canvas = surface.selected()?;
                 tool.edit.borrow_mut().base = canvas.composition;
                 let composition = tool::Tool::composition(tool, canvas.composition);

@@ -1,14 +1,14 @@
 use super::*;
 use std::sync::Mutex;
 
-struct HeldPhoto {
-    sources: source_loading::SourceLoader,
+pub(super) struct HeldPhoto {
+    pub(super) sources: source_loading::SourceLoader,
     entered: mpsc::Receiver<()>,
     release: Option<mpsc::Sender<()>>,
 }
 
 impl HeldPhoto {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let (started, entered) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let resume = Mutex::new(Some(resume));
@@ -28,13 +28,13 @@ impl HeldPhoto {
         }
     }
 
-    fn install(&self, harness: &Harness<'_, Editor>) {
+    pub(super) fn install(&self, harness: &Harness<'_, Editor>) {
         harness.update(|editor| {
             editor.source_services.as_mut().unwrap().developments = self.sources.clone();
         });
     }
 
-    fn wait_entered(&self, harness: &mut Harness<'_, Editor>) {
+    pub(super) fn wait_entered(&self, harness: &mut Harness<'_, Editor>) {
         wait_for(harness, |_| self.entered.try_recv().is_ok());
         harness.read(|editor| {
             assert!(editor.document.visit.source.pending());
@@ -42,7 +42,7 @@ impl HeldPhoto {
         });
     }
 
-    fn release(&mut self) {
+    pub(super) fn release(&mut self) {
         if let Some(release) = self.release.take() {
             let _ = release.send(());
         }

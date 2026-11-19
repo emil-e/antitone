@@ -273,6 +273,25 @@ fn external_edit_saves_the_project_before_rendering_and_publication() {
 
 #[test]
 fn external_session_survives_normal_import_and_history_then_retires_on_document_replacement() {
+    external_session_import_history_and_departure(None, egui::vec2(1100., 800.), 315.);
+}
+
+#[test]
+fn external_session_controls_history_and_discard_work_while_photo_loading_is_pending() {
+    for (size, width) in [
+        (egui::vec2(1100., 800.), 315.),
+        (egui::vec2(800., 600.), 270.),
+    ] {
+        let held = settling::HeldPhoto::new();
+        external_session_import_history_and_departure(Some(held), size, width);
+    }
+}
+
+fn external_session_import_history_and_departure(
+    mut held: Option<settling::HeldPhoto>,
+    size: egui::Vec2,
+    width: f32,
+) {
     let directory = tempfile::tempdir().unwrap();
     let destination = Arc::new(HostDestination {
         folder: directory.path().into(),
@@ -285,8 +304,27 @@ fn external_session_survives_normal_import_and_history_then_retires_on_document_
         destination,
     });
     editor_harness(|mut h, _| {
+        set_layout(&mut h, size, width);
+        if let Some(held) = &held {
+            held.install(&h);
+        }
         h.enter(|editor, cx| editor.open_external(request, cx));
         wait_for(&mut h, |editor| !editor.interaction_blocked());
+        if let Some(held) = &held {
+            held.wait_entered(&mut h);
+        }
+        let assert_loading = |editor: &Editor| {
+            if let Some(held) = &held {
+                assert!(held.sources.waiter_count() > 0);
+                assert!(editor.document.visit.source.pending());
+                assert!(editor.document.visit.canvas.ready.is_none());
+                assert!(
+                    editor
+                        .activities
+                        .any(|view| !view.modal && view.title == "Loading photo…")
+                );
+            }
+        };
         h.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
@@ -316,21 +354,26 @@ fn external_session_survives_normal_import_and_history_then_retires_on_document_
                 requested
             );
         });
+        h.read(assert_loading);
         stage(&mut h, "Roll");
         if h.query_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
             .is_none()
         {
-            h.get_by_label("Exposure").scroll_to_me();
-            h.try_run_realtime().unwrap();
-            h.get_by_label("Exposure").click();
+            scroll_to_control(&mut h, egui::accesskit::Role::Button, "Exposure");
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
+                .click();
             h.step();
         }
         workflow::enter_numeric(&mut h, "Exposure", "0.5");
         wait_for(&mut h, |editor| !editor.interaction_blocked());
-        h.read(|editor| assert_eq!(editor.document.project.roll.exposure, 0.5));
+        h.read(|editor| {
+            assert_loading(editor);
+            assert_eq!(editor.document.project.roll.exposure, 0.5);
+        });
         native_file_action(&mut h, crate::platform::menu::Action::Undo);
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| {
+            assert_loading(editor);
             assert_eq!(editor.document.project.roll.exposure, 0.);
             assert_eq!(
                 editor
@@ -346,6 +389,7 @@ fn external_session_survives_normal_import_and_history_then_retires_on_document_
         native_file_action(&mut h, crate::platform::menu::Action::Redo);
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| {
+            assert_loading(editor);
             assert_eq!(editor.document.project.roll.exposure, 0.5);
             assert_eq!(
                 editor
@@ -365,8 +409,8 @@ fn external_session_survives_normal_import_and_history_then_retires_on_document_
         // Capture ordinary accepted data; it must not prolong caller ownership.
         let snapshot = h.read(|editor| editor.document.capture());
         h.enter(|editor, cx| editor.guard_transition(Transition::New, cx));
-        h.step();
-        h.try_run_realtime().unwrap();
+        wait_for(&mut h, |editor| editor.dialogs.is_open());
+        h.read(assert_loading);
         h.get_by_label("Discard changes").click();
         h.step();
         wait_for(&mut h, |editor| {
@@ -375,5 +419,22 @@ fn external_session_survives_normal_import_and_history_then_retires_on_document_
         h.read(|editor| assert!(editor.document.external_edit.session.is_none()));
         assert!(weak.upgrade().is_none());
         assert_eq!(snapshot.project.order.len(), 2);
+        if let Some(held) = &mut held {
+            assert_eq!(
+                held.sources.waiter_count(),
+                0,
+                "departure must withdraw acquisition demand before loader shutdown"
+            );
+            held.release();
+            held.sources.close_and_wait().unwrap();
+            h.step();
+            h.read(|editor| {
+                assert!(editor.document.project.order.is_empty());
+                assert!(editor.document.external_edit.session.is_none());
+                assert!(!editor.document.visit.source.pending());
+                assert!(editor.document.visit.canvas.ready.is_none());
+                assert!(editor.canvas_frame.displayed.is_none());
+            });
+        }
     });
 }

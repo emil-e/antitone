@@ -58,16 +58,12 @@ impl super::Editor {
     }
 
     pub(super) fn canvas_inspection(&self) -> bool {
-        if self.fullscreen.is_some() && self.document.visit.hosted_tool.occupied() {
-            self.document.source
-        } else {
-            self.document
-                .visit
-                .picker
-                .display()
-                .map_or(self.document.source, |display| {
-                    display.view != super::picking::View::Working
-                })
-        }
+        self.document
+            .visit
+            .picker
+            .display()
+            .map_or(self.document.source, |display| {
+                display.view != super::picking::View::Working
+            })
     }
 }

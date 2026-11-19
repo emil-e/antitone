@@ -203,7 +203,6 @@ impl Editor {
     }
 
     pub(super) fn retire_hosted_tool(&mut self) {
-        self.retire_fullscreen();
         self.document.clear_hosted_tools();
         self.canvas_frame = Default::default();
         self.document.visit.canvas.last_layout = None;

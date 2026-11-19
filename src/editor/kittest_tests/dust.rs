@@ -492,7 +492,7 @@ fn source_view_keeps_dust_identity_and_done_available_without_applying_repairs()
 }
 
 #[test]
-fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
+fn fullscreen_adds_dust_repairs_and_keeps_them_after_exit_and_done() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
@@ -509,7 +509,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
-        let project = h.read(|editor| editor.document.state.project.clone());
+        let first = h.read(|editor| editor.dust_repairs(source).unwrap().repairs()[0].clone());
         assert!(h.get_by_label("View source").accesskit_node().is_disabled());
         h.get_by_label("View source").click();
         h.step();
@@ -518,8 +518,13 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         h.read(|editor| assert!(editor.fullscreen.is_some()));
         let brush = h.read(|editor| editor.document.visit.dust.brush_size);
         click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
-        h.read(|editor| assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1));
-        h.read(|editor| assert_eq!(editor.document.visit.dust.brush_size, brush));
+        ready(&mut h, 2);
+        h.read(|editor| {
+            assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 2);
+            assert_eq!(editor.dust_repairs(source).unwrap().repairs()[0], first);
+            assert_eq!(editor.document.visit.dust.brush_size, brush);
+        });
+        let project = h.read(|editor| editor.document.state.project.clone());
         key(&mut h, egui::Key::F);
         h.update(|editor| editor.fullscreen_changed(false));
         h.step();
@@ -530,7 +535,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         h.step();
         let stored = h.read(|editor| serde_json::to_value(&editor.document.state.project).unwrap());
         assert_eq!(stored, serde_json::to_value(&project).unwrap());
-        ready(&mut h, 1);
+        ready(&mut h, 2);
         assert!(h.get_by_label("Display P3").rect().height() > 0.);
     });
 }

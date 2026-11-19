@@ -13,11 +13,15 @@ button (right end of the bar) lists navigation and the active tool's gestures.
   Fit/100%.
 - **Actual Size** (⌘1) and **Zoom In / Zoom Out** are in the **View** menu.
 
-## Photo inspection (fullscreen)
+## Fullscreen
 
-Press **F** — or use the viewer's fullscreen button, or **View → Photo Inspection** — for
-a photo-only view of the current image: the workspace chrome disappears so you can judge
-the photograph. **F or Escape returns.** This covers the current display without opening
+Press **F** — or use the viewer's fullscreen button, or **View → Photo Inspection** — to
+enlarge the current viewer. Your active tool stays usable, including Crop handles and
+area selection. The same viewer bar floats over the image with **Apply**, **Cancel** or
+**Done**; move near the bottom or press **Tab** to reveal it after it fades.
+
+**F or Escape returns** without applying or cancelling your draft. Navigation and viewing
+changes carry back to the workspace. Fullscreen covers the current display without opening
 a macOS fullscreen Space.
 
 ## Inspecting the source

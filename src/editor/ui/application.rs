@@ -129,7 +129,7 @@ fn help_contents(ui: &mut egui::Ui) {
         "Dust repairs are saved in the project and included in exports and filmstrip thumbnails.",
     );
     ui.strong("Inspect the image");
-    ui.label("Use the viewer controls to fit, zoom and compare the developed source. F enters photo-only inspection; F or Escape returns. This covers the current display without opening a macOS fullscreen Space.");
+    ui.label("Use the viewer controls to fit, zoom and compare the developed source. F enlarges the same viewer with tools still active; F or Escape returns without discarding drafts. This covers the current display without opening a macOS fullscreen Space.");
     ui.label("Double-click or Option-click a control’s name to reset that value; the reset in a section heading clears the whole group. Hold Shift while dragging a slider or its value, or with the arrow keys, for finer steps.");
     ui.label("Hover an unfamiliar icon for its name and shortcut. Tool-specific gestures are available from the viewer’s help control.");
 }

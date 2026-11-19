@@ -62,6 +62,32 @@ fn role_actions_forward_labels_optional_primary_and_enabled_clicks() {
 }
 
 #[test]
+fn tool_actions_leave_context_sensitive_dismiss_shortcuts_to_their_owner() {
+    let context = Context::default();
+    context.all_styles_mut(|style| {
+        style.interaction.tooltip_delay = 0.;
+        style.interaction.show_tooltips_only_when_still = false;
+    });
+    let render = |events| {
+        frame(&context, 315., true, events, |ui| {
+            group("Crop", false, true)
+                .show_actions(ui, Some("Apply"), "Cancel", None)
+                .inner
+        })
+    };
+    let (actions, _) = render(vec![]);
+    for (response, tooltip) in [(actions.primary.unwrap(), true), (actions.dismiss, false)] {
+        render(vec![egui::Event::PointerMoved(response.rect.center())]);
+        render(vec![]);
+        render(vec![]);
+        assert_eq!(
+            egui::Tooltip::was_tooltip_open_last_frame(&context, response.id),
+            tooltip
+        );
+    }
+}
+
+#[test]
 fn tool_warning_has_reserved_space_reason_semantics_and_unchanged_actions() {
     let reason = "No crop proposal: retained frame measurements are missing";
     for width in [270., 315.] {

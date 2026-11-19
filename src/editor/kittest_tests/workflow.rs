@@ -4,12 +4,17 @@ mod source_working;
 mod underlay;
 
 pub(super) fn enter_numeric(harness: &mut Harness<'_, Editor>, label: &str, text: &str) {
-    harness.try_run_realtime().unwrap();
     let role = egui::accesskit::Role::SpinButton;
-    harness.get_by_role_and_label(role, label).scroll_to_me();
-    harness.try_run_realtime().unwrap();
+    scroll_to_control(harness, role, label);
     harness.get_by_role_and_label(role, label).click();
     harness.step();
+    assert!(
+        harness
+            .get_by_role_and_label(role, label)
+            .accesskit_node()
+            .is_focused(),
+        "{label:?} must own numeric input"
+    );
     harness.event(egui::Event::Text(text.into()));
     harness.event(egui::Event::Key {
         key: egui::Key::Enter,

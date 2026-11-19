@@ -178,7 +178,6 @@ impl Editor {
 pub(super) struct FlatTool {
     state: Rc<RefCell<FlatEdit>>,
     viewport: Viewport,
-    fullscreen_viewport: Option<Viewport>,
     drag: Option<PickDrag>,
 }
 
@@ -228,7 +227,6 @@ impl FlatTool {
         Self {
             state: Rc::new(RefCell::new(state)),
             viewport: Default::default(),
-            fullscreen_viewport: None,
             drag: None,
         }
     }
@@ -262,13 +260,8 @@ impl tool::Tool for FlatTool {
         }
     }
 
-    fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if editor.fullscreen.is_some() {
-            self.fullscreen_viewport.get_or_insert(self.viewport)
-        } else {
-            self.fullscreen_viewport = None;
-            &mut self.viewport
-        }
+    fn viewport<'a>(&'a mut self, _editor: &'a mut Editor) -> &'a mut Viewport {
+        &mut self.viewport
     }
 
     fn drawer(&mut self, ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
@@ -308,9 +301,7 @@ impl tool::Tool for FlatTool {
                 let relayout =
                     |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
                 let mut response = canvas.response.clone();
-                if editor.fullscreen.is_none() {
-                    navigation::consume_primary(&mut response);
-                }
+                navigation::consume_primary(&mut response);
                 let viewport = tool.viewport(editor);
                 let layout = canvas.layout(viewport, relayout);
                 let (layout, panning) =
@@ -323,8 +314,7 @@ impl tool::Tool for FlatTool {
                     services.as_ref(),
                     cx,
                 );
-                let selecting = editor.fullscreen.is_none()
-                    && !editor.interaction_blocked()
+                let selecting = !editor.interaction_blocked()
                     && canvas.ui.is_enabled()
                     && !panning
                     && !canvas.ui.input(|input| input.key_down(egui::Key::Space));
@@ -372,9 +362,7 @@ impl tool::Tool for FlatTool {
                 {
                     tool.drag = None;
                 }
-                if editor.fullscreen.is_none()
-                    && let Some(region) = tool.state.borrow().region
-                {
+                if let Some(region) = tool.state.borrow().region {
                     picking::paint_selection(canvas.ui, layout, region);
                 }
                 Some(layout)

@@ -278,8 +278,7 @@ impl ToolGroup<'_> {
             ui.add_space(TOOL_ACTION_SPACE);
             let dismiss = TextAction::new(dismiss)
                 .enabled(self.cancel_enabled)
-                .toolbar(0.)
-                .help("Escape");
+                .toolbar(0.);
             let dismiss = if primary.is_none() {
                 dismiss.primary()
             } else {

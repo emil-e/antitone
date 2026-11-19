@@ -739,7 +739,40 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
 }
 
 #[test]
-fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_it() {
+fn enter_applies_auto_crop_from_fullscreen_without_exiting_presentation() {
+    setup(|mut h, _directory| {
+        stage(&mut h, "Roll");
+        click_action(&mut h, "Auto-crop roll");
+        overlay::wait_context(&mut h);
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
+        let expected = h.read(|editor| {
+            editor
+                .auto_crop_preview(source)
+                .flatten()
+                .expect("fixture has a crop proposal")
+        });
+        h.key_press(egui::Key::F);
+        h.step();
+        overlay::wait_context(&mut h);
+        h.key_press(egui::Key::Enter);
+        h.step();
+        h.read(|editor| {
+            assert!(editor.fullscreen_requested());
+            assert!(!editor.document.auto_crop.active());
+            assert_eq!(
+                editor.document.project.source(source).unwrap().crop,
+                Some(expected)
+            );
+            assert_eq!(
+                editor.history_label(super::super::history::Direction::Undo),
+                Some("Auto-crop")
+            );
+        });
+    });
+}
+
+#[test]
+fn fullscreen_keeps_auto_crop_review_editable_and_escape_preserves_the_draft() {
     setup(|mut h, _directory| {
         stage(&mut h, "Photo");
         let old = prior_crop(&mut h);
@@ -757,24 +790,24 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
             assert!(
                 editor.fullscreen.is_some()
                     && editor.document.auto_crop.reviewing()
-                    && !editor.auto_crop_context()
+                    && editor.auto_crop_context()
             )
         });
         assert!(
-            h.query_by_role_and_label(egui::accesskit::Role::Button, "Apply")
-                .is_none()
+            !h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
+                .accesskit_node()
+                .is_disabled()
         );
-        wait_for(&mut h, |e| {
-            !e.document.visit.working_view.updating
-                && e.document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .is_some_and(|v| v.spec.frame().composition.crop() == old)
-        });
-        h.key_press(egui::Key::Enter);
-        h.step();
+        overlay::wait_context(&mut h);
+        let layout = h.read(|editor| editor.canvas_frame.layout.unwrap().0);
+        let q = h.read(|editor| editor.auto_crop_outline(layout).unwrap());
+        let end =
+            q[0] + ((q[1] - q[0]).normalized() + (q[3] - q[0]).normalized()) * layout.scale * 6.;
+        drag(&mut h, q[0], end);
+        let edited = h
+            .read(|editor| editor.auto_crop_preview(editor.document.visit.current_source.unwrap()));
+        assert_ne!(edited, draft);
+        h.read(|editor| assert_eq!(editor.photo_crop(), Some(old)));
         h.read(|editor| assert!(editor.document.auto_crop.reviewing()));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Escape);
@@ -786,7 +819,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.read(|editor| {
             assert_eq!(
                 editor.auto_crop_preview(editor.document.visit.current_source.unwrap()),
-                draft
+                edited
             )
         });
         h.key_press(egui::Key::Escape);

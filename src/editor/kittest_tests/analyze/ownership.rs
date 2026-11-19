@@ -89,7 +89,7 @@ fn review_uses_ordinary_selection_without_retargeting_its_roll_wide_drafts() {
 }
 
 #[test]
-fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_navigation() {
+fn fullscreen_keeps_source_review_editing_and_its_navigation() {
     editor_harness(|mut harness, _| {
         calibrated_roll(&mut harness);
         show_confirmation(&mut harness);
@@ -106,7 +106,7 @@ fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_na
             );
             harness.get_by_label("100%").click();
             harness.step();
-            let (drafts, viewport, normal, project, preferences) = harness.read(|editor| {
+            let (drafts, normal, project, preferences) = harness.read(|editor| {
                 (
                     editor
                         .document
@@ -115,7 +115,6 @@ fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_na
                         .approved
                         .entries
                         .clone(),
-                    editor.document.analyze_tool().unwrap().viewport,
                     editor.document.visit.canvas.viewport,
                     editor.document.project.clone(),
                     editor.preferences.clone(),
@@ -140,28 +139,45 @@ fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_na
                 assert!(painted.view.capture.is_inspection());
                 assert!(painted.view.look_id().is_none());
             });
-            assert!(harness.query_by_label("Analyze roll").is_none());
-            assert!(harness.query_by_label("Cancel").is_none());
-            let image = harness.read(|editor| editor.canvas_frame.layout.unwrap().0.image);
-            drag(
-                &mut harness,
-                image.center() - egui::vec2(25., 20.),
-                image.center() + egui::vec2(25., 20.),
-            );
+            assert!(harness.query_by_label("Analyze roll").is_some());
+            assert!(harness.query_by_label("Cancel").is_some());
+            let corner = harness.read(|editor| {
+                let source = editor.document.visit.current_source.unwrap();
+                let entry = editor
+                    .document
+                    .analysis_review()
+                    .unwrap()
+                    .approved
+                    .entries
+                    .iter()
+                    .find(|entry| entry.source == source)
+                    .unwrap();
+                let point = entry.areas.picture.unwrap()[0];
+                editor
+                    .canvas_frame
+                    .layout
+                    .unwrap()
+                    .0
+                    .screen_point(egui::pos2(point[0] as f32, point[1] as f32))
+            });
+            drag(&mut harness, corner, corner + egui::vec2(20., 15.));
             harness.key_press(egui::Key::Z);
             harness.step();
             harness.update(|editor| {
                 editor.with_tool_viewport(|viewport| assert!(viewport.zoom.is_none()))
             });
-            harness.key_press(egui::Key::Enter);
-            harness.step();
-            harness.read(|editor| {
+            let edited = harness.read(|editor| {
                 assert!(!editor.analysis_fitting());
-                assert_eq!(
-                    editor.document.analysis_review().unwrap().approved.entries,
-                    drafts
-                );
-                assert_eq!(editor.document.analyze_tool().unwrap().viewport, viewport);
+                let entries = editor
+                    .document
+                    .analysis_review()
+                    .unwrap()
+                    .approved
+                    .entries
+                    .clone();
+                assert_ne!(entries, drafts, "fullscreen selection must edit the review");
+                assert_eq!(editor.document.project, project);
+                entries
             });
             save_capture(
                 &harness.render().unwrap(),
@@ -182,9 +198,17 @@ fn fullscreen_inspects_the_source_without_editing_or_losing_the_review_or_its_na
                 assert!(editor.fullscreen.is_none());
                 assert_eq!(
                     editor.document.analysis_review().unwrap().approved.entries,
-                    drafts
+                    edited
                 );
-                assert_eq!(editor.document.analyze_tool().unwrap().viewport, viewport);
+                assert!(
+                    editor
+                        .document
+                        .analyze_tool()
+                        .unwrap()
+                        .viewport
+                        .zoom
+                        .is_none()
+                );
                 assert_eq!(editor.document.visit.canvas.viewport, normal);
                 assert_eq!(editor.document.project, project);
                 assert_eq!(editor.preferences, preferences);

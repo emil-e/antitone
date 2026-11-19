@@ -96,7 +96,6 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
         file_action: &mut Option<FileAction>,
-        fullscreen_was_active: bool,
         dialog_escape_available: bool,
     ) {
         self.sync_adjustment_layer_drag(ui.ctx());
@@ -107,7 +106,7 @@ impl Editor {
         });
         self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
         self.analysis_shortcuts(ui, cx, text_was_focused, dialog_escape_available);
-        self.workspace_shortcuts(ui, cx, file_action, fullscreen_was_active, text_was_focused);
+        self.workspace_shortcuts(ui, cx, file_action, text_was_focused);
     }
 
     fn analysis_shortcuts(
@@ -151,12 +150,9 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
         file_action: &mut Option<FileAction>,
-        fullscreen_was_active: bool,
         text_was_focused: bool,
     ) {
         if !self.workspace_input.is_blocked()
-            && self.fullscreen.is_none()
-            && !fullscreen_was_active
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && !ui.ctx().egui_wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx())
