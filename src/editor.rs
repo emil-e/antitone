@@ -57,7 +57,7 @@ mod workspace_input;
 use activity::Reporter as ActivityReporter;
 use activity::{Activities, Activity, Options as ActivityOptions};
 mod fullscreen;
-use fullscreen::FullscreenView;
+use fullscreen::Fullscreen;
 mod thumbnails;
 use thumbnails::Thumbnails;
 mod adjustment_layers;
@@ -246,7 +246,7 @@ pub struct Editor {
     menus: menu::Menus,
     submissions: crate::platform::SubmissionGate,
     scopes: Scopes,
-    fullscreen: Option<FullscreenView>,
+    fullscreen: Option<Fullscreen>,
     canvas_frame: canvas::Frame,
     // Running physical work outlives logical cancellation.
     id: u64,
@@ -1594,16 +1594,9 @@ impl Editor {
             && !(self.menus.text_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)));
         let tool_escape_available = !popup_was_open && self.menus.panel.is_none();
         self.receive_frame();
-        let fullscreen_was_active = self.fullscreen.is_some();
         self.update_fullscreen(ui.ctx());
         let mut actions = self.application_actions(ui);
-        self.frame_shortcuts(
-            ui,
-            cx,
-            &mut actions.file,
-            fullscreen_was_active,
-            tool_escape_available,
-        );
+        self.frame_shortcuts(ui, cx, &mut actions.file, tool_escape_available);
 
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);

@@ -43,7 +43,7 @@ impl Viewer<'_> {
         if !editor.has_hosted_tool() {
             let fullscreen = editor.fullscreen.is_some();
             ui::viewer_surface(self.ui, fullscreen, |ui| {
-                editor.viewer_canvas(ui, bar.zoom.or(self.zoom), fullscreen, cx)
+                editor.viewer_canvas(ui, bar.zoom.or(self.zoom), cx)
             });
             return None;
         }
@@ -136,11 +136,7 @@ impl Surface<'_> {
             image.zoom_action,
         );
         let (layout, _) = editor.canvas_navigation(image.ui, image.response, layout, true);
-        if editor.document.visit.picker.display().is_some() {
-            image.paint_sample(editor, layout, editor.canvas_inspection(), cx);
-        } else {
-            image.paint_image(editor, layout, false, cx);
-        }
+        image.paint_image(editor, layout, false, cx);
         Some(layout)
     }
 }
@@ -316,7 +312,7 @@ impl Editor {
             }
             let fullscreen = self.fullscreen.is_some();
             ui::viewer_surface(ui, fullscreen, |ui| {
-                self.viewer_canvas(ui, bar.zoom.or(menu_zoom), fullscreen, cx)
+                self.viewer_canvas(ui, bar.zoom.or(menu_zoom), cx)
             });
         }
     }
@@ -381,7 +377,7 @@ impl Editor {
     #[cfg(test)]
     pub(super) fn canvas_composition(&mut self, area: Rect) -> Composition {
         let normal = self.normal_canvas_composition(area);
-        if self.fullscreen.is_some() || self.current_tool().is_none() {
+        if self.current_tool().is_none() {
             normal
         } else {
             self.with_current_tool(|tool, _| tool.composition(normal))
@@ -698,11 +694,10 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         zoom_action: Option<f32>,
-        fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
         ui.push_id("viewer-canvas", |ui| {
-            self.canvas_contents(ui, zoom_action, fullscreen, cx)
+            self.canvas_contents(ui, zoom_action, cx)
         });
     }
 
@@ -710,7 +705,6 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         zoom_action: Option<f32>,
-        fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
         self.canvas_frame = Frame::default();
@@ -752,16 +746,7 @@ impl Editor {
         let geometry = self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
         let (geometry, _) = self.canvas_navigation(ui, &response, geometry, canvas_input);
         self.canvas_frame.layout = Some((geometry, pixels_per_point));
-        let image_mode = if fullscreen && self.document.visit.picker.display().is_some() {
-            if self.canvas_inspection() {
-                ImageMode::SourceSample
-            } else {
-                ImageMode::PositiveSample
-            }
-        } else {
-            ImageMode::Photograph
-        };
-        let image = self.canvas_image(ui, geometry, proxy, pending, image_mode, cx);
+        let image = self.canvas_image(ui, geometry, proxy, pending, ImageMode::Photograph, cx);
         if let Some((draw, paint)) = image {
             ui.painter()
                 .with_clip_rect(canvas)

@@ -306,8 +306,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
         });
         harness.get_by_label("100%").click();
         harness.step();
-        let reference_viewport = harness.update(|e| e.with_tool_viewport(|viewport| *viewport));
-        assert_eq!(reference_viewport.zoom, Some(1.));
+        harness.update(|e| assert_eq!(e.with_tool_viewport(|viewport| viewport.zoom), Some(1.)));
         harness.get_by_label("Fullscreen viewing").click();
         harness.step();
         harness.read(|e| assert!(e.fullscreen.is_some()));
@@ -331,6 +330,19 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
             assert!(e.with_tool_viewport(|viewport| *viewport).zoom.is_none());
             normal_unchanged(e);
         });
+        let layout = harness.read(|e| e.canvas_frame.layout.unwrap().0);
+        drag(
+            &mut harness,
+            layout.image.min + layout.image.size() * 0.25,
+            layout.image.min + layout.image.size() * 0.75,
+        );
+        let region = harness.read(|e| {
+            e.document
+                .flat_edit()
+                .unwrap()
+                .region
+                .expect("fullscreen reference selection")
+        });
         harness.get_by_label("Exit fullscreen").click();
         harness.step();
         harness.update(|e| e.fullscreen_changed(false));
@@ -338,10 +350,8 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
         wait_settled(&mut harness);
         harness.update(|e| {
             assert!(e.fullscreen.is_none());
-            assert_eq!(
-                e.with_tool_viewport(|viewport| *viewport),
-                reference_viewport
-            );
+            assert!(e.with_tool_viewport(|viewport| viewport.zoom).is_none());
+            assert_eq!(e.document.flat_edit().unwrap().region, Some(region));
             normal_unchanged(e);
         });
         harness.get_by_label("Cancel").click();

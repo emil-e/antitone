@@ -1,5 +1,7 @@
 use super::*;
 
+mod interactions;
+
 fn native(harness: &mut Harness<'_, Editor>, fullscreen: bool) {
     harness
         .input_mut()
@@ -79,8 +81,6 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 let preferences = harness.read(|editor| editor.preferences.clone());
                 let project = harness.read(|editor| editor.document.state.project.clone());
                 let viewport = harness.read(|editor| editor.document.visit.canvas.viewport);
-                let source =
-                    harness.read(|editor| (editor.document.source, editor.source_exposure));
                 let workspace =
                     harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.canvas);
                 harness.get_by_label("Fullscreen viewing").click();
@@ -148,7 +148,10 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.read(|editor| assert_eq!(editor.preferences, preferences));
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));
                 harness.read(|editor| {
-                    assert_eq!((editor.document.source, editor.source_exposure), source)
+                    assert_eq!(
+                        (editor.document.source, editor.source_exposure),
+                        (true, 1.234567)
+                    )
                 });
                 harness.read(|editor| {
                     assert_eq!(
@@ -186,13 +189,12 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         let draft = tools::crop_draft(&mut harness);
         let project = harness.read(|editor| editor.document.state.project.clone());
         key(&mut harness, egui::Key::F);
-        // Normal fullscreen rendering acquires real GPU work, not virtual UI time.
+        // The same Crop view acquires real GPU work, not virtual UI time.
         harness.try_run_realtime().unwrap();
         reveal(&mut harness);
         harness.read(|editor| assert!(editor.fullscreen.is_some()));
-        assert!(harness.query_by_label("Apply").is_none());
-        assert!(harness.query_by_label("Cancel").is_none());
-        key(&mut harness, egui::Key::Enter);
+        assert!(harness.query_by_label("Apply").is_some());
+        assert!(harness.query_by_label("Cancel").is_some());
         harness.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, draft));
         harness.get_by_label("Viewer help").click();
         harness.step();

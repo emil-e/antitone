@@ -1,13 +1,6 @@
 use super::*;
 
-pub(super) struct FullscreenView {
-    id: u64,
-    viewport: Viewport,
-    layout: Option<(crate::viewport::CanvasLayout, f32)>,
-    source: bool,
-    source_exposure: f64,
-    source_white_balance: crate::raw::SourceWhiteBalance,
-    calibrated: bool,
+pub(super) struct Fullscreen {
     native_before: bool,
     restored: bool,
     exiting: bool,
@@ -21,8 +14,8 @@ impl Editor {
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
             && (self.fullscreen.is_some()
-                || (self.canvas_frame.layout.is_some() || self.selected_view().is_some())
-                    && !(self.interaction_blocked() && self.picking()))
+                || self.canvas_frame.layout.is_some()
+                || self.selected_view().is_some())
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -34,39 +27,12 @@ impl Editor {
                 view.exiting = true;
             }
         } else {
-            let inspection = self.canvas_inspection();
-            let picker_viewport = (self.document.visit.picker.display().is_some()
-                && self.document.visit.hosted_tool.occupied())
-            .then(|| self.with_tool_viewport(|viewport| *viewport));
-            let normal_viewport = std::ptr::from_ref(&self.active_canvas().viewport);
-            let normal_layout =
-                self.with_tool_viewport(|viewport| std::ptr::eq(viewport, normal_viewport));
-            let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
-            self.fullscreen = Some(FullscreenView {
-                id: self.id,
-                viewport: self.active_canvas().viewport,
-                layout: self.active_canvas().last_layout,
-                source: self.document.source,
-                source_exposure: self.source_exposure,
-                source_white_balance: self.source_white_balance,
-                calibrated: self.document.project.input.ready(),
-                native_before,
+            self.preserve_fullscreen_anchor();
+            self.fullscreen = Some(Fullscreen {
+                native_before: context.input(|input| input.viewport().fullscreen == Some(true)),
                 restored: false,
                 exiting: false,
             });
-            if let Some(viewport) = picker_viewport {
-                self.document.source = inspection;
-                self.active_canvas_mut().viewport = viewport;
-            }
-            // A picker carries its current view into inspection; Crop keeps its private draft view.
-            if (normal_layout || picker_viewport.is_some())
-                && self.active_canvas().viewport.zoom.is_some()
-                && let Some((layout, density)) = self.active_canvas().last_layout
-            {
-                self.active_canvas_mut()
-                    .viewport
-                    .reframe(layout, layout.composition, density);
-            }
             ui::ViewerBar::reset_overlay(context);
         }
         context.memory_mut(|memory| {
@@ -77,18 +43,13 @@ impl Editor {
         context.request_repaint();
     }
 
-    pub(super) fn retire_fullscreen(&mut self) {
-        let Some(view) = self.fullscreen.take() else {
-            return;
-        };
-        if view.id == self.id {
-            self.document.visit.canvas.viewport = view.viewport;
-            self.document.visit.canvas.last_layout = view.layout;
-            if self.document.project.input.ready() == view.calibrated {
-                self.document.source = view.source;
-            }
-            self.source_exposure = view.source_exposure;
-            self.source_white_balance = view.source_white_balance;
+    fn preserve_fullscreen_anchor(&mut self) {
+        if let Some((layout, density)) = self.canvas_frame.layout {
+            self.with_tool_viewport(|viewport| {
+                if viewport.zoom.is_some() {
+                    viewport.reframe(layout, layout.composition, density);
+                }
+            });
         }
     }
 
@@ -107,20 +68,13 @@ impl Editor {
         let Some(view) = &self.fullscreen else {
             return;
         };
-        let context_changed = view.id != self.id;
         let native_exit = !view.exiting && view.native_before && native == Some(false);
         let returned = view.exiting && view.restored;
-        if context_changed || native_exit || returned {
-            let view = self.fullscreen.take().unwrap();
-            if !context_changed {
-                self.active_canvas_mut().viewport = view.viewport;
-                self.active_canvas_mut().last_layout = view.layout;
-                if self.document.project.input.ready() == view.calibrated {
-                    self.document.source = view.source;
-                }
-                self.source_exposure = view.source_exposure;
-                self.source_white_balance = view.source_white_balance;
-            }
+        if native_exit || returned {
+            // An Escape arriving with the host's return still belongs to fullscreen.
+            context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            self.preserve_fullscreen_anchor();
+            self.fullscreen = None;
             context.request_repaint();
         }
     }
@@ -146,10 +100,6 @@ impl Editor {
         {
             self.toggle_fullscreen(ui.ctx());
             self.update_fullscreen(ui.ctx());
-        } else if self.fullscreen.is_some()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-        {
-            self.with_tool_viewport(Viewport::fit);
         }
     }
 }

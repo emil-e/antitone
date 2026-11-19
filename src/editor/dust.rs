@@ -780,9 +780,6 @@ impl tool::Tool for DustTool {
             cx,
             Editor::photograph_controls,
             |tool, surface, editor, cx| {
-                if editor.fullscreen.is_some() {
-                    return surface.photograph(editor, cx);
-                }
                 let mut canvas = surface.selected()?;
                 let rect = canvas.response.rect;
                 let composition = canvas.composition;
@@ -911,7 +908,7 @@ impl DustTool {
         geometry: crate::viewport::CanvasLayout,
         cx: &UiContext<'_, Editor>,
     ) {
-        if editor.tab != 1 || editor.fullscreen.is_some() || editor.document.source {
+        if editor.tab != 1 || editor.document.source {
             return;
         }
         let modifies = ui.input(|input| {
@@ -1547,7 +1544,7 @@ impl DustTool {
         let Some(source) = editor.document.visit.current_source else {
             return;
         };
-        if editor.tab != 1 || editor.fullscreen.is_some() || editor.canvas_inspection() {
+        if editor.tab != 1 || editor.canvas_inspection() {
             return;
         }
         let painter = ui.painter().with_clip_rect(geometry.canvas);

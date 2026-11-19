@@ -208,7 +208,6 @@ impl Editor {
     #[cfg(test)]
     fn auto_crop_photo(&mut self, photo: SourceId) {
         if self.interaction_blocked()
-            || self.fullscreen.is_some()
             || !self.cropping()
             || self.document.visit.current_source != Some(photo)
         {
@@ -461,7 +460,7 @@ impl tool::Tool for AutoCropTool {
     }
 
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if editor.fullscreen.is_none() && self.review.borrow().is_some() {
+        if self.review.borrow().is_some() {
             self.review_viewport(editor)
         } else {
             &mut editor.document.visit.canvas.viewport
@@ -514,9 +513,6 @@ impl tool::Tool for AutoCropTool {
             cx,
             Editor::photograph_controls,
             |tool, surface, editor, cx| {
-                if editor.fullscreen.is_some() {
-                    return surface.photograph(editor, cx);
-                }
                 let mut canvas = surface.selected()?;
                 let reviewing = tool.review.borrow().is_some();
                 let composition = tool.composition(canvas.composition);
@@ -565,9 +561,7 @@ impl tool::Tool for AutoCropTool {
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
-            tool::Action::Primary
-                if !editor.interaction_blocked() && editor.fullscreen.is_none() =>
-            {
+            tool::Action::Primary if !editor.interaction_blocked() => {
                 let Some(snapshot) = self.review.borrow().clone() else {
                     return;
                 };
@@ -600,7 +594,7 @@ impl tool::Tool for AutoCropTool {
 
 impl Draft {
     fn editable(&self, editor: &Editor) -> bool {
-        !editor.interaction_blocked() && editor.fullscreen.is_none() && self.valid(editor)
+        !editor.interaction_blocked() && self.valid(editor)
     }
 
     fn warning(&self, editor: &Editor) -> Option<&'static str> {
@@ -855,7 +849,7 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
 
 impl Draft {
     fn context(&self, editor: &Editor) -> bool {
-        editor.fullscreen.is_none() && self.belongs_to(editor)
+        self.belongs_to(editor)
     }
 
     fn margin_entry(&self, editor: &Editor) -> Option<&Entry> {

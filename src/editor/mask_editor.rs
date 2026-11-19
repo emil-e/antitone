@@ -35,10 +35,10 @@ impl Kind {
     fn help(self) -> &'static str {
         match self {
             Self::Linear => {
-                "Drag endpoints to change the fade; drag the connector to move it. Release accepts; Escape cancels this gesture."
+                "Drag endpoints to change the fade; drag the connector to move it. Release accepts each gesture."
             }
             Self::Radial => {
-                "Draw outward from the centre. Drag inside to move, squares to reshape, the outer handle to rotate, or the inner diamond to feather. Release accepts; Escape cancels this gesture."
+                "Draw outward from the centre. Drag inside to move, squares to reshape, the outer handle to rotate, or the inner diamond to feather. Release accepts each gesture."
             }
         }
     }
@@ -344,7 +344,6 @@ impl Editor {
         self.tool_start_available()
             && self.selected_area().is_some()
             && self.document.project.input.ready()
-            && self.fullscreen.is_none()
     }
 
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
@@ -441,7 +440,7 @@ impl Editor {
     }
 
     pub(super) fn mask_preview_source(&self) -> Option<Source> {
-        if self.fullscreen.is_some() || self.tab != 1 {
+        if self.tab != 1 {
             return None;
         }
         let active = self.mask_edit()?;
@@ -520,7 +519,7 @@ impl Editor {
 
     #[cfg(test)]
     pub(super) fn paint_mask(&self, ui: &egui::Ui, layout: CanvasLayout) {
-        if self.fullscreen.is_some() || self.document.source || self.tab != 1 {
+        if self.document.source || self.tab != 1 {
             return;
         }
         if let Some(edit) = self.mask_edit() {

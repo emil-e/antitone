@@ -927,7 +927,7 @@ fn escape_cancels_preparation_without_changing_grade_or_requesting_original_work
                     }],
                     ..Default::default()
                 },
-                |ui| editor.frame_shortcuts(ui, cx, &mut None, false, true),
+                |ui| editor.frame_shortcuts(ui, cx, &mut None, true),
             );
             output.textures_delta.clear();
             assert!(!editor.analysis_fitting());

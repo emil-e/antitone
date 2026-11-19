@@ -157,9 +157,11 @@ Tools compose the [canvas surface](../src/editor/canvas.rs) with the photograph 
 
 Precision tools present completed original-sample images through the shared renderer, with native rectangular or affine framing as requested. These products belong to their tool demand: leaving the tool or changing its inputs rejects stale results. Ordinary viewing retains physical-view processing.
 
-## Photo-only fullscreen inspection
+## Fullscreen viewer
 
-The fullscreen action beside the zoom controls, or F, makes the current photograph a full-display inspection view: the host makes the existing window borderless without entering a native fullscreen Space. Shared zoom/source controls float over the image and fade after inactivity; moving near the bottom or pressing Tab reveals them, and a hidden bar leaves no invisible canvas hitbox. Crop's temporary view and interaction are suspended, preserving its draft and viewport for return. Reference and Analyze source views keep separate fullscreen navigation and suspend area editing and artwork, preserving their drafts, docked views and the working photograph.
+F or the fullscreen action enlarges the same feature-owned image, composition, viewport and interaction. The host makes the existing window borderless without entering a native fullscreen Space. The same viewer bar, including tool identity and Apply/Cancel/Done actions, floats and fades after inactivity; moving near the bottom or pressing Tab reveals it. A hidden bar leaves no invisible canvas hitbox. Crop handles, picking, reference/Analyze areas, Auto-crop margins, Dust and gradients remain interactive.
+
+F or Escape returns to the workspace without accepting or discarding drafts. Navigation and viewing changes remain in their existing owners; explicit zoom retains physical magnification and the current source anchor across the resize. Tool completion or replacement leaves fullscreen active. Native restoration acknowledgement ends the window transition, not a photographic-state restoration. Source and document replacement retire their own image requests and interactions through the ordinary scopes.
 
 ## Fast feedback is not authoritative data
 

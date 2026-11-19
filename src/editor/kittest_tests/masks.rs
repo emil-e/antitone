@@ -484,13 +484,21 @@ fn captured_mask_gestures_leave_shared_navigation_commands_available() {
 }
 
 #[test]
-fn fullscreen_suspension_cannot_accept_an_unseen_mask_release() {
+fn fullscreen_keeps_the_mask_gesture_and_accepts_release_in_the_current_view() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         arm(&mut harness, false);
-        let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
-        let start = image.center() - egui::vec2(40., 40.);
-        let end = image.center() + egui::vec2(40., 40.);
+        let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+        let start = layout.image.center() - egui::vec2(40., 40.);
+        let end = layout.image.center() + egui::vec2(40., 40.);
         hold_drag(&mut harness, start, end);
+        let source_anchor = harness.read(|editor| {
+            let AdjustmentLayerCoverage::Linear { end, .. } =
+                editor.mask_preview_geometry().unwrap()
+            else {
+                unreachable!()
+            };
+            end
+        });
         let before = harness.read(|editor| editor.document.state.project.clone());
         harness.key_press(egui::Key::F);
         harness.step();
@@ -499,14 +507,33 @@ fn fullscreen_suspension_cannot_accept_an_unseen_mask_release() {
         harness.update(|editor| editor.toggle_fullscreen(&context));
         harness.step();
         harness.read(|editor| assert!(editor.fullscreen.is_some()));
-        pointer(&mut harness, end + egui::vec2(80., 50.), false);
-        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.read(|editor| {
+            assert!(editor.mask_dragging());
+            assert_eq!(editor.document.state.project, before);
+        });
+        let layout = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
+        let end = layout.image.center() + egui::vec2(80., 50.);
+        let source_end = layout.source_point(end);
+        pointer(&mut harness, end, false);
+        let accepted = harness.read(|editor| {
+            assert_ne!(editor.document.state.project, before);
+            let mask = accepted_mask(editor);
+            let AdjustmentLayerCoverage::Linear { start, end } = mask else {
+                unreachable!()
+            };
+            assert_eq!(end, source_anchor);
+            assert!((start.0[0] - f64::from(source_end.x)).abs() < 1e-3);
+            assert!((start.0[1] - f64::from(source_end.y)).abs() < 1e-3);
+            mask
+        });
         harness.key_press(egui::Key::F);
         harness.step();
         harness.update(|editor| host::App::photo_fullscreen_changed(editor, false));
         harness.step();
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
-        harness.read(|editor| assert!(editor.creating_mask() && !editor.mask_dragging()));
-        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.read(|editor| {
+            assert!(editor.masking() && !editor.creating_mask() && !editor.mask_dragging());
+            assert_eq!(accepted_mask(editor), accepted);
+        });
     });
 }

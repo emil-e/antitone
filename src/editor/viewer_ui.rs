@@ -115,9 +115,7 @@ impl Editor {
         let mut fit = false;
         let mut toggle_fullscreen = false;
         let fullscreen = self.fullscreen.is_some();
-        let hosted = (!fullscreen)
-            .then(|| self.current_tool().map(|tool| tool.presentation()))
-            .flatten();
+        let hosted = self.current_tool().map(|tool| tool.presentation());
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
         let tool = hosted
             .as_ref()
@@ -284,7 +282,7 @@ impl Editor {
                     if fullscreen {
                         "Exit fullscreen (F or Escape)."
                     } else {
-                        "View photo fullscreen (F)."
+                        "Enlarge the current viewer (F)."
                     },
                 )
                 .clicked()
@@ -356,11 +354,15 @@ impl Editor {
                         if let Some(tool) = &hosted {
                             ui.separator();
                             ui.small(tool.help);
-                            ui.small(if tool.primary.is_some() {
-                                "Enter: primary action · Escape: dismiss"
-                            } else {
-                                "Escape: dismiss"
-                            });
+                            if tool.primary.is_some() {
+                                ui.small(if fullscreen {
+                                    "Enter: primary action"
+                                } else {
+                                    "Enter: primary action · Escape: cancel / dismiss"
+                                });
+                            } else if !fullscreen {
+                                ui.small("Escape: cancel / dismiss");
+                            }
                         }
                     });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -400,9 +402,7 @@ impl Editor {
     }
 
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
-        let inspecting = navigating
-            && self.input().ready()
-            && (!self.has_hosted_tool() || self.fullscreen.is_some());
+        let inspecting = navigating && self.input().ready() && !self.has_hosted_tool();
         let correction_ready =
             !self.document.correction.pending() && self.document.correction.error().is_none();
         let can_toggle = correction_ready || !self.document.source;

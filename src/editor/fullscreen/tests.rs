@@ -48,7 +48,7 @@ fn ready() -> Editor {
 }
 
 #[test]
-fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
+fn fullscreen_hides_workspace_and_keeps_view_edits_after_window_return() {
     let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
@@ -111,7 +111,12 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
             editor.source_white_balance,
             editor.tab
         ),
-        before
+        (
+            !before.0,
+            2.,
+            crate::raw::SourceWhiteBalance::AsShot,
+            before.3
+        )
     );
     assert_eq!(editor.preferences, preferences);
     assert_eq!(editor.document.state.project, project);
@@ -155,11 +160,11 @@ fn requested_exit_waits_for_host_acknowledgement_and_accepts_os_adjusted_bounds(
     );
     assert!(editor.fullscreen.is_none());
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
-    assert_eq!(editor.source_exposure, 0.);
+    assert_eq!(editor.source_exposure, 3.);
 }
 
 #[test]
-fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
+fn fullscreen_entry_and_escape_keep_crop_and_picker_drafts() {
     for crop in [false, true] {
         let mut editor = ready();
         let context = egui::Context::default();
@@ -176,7 +181,6 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
         let pick = editor.test_pick();
         frame(&mut editor, &context, Some(false), key(egui::Key::F));
         frame(&mut editor, &context, Some(true), vec![]);
-        frame(&mut editor, &context, Some(true), key(egui::Key::Enter));
         assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         assert_eq!(editor.test_pick(), pick);
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
@@ -211,7 +215,6 @@ fn fullscreen_preserves_normal_navigation_anchor_with_or_without_a_hosted_intera
             .viewport
             .pan(layout, 1., egui::vec2(80., -20.));
         frame(&mut editor, &context, Some(false), vec![]);
-        let viewport = editor.document.visit.canvas.viewport;
         let before = editor.active_canvas().last_layout.unwrap().0;
         let anchor = before
             .composition
@@ -238,13 +241,20 @@ fn fullscreen_preserves_normal_navigation_anchor_with_or_without_a_hosted_intera
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(false), vec![]);
-        assert_eq!(editor.document.visit.canvas.viewport, viewport);
+        let returned = editor.canvas_frame.layout.unwrap().0;
+        assert_eq!(returned.scale, before.scale);
+        assert!(
+            returned
+                .source_point(returned.canvas.center())
+                .distance(before.source_point(before.canvas.center()))
+                < 1e-3
+        );
         assert_eq!(editor.dusting(), dust);
     }
 }
 
 #[test]
-fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view() {
+fn fullscreen_navigation_uses_the_same_crop_view_without_touching_normal_navigation() {
     let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
@@ -272,7 +282,7 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     frame(&mut editor, &context, Some(true), vec![]);
     let composition = editor.active_canvas().last_layout.unwrap().0.composition;
-    assert_eq!(composition.crop(), Crop::from_region(composition.area()));
+    assert_eq!(composition.crop(), draft);
     let layout = editor.active_canvas().last_layout.unwrap().0;
     let center = layout.canvas.center();
     frame(
@@ -281,11 +291,12 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
         Some(true),
         vec![egui::Event::PointerMoved(center), egui::Event::Zoom(1.25)],
     );
-    let zoomed = editor.document.visit.canvas.viewport;
-    assert!(zoomed.zoom.unwrap() > normal.zoom.unwrap());
+    let zoomed = editor.with_tool_viewport(|viewport| *viewport);
+    assert!(zoomed.zoom.unwrap() > crop_view.zoom.unwrap());
     frame(&mut editor, &context, Some(true), vec![]);
     assert_eq!(
-        editor.document.visit.canvas.viewport, zoomed,
+        editor.with_tool_viewport(|viewport| *viewport),
+        zoomed,
         "next layout must not discard fullscreen zoom"
     );
     for (point, pressed) in [
@@ -304,14 +315,14 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
         }
         frame(&mut editor, &context, Some(true), events);
     }
-    let panned = editor.document.visit.canvas.viewport;
+    let panned = editor.with_tool_viewport(|viewport| *viewport);
     assert_ne!(panned, zoomed);
     frame(&mut editor, &context, Some(true), vec![]);
-    assert_eq!(editor.document.visit.canvas.viewport, panned);
+    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), panned);
     let output = frame(&mut editor, &context, Some(true), vec![]);
     let fit = super::super::tests::ui_labels(output)
         .into_iter()
-        .find(|(name, _)| name == "Fit")
+        .find(|(name, _)| name == "Fit crop")
         .unwrap()
         .1
         .center();
@@ -331,24 +342,59 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
             ],
         );
     }
-    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+    let fitted = editor.with_tool_viewport(|viewport| *viewport);
+    let fitted_layout = editor.canvas_frame.layout.unwrap().0;
+    let size = fitted_layout.composition.size();
+    let expected = ((fitted_layout.canvas.width() - 40.) / size[0] as f32)
+        .min((fitted_layout.canvas.height() - 40.) / size[1] as f32);
+    assert_eq!(fitted.zoom, Some(expected));
     frame(
         &mut editor,
         &context,
         Some(true),
         vec![egui::Event::PointerMoved(center), egui::Event::Zoom(2.)],
     );
-    assert!(editor.document.visit.canvas.viewport.zoom.is_some());
+    assert!(editor.with_tool_viewport(|viewport| viewport.zoom.unwrap()) > fitted.zoom.unwrap());
     frame(&mut editor, &context, Some(true), key(egui::Key::Z));
-    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), fitted);
     frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
     editor.fullscreen_changed(false);
     frame(&mut editor, &context, Some(false), vec![]);
     assert!(editor.fullscreen.is_none());
     assert_eq!(editor.document.visit.canvas.viewport, normal);
-    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), crop_view);
+    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), fitted);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(editor.document.state.project, project);
+}
+
+#[test]
+fn host_fullscreen_return_consumes_escape_before_it_can_cancel_the_active_draft() {
+    for (crop, native_exit) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut editor = ready();
+        let context = egui::Context::default();
+        frame(&mut editor, &context, Some(native_exit), vec![]);
+        if crop {
+            editor.begin_crop();
+        } else {
+            editor.preview_picker(PickerCase::Dmin);
+        }
+        frame(&mut editor, &context, Some(native_exit), vec![]);
+        let draft = editor.document.crop_edit().map(|edit| edit.draft);
+        let pick = editor.test_pick();
+        let project = editor.document.state.project.clone();
+        frame(&mut editor, &context, Some(native_exit), key(egui::Key::F));
+        assert!(editor.fullscreen_requested());
+        if !native_exit {
+            frame(&mut editor, &context, Some(true), key(egui::Key::F));
+            editor.fullscreen_changed(false);
+        }
+        frame(&mut editor, &context, Some(false), key(egui::Key::Escape));
+        assert!(editor.fullscreen.is_none());
+        assert!(editor.has_hosted_tool());
+        assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
+        assert_eq!(editor.test_pick(), pick);
+        assert_eq!(editor.document.state.project, project);
+    }
 }
 
 #[test]
@@ -398,24 +444,53 @@ fn ending_reference_fullscreen_does_not_restore_its_view_over_the_working_photo(
     assert!(editor.fullscreen.is_some());
     editor.finish_flat_edit();
     frame(&mut editor, &context, Some(false), vec![]);
-    assert!(editor.fullscreen.is_none());
+    assert!(editor.fullscreen.is_some());
     assert_eq!(editor.document.visit.canvas.viewport, working);
 }
 
 #[test]
-fn a_changed_source_retires_fullscreen_without_restoring_the_old_source_view() {
-    let mut editor = ready();
-    let context = egui::Context::default();
-    frame(&mut editor, &context, Some(false), vec![]);
-    frame(&mut editor, &context, Some(false), key(egui::Key::F));
-    editor.id += 1;
-    editor.document.visit.canvas.viewport.zoom = Some(3.);
-    editor.source_exposure = 5.;
-    frame(&mut editor, &context, Some(false), vec![]);
-    assert!(editor.fullscreen.is_none());
-    assert!(!editor.fullscreen_requested());
-    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(3.));
-    assert_eq!(editor.source_exposure, 5.);
+fn fullscreen_source_replacement_retires_the_departed_image_not_window_presentation() {
+    let editor = super::super::tests::authored_fixture(&["patches.dng", "roll-0.dng"]);
+    crate::application::test_support::with_application(editor, |app| {
+        let hold = crate::background::testing::pause();
+        let context = egui::Context::default();
+        frame(app, &context, Some(false), vec![]);
+        let before = app.read(|editor| editor.document.visit.current_source);
+        app.update(|editor| editor.preview_picker(PickerCase::Dmin));
+        frame(app, &context, Some(false), vec![]);
+        frame(app, &context, Some(false), key(egui::Key::F));
+        app.enter(|editor, cx| editor.select_roll_photo(1, egui::Modifiers::NONE, cx));
+        app.read(|editor| {
+            assert!(editor.fullscreen_requested());
+            assert_ne!(editor.document.visit.current_source, before);
+            assert!(editor.current_tool().is_none());
+            assert!(
+                editor.canvas_frame.layout.is_none() && editor.canvas_frame.displayed.is_none()
+            );
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(editor.selected_view().is_none());
+            assert!(editor.document.visit.working_view.displayed.is_none());
+            assert!(editor.active_canvas().original.wanted.is_none());
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(20), |editor| {
+            editor.document.visit.canvas.ready.is_some()
+        });
+        app.update(|editor| {
+            editor.document.visit.canvas.viewport.zoom = Some(3.);
+            editor.source_exposure = 5.;
+        });
+        frame(app, &context, Some(true), vec![]);
+        frame(app, &context, Some(true), key(egui::Key::Escape));
+        app.update(|editor| editor.fullscreen_changed(false));
+        frame(app, &context, Some(false), vec![]);
+        app.read(|editor| {
+            assert!(editor.fullscreen.is_none());
+            assert_ne!(editor.document.visit.current_source, before);
+            assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(3.));
+            assert_eq!(editor.source_exposure, 5.);
+        });
+    });
 }
 
 #[test]
