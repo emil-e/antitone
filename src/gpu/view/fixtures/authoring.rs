@@ -266,10 +266,7 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
                         bounds: [0, 0, 4, 3].into(),
                         grid,
                     },
-                    e::Budget {
-                        tile: [4, 3],
-                        scratch_bytes: 4096,
-                    },
+                    e::Tiling { tile: [4, 3] },
                 )
                 .unwrap()
         };

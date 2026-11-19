@@ -307,7 +307,7 @@ impl GpuRenderer {
         luts: &crate::looks::LutChain,
         destination: &wgpu::Texture,
     ) -> Result<RenderBinding, Error> {
-        use crate::gpu::evaluation::{Budget, ImageFormat, Reference, Region};
+        use crate::gpu::evaluation::{ImageFormat, Reference, Region, Tiling};
         self.evaluation.require_device(device)?;
         let domain = source.definition().domain();
         let region = source.layout().region;
@@ -331,9 +331,8 @@ impl GpuRenderer {
                 bounds: region,
                 grid: domain.grid,
             },
-            Budget {
+            Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: device.limits().max_buffer_size,
             },
         )?;
         let recorded = self.evaluation.record_to_texture(

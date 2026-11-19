@@ -26,9 +26,8 @@ fn mark(p: vec4f, position: vec2f) -> vec4f {
     let plan = Plan::new(
         root,
         domain.finite().unwrap(),
-        Budget {
+        Tiling {
             tile: [width, height],
-            scratch_bytes: 128 << 20,
         },
     )
     .unwrap();

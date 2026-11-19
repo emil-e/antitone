@@ -174,7 +174,13 @@ impl Editor {
                 } else {
                     "sRGB"
                 };
-                let quality = if self.document.visit.pending_preview.is_some() {
+                let quality = if self.document.visit.working_view.error.is_some() {
+                    ""
+                } else if self.document.visit.working_view.updating
+                    && self.document.visit.working_view.displayed.is_some()
+                {
+                    " · Updating preview"
+                } else if self.document.visit.pending_preview.is_some() {
                     " · Cached preview"
                 } else if painted_source
                     || self.canvas_inspection()
@@ -184,8 +190,6 @@ impl Editor {
                 } else if self.document.visit.working_view.enabled() {
                     if look_error.is_some() {
                         " · Look unavailable"
-                    } else if self.document.visit.working_view.error.is_some() {
-                        " · View unavailable"
                     } else if self.document.visit.working_view.displayed.is_none() {
                         " · Acquiring view"
                     } else {
@@ -310,18 +314,6 @@ impl Editor {
                     {
                         self.look_render_failed(error.to_string());
                     }
-                } else if let Some(error) = &self.document.visit.working_view.error {
-                    let (_, response) = ui.allocate_exact_size(
-                        egui::Vec2::splat(ui::CONTROL_HEIGHT),
-                        egui::Sense::hover(),
-                    );
-                    ui::status_icon(
-                        ui,
-                        response,
-                        "View unavailable",
-                        ui::StatusLevel::Error,
-                        error,
-                    );
                 }
                 let help = ui::icons::button(
                     ui,

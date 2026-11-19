@@ -104,10 +104,7 @@ impl ForwardModel for ResponseModel<'_> {
                 bounds: domain.finite()?,
                 grid: domain.grid,
             },
-            evaluation::Budget {
-                tile: [width, 16],
-                scratch_bytes: 32 << 20,
-            },
+            evaluation::Tiling { tile: [width, 16] },
         )?;
         let cancelled = RefCell::new(cancelled);
         let interrupted = Cell::new(false);

@@ -31,6 +31,7 @@ mod masks;
 mod menus;
 mod orientation;
 mod picking;
+mod preview_failure;
 mod progress;
 mod project;
 mod roll_changes;

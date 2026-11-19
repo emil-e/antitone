@@ -14,10 +14,7 @@ pub(crate) use spatial::CameraWindow;
 #[cfg(test)]
 mod tests;
 
-const BUDGET: evaluation::Budget = evaluation::Budget {
-    tile: [1, 8192],
-    scratch_bytes: 32 << 20,
-};
+const BUDGET: evaluation::Tiling = evaluation::Tiling { tile: [1, 8192] };
 
 pub(crate) struct CameraSampler<'a> {
     input: Arc<AnalysisInput>,

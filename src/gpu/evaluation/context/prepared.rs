@@ -1,5 +1,6 @@
 //! Actual image demands retain their preparation through recording or missing production.
 use super::*;
+use crate::gpu::allocation::DeviceAllocationExt;
 use crate::gpu::evaluation::materializations::ProducedImage;
 
 mod sharing;
@@ -48,29 +49,33 @@ impl Preparation {
         }
     }
 
+    fn recording_passes(&self) -> Option<usize> {
+        let own = match &self.work {
+            PreparedWork::Cached(_) => 0,
+            PreparedWork::Gpu(plan) => plan.recording_passes(),
+            PreparedWork::Produce(_) | PreparedWork::Units => return None,
+        };
+        self.dependencies
+            .iter()
+            .try_fold(own, |passes, dependency| {
+                dependency
+                    .recording_passes()
+                    .map(|additional| passes + additional)
+            })
+            .filter(|passes| *passes <= Plan::MAX_RECORDING_PASSES)
+    }
+
     pub(crate) fn can_record(&self) -> bool {
-        matches!(self.work, PreparedWork::Cached(_) | PreparedWork::Gpu(_))
-            && self.dependencies.iter().all(Self::can_record)
-    }
-
-    fn scratch_bytes(&self) -> u64 {
-        match &self.work {
-            PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan.peak_scratch_bytes,
-            _ => 0,
-        }
-    }
-
-    fn held_scratch_bytes(&self) -> u64 {
-        if self.kind == DependencyKind::SourceSlice && !self.can_record() {
-            // Worker acquisition completes first: its scratch is a producer
-            // peak, not storage held throughout consumer execution.
-            0
-        } else {
-            self.scratch_bytes()
-        }
+        self.recording_passes().is_some()
     }
 
     pub(crate) fn record(self, context: &Context) -> Result<RecordedImage, Error> {
+        if !self.can_record() {
+            return Err(Error::InvalidParameter(
+                "image preparation requires production before recording",
+            ));
+        }
+
         let prerequisites = self
             .dependencies
             .into_iter()
@@ -91,7 +96,7 @@ impl Preparation {
                     .with_prerequisites(prerequisites);
                 let pixels = match self.destination {
                     Some(pixels) => pixels,
-                    None => BufferImage::recorded(root, region, output_buffer(context, region))?,
+                    None => BufferImage::recorded(root, region, output_buffer(context, region)?)?,
                 };
                 let pixels = match pixels {
                     BufferImage::Produced(mut image) => {
@@ -129,10 +134,7 @@ impl Preparation {
                 format: ImageFormat::Rgba32Float,
                 backing: ImageBacking::Buffer,
             };
-            let own = Worker {
-                budget: dependency.evaluation.job.budget(),
-                ..*worker
-            };
+            let own = Worker { ..*worker };
             let image = dependency.produce(&own, layout)?;
             if kind == DependencyKind::SourceSlice {
                 // Keep acquired pixels through consumer execution, not the
@@ -163,10 +165,7 @@ impl Preparation {
             }
             PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan,
             PreparedWork::Units => {
-                let worker = Worker {
-                    budget: self.evaluation.job.budget(),
-                    ..*worker
-                };
+                let worker = Worker { ..*worker };
                 if let Some(destination) = self.destination {
                     let image = match destination {
                         BufferImage::Produced(image) => image.image,
@@ -188,128 +187,24 @@ impl Preparation {
                 return Ok(image.into());
             }
         };
-        worker
-            .working
-            .admit_gpu(worker.context.device(), 0, worker.budget.scratch_bytes)?;
+        worker.working.admit_gpu(worker.context.device())?;
         let image = match self.destination {
             Some(BufferImage::Produced(image)) => image.image,
             Some(BufferImage::Submitted(pixels)) => ImageValue::new(pixels),
-            None => ImageValue::new(output_buffer(worker.context, layout.region)),
+            None => ImageValue::new(output_buffer(worker.context, layout.region)?),
         };
-        let pixels = image.as_buffer().expect("prepared buffer destination");
-        let _target = worker.working.activate_buffer(pixels);
-        // New operand outputs remain live together, unlike ordinary scratch-slot reuse.
-        // Reserve them before giving any nested producer or the final plan its allowance.
-        let produced_bytes = plan
-            .tiles
-            .iter()
-            .flat_map(|tile| &tile.fragment.work)
-            .filter_map(|step| match step {
-                Work::Produce { output, .. } | Work::Upload { output, .. } => {
-                    Some(u64::from(output.region.width) * u64::from(output.region.height) * 16)
-                }
-                _ => None,
-            })
-            .try_fold(0u64, u64::checked_add);
-        let available = produced_bytes
-            .and_then(|bytes| worker.budget.scratch_bytes.checked_sub(bytes))
-            .filter(|available| *available >= plan.peak_scratch_bytes && *available > 0);
-        let Some(available) = available else {
-            Production {
-                worker: *worker,
-                layout,
-                pixels,
-            }
-            .deliver(&mut worker.executor(), plan)?;
-            return Ok(ProducedImage::new(image, owners));
-        };
-        let producer = Worker {
-            budget: Budget {
-                scratch_bytes: available,
-                ..worker.budget
-            },
-            ..*worker
-        };
-        let tile = plan
-            .tiles
-            .into_iter()
-            .next()
-            .ok_or(Error::InvalidParameter(
-                "prepared image has no execution tile",
-            ))?;
-        let mut fragment = tile.fragment;
-        let mut work = Vec::new();
-        for step in std::mem::take(&mut fragment.work) {
-            (worker.progress)();
-            if (worker.cancelled)() {
-                return Err(Error::Cancelled);
-            }
-            let (image, output) = match step {
-                Work::Produce { image, output } => (image, output),
-                Work::Upload { source, output } => (super::super::source(source), output),
-                other => {
-                    work.push(other);
-                    continue;
-                }
-            };
-            let input_layout = ImageLayout {
-                domain: output.domain,
-                region: output.region,
-                format: ImageFormat::Rgba32Float,
-                backing: ImageBacking::Buffer,
-            };
-            let query = producer.query(image.clone(), output.region, available)?;
-            let pixels =
-                producer.materialize_image(&query, input_layout, &mut WorkCounts::default())?;
-            if let Some(key) = image.output(output.region)?.identity() {
-                let root = self.evaluation.job.image().output(layout.region)?;
-                let retain = self.evaluation.retain
-                    || output.region != layout.region
-                    || output.domain != layout.domain
-                    || root.identity() != Some(key);
-                worker.scope.publish(
-                    &Image {
-                        identity: key.clone(),
-                        descriptor: Arc::new(input_layout),
-                        image: pixels.clone(),
-                        inputs: pixels.reusable_inputs(),
-                    },
-                    retain,
-                );
-            }
-            owners.extend(pixels.reusable_inputs().iter().cloned());
-            owners.push(pixels.clone());
-            fragment.resources[output.resource.0] = Storage::ResidentBuffer(pixels);
+        Production {
+            worker: *worker,
+            layout,
+            pixels: image.as_buffer().expect("prepared buffer destination"),
         }
-        fragment.work = work;
-        // Production becoming an immutable input changes slot liveness, not mathematics.
-        let plan = Plan::from_work(fragment, tile.result, available)?;
-        let recorded = worker
-            .executor()
-            .prepare(worker.context.device(), plan)?
-            .with_request(self.evaluation.job.image(), layout.region);
-        owners.extend(recorded.reusable_inputs().into_iter().filter(|image| {
-            !execution_sources
-                .iter()
-                .any(|source| Arc::ptr_eq(source, image))
-        }));
-        let mut encoder = worker
-            .context
-            .device
-            .create_command_encoder(&Default::default());
-        recorded.encode_result(worker.context.device(), &mut encoder, pixels)?;
-        worker
-            .context
-            .submit_with(worker.queue, worker.gate, encoder, worker.cancelled, || {
-                recorded.submitted()
-            })?
-            .ok_or(Error::Cancelled)?;
+        .deliver(&mut worker.executor(), plan)?;
         Ok(ProducedImage::new(image, owners))
     }
 }
 
-fn output_buffer(context: &Context, region: CellRegion) -> wgpu::Buffer {
-    context.device.create_buffer(&wgpu::BufferDescriptor {
+fn output_buffer(context: &Context, region: CellRegion) -> Result<wgpu::Buffer, Error> {
+    context.device.try_create_buffer(&wgpu::BufferDescriptor {
         label: Some("prepared image result"),
         size: u64::from(region.width) * u64::from(region.height) * 16,
         usage: wgpu::BufferUsages::STORAGE
@@ -355,9 +250,7 @@ impl Context {
         if layout.bytes() > limits.max_buffer_size
             || layout.bytes() > limits.max_storage_buffer_binding_size
         {
-            return Err(Error::WorkingAllowance(
-                "prepared image exceeds GPU storage",
-            ));
+            return Err(Error::EvaluationLimit("prepared image exceeds GPU storage"));
         }
         Ok(layout)
     }
@@ -381,10 +274,7 @@ impl Context {
             PreparedWork::Cached(image)
         } else {
             match evaluation.job.probe(region) {
-                Ok(plan)
-                    if !plan.requires_production(root)?
-                        && plan.peak_scratch_bytes <= evaluation.job.budget().scratch_bytes =>
-                {
+                Ok(plan) if !plan.requires_production(root)? => {
                     match Executor::admit(&limits, &plan) {
                         Ok(()) => {
                             let missing =
@@ -399,11 +289,11 @@ impl Context {
                                 PreparedWork::Gpu(plan)
                             }
                         }
-                        Err(Error::WorkingAllowance(_)) => PreparedWork::Units,
+                        Err(Error::EvaluationLimit(_)) => PreparedWork::Units,
                         Err(error) => return Err(error),
                     }
                 }
-                Ok(_) | Err(Error::WorkingAllowance(_)) => PreparedWork::Units,
+                Ok(_) | Err(Error::EvaluationLimit(_)) => PreparedWork::Units,
                 Err(error) => return Err(error),
             }
         };
@@ -457,7 +347,6 @@ impl Context {
             queue,
             gate,
             scope: &scope,
-            budget: evaluation.job.budget(),
             working: &working,
             cancelled: &cancelled,
             progress: &|| {},
@@ -536,14 +425,13 @@ impl Context {
                             })
                             .collect::<Vec<_>>();
                         let selected = jobs.iter().collect::<Vec<_>>();
-                        if let Some((evaluation, _)) = jobs.first() {
+                        if !jobs.is_empty() {
                             let worker = Worker {
                                 context: &context,
                                 queue: &queue,
                                 gate: &gate,
                                 scope: &owned_scope,
                                 working: &working,
-                                budget: evaluation.job.budget(),
                                 cancelled: &cancelled,
                                 progress: &progress,
                             };
@@ -574,7 +462,6 @@ impl Context {
                             gate: &gate,
                             scope: &owned_scope,
                             working: &working,
-                            budget: evaluation.job.budget(),
                             cancelled: &cancelled,
                             progress: &progress,
                         };

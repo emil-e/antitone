@@ -73,10 +73,7 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
         bounds: Some(region),
         ..domain
     };
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 1024,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let evaluations=[5f32,9.].map(|bias| {
         let root=Value::new(output_domain,region,vec![input.request(domain.finite().unwrap()).unwrap()],
             value::Operation::new("biased last coordinate",bias.to_bits(),
@@ -94,13 +91,12 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget,
             working: &working,
             cancelled: &|| false,
             progress: &|| {},
         };
         let unit = last_unit(input.clone(), output_domain, region, bias)
-            .admit_for(budget, &device.limits())
+            .admit_for(&device.limits())
             .unwrap();
         let (image, _) = worker.compute_unit(evaluation.job.image(), unit).unwrap();
         assert_eq!(
@@ -116,7 +112,6 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
         queue: &queue,
         gate: &gate,
         scope: &scope,
-        budget,
         working: &working,
         cancelled: &|| false,
         progress: &|| {},
@@ -134,15 +129,12 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
             },
             unit: Some(
                 last_unit(input.clone(), output_domain, region, bias)
-                    .admit_for(budget, &device.limits())
+                    .admit_for(&device.limits())
                     .unwrap(),
             ),
         })
         .collect();
-    let images = worker
-        .materialize_targets(targets, 40, 1024)
-        .unwrap()
-        .unwrap();
+    let images = worker.materialize_targets(targets).unwrap().unwrap();
     for (image, value) in images.iter().zip([35., 39.]) {
         assert_eq!(
             crate::gpu::evaluation::execute::read(&device, &queue, image.as_buffer().unwrap()),

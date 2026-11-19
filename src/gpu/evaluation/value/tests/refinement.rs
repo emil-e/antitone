@@ -43,7 +43,7 @@ fn collect(
     queue: &wgpu::Queue,
     value: Value,
     region: CellRegion,
-    bytes: u64,
+    tile: [u32; 2],
 ) -> Result<Vec<[f32; 4]>, Error> {
     let query = context.request(
         value.clone(),
@@ -51,10 +51,7 @@ fn collect(
             bounds: region,
             grid: value.domain().grid,
         },
-        Budget {
-            tile: [region.width, region.height],
-            scratch_bytes: bytes,
-        },
+        Tiling { tile },
     )?;
     let mut pixels = vec![[0.; 4]; (region.width * region.height) as usize];
     let mut seen = std::collections::HashSet::new();
@@ -94,24 +91,25 @@ fn directly_authored_constituents_refine_their_kernel_layouts_with_the_output() 
     let root = Value::new(first.domain(), region, vec![first], Operation::new(
         "coordinate second shear", (), "fn pixel(p:vec2i, position:vec2f, a:vec4f)->vec4f { return vec4f(2.0*a.x-a.y, a.y+7.0, a.zw); }", "pixel", Access::Pointwise,
     )).unwrap();
-    let allowance = Budget {
-        tile: [8, 8],
-        scratch_bytes: 768,
-    };
+    let allowance = Tiling { tile: [8, 8] };
+    let mut limits = device.limits();
+    limits.max_storage_buffer_binding_size = 512;
     assert!(matches!(
-        root.plan_unit(region, allowance).unwrap().admit(allowance),
-        Err(Error::WorkingAllowance(_))
+        root.plan_unit(region, allowance)
+            .unwrap()
+            .admit_for(&limits),
+        Err(Error::EvaluationLimit(_))
     ));
     let small = CellRegion::new([-3, 5], [2, 2]);
     let candidate = root
         .plan_unit(small, allowance)
         .unwrap()
-        .admit(allowance)
+        .admit_for(&limits)
         .unwrap();
     assert_eq!(candidate.output, small);
     assert_eq!(cells.load(Ordering::Relaxed), 0);
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let pixels = collect(&context, &queue, root, region, allowance.scratch_bytes).unwrap();
+    let pixels = collect(&context, &queue, root, region, [2, 2]).unwrap();
     for (i, pixel) in pixels.iter().enumerate() {
         let x = region.x + (i % region.width as usize) as i32;
         let y = region.y + (i / region.width as usize) as i32;
@@ -135,7 +133,7 @@ impl GroupOperation for LazyPair {
         inputs: &[Value],
         domain: Domain,
         region: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<Calculation>, Error> {
         let inputs = Calculation::references(inputs);
         Calculation::new(domain, region, inputs, Operation::new(
@@ -157,7 +155,7 @@ fn lazy_groups_cannot_deliver_private_records_as_photographic_pixels() {
     );
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     assert!(matches!(
-        collect(&context, &queue, value, region, 1 << 20),
+        collect(&context, &queue, value, region, [4, 4]),
         Err(Error::InvalidParameter(
             "record values cannot be requested as photographic images"
         ))
@@ -172,7 +170,7 @@ impl GroupOperation for SplitWindows {
         inputs: &[Value],
         _domain: Domain,
         _output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let region = inputs[0].domain().finite()?;
         let calculated = Calculation::new(
@@ -226,7 +224,7 @@ fn shared_constituents_keep_each_window_stride_when_concatenated() {
     .request(flat)
     .unwrap();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let pixels = collect(&context, &queue, value, flat, 16 << 10).unwrap();
+    let pixels = collect(&context, &queue, value, flat, [32, 1]).unwrap();
     let expected = [region.x, region.x + 4]
         .into_iter()
         .flat_map(|left| {
@@ -264,7 +262,7 @@ fn disconnected_private_record_demands_reject_unaddressable_scratch_before_sourc
     // Each operand reads one cell, but their shared scratch rectangle spans both.
     assert!(matches!(
         root.plan_unit(output, budget(output)),
-        Err(Error::WorkingAllowance(
+        Err(Error::EvaluationLimit(
             "unit state exceeds GPU cell addressing"
         ))
     ));

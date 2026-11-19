@@ -66,10 +66,7 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
                     bounds: region.try_into().unwrap(),
                     grid: image.domain().grid,
                 },
-                Budget {
-                    tile: [2, 1],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [2, 1] },
             )
             .unwrap();
         context

@@ -3,19 +3,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn nested_production_counts_source_work_submissions_and_allocations() {
-    let (input, reads) = fixture([512, 256], vec![[2., -3., 4., 1.]; 512 * 256]);
+    let (input, reads) = fixture([512, 2560], vec![[2., -3., 4., 1.]; 512 * 2560]);
     let mapping = Mapping {
         start: [0.; 2],
-        axes: [[512., 0.], [0., 256.]],
+        axes: [[512., 0.], [0., 2560.]],
     };
-    let inner = reconstruct_mapped(input, output(mapping, [0, 0, 1, 1].into()), mapping).unwrap();
+    let inner = reconstruct_mapped(
+        cpu_boundary(input),
+        output(mapping, [0, 0, 1, 1].into()),
+        mapping,
+    )
+    .unwrap();
     let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 256 << 10,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let evaluation = context
         .request(
             root.clone(),
@@ -27,10 +29,12 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
         )
         .unwrap();
     let plan = evaluation.plans().next().unwrap().unwrap();
-    assert!(matches!(
-        plan.tiles[0].fragment.work[0],
-        Work::Produce { .. }
-    ));
+    assert!(
+        plan.tiles
+            .iter()
+            .flat_map(|tile| &tile.fragment.work)
+            .any(|work| matches!(work, Work::Produce { .. }))
+    );
 
     for delivery in ["read", "sink", "production"] {
         reads.lock().unwrap().clear();
@@ -88,7 +92,6 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                     queue: &queue,
                     gate: &gate,
                     scope: &context.materializations(),
-                    budget,
                     working: &RunWorkingSet::default(),
                     cancelled: &|| false,
                     progress: &|| {},
@@ -115,8 +118,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
             "include contributions and clear/final readouts"
         );
         assert_eq!(
-            stats.buffer_allocations as u64,
-            buffers + u64::from(delivery == "read"),
+            stats.buffer_allocations as u64, buffers,
             "{delivery}: include captures, reduction storage and the host readback"
         );
         let reads = reads.lock().unwrap();
@@ -127,7 +129,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
             reads.iter().map(cells).sum::<u64>(),
             "{delivery}"
         );
-        assert_eq!(stats.source_cells, 512 * 256);
+        assert_eq!(stats.source_cells, 512 * 2560);
         drop(reads);
         if delivery != "read" {
             actual = super::super::super::super::execute::read(&device, &queue, &pixels);

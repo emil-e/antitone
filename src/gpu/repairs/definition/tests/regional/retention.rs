@@ -39,7 +39,7 @@ impl Operation for Grade {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -79,7 +79,8 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
     let reads = Arc::new(Mutex::new(Vec::new()));
     let make = |repairs: &[Repair]| {
         let base = source(Arc::new(DamagedPlate(reads.clone())));
-        [[256, 128], [128, 64]].map(|size| {
+        // Keep the original byte footprints but cross two natural256-wide detail units.
+        [[512, 64], [128, 64]].map(|size| {
             let domain = Domain {
                 bounds: Some(CellRegion::new([0, 0], size)),
                 grid: Grid::axis_aligned([0.; 2], [512. / size[0] as f64, 256. / size[1] as f64]),
@@ -146,18 +147,14 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
             .submitted(&scope);
     }
     let before = pixels(graded[0].clone());
-    let index = 20 * 256 + 180;
-    let expected = [2. * (1. + 360.5 / 512.), 2. * (-0.5 - 40.5 / 256.), 0.5, 0.];
+    let index = 10 * 512 + 361;
+    let expected = [2. * (1. + 361. / 512.), 2. * (-0.5 - 41.5 / 256.), 0.5, 0.];
     assert!(
         (before[index][0] - expected[0]).abs() > 0.1,
         "the second defect must visibly remain before accepting its repair"
     );
     assert!(
-        reads
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|r| r.x < 256 && r.right() <= 256),
+        reads.lock().unwrap().iter().any(|r| r.x < 256),
         "cold detail acquisition must actually read the left region"
     );
     reads.lock().unwrap().clear();
@@ -171,21 +168,21 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
             .submitted(&scope);
     }
     let check_plate = |image: &[[f32; 4]]| {
-        assert_eq!(image.len(), 256 * 128);
-        for y in 0..128 {
-            for x in 0..256 {
-                // Each output averages a 2x2 block of the authored linear plate.
+        assert_eq!(image.len(), 512 * 64);
+        for y in 0..64 {
+            for x in 0..512 {
+                // Each output averages a1x4 block of the authored linear plate.
                 let expected = [
-                    2. * (1. + (2. * x as f32 + 0.5) / 512.),
-                    2. * (-0.5 - (2. * y as f32 + 0.5) / 256.),
+                    2. * (1. + x as f32 / 512.),
+                    2. * (-0.5 - (4. * y as f32 + 1.5) / 256.),
                     0.5,
                     0.,
                 ];
-                for (actual, expected) in image[y * 256 + x].into_iter().zip(expected) {
+                for (actual, expected) in image[y * 512 + x].into_iter().zip(expected) {
                     assert!(
                         (actual - expected).abs() < 2e-5,
                         "repaired plate differs at [{x}, {y}]: {:?}",
-                        image[y * 256 + x]
+                        image[y * 512 + x]
                     );
                 }
             }

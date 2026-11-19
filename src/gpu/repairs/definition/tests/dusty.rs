@@ -117,7 +117,7 @@ impl Operation for Signed {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -176,10 +176,7 @@ fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch
                 bounds: camera.domain().finite().unwrap(),
                 grid: camera.domain().grid,
             },
-            Budget {
-                tile: [512, 128],
-                scratch_bytes: 128 << 20,
-            },
+            Tiling { tile: [512, 128] },
         )
         .unwrap();
     let held = pollster::block_on(
@@ -223,10 +220,7 @@ fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch
                     bounds,
                     grid: Grid::from_frame(frame),
                 },
-                Budget {
-                    tile: frame.output,
-                    scratch_bytes: 128 << 20,
-                },
+                Tiling { tile: frame.output },
             )
             .unwrap()
     };

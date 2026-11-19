@@ -117,9 +117,8 @@ impl ViewImage {
                 bounds: region,
                 grid: root.domain().grid,
             },
-            e::Budget {
+            e::Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: 1280 << 20,
             },
         )?)?;
         let image = work.record(context)?;
@@ -239,9 +238,8 @@ impl ViewImage {
                         bounds: region,
                         grid: domain.grid,
                     },
-                    e::Budget {
+                    e::Tiling {
                         tile: [region.width, region.height],
-                        scratch_bytes: 512 << 20,
                     },
                 )
             })

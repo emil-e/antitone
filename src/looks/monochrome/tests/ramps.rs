@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     gpu::{
-        evaluation::{self, Budget, CellRegion, Domain, Grid, Meaning, Region, Source},
+        evaluation::{self, CellRegion, Domain, Grid, Meaning, Region, Source, Tiling},
         submission::SubmissionGate,
     },
     looks::LutChain,
@@ -74,10 +74,7 @@ fn all_materials_keep_neutral_exposure_order_through_both_delivered_targets() {
                             bounds: domain.finite().unwrap(),
                             grid: domain.grid,
                         },
-                        Budget {
-                            tile: [256, 1],
-                            scratch_bytes: 8 << 20,
-                        },
+                        Tiling { tile: [256, 1] },
                     )
                     .unwrap();
                 let mut encoded = vec![[f64::NAN; 3]; WIDTH as usize];

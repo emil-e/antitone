@@ -238,7 +238,7 @@ fn copy_admission_rejects_out_of_range_or_unaligned_transfers_before_execution()
             target_offset: 0,
             bytes,
         });
-        let plan = Plan::from_work(fragment, output, 1024).unwrap();
+        let plan = Plan::from_work(fragment, output).unwrap();
         assert!(matches!(
             Executor::admit(&wgpu::Limits::default(), &plan),
             Err(Error::InvalidParameter(

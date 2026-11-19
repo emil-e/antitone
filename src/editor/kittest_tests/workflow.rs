@@ -701,7 +701,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 )
                 .err();
             assert!(error.is_some());
-            editor.document.visit.working_view.error = error.map(|e| e.to_string());
+            editor.document.visit.working_view.error = error;
         });
         harness.step();
         harness.render().unwrap();

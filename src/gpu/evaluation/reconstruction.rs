@@ -431,15 +431,6 @@ fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {
     }
 }
 
-pub(crate) fn unit_cells(budget: Budget) -> u64 {
-    (budget.scratch_bytes / 128).min(
-        budget
-            .scratch_bytes
-            .saturating_sub(phases::PHASE_HEADROOM + 64)
-            / 112,
-    )
-}
-
 impl Operation for Reconstruction {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new((self.mapping, self.support)))
@@ -464,12 +455,10 @@ impl Operation for Reconstruction {
         ))
     }
 
-    fn work_units(&self, region: Rect, budget: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, region: Rect, _budget: Tiling) -> Result<WorkUnits, Error> {
         if self.tiled {
             region.validate()?;
-            let side = unit_cells(budget)
-                .isqrt()
-                .clamp(1, u64::from(MAX_UNIT_SIDE)) as i64;
+            let side = i64::from(MAX_UNIT_SIDE);
             let first = [
                 i64::from(region.x).div_euclid(side) * side,
                 i64::from(region.y).div_euclid(side) * side,
@@ -499,12 +488,25 @@ impl Operation for Reconstruction {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: Rect,
-        budget: Budget,
+        _tiling: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
-        self.express(inputs[0].clone(), domain, output, budget)
+        self.express(inputs[0].clone(), domain, output, None)
             .map(Some)
     }
+    fn calculation_with_limits(
+        self: Arc<Self>,
+        inputs: &[value::Value],
+        domain: Domain,
+        output: Rect,
+        _tiling: Tiling,
+        limits: &wgpu::Limits,
+    ) -> Result<Option<value::Calculation>, Error> {
+        let inputs = value::Calculation::references(inputs);
+        self.express(inputs[0].clone(), domain, output, Some(limits))
+            .map(Some)
+    }
+
     fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
         let demand = self.input_demand(region)?;
         let slices = self.tiled;
@@ -531,7 +533,7 @@ impl Operation for Reconstruction {
                 continue;
             }
             if reads.len() >= value::MAX_UNIT_VALUES {
-                return Err(Error::WorkingAllowance(
+                return Err(Error::EvaluationLimit(
                     "reconstruction exceeds the input-slice capacity",
                 ));
             }

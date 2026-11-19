@@ -1,10 +1,10 @@
 //! Materialize and execute declared work. No photographic-operation cases live here.
+use crate::gpu::allocation::DeviceAllocationExt;
 
 use super::*;
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
 use std::collections::HashMap;
-use wgpu::util::DeviceExt;
 
 #[cfg(not(feature = "export"))]
 macro_rules! timed {
@@ -133,21 +133,21 @@ impl Allocation {
                     uniform: false,
                 },
                 Storage::Buffer(bytes),
-            ) => buffer.size() >= *bytes,
+            ) => buffer.size() == *bytes,
             (
                 Self::Buffer {
                     buffer,
                     uniform: true,
                 },
                 Storage::Uniform(bytes),
-            ) => buffer.size() >= bytes.len() as u64,
+            ) => buffer.size() == bytes.len() as u64,
             (
                 Self::Buffer {
                     buffer,
                     uniform: false,
                 },
                 Storage::Data(bytes),
-            ) => buffer.size() >= bytes.len() as u64,
+            ) => buffer.size() == bytes.len() as u64,
             (Self::Retained(value), Storage::Image { key, layout, .. }) => {
                 value.key == *key
                     && value.descriptor.downcast_ref::<ImageLayout>() == Some(layout)
@@ -220,7 +220,6 @@ impl Programs {
 pub(super) struct Encoded {
     pub counts: WorkCounts,
     pub resources: Allocations,
-    pub working_bytes: u64,
 }
 
 pub struct Sink<E, S> {
@@ -240,9 +239,9 @@ pub struct Executor {
     pool: Vec<Option<Allocation>>,
     retained: Vec<Arc<RetainedBuffer>>,
     used_images: Vec<Arc<ImageValue>>,
+    copied_uploads: HashMap<usize, materialized::CopyCover>,
     scope: Materializations,
     pub(super) working: RunWorkingSet,
-    active: Option<Arc<Allocations>>,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     pub timestamps: Option<(wgpu::QuerySet, u32)>,
 }
@@ -278,9 +277,9 @@ impl Executor {
             pool: Vec::new(),
             retained: Vec::new(),
             used_images: Vec::new(),
+            copied_uploads: HashMap::new(),
             scope,
             working: RunWorkingSet::default(),
-            active: None,
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             timestamps: None,
         }
@@ -294,17 +293,12 @@ impl Executor {
     pub fn admit(limits: &wgpu::Limits, plan: &Plan) -> Result<(), Error> {
         if !plan.domain.contains_region(plan.region) {
             return Err(Error::InvalidParameter(
-                "evaluation plan exceeds captured domain or budget",
-            ));
-        }
-        if plan.peak_scratch_bytes > plan.scratch_budget {
-            return Err(Error::WorkingAllowance(
-                "evaluation plan exceeds captured domain or budget",
+                "evaluation plan exceeds captured domain",
             ));
         }
         let bytes = u64::from(plan.region.width) * u64::from(plan.region.height) * 16;
         if bytes > limits.max_buffer_size || bytes > limits.max_storage_buffer_binding_size {
-            return Err(Error::WorkingAllowance(
+            return Err(Error::EvaluationLimit(
                 "evaluation output exceeds GPU limits",
             ));
         }
@@ -381,7 +375,7 @@ impl Executor {
                     }
                 };
                 if invalid {
-                    return Err(Error::WorkingAllowance(
+                    return Err(Error::EvaluationLimit(
                         "evaluation resource exceeds GPU limits",
                     ));
                 }
@@ -431,7 +425,7 @@ impl Executor {
                         .iter()
                         .any(|v| *v > limits.max_compute_workgroups_per_dimension)
                     {
-                        return Err(Error::WorkingAllowance(
+                        return Err(Error::EvaluationLimit(
                             "evaluation dispatch exceeds GPU limits",
                         ));
                     }
@@ -582,14 +576,14 @@ impl Executor {
             return Ok(None);
         }
         Self::admit(&device.limits(), plan)?;
-        let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+        let pixels = device.try_create_buffer(&wgpu::BufferDescriptor {
             label: Some("evaluation retained result"),
             size: u64::from(plan.region.width) * u64::from(plan.region.height) * 16,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        })?;
         let Some(mut stats) = self.run_sink(
             device,
             queue,
@@ -666,11 +660,7 @@ impl Executor {
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         (mut sink, destination): (Sink<E, S>, Option<&wgpu::Buffer>),
-        mut produce: impl FnMut(
-            &value::Value,
-            PlannedImage,
-            (&wgpu::Buffer, u64),
-        ) -> Result<WorkCounts, Error>,
+        mut produce: impl FnMut(&value::Value, PlannedImage, &wgpu::Buffer) -> Result<WorkCounts, Error>,
     ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
@@ -691,7 +681,6 @@ impl Executor {
         }
 
         timed!(Setup, self.compile(device, plan))?;
-        let _target = destination.map(|buffer| self.working.activate_buffer(buffer));
         let mut stats = WorkCounts::default();
 
         for tile in &plan.tiles {
@@ -699,13 +688,7 @@ impl Executor {
                 return Ok(None);
             }
 
-            self.materialize(
-                device,
-                tile,
-                plan.scratch_budget,
-                &mut stats,
-                Materialization::Worker,
-            )?;
+            self.materialize(device, tile, &mut stats, Materialization::Worker)?;
             for (id, storage) in tile.fragment.resources.iter().enumerate() {
                 if let Storage::Uniform(bytes) | Storage::Data(bytes) = storage {
                     queue.write_buffer(
@@ -725,14 +708,7 @@ impl Executor {
                         .as_ref()
                         .unwrap()
                         .buffer();
-                    let nested = produce(
-                        image,
-                        *output,
-                        (
-                            pixels,
-                            plan.scratch_budget.saturating_sub(self.pool_bytes()),
-                        ),
-                    )?;
+                    let nested = produce(image, *output, pixels)?;
                     stats.include(nested);
                 }
             }
@@ -740,7 +716,17 @@ impl Executor {
                 return Ok(None);
             }
             let mut encoder = device.create_command_encoder(&Default::default());
-            self.encode_tile(device, Some(queue), &mut encoder, tile, &mut stats, &[])?;
+            match self.encode_tile(
+                device,
+                (Some(queue), &cancelled),
+                &mut encoder,
+                tile,
+                &mut stats,
+                &[],
+            ) {
+                Err(Error::Cancelled) => return Ok(None),
+                result => result?,
+            }
             let output = self.pool[tile.assignment[tile.result.resource.0]]
                 .as_ref()
                 .unwrap()
@@ -752,25 +738,21 @@ impl Executor {
 
             stats.submitted();
             let gpu_only = destination.is_some()
-                && !tile
-                    .fragment
-                    .work
-                    .iter()
-                    .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }));
+                && !tile.fragment.work.iter().any(|work| match work {
+                    Work::Upload { output, .. } => {
+                        !self.copied_uploads.contains_key(&output.resource.0)
+                    }
+                    Work::Produce { .. } => true,
+                    _ => false,
+                });
             if gpu_only {
                 let mut resources = self.resources(&tile.fragment);
                 resources.buffer(destination.unwrap());
-                self.working.submit_gpu(
-                    device,
-                    (queue, gate),
-                    encoder,
-                    resources,
-                    (self.pool_bytes(), plan.scratch_budget),
-                    || {
+                self.working
+                    .submit_gpu(device, (queue, gate), encoder, resources, || {
                         self.submitted();
                         (sink.submitted)()
-                    },
-                )?;
+                    })?;
             } else {
                 submit(device, queue, gate, encoder, || {
                     self.submitted();
@@ -787,7 +769,7 @@ impl Executor {
     fn encode_tile(
         &self,
         device: &wgpu::Device,
-        queue: Option<&wgpu::Queue>,
+        (queue, cancelled): (Option<&wgpu::Queue>, &dyn Fn() -> bool),
         encoder: &mut wgpu::CommandEncoder,
         tile: &Tile,
         stats: &mut WorkCounts,
@@ -826,6 +808,9 @@ impl Executor {
         #[cfg(not(all(test, target_os = "macos", feature = "export")))]
         let work = work.map(|work| ((), work));
         for (_index, work) in work {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
             match work {
                 Work::Produce { .. } => {}
                 Work::Copy {
@@ -867,7 +852,14 @@ impl Executor {
                     let queue = queue.ok_or(Error::InvalidParameter(
                         "record-only execution requires resident input",
                     ))?;
+                    if let Some(cover) = self.copied_uploads.get(&output.resource.0) {
+                        cover.encode(encoder, get(output.resource).buffer())?;
+                        continue;
+                    }
                     let values = timed!(SourcePrepare, source.read(output.region))?;
+                    if cancelled() {
+                        return Err(Error::Cancelled);
+                    }
                     if values.len() != output.cells() as usize
                         || !values.iter().fold(true, |valid, pixel| {
                             pixel
@@ -999,6 +991,12 @@ impl Executor {
     }
 
     pub fn prepare(mut self, device: &wgpu::Device, plan: Plan) -> Result<Recorded, Error> {
+        if plan.recording_passes() > Plan::MAX_RECORDING_PASSES {
+            return Err(Error::EvaluationLimit(
+                "recording exceeds the command-pass capacity",
+            ));
+        }
+
         if plan.tiles.len() != 1 {
             return Err(Error::InvalidParameter(
                 "record-only execution requires one bounded tile",
@@ -1020,7 +1018,6 @@ impl Executor {
         self.materialize(
             device,
             &plan.tiles[0],
-            plan.scratch_budget,
             &mut preparation,
             Materialization::Capture,
         )?;
@@ -1071,31 +1068,34 @@ impl Executor {
         &mut self,
         device: &wgpu::Device,
         tile: &Tile,
-        budget: u64,
         stats: &mut WorkCounts,
         mode: Materialization,
     ) -> Result<(), Error> {
-        self.active = None;
         self.pool.truncate(tile.slots.len());
-        let retained: u64 = tile
-            .slots
-            .iter()
-            .enumerate()
-            .map(|(index, storage)| {
-                self.pool
-                    .get(index)
-                    .and_then(Option::as_ref)
-                    .filter(|a| a.can_hold(storage))
-                    .map_or_else(|| storage.bytes(), Allocation::bytes)
-            })
-            .sum();
-        if retained > budget {
-            self.pool.clear();
-        }
         self.pool.resize_with(tile.slots.len(), || None);
 
         self.retained.clear();
         self.used_images.clear();
+        self.copied_uploads.clear();
+        if mode == Materialization::Worker {
+            let mut commands = value::MAX_UNIT_VALUES;
+            let mut remaining = value::MAX_UNIT_VALUES;
+            for work in &tile.fragment.work {
+                if let Work::Upload { source, output } = work
+                    && let Some(cover) = materialized::CopyCover::find(
+                        &self.scope,
+                        &super::source(source.clone()),
+                        output.region,
+                        commands,
+                        &mut remaining,
+                    )?
+                {
+                    commands -= cover.commands;
+                    self.used_images.extend(cover.images().cloned());
+                    self.copied_uploads.insert(output.resource.0, cover);
+                }
+            }
+        }
         for storage in &tile.slots {
             if let Storage::ResidentBuffer(image) = storage {
                 self.used_images.push(image.clone());
@@ -1118,18 +1118,9 @@ impl Executor {
                 self.pool[index] = None;
             }
         }
-        self.active = Some(self.working.activate(self.resources(&tile.fragment)));
-        let required = tile
-            .slots
-            .iter()
-            .enumerate()
-            .map(|(index, storage)| {
-                self.pool[index]
-                    .as_ref()
-                    .map_or_else(|| storage.bytes(), Allocation::bytes)
-            })
-            .sum();
-        self.working.admit_gpu(device, required, budget)?;
+        if mode == Materialization::Worker {
+            self.working.admit_gpu(device)?;
+        }
         for (index, storage) in tile.slots.iter().enumerate() {
             if self.pool[index]
                 .as_ref()
@@ -1138,12 +1129,6 @@ impl Executor {
                 if let Some(Allocation::Retained(value)) = &self.pool[index] {
                     self.retained.push(value.clone());
                 }
-                continue;
-            }
-
-            if mode == Materialization::Capture
-                && matches!(storage, Storage::Buffer(_) | Storage::Texture(_))
-            {
                 continue;
             }
 
@@ -1178,7 +1163,7 @@ impl Executor {
                         buffer: if mode != Materialization::Worker
                             && let Storage::Uniform(initial) | Storage::Data(initial) = storage
                         {
-                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            device.try_create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                 label: Some("evaluation captured constants"),
                                 contents: initial,
                                 usage: if uniform {
@@ -1188,9 +1173,9 @@ impl Executor {
                                         | wgpu::BufferUsages::COPY_SRC
                                         | wgpu::BufferUsages::COPY_DST
                                 },
-                            })
+                            })?
                         } else {
-                            device.create_buffer(&wgpu::BufferDescriptor {
+                            device.try_create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("evaluation scheduled buffer slot"),
                                 size: bytes,
                                 usage: if uniform {
@@ -1201,7 +1186,7 @@ impl Executor {
                                         | wgpu::BufferUsages::COPY_DST
                                 },
                                 mapped_at_creation: false,
-                            })
+                            })?
                         },
                         uniform,
                     }
@@ -1218,8 +1203,9 @@ impl Executor {
                             image.clone(),
                         ))
                     } else {
-                        let Some(value) =
-                            self.scope.generated_image(device, key, *layout, true, true)
+                        let Some(value) = self
+                            .scope
+                            .generated_image(device, key, *layout, true, true)?
                         else {
                             continue;
                         };
@@ -1248,7 +1234,7 @@ impl Executor {
                     }
 
                     stats.texture_allocated();
-                    let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    let texture = device.try_create_texture(&wgpu::TextureDescriptor {
                         label: Some("evaluation scheduled texture slot"),
                         size: wgpu::Extent3d {
                             width: size[0],
@@ -1262,13 +1248,12 @@ impl Executor {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                             | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
-                    });
+                    })?;
                     let view = texture.create_view(&Default::default());
                     Allocation::Texture(texture, view)
                 }
             });
         }
-        self.active = Some(self.working.activate(self.resources(&tile.fragment)));
         Ok(())
     }
 }
@@ -1284,8 +1269,9 @@ pub(crate) struct Recorded {
 }
 
 impl Recorded {
-    pub(super) fn plan_budget(&self) -> u64 {
-        self.plan.scratch_budget
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn scheduled_bytes(&self) -> u64 {
+        self.plan.scheduled_bytes()
     }
 
     #[cfg(feature = "editor")]
@@ -1300,11 +1286,6 @@ impl Recorded {
     pub(super) fn with_request(mut self, value: &value::Value, region: CellRegion) -> Self {
         self.relevance = Some(super::materializations::Relevance::new(value, region));
         self
-    }
-
-    #[cfg(all(test, feature = "editor"))]
-    pub(crate) fn scratch_bytes(&self) -> u64 {
-        self.plan.peak_scratch_bytes
     }
 
     #[cfg(test)]
@@ -1415,13 +1396,7 @@ impl Recorded {
             });
         }
         let mut stats = WorkCounts::default();
-        execution.materialize(
-            device,
-            tile,
-            self.plan.scratch_budget,
-            &mut stats,
-            Materialization::Record,
-        )?;
+        execution.materialize(device, tile, &mut stats, Materialization::Record)?;
         let mut resources = Allocations::default();
         #[cfg(feature = "editor")]
         for prerequisite in &self.prerequisites {
@@ -1434,7 +1409,14 @@ impl Recorded {
             resources.buffered(&prerequisite.pixels);
         }
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
-        execution.encode_tile(device, None, encoder, tile, &mut stats, &inputs)?;
+        execution.encode_tile(
+            device,
+            (None, &|| false),
+            encoder,
+            tile,
+            &mut stats,
+            &inputs,
+        )?;
         let output = match execution.pool[output_slot].as_ref().unwrap() {
             Allocation::Input { slot, .. } => inputs[*slot],
             allocation => allocation.buffer(),
@@ -1460,7 +1442,6 @@ impl Recorded {
         Ok(Encoded {
             counts: stats,
             resources,
-            working_bytes: execution.pool_bytes(),
         })
     }
 
@@ -1487,14 +1468,8 @@ impl Recorded {
         execution.retained = self.executor.retained.clone();
         let tile = &self.plan.tiles[0];
         let mut stats = WorkCounts::default();
-        execution.materialize(
-            device,
-            tile,
-            self.plan.scratch_budget,
-            &mut stats,
-            Materialization::Record,
-        )?;
-        execution.encode_tile(device, None, encoder, tile, &mut stats, inputs)?;
+        execution.materialize(device, tile, &mut stats, Materialization::Record)?;
+        execution.encode_tile(device, (None, &|| false), encoder, tile, &mut stats, inputs)?;
         let mut resources = execution.resources(&tile.fragment);
         for input in inputs {
             resources.buffer(input);
@@ -1502,7 +1477,6 @@ impl Recorded {
         Ok(Encoded {
             counts: stats,
             resources,
-            working_bytes: execution.pool_bytes(),
         })
     }
 

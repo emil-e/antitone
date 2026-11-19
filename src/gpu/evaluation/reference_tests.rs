@@ -468,17 +468,10 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 let image = reference
                     .compose(borrowed_input(domain), &renderer)
                     .unwrap();
-                let plan = Job::new(
-                    image,
-                    domain.finite().unwrap(),
-                    Budget {
-                        tile: [3, 2],
-                        scratch_bytes: 1 << 20,
-                    },
-                )
-                .unwrap()
-                .texture_plan(&output)
-                .unwrap();
+                let plan = Job::new(image, domain.finite().unwrap(), Tiling { tile: [3, 2] })
+                    .unwrap()
+                    .texture_plan(&output)
+                    .unwrap();
                 let fragment = &plan.tiles[0].fragment;
                 assert!(
                     !fragment
@@ -629,17 +622,10 @@ fn compare_sample_flags(look: Arc<LookAsset>) {
                 .unwrap()
                 .compose(argument.definition.clone(), &renderer)
                 .unwrap();
-                let job = Job::new(
-                    image,
-                    domain.finite().unwrap(),
-                    Budget {
-                        tile: [5, 1],
-                        scratch_bytes: 1 << 20,
-                    },
-                )
-                .unwrap()
-                .with_policy(policy)
-                .with_supplied(vec![argument].into());
+                let job = Job::new(image, domain.finite().unwrap(), Tiling { tile: [5, 1] })
+                    .unwrap()
+                    .with_policy(policy)
+                    .with_supplied(vec![argument].into());
                 let plan = job.plans().next().unwrap().unwrap();
                 let recorded = renderer
                     .evaluation
@@ -707,7 +693,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             inputs: &[crate::gpu::evaluation::value::Value],
             domain: Domain,
             output: CellRegion,
-            _budget: crate::gpu::evaluation::Budget,
+            _budget: crate::gpu::evaluation::Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
             let function = Function::new(
@@ -735,10 +721,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
     let context = renderer.evaluation();
     let scope = context.materializations();
     let gate = crate::gpu::submission::SubmissionGate::default();
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [1, 1] };
     for (fails, paired) in [(false, false), (true, false), (false, true), (true, true)] {
         let chain = |first: &Arc<LookAsset>| crate::looks::LutChain {
             lut: Some(first.clone()),
@@ -902,10 +885,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         &Default::default(),
     )
     .unwrap();
-    let budget = Budget {
-        tile: [3, 2],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [3, 2] };
     let image = reference
         .compose(borrowed_input(domain), &renderer)
         .unwrap();
@@ -960,17 +940,10 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
             .is_err()
     );
     assert!(
-        Job::new(
-            image,
-            domain.finite().unwrap(),
-            Budget {
-                tile: [2, 1],
-                ..budget
-            }
-        )
-        .unwrap()
-        .texture_plan(&output)
-        .is_err()
+        Job::new(image, domain.finite().unwrap(), Tiling { tile: [2, 1] })
+            .unwrap()
+            .texture_plan(&output)
+            .is_err()
     );
     let scene = Reference::capture(
         &device,

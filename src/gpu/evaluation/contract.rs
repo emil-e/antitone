@@ -186,9 +186,22 @@ pub trait Operation: std::any::Any + Send + Sync {
         _inputs: &[crate::gpu::evaluation::value::Value],
         _domain: Domain,
         _output: Rect,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         Ok(None)
+    }
+
+    /// Select executable expressions using actual device representation limits.
+    /// This can change coalescing, not the captured mathematics or raster grid.
+    fn calculation_with_limits(
+        self: Arc<Self>,
+        inputs: &[value::Value],
+        domain: Domain,
+        output: Rect,
+        tiling: Tiling,
+        _limits: &wgpu::Limits,
+    ) -> Result<Option<value::Calculation>, Error> {
+        self.calculation(inputs, domain, output, tiling)
     }
 
     fn access(&self) -> value::Access {
@@ -201,7 +214,7 @@ pub trait Operation: std::any::Any + Send + Sync {
         ))
     }
 
-    fn work_units(&self, output: Rect, _budget: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, output: Rect, _budget: Tiling) -> Result<WorkUnits, Error> {
         output.validate()?;
         // Ordinary GPU operations accept any admitted rectangle, including a consumer's halo.
         // Stages with intrinsic or streamed units override this decomposition.

@@ -209,10 +209,7 @@ fn read(context: &Context, queue: &wgpu::Queue, image: Value) -> Vec<DVec3> {
                 bounds: image.domain().finite().unwrap(),
                 grid: image.domain().grid,
             },
-            Budget {
-                tile: [2, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [2, 1] },
         )
         .unwrap();
     let mut result = Vec::new();

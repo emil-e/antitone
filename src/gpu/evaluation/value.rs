@@ -341,7 +341,7 @@ pub(super) fn constituents(calculation: &Calculation) -> Result<Option<Vec<Value
         }
         count += 1;
         if count > MAX_UNIT_VALUES {
-            return Err(Error::WorkingAllowance(
+            return Err(Error::EvaluationLimit(
                 "calculation exceeds the unit graph capacity",
             ));
         }
@@ -353,10 +353,11 @@ pub(super) fn constituents(calculation: &Calculation) -> Result<Option<Vec<Value
 pub(super) fn compile_unit(
     calculation: &Calculation,
     output: CellRegion,
-    budget: Budget,
+    budget: Tiling,
+    limits: Option<&wgpu::Limits>,
 ) -> Result<WorkUnit, Error> {
     if let Some(alias) = calculation.value() {
-        let expanded = super::unit::calculation(alias, output, budget)?;
+        let expanded = super::unit::calculation_with_limits(alias, output, budget, limits)?;
         if expanded
             .value()
             .is_some_and(|value| value.same_capture(alias))
@@ -365,7 +366,7 @@ pub(super) fn compile_unit(
                 "operation requires a declared executable calculation",
             ));
         }
-        return expanded.compile(output, budget);
+        return expanded.compile_with_limits(output, budget, limits);
     }
     if let Some(boundaries) = constituents(calculation)? {
         return Ok(WorkUnit {
@@ -542,9 +543,8 @@ impl Value {
         let calculation = self
             .lower(
                 region,
-                Budget {
+                Tiling {
                     tile: [region.width, region.height],
-                    scratch_bytes: 64 << 20,
                 },
             )
             .ok()?;

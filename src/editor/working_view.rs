@@ -22,7 +22,7 @@ pub(super) struct Demand {
     pub pixels: source::Context,
     pub capture: PhotographRequest,
     pub target: OutputTarget,
-    rendering: OnceLock<Result<Arc<crate::gpu::view::rendering::Request>, String>>,
+    rendering: OnceLock<Result<Arc<crate::gpu::view::rendering::Request>, Error>>,
 }
 impl Clone for Demand {
     fn clone(&self) -> Self {
@@ -42,13 +42,13 @@ impl Demand {
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         previous: Option<&SourceRequest>,
-    ) -> Result<Arc<crate::gpu::view::rendering::Request>, String> {
+    ) -> Result<Arc<crate::gpu::view::rendering::Request>, Error> {
         self.rendering
             .get_or_init(|| {
                 crate::gpu::view::rendering::Request::photograph(
                     renderer,
                     kernels,
-                    &self.pixels.scan().map_err(|error| error.to_string())?,
+                    &self.pixels.scan()?,
                     self.pixels
                         .correction
                         .as_ref()
@@ -61,7 +61,6 @@ impl Demand {
                     previous,
                 )
                 .map(Arc::new)
-                .map_err(|error| error.to_string())
             })
             .clone()
     }
@@ -143,7 +142,7 @@ pub(super) struct Mailbox(Mutex<MailboxState>, pub event_listener::Event);
 pub(super) struct Completion {
     owner: std::sync::Weak<Mailbox>,
     demand: Arc<Demand>,
-    result: Result<Arc<Frame>, String>,
+    result: Result<Arc<Frame>, Error>,
 }
 
 #[cfg(test)]
@@ -186,7 +185,9 @@ pub(super) struct WorkingView {
     rendered: Option<Arc<RenderedView>>,
     pub displayed: Option<Arc<RenderedView>>,
     pub updating: bool,
-    pub error: Option<String>,
+    pub error: Option<Error>,
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fail_next: Option<Error>,
 }
 
 impl WorkingView {
@@ -380,6 +381,28 @@ impl WorkingView {
         drop(state);
         self.refresh_support();
         self.mailbox.1.notify(usize::MAX);
+        #[cfg(all(test, feature = "ui-tests"))]
+        if let Some(error) = self.fail_next.take() {
+            self.acquisition_failed(error);
+        }
+    }
+
+    pub(super) fn presentation_failed(&mut self, error: Error) {
+        if self.error.as_ref() != Some(&error) {
+            self.log_failure("presentation", "current", None, &error);
+            if matches!(error, Error::GpuOutOfMemory(_))
+                && let Some(frame) = &self.frame
+            {
+                frame
+                    .source
+                    .renderer
+                    .evaluation()
+                    .materializations()
+                    .evict_optional();
+            }
+        }
+        self.failed = self.wanted.clone();
+        self.error = Some(error);
     }
 
     pub(super) fn acquisition(&self) -> Option<Acquisition> {
@@ -444,7 +467,9 @@ impl WorkingView {
                     "acquired view does not satisfy requested source/layout",
                 );
                 self.failed = Some(demand);
-                self.error = Some("acquired view does not satisfy requested source/layout".into());
+                self.error = Some(Error::InvalidParameter(
+                    "acquired view does not satisfy requested source/layout",
+                ));
             }
             Err(error) => {
                 self.log_failure("acquisition", "current", Some(&demand), &error);
@@ -460,12 +485,12 @@ impl WorkingView {
         phase: &str,
         disposition: &str,
         request: Option<&Demand>,
-        error: &str,
+        error: impl std::fmt::Display,
     ) {
         log::warn!(
             phase = phase,
             disposition = disposition,
-            error = error,
+            error = error.to_string(),
             request_frame:? = request.map(|demand| demand.frame),
             wanted_frame:? = self.wanted.as_ref().map(|demand| demand.frame),
             inspection:? = request.map(|demand| demand.capture.is_inspection()),
@@ -474,7 +499,7 @@ impl WorkingView {
         );
     }
 
-    pub(super) fn acquisition_failed(&mut self, error: String) {
+    pub(super) fn acquisition_failed(&mut self, error: Error) {
         self.failed = self.mailbox.0.lock().unwrap().demand.clone();
         self.log_failure("preparation", "current", self.failed.as_deref(), &error);
         self.error = Some(error);
@@ -545,7 +570,7 @@ impl WorkingView {
             .is_some_and(|failed| failed.same_calculation(&wanted))
             && let Some(error) = &self.error
         {
-            return Err(Error::Gpu(error.clone()));
+            return Err(error.clone());
         }
         let Some(frame) = self.frame.clone() else {
             self.updating = true;
@@ -715,9 +740,8 @@ pub(super) async fn acquire_images(
                 .completed
                 .as_ref()
                 .map(|frame| frame.source.spec.clone());
-            let rendering = demand
-                .rendering(renderer.clone(), kernels.clone(), previous.as_ref())
-                .map_err(Error::Gpu)?;
+            let rendering =
+                demand.rendering(renderer.clone(), kernels.clone(), previous.as_ref())?;
             trace("graph_described");
             let Some(images) = rendering.produce(queue, submissions, &cancelled).await? else {
                 return Ok(None);
@@ -729,11 +753,13 @@ pub(super) async fn acquire_images(
                 images,
             ))))
         }
-        .await
-        .map_err(|error: Error| error.to_string());
+        .await;
         trace("acquisition_finished");
         if cancelled() {
             return None;
+        }
+        if matches!(&result, Err(Error::GpuOutOfMemory(_))) {
+            renderer.evaluation().materializations().evict_optional();
         }
         let mut state = mailbox.0.lock().unwrap();
         if let Ok(Some(frame)) = &result
@@ -768,6 +794,23 @@ pub(super) async fn acquire_images(
 }
 
 impl Editor {
+    pub(super) fn preview_failure_status(&self) -> Option<(ui::ContextualStatus, &Error)> {
+        let error = self.document.visit.working_view.error.as_ref()?;
+        let preview = if self.canvas_frame.displayed.is_some() {
+            "Preview not updated — showing previous image"
+        } else {
+            "Preview unavailable"
+        };
+        let reason = match error {
+            Error::GpuOutOfMemory(_) => "not enough graphics memory",
+            _ => "calculation failed",
+        };
+        Some((
+            ui::ContextualStatus::new(ui::StatusLevel::Error, format!("{preview}: {reason}")),
+            error,
+        ))
+    }
+
     pub(super) fn working_view(
         &mut self,
         frame: FrameRaster,
@@ -843,7 +886,7 @@ impl Acquisition {
         self,
         services: source::Services,
         submissions: crate::platform::SubmissionGate,
-    ) -> Result<Option<Completion>, String> {
+    ) -> Result<Option<Completion>, Error> {
         let kernels = self.kernels.clone();
         let prepared = crate::background::run(move |stop| {
             if stop.is_cancelled() {
@@ -860,8 +903,7 @@ impl Acquisition {
             Ok::<_, crate::Error>(Some((services, renderer, pipelines)))
         })
         .await
-        .map_err(|_| "Working-source preparation worker panicked".to_owned())?
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| Error::Gpu("Working-source preparation worker panicked".into()))??;
         let Some((services, renderer, kernels)) = prepared else {
             return Ok(None);
         };
@@ -897,7 +939,7 @@ impl Editor {
             self.document
                 .visit
                 .working_view
-                .acquisition_failed("Working-source services unavailable".into());
+                .acquisition_failed(Error::Gpu("Working-source services unavailable".into()));
             return;
         };
         let Some(request) = self.document.visit.working_view.acquisition() else {
@@ -939,7 +981,7 @@ impl Editor {
             self.document
                 .visit
                 .working_view
-                .acquisition_failed("Application stopped".into());
+                .acquisition_failed(Error::Gpu("Application stopped".into()));
             return;
         };
         self.document.visit.working_view.task = Some(task);

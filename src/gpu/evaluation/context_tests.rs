@@ -64,7 +64,7 @@ impl Operation for ApplyField {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let code = r#"
@@ -113,9 +113,8 @@ fn request(context: &Context, image: Value, bounds: SourceRegion) -> Evaluation 
                 bounds,
                 grid: image.domain.grid,
             },
-            Budget {
+            Tiling {
                 tile: [bounds.width, bounds.height],
-                scratch_bytes: 1 << 20,
             },
         )
         .unwrap()
@@ -159,14 +158,7 @@ fn evaluation_preserves_the_requested_grid_and_cancels_before_source_acquisition
     region.grid.axes[0][0] = 2.;
     assert!(
         context
-            .request(
-                image,
-                region,
-                Budget {
-                    tile: [5, 4],
-                    scratch_bytes: 1 << 20
-                }
-            )
+            .request(image, region, Tiling { tile: [5, 4] })
             .is_err()
     );
     let mut actual = None;
@@ -417,6 +409,7 @@ fn abandoning_an_unsubmitted_generated_value_releases_its_reservation() {
             true,
             true,
         )
+        .unwrap()
         .unwrap();
     assert!(!work.ready());
     assert_eq!(context.retained_bytes(), layout.bytes());

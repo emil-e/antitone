@@ -612,7 +612,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     ([0., 0., 1., 1.], [0, 1, 2, 3, 4, 5, 6, 7]),
                     ([0.25, 0., 0.5, 1.], [1, 1, 2, 2, 5, 5, 6, 6]),
                 ] {
-                    let group = image.presentation_group(&device, uv);
+                    let group = image.presentation_group(&device, uv).unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
                     {
                         let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -766,7 +766,8 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
                                             ]),
                                             area,
                                         );
-                                        let group = image.presentation_group(&device, mapping);
+                                        let group =
+                                            image.presentation_group(&device, mapping).unwrap();
                                         let mut encoder =
                                             device.create_command_encoder(&Default::default());
                                         {

@@ -1,5 +1,6 @@
 //! One scoped lookup for live production, active images and optionally retained image storage.
 use super::*;
+use crate::gpu::allocation::DeviceAllocationExt;
 use futures_util::{
     FutureExt,
     future::{BoxFuture, Shared, WeakShared},
@@ -77,8 +78,7 @@ impl PartialEq for ImageStorage {
 impl Eq for ImageStorage {}
 pub struct ImageValue {
     pub(super) storage: ImageStorage,
-    // The charge follows physical image owners, including recorded consumers, not UI retention.
-    // Cached outputs can discover a live consumer's inputs without retaining them themselves.
+    // Cached outputs can discover a live consumer's reusable inputs without retaining them.
     inputs: Mutex<Weak<Vec<Arc<ImageValue>>>>,
 }
 impl std::fmt::Debug for ImageValue {
@@ -391,7 +391,6 @@ struct State {
 }
 #[derive(Clone, Copy)]
 pub(super) struct RequestPolicy {
-    pub budget: Option<Budget>,
     pub retain: bool,
 }
 
@@ -400,7 +399,7 @@ struct Entry {
     key: RetainedKey,
     descriptor: Arc<dyn Any + Send + Sync>,
     value: EntryState,
-    budget: Option<Budget>,
+
     retain: bool,
     retained: Option<Arc<ImageValue>>,
     lease: Option<Arc<cache::Lease>>,
@@ -495,6 +494,15 @@ impl Materializations {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    pub(crate) fn evict_optional(&self) {
+        let mut entries = self.0.entries.lock().unwrap();
+        for entry in entries.iter_mut() {
+            entry.retained = None;
+            entry.lease = None;
+        }
+        sweep(&mut entries);
+    }
+
     pub fn clear(&self) {
         self.0.entries.lock().unwrap().clear();
     }
@@ -560,15 +568,10 @@ impl Materializations {
         can_supply: impl Fn(&D) -> bool,
         policy: RequestPolicy,
     ) -> Option<ImageFuture<D>> {
-        let budget = policy.budget;
         sweep(entries);
         let index = entries.iter().rposition(|entry| {
             entry.key == *key
                 && !matches!(entry.value, EntryState::Recording { .. })
-                && (matches!(entry.value, EntryState::Complete(_))
-                    || budget.is_none()
-                    || entry.budget.is_none()
-                    || entry.budget == budget)
                 && entry
                     .descriptor
                     .downcast_ref::<D>()
@@ -600,10 +603,7 @@ impl Materializations {
             &mut self.0.entries.lock().unwrap(),
             key,
             can_supply,
-            RequestPolicy {
-                budget: None,
-                retain: false,
-            },
+            RequestPolicy { retain: false },
         )
     }
     pub(super) fn find_for<D: Any + Send + Sync>(
@@ -632,6 +632,30 @@ impl Materializations {
                 })
             })
             .collect()
+    }
+
+    // Copy readers need physical output owners, not leases on their producers' inputs.
+    // Count inspected entries, including misses, against the caller's shared work bound.
+    pub(super) fn ready_bounded<D: Any + Send + Sync>(
+        &self,
+        key: &RetainedKey,
+        remaining: &mut usize,
+    ) -> Vec<(Arc<D>, Arc<ImageValue>)> {
+        let entries = self.0.entries.lock().unwrap();
+        let mut images = Vec::new();
+        for entry in entries.iter().rev() {
+            let Some(next) = remaining.checked_sub(1) else {
+                break;
+            };
+            *remaining = next;
+            if entry.key == *key
+                && let Some(image) = entry.value.image()
+                && let Ok(descriptor) = entry.descriptor.clone().downcast::<D>()
+            {
+                images.push((descriptor, image));
+            }
+        }
+        images
     }
 
     #[cfg(feature = "editor")]
@@ -721,7 +745,7 @@ impl Materializations {
                 key: image.identity.clone(),
                 descriptor: image.descriptor.clone(),
                 value: EntryState::Complete(Arc::downgrade(&image.image)),
-                budget: None,
+
                 retain: false,
                 retained: None,
                 lease: None,
@@ -748,10 +772,7 @@ impl Materializations {
             key,
             descriptor,
             bytes,
-            RequestPolicy {
-                budget: None,
-                retain: true,
-            },
+            RequestPolicy { retain: true },
             produce,
         )
     }
@@ -803,7 +824,6 @@ impl Materializations {
         &self,
         key: RetainedKey,
         layout: Arc<ImageLayout>,
-        budget: Budget,
     ) -> (ImageFuture<ImageLayout>, Option<InlineProducer>) {
         let mut entries = self.0.entries.lock().unwrap();
         // A queued root/batch cannot be awaited by a worker it may depend on. Fulfil its
@@ -812,7 +832,6 @@ impl Materializations {
         entries.retain(|entry| {
             let queued = entry.key == key
                 && entry.descriptor.downcast_ref::<ImageLayout>() == Some(layout.as_ref())
-                && (entry.budget.is_none() || entry.budget == Some(budget))
                 && matches!(entry.value, EntryState::Producing { inline: false, .. });
             if queued {
                 reserved_retention = Some(reserved_retention.unwrap_or(false) || entry.retain);
@@ -820,7 +839,6 @@ impl Materializations {
             !queued
         });
         let policy = RequestPolicy {
-            budget: Some(budget),
             retain: reserved_retention.unwrap_or(true),
         };
         if let Some(value) = self.find_entry(
@@ -899,7 +917,7 @@ impl Materializations {
                 result: result.downgrade().unwrap(),
                 inline: false,
             },
-            budget: policy.budget,
+
             retain: policy.retain,
             retained: None,
             lease: None,
@@ -927,17 +945,7 @@ impl Materializations {
         self.obtain_many_for(
             requests
                 .into_iter()
-                .map(|(key, layout, bytes)| {
-                    (
-                        key,
-                        layout,
-                        bytes,
-                        RequestPolicy {
-                            budget: None,
-                            retain: true,
-                        },
-                    )
-                })
+                .map(|(key, layout, bytes)| (key, layout, bytes, RequestPolicy { retain: true }))
                 .collect(),
             produce,
         )
@@ -1013,7 +1021,7 @@ impl Materializations {
         layout: ImageLayout,
         retain: bool,
         required: bool,
-    ) -> Option<Arc<cache::RetainedBuffer>> {
+    ) -> Result<Option<Arc<cache::RetainedBuffer>>, Error> {
         let descriptor = layout;
         let bytes = layout.bytes();
         let mut entries = self.0.entries.lock().unwrap();
@@ -1040,7 +1048,7 @@ impl Materializations {
             }
             entries.insert(index, entry);
             if resource.is_some() {
-                return resource;
+                return Ok(resource);
             }
         }
         let pending = entries.iter().any(|entry| {
@@ -1055,16 +1063,16 @@ impl Materializations {
             self.reserve(&mut entries, bytes)
         };
         if lease.is_none() && !required {
-            return None;
+            return Ok(None);
         }
-        let image = ImageValue::new(device.create_buffer(&wgpu::BufferDescriptor {
+        let image = ImageValue::new(device.try_create_buffer(&wgpu::BufferDescriptor {
             label: Some("evaluation generated value"),
             size: bytes,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        }));
+        })?);
         let descriptor: Arc<dyn Any + Send + Sync> = Arc::new(descriptor);
         let publication = {
             let (sender, receiver) = futures_channel::oneshot::channel();
@@ -1083,7 +1091,7 @@ impl Materializations {
                 value: EntryState::Recording {
                     result: result.downgrade().unwrap(),
                 },
-                budget: None,
+
                 retain,
                 retained: None,
                 lease,
@@ -1109,7 +1117,7 @@ impl Materializations {
         {
             entry.initializer = Some(Arc::downgrade(&resource));
         }
-        Some(resource)
+        Ok(Some(resource))
     }
 }
 

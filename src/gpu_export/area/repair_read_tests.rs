@@ -41,27 +41,13 @@ fn masked_replacement_declares_only_its_requested_original_cells_without_reading
         (e::CellRegion::new([100, 100], [8, 8]), Vec::new()),
     ] {
         assert_eq!(
-            root.regions_for(
-                &replacement,
-                output,
-                e::Budget {
-                    tile: [128; 2],
-                    scratch_bytes: 1 << 20
-                }
-            )
-            .unwrap(),
+            root.regions_for(&replacement, output, e::Tiling { tile: [128; 2] })
+                .unwrap(),
             expected
         );
         assert_eq!(
-            root.regions_for(
-                &base,
-                output,
-                e::Budget {
-                    tile: [128; 2],
-                    scratch_bytes: 1 << 20
-                }
-            )
-            .unwrap(),
+            root.regions_for(&base, output, e::Tiling { tile: [128; 2] })
+                .unwrap(),
             vec![output]
         );
     }

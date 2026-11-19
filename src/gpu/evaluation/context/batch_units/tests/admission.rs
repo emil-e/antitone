@@ -35,7 +35,7 @@ impl GpuKernel for FixedScratchKernel {
 }
 
 #[test]
-fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance() {
+fn related_valid_roots_execute_once_without_fractional_working_reserves() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -45,14 +45,10 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Neutral,
     };
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 1024,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let calls = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
     let evaluations = [5f32, 9.].map(|value| {
-        // Include real packed arguments: this compiled implementation fits its own
-        // allowance but not the shared descriptor allowance of 748 bytes.
+        // Packed tables and persistent state must both participate in real execution.
         let root = Value::new(
             domain,
             region,
@@ -74,13 +70,10 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
                     bounds: region,
                     grid: domain.grid,
                 },
-                Budget {
-                    scratch_bytes: 748,
-                    ..budget
-                },
+                budget,
             )
             .unwrap();
-        let rejected = pollster::block_on(
+        let first = pollster::block_on(
             context
                 .materialize(
                     &queue,
@@ -92,12 +85,10 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
                 )
                 .unwrap(),
         );
-        assert!(
-            matches!(
-                rejected.as_ref().err().map(|error| error.as_ref()),
-                Some(Error::WorkingAllowance(_))
-            ),
-            "the shared descriptor allowance cannot execute this root"
+        let first = first.unwrap();
+        assert_eq!(
+            crate::gpu::evaluation::execute::read(&device, &queue, first.as_buffer().unwrap()),
+            vec![[value; 4]]
         );
         let evaluation = context
             .request(
@@ -159,7 +150,7 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
                         }))),
                     }),
                 }
-                .admit_for(budget, &device.limits())
+                .admit_for(&device.limits())
                 .unwrap(),
             ),
         })
@@ -176,15 +167,11 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
         queue: &queue,
         gate: &gate,
         scope: &scope,
-        budget,
         working: &working,
         cancelled: &|| false,
         progress: &|| {},
     };
-    let images = worker
-        .materialize_targets(targets, 40, 1024)
-        .unwrap()
-        .unwrap();
+    let images = worker.materialize_targets(targets).unwrap().unwrap();
     for ((image, value), calls) in images.iter().zip([5., 9.]).zip(calls) {
         assert_eq!(
             crate::gpu::evaluation::execute::read(&device, &queue, image.as_buffer().unwrap()),
@@ -193,12 +180,12 @@ fn aggregate_phase_admission_retries_each_root_under_its_own_working_allowance()
         assert_eq!(
             calls.load(Ordering::Relaxed),
             1,
-            "each shared backend attempt must actually reach phase admission"
+            "each backend executes once, without rejection and retry"
         );
     }
     assert_eq!(
         submissions.load(Ordering::Relaxed),
         2,
-        "both roots must independently execute after aggregate rejection"
+        "each valid root submits its declared phase"
     );
 }

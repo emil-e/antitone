@@ -3,9 +3,9 @@
 use crate::Error;
 use crate::coverage::Coverage;
 use crate::gpu::evaluation;
-use crate::gpu::evaluation::Budget;
 use crate::gpu::evaluation::Grid;
 use crate::gpu::evaluation::Region;
+use crate::gpu::evaluation::Tiling;
 use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::photograph::PhotographGraph;
@@ -72,10 +72,7 @@ impl<'a> Samples<'a> {
                 bounds: self.coverage.bounds(self.scan.area)?.try_into()?,
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
-            Budget {
-                tile: [512, 128],
-                scratch_bytes: 32 << 20,
-            },
+            Tiling { tile: [512, 128] },
         )?;
 
         let result = self.renderer.evaluation().read(

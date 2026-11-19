@@ -114,10 +114,7 @@ fn query(context: &Context, root: Value, region: CellRegion) -> Evaluation {
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap()
 }
@@ -222,7 +219,7 @@ impl Operation for ConstantCpu {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new("constant signed HDR CPU image"))
     }
-    fn work_units(&self, _: CellRegion, _: Budget) -> Result<WorkUnits, crate::Error> {
+    fn work_units(&self, _: CellRegion, _: Tiling) -> Result<WorkUnits, crate::Error> {
         Ok(Box::new(std::iter::once([0, 0, 8, 4].into())))
     }
     fn calculation(
@@ -230,7 +227,7 @@ impl Operation for ConstantCpu {
         _inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         _: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         Ok(Some(value::Calculation::new(
             domain,
@@ -325,6 +322,16 @@ fn consume_backend(
     stop: Arc<AtomicBool>,
     unit: WorkUnit,
 ) -> thread::JoinHandle<Result<Option<Vec<[f32; 4]>>, crate::Error>> {
+    consume_backend_observed(context, queue, evaluation, stop, unit, Arc::new(|| {}))
+}
+fn consume_backend_observed(
+    context: Context,
+    queue: wgpu::Queue,
+    evaluation: Evaluation,
+    stop: Arc<AtomicBool>,
+    unit: WorkUnit,
+    progress: Arc<dyn Fn() + Send + Sync>,
+) -> thread::JoinHandle<Result<Option<Vec<[f32; 4]>>, crate::Error>> {
     thread::spawn(move || {
         let scope = context.materializations();
         let gate = crate::gpu::submission::SubmissionGate::default();
@@ -336,9 +343,8 @@ fn consume_backend(
             gate: &gate,
             scope: &scope,
             working: &working,
-            budget: evaluation.job.budget(),
             cancelled: &cancelled,
-            progress: &|| {},
+            progress: &*progress,
         };
         let whole = unit.output;
         let image =
@@ -467,10 +473,7 @@ fn retiring_a_queued_materialization_does_not_claim_or_run_its_unit() {
                 bounds: root.domain().finite().unwrap(),
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 4] },
         )
         .unwrap();
     let scope = context.materializations();
@@ -572,8 +575,8 @@ fn concurrent_regions_join_one_gpu_unit_while_its_upstream_cpu_dependency_is_run
     assert_eq!(context.retained_bytes(), 0);
 }
 
-struct BudgetSource(Arc<Gate>);
-impl Source for BudgetSource {
+struct GatedSource(Arc<Gate>);
+impl Source for GatedSource {
     fn domain(&self) -> Domain {
         Domain {
             bounds: Some([0, 0, 1, 1].into()),
@@ -581,7 +584,7 @@ impl Source for BudgetSource {
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new("gated constant budget source"))
+        Some(RetainedKey::new("gated constant source"))
     }
     fn read(&self, _: CellRegion) -> Result<Vec<[f32; 4]>, crate::Error> {
         self.0.entered.fetch_add(1, Ordering::AcqRel);
@@ -589,8 +592,8 @@ impl Source for BudgetSource {
         Ok(vec![[3., 5., 7., 0.]])
     }
 }
-struct BudgetGpu;
-impl BudgetGpu {
+struct CountedGpu(Arc<AtomicUsize>);
+impl CountedGpu {
     fn unit(&self, node: &Value) -> WorkUnit {
         let domain = node.domain();
         let output = domain.finite().unwrap();
@@ -601,7 +604,7 @@ impl BudgetGpu {
                 kernel: Arc::new(ClearGpu {
                     domain,
                     region: output,
-                    clears: Arc::new(AtomicUsize::new(0)),
+                    clears: self.0.clone(),
                 }),
             },
             GpuPhase {
@@ -626,9 +629,8 @@ impl BudgetGpu {
     }
 }
 #[test]
-fn incompatible_pending_budgets_do_not_share_an_admission_failure_but_completed_values_are_reusable()
- {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+fn traversal_tiles_join_one_pending_natural_unit_and_reuse_its_completed_image() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
         CachePolicy {
@@ -636,8 +638,7 @@ fn incompatible_pending_budgets_do_not_share_an_admission_failure_but_completed_
         },
     );
     let gate = Arc::new(Gate::default());
-    let input = source(Arc::new(BudgetSource(gate.clone())));
-    let root = backend_value(input);
+    let root = backend_value(source(Arc::new(GatedSource(gate.clone()))));
     let small = context
         .request(
             root.clone(),
@@ -645,39 +646,54 @@ fn incompatible_pending_budgets_do_not_share_an_admission_failure_but_completed_
                 bounds: [0, 0, 1, 1].into(),
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 64,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
-    let large = query(&context, root.clone(), [0, 0, 1, 1].into());
+    let large = context
+        .request(
+            root.clone(),
+            Region {
+                bounds: [0, 0, 1, 1].into(),
+                grid: root.domain().grid,
+            },
+            Tiling { tile: [8, 4] },
+        )
+        .unwrap();
+    assert_ne!(small.job.tiling(), large.job.tiling());
+    let clears = Arc::new(AtomicUsize::new(0));
+    let backend = CountedGpu(clears.clone());
     let first = consume_backend(
         context.clone(),
         queue.clone(),
         small.clone(),
         Arc::new(AtomicBool::new(false)),
-        BudgetGpu.unit(&root),
+        backend.unit(&root),
     );
-    until(|| gate.entered.load(Ordering::Acquire) > 0);
-    let second = consume_backend(
+    until(|| gate.entered.load(Ordering::Acquire) == 1);
+    let waiting = Arc::new(AtomicUsize::new(0));
+    let observed = waiting.clone();
+    let second = consume_backend_observed(
         context.clone(),
         queue.clone(),
         large,
         Arc::new(AtomicBool::new(false)),
-        BudgetGpu.unit(&root),
+        backend.unit(&root),
+        Arc::new(move || {
+            observed.fetch_add(1, Ordering::Release);
+        }),
     );
-    until(|| gate.entered.load(Ordering::Acquire) >= 2);
+    until(|| waiting.load(Ordering::Acquire) > 0);
     gate.release.store(true, Ordering::Release);
+    for worker in [first, second] {
+        assert_eq!(
+            worker.join().unwrap().unwrap().unwrap(),
+            vec![[3., 5., 7., 0.]]
+        );
+    }
     assert_eq!(
-        first.join().unwrap(),
-        Err(crate::Error::WorkingAllowance(
-            "evaluation tile exceeds scratch budget"
-        ))
-    );
-    assert_eq!(
-        second.join().unwrap().unwrap().unwrap(),
-        vec![[3., 5., 7., 0.]]
+        clears.load(Ordering::Acquire),
+        1,
+        "one actual GPU producer, not merely shared source IO"
     );
     assert_eq!(
         consume_backend(
@@ -685,16 +701,16 @@ fn incompatible_pending_budgets_do_not_share_an_admission_failure_but_completed_
             queue,
             small,
             Arc::new(AtomicBool::new(false)),
-            BudgetGpu.unit(&root)
+            backend.unit(&root)
         )
         .join()
         .unwrap()
         .unwrap()
         .unwrap(),
-        vec![[3., 5., 7., 0.]],
-        "the small request can consume a completed image without producing it"
+        vec![[3., 5., 7., 0.]]
     );
-    assert_eq!(gate.entered.load(Ordering::Acquire), 2);
+    assert_eq!(gate.entered.load(Ordering::Acquire), 1);
+    assert_eq!(clears.load(Ordering::Acquire), 1);
 }
 
 struct PlusOne;
@@ -710,7 +726,7 @@ impl Operation for PlusOne {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -743,10 +759,7 @@ fn one_worker_pool_completes_nested_units_and_dependent_batches_in_both_orders()
                         bounds: node.domain().finite().unwrap(),
                         grid: node.domain().grid,
                     },
-                    Budget {
-                        tile: [8, 4],
-                        scratch_bytes: 1 << 20,
-                    },
+                    Tiling { tile: [8, 4] },
                 )
                 .unwrap()
         };
@@ -891,7 +904,7 @@ fn a_host_image_is_not_mistaken_for_a_resident_gpu_buffer() {
         domain,
         region: domain.finite().unwrap(),
     };
-    let plan = Plan::from_work(fragment, result, 1 << 20).unwrap();
+    let plan = Plan::from_work(fragment, result).unwrap();
     assert!(matches!(
         Executor::admit(&device.limits(), &plan),
         Err(crate::Error::InvalidParameter(_))
@@ -927,7 +940,7 @@ fn bounded_run_ownership_uses_common_discovery_without_optional_retention() {
     publish(second.clone(), 2.);
     assert!(
         scope.ready::<ImageLayout>(&first).is_empty(),
-        "the live working allowance must stay bounded"
+        "run-owned host reuse stays bounded"
     );
     assert_eq!(scope.ready::<ImageLayout>(&second).len(), 1);
     assert_eq!(context.retained_bytes(), 0);

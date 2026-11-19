@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     geometry::{Composition, FramePoint},
     gpu::evaluation::{
-        Budget, CellRegion, CpuImage, CpuKernel, Domain, Operation, Read, Value, WorkUnits, value,
+        CellRegion, CpuImage, CpuKernel, Domain, Operation, Read, Tiling, Value, WorkUnits, value,
     },
 };
 use std::sync::Arc;
@@ -34,7 +34,7 @@ impl Operation for DeclaredOperation {
     fn reads(&self, _: CellRegion) -> Result<Vec<Read>, Error> {
         panic!("dependency queries must use the unit's reads")
     }
-    fn work_units(&self, output: CellRegion, _: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, output: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
         Ok(Box::new(std::iter::once(
             self.definition.natural.unwrap_or(output),
         )))
@@ -44,7 +44,7 @@ impl Operation for DeclaredOperation {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let mut low = [
             i64::from(output.x) - i64::from(self.definition.before[0]),
@@ -255,7 +255,7 @@ impl Operation for Merge {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,

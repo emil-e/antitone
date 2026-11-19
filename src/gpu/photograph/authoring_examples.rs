@@ -109,7 +109,7 @@ impl Operation for Tent {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: Rect,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let horizontal = output.expanded([0, self.support.0[1]], domain.bounds)?;

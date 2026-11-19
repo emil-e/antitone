@@ -123,10 +123,7 @@ pub(super) fn make_plan_with_policy(node: Value, tile: [u32; 2], policy: Policy)
     Plan::with_policy(
         node.clone(),
         node.domain.finite().unwrap(),
-        Budget {
-            tile,
-            scratch_bytes: 32 << 20,
-        },
+        Tiling { tile },
         policy,
     )
     .unwrap()
@@ -280,7 +277,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
     let node = chain(&device, &renderer, Arc::new(data.clone()), false, None, 0.9);
     let plan = make_plan_with_policy(node, [13, 11], Policy::Composed);
     assert_eq!(plan.domain.meaning, Meaning::Graded);
-    assert!(plan.peak_scratch_bytes <= 32 << 20);
+    assert!(plan.scheduled_bytes() <= 32 << 20);
     assert!(plan.tiles.len() > 1);
     let first = &plan.tiles[0];
     let maps = first

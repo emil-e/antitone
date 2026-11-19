@@ -21,7 +21,7 @@ impl Operation for Alias {
         inputs: &[value::Value],
         _: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         Ok(Some(value::Calculation::input(inputs[0].request(output)?)))
     }
@@ -57,10 +57,7 @@ fn cold_aliases_compile_owned_backend_units_and_reuse_their_actual_result() {
                     bounds: region,
                     grid: core.domain().grid,
                 },
-                Budget {
-                    tile: [8, 4],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [8, 4] },
             )
             .unwrap();
         pollster::block_on(
@@ -109,14 +106,7 @@ fn unsupported_definitions_reject_without_recursively_describing_themselves() {
         Undefined,
     );
     assert!(matches!(
-        super::unit::plan(
-            &root,
-            region,
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 1024
-            }
-        ),
+        super::unit::plan(&root, region, Tiling { tile: [1, 1] }),
         Err(Error::InvalidParameter(
             "operation requires a declared executable calculation"
         ))
@@ -155,7 +145,7 @@ impl Operation for Triple {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -181,7 +171,7 @@ impl Operation for WholeCpu {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(self.region))
     }
-    fn work_units(&self, _: CellRegion, _: Budget) -> Result<WorkUnits, crate::Error> {
+    fn work_units(&self, _: CellRegion, _: Tiling) -> Result<WorkUnits, crate::Error> {
         Ok(Box::new(std::iter::once(self.region)))
     }
     fn calculation(
@@ -189,7 +179,7 @@ impl Operation for WholeCpu {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         _: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let output = self.region;
         let donor = CellRegion::new(
@@ -283,10 +273,7 @@ fn gpu_cpu_gpu_chain_assembles_nonlocal_inputs_and_reuses_the_natural_unit() {
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
     assert_eq!(
@@ -338,10 +325,7 @@ fn a_whole_cpu_unit_larger_than_gpu_scratch_is_reused_across_output_tiles() {
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 512,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
     let mut pixels = Vec::new();
@@ -384,10 +368,7 @@ fn cpu_cancellation_does_not_publish_a_partial_downstream_result() {
                 bounds: [2, 1, 2, 2].into(),
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
     let mut published = false;
@@ -422,7 +403,7 @@ impl Operation for Offset {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function=Function::new("@group(0) @binding(0) var<uniform> parameters:vec4f; fn offset(p:vec4f, at:vec2f)->vec4f { return vec4f(p.rgb+vec3f(parameters.x),p.w); }", "offset")
@@ -446,7 +427,7 @@ impl Operation for Merge {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let operands = inputs
@@ -505,10 +486,7 @@ fn independent_cpu_dependencies_are_fulfilled_before_intervening_gpu_commands() 
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [2, 2],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [2, 2] },
         )
         .unwrap();
     let mut values = Vec::new();
@@ -556,10 +534,7 @@ fn nested_cpu_readback_keeps_the_requested_materialization_scope() {
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
     let isolated = query
@@ -619,14 +594,11 @@ fn an_owned_gpu_unit_materialization_executes_without_joining_its_own_pending_re
         },
     )
     .unwrap();
-    let allowance = Budget {
-        tile: [4, 1],
-        scratch_bytes: 32 << 10,
-    };
+    let allowance = Tiling { tile: [4, 1] };
     let unit = root
         .plan_unit(region, allowance)
         .unwrap()
-        .admit_for(allowance, &device.limits())
+        .admit_for(&device.limits())
         .unwrap();
     assert!(
         matches!(unit.work, UnitWork::Gpu(ref gpu) if !gpu.state.is_empty()),

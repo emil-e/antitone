@@ -98,9 +98,8 @@ fn record(
     let plan = Plan::with_policy(
         root,
         region,
-        Budget {
+        Tiling {
             tile: [region.width, region.height],
-            scratch_bytes: 8 << 20,
         },
         Policy::Composed,
     )

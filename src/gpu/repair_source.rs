@@ -21,7 +21,7 @@ pub(crate) struct Source<'a> {
     queue: &'a wgpu::Queue,
     submissions: &'a SubmissionGate,
     image: evaluation::Value,
-    budget: evaluation::Budget,
+    budget: evaluation::Tiling,
 }
 
 impl<'a> Source<'a> {
@@ -57,10 +57,7 @@ impl<'a> Source<'a> {
             queue: gpu.0,
             submissions: gpu.1,
             image,
-            budget: evaluation::Budget {
-                tile: [512, 128],
-                scratch_bytes: 32 << 20,
-            },
+            budget: evaluation::Tiling { tile: [512, 128] },
         })
     }
 

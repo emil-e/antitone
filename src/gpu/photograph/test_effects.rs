@@ -68,7 +68,7 @@ impl Operation for Neighbour {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: Rect,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let read = output.expanded(self.margin.0, self.domain.bounds)?;

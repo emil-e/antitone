@@ -10,7 +10,6 @@ pub struct Worker<'a> {
     pub queue: &'a wgpu::Queue,
     pub gate: &'a crate::gpu::submission::SubmissionGate,
     pub scope: &'a Materializations,
-    pub budget: Budget,
     pub working: &'a RunWorkingSet,
     pub cancelled: &'a dyn Fn() -> bool,
     pub progress: &'a dyn Fn(),
@@ -31,53 +30,38 @@ impl<'a> std::ops::Deref for Production<'a> {
 pub(super) fn admitted_plans<'a>(
     evaluation: Evaluation,
     region: CellRegion,
-    budget: Budget,
+    budget: Tiling,
     limits: wgpu::Limits,
     (cancelled, progress): (&'a dyn Fn() -> bool, &'a dyn Fn()),
 ) -> Result<impl Iterator<Item = Result<Plan, Error>> + 'a, Error> {
-    let mut regions = tiled_units(region, budget.tile)?;
-    let mut pending = Vec::new();
-    Ok(std::iter::from_fn(move || {
-        loop {
-            let region = pending.pop().or_else(|| regions.next())?;
-            progress();
-            if cancelled() {
-                return Some(Err(Error::Cancelled));
-            }
-            let candidate = (|| {
-                let mut plan = evaluation.job.probe(region)?;
-                if plan.requires_production(evaluation.job.image())? {
-                    super::super::unit::plan(evaluation.job.image(), region, budget)?
-                        .admit_for(budget, &limits)?;
-                }
-                Executor::admit(&limits, &plan)?;
-                if plan.peak_scratch_bytes > budget.scratch_bytes {
-                    return Err(Error::WorkingAllowance(
-                        "evaluation neighbourhood exceeds working storage",
-                    ));
-                }
-                plan.scratch_budget = budget.scratch_bytes;
-                Ok(plan)
-            })();
-            match candidate {
-                Ok(plan) => return Some(Ok(plan)),
-                Err(error @ Error::WorkingAllowance(_)) => {
-                    let Some([first, second]) = super::super::unit::bisect(region) else {
-                        return Some(Err(error));
-                    };
-                    pending.extend([second, first]);
-                }
-                Err(error) => return Some(Err(error)),
-            }
+    Ok(tiled_units(region, budget.tile)?.map(move |region| {
+        progress();
+        if cancelled() {
+            return Err(Error::Cancelled);
         }
+        let plan = evaluation.job.probe(region)?;
+        if plan.requires_production(evaluation.job.image())? {
+            super::super::unit::plan_with_limits(
+                evaluation.job.image(),
+                region,
+                budget,
+                Some(&limits),
+            )?
+            .admit_for(&limits)?;
+        }
+        Executor::admit(&limits, &plan)?;
+        Ok(plan)
     }))
 }
 
 impl Production<'_> {
     pub(crate) fn produce(&self, evaluation: &Evaluation) -> Result<WorkCounts, Error> {
-        let _target = self.working.activate_buffer(self.pixels);
         let evaluation = evaluation.clone().with_materializations(self.scope.clone());
         let node = evaluation.job.image();
+        let tiling = evaluation.job.tiling();
+        if let Some(counts) = self.copy_ready(node)? {
+            return Ok(counts);
+        }
         let stored = super::super::materialized::Stored::find(
             Some(self.scope),
             &[],
@@ -85,24 +69,35 @@ impl Production<'_> {
             self.layout.region,
         )?
         .is_some();
-        if !stored && super::super::unit::can_inline(node, self.layout.region, self.budget)? {
+        if !stored
+            && super::super::unit::can_inline(
+                node,
+                self.layout.region,
+                tiling,
+                Some(&self.context.device().limits()),
+            )?
+        {
             let plan = evaluation.job.probe(self.layout.region)?;
             let deferred = plan.requires_production(node)?
-                || plan.peak_scratch_bytes > self.budget.scratch_bytes
                 || Executor::admit(&self.context.device().limits(), &plan).is_err();
             return if deferred {
-                self.produce_units(node)
+                self.produce_units(node, tiling)
             } else {
                 self.deliver(&mut self.executor(), plan)
             };
         }
         if !stored
             && matches!(
-                super::super::unit::lowering(node, self.layout.region, self.budget)?,
+                super::super::unit::lowering(
+                    node,
+                    self.layout.region,
+                    tiling,
+                    Some(&self.context.device().limits())
+                )?,
                 super::super::unit::Lowering::Deferred
             )
         {
-            return self.produce_units(node);
+            return self.produce_units(node, tiling);
         }
         self.evaluate(&evaluation)
     }
@@ -113,7 +108,7 @@ impl Production<'_> {
         for plan in admitted_plans(
             evaluation.clone(),
             self.layout.region,
-            self.budget,
+            evaluation.job.tiling(),
             self.context.device().limits(),
             (self.cancelled, self.progress),
         )? {
@@ -146,21 +141,20 @@ impl Production<'_> {
     pub(in crate::gpu::evaluation) fn deliver(
         &self,
         executor: &mut Executor,
-        mut plan: Plan,
+        plan: Plan,
     ) -> Result<WorkCounts, Error> {
         (self.progress)();
         if (self.cancelled)() {
             return Err(Error::Cancelled);
         }
-        plan.scratch_budget = self.budget.scratch_bytes;
-        let resident = plan.region == self.layout.region
+        let resident = plan.recording_passes() <= Plan::MAX_RECORDING_PASSES
+            && plan.region == self.layout.region
             && !plan
                 .tiles
                 .iter()
                 .flat_map(|tile| &tile.fragment.work)
                 .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }));
         if resident {
-            let _target = self.working.activate_buffer(self.pixels);
             let recorded = self.executor().prepare(self.context.device(), plan)?;
             let mut encoder = self
                 .context
@@ -179,7 +173,6 @@ impl Production<'_> {
                 (self.queue, self.gate),
                 encoder,
                 resources,
-                (encoded.working_bytes, recorded.plan_budget()),
                 || recorded.submitted(),
             )?;
             stats.submitted();
@@ -212,18 +205,18 @@ impl Worker<'_> {
         &self,
         plan: Plan,
         inputs: &[&wgpu::Buffer],
+        images: &[Arc<ImageValue>],
     ) -> Result<WorkCounts, Error> {
-        let mut borrowed = Allocations::default();
-        for input in inputs {
-            borrowed.buffer(input);
-        }
-        let _inputs = self.working.activate(borrowed);
         let recorded = self.executor().prepare(self.context.device(), plan)?;
         let mut encoder = self
             .context
             .device()
             .create_command_encoder(&Default::default());
-        let encoded = recorded.encode_work_owned(self.context.device(), &mut encoder, inputs)?;
+        let mut encoded =
+            recorded.encode_work_owned(self.context.device(), &mut encoder, inputs)?;
+        for image in images {
+            encoded.resources.image(image);
+        }
         let mut stats = encoded.counts;
         stats.include(recorded.preparation.clone());
         if (self.cancelled)() {
@@ -234,7 +227,6 @@ impl Worker<'_> {
             (self.queue, self.gate),
             encoder,
             encoded.resources,
-            (encoded.working_bytes, recorded.plan_budget()),
             || recorded.submitted(),
         )?;
         stats.submitted();
@@ -268,10 +260,9 @@ impl Context {
             plan,
             cancelled,
             sink,
-            |image, output, (pixels, available)| {
-                let budget = Budget {
+            |image, output, pixels| {
+                let budget = Tiling {
                     tile: [output.region.width.min(512), output.region.height.min(128)],
-                    scratch_bytes: available,
                 };
                 let evaluation = self
                     .request(
@@ -289,7 +280,6 @@ impl Context {
                     gate,
                     scope: &scope,
                     working: &working,
-                    budget,
                     cancelled,
                     progress,
                 };

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_identity() {
+fn traversal_hints_do_not_change_the_completed_reconstruction_identity() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -10,10 +10,10 @@ fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_i
         },
     );
     let scope = context.test_materializations(true);
-    let (input, reads) = fixture([128, 65], vec![[2.5, -1.25, 10_000., 1.]; 128 * 65]);
+    let (input, reads) = fixture([512, 257], vec![[2.5, -1.25, 10_000., 1.]; 512 * 257]);
     let map = Mapping {
         start: [0.; 2],
-        axes: [[128., 0.], [0., 65.]],
+        axes: [[512., 0.], [0., 257.]],
     };
     let region = Rect::new([0, 0], [1, 1]);
     let domain = output(map, region);
@@ -24,7 +24,7 @@ fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_i
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }));
-    let acquire = |budget| {
+    let acquire = |tile| {
         pollster::block_on(
             context
                 .materialize(
@@ -38,10 +38,7 @@ fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_i
                                 bounds: region,
                                 grid: domain.grid,
                             },
-                            Budget {
-                                tile: [1, 1],
-                                scratch_bytes: budget,
-                            },
+                            Tiling { tile },
                         )
                         .unwrap(),
                     ImageFormat::Rgba32Float,
@@ -51,7 +48,7 @@ fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_i
         )
         .unwrap()
     };
-    let first = acquire(32 << 10);
+    let first = acquire([1, 1]);
     let acquired = reads.lock().unwrap().len();
     assert!(
         acquired > 1,
@@ -62,16 +59,16 @@ fn bounded_operation_partitioning_does_not_change_the_completed_reconstruction_i
         vec![[2.5, -1.25, 10_000., 9.]]
     );
     submissions.store(0, std::sync::atomic::Ordering::Relaxed);
-    let second = acquire(128 << 10);
+    let second = acquire([256, 256]);
     assert_eq!(
         first.identity, second.identity,
-        "execution budget is not calculation identity"
+        "traversal shape is not calculation identity"
     );
     assert_eq!(first.descriptor, second.descriptor);
     assert_eq!(
         reads.lock().unwrap().len(),
         acquired,
-        "the changed budget must not reacquire source inputs"
+        "the changed traversal hint must not reacquire source inputs"
     );
     assert_eq!(
         submissions.load(std::sync::atomic::Ordering::Relaxed),

@@ -530,12 +530,7 @@ impl Editor {
         let rendered = match self.working_view(physical_frame, &capture, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
-                let error = error.to_string();
-                let working = &mut self.document.visit.working_view;
-                if working.error.as_deref() != Some(error.as_str()) {
-                    working.log_failure("presentation", "current", None, &error);
-                }
-                working.error = Some(error);
+                self.document.visit.working_view.presentation_failed(error);
                 self.document.visit.working_view.hold(target)
             }
         };
@@ -584,7 +579,7 @@ impl Editor {
                     geometry.frame_raster(pixels_per_point)
                 })
             };
-            ImagePaint::rendered(
+            self.rendered_paint(
                 rendered,
                 mapping,
                 self.submissions.clone(),
@@ -610,6 +605,27 @@ impl Editor {
         Some((draw, paint))
     }
 
+    fn rendered_paint(
+        &mut self,
+        rendered: Arc<crate::gpu::view::RenderedView>,
+        mapping: crate::geometry::TextureMapping,
+        submissions: crate::gpu::submission::SubmissionGate,
+        context: egui::Context,
+    ) -> ImagePaint {
+        match ImagePaint::rendered(
+            rendered.clone(),
+            mapping,
+            submissions.clone(),
+            context.clone(),
+        ) {
+            Ok(paint) => paint,
+            Err(error) => {
+                self.document.visit.working_view.presentation_failed(error);
+                ImagePaint::retained(rendered, submissions, context)
+            }
+        }
+    }
+
     /// Grade the camera proxy through the physical-view renderer. Crop editing retains the
     /// whole source and maps it beneath the draft frame; other previews compose before grading.
     fn preview_paint(
@@ -620,7 +636,7 @@ impl Editor {
         source_outside_frame: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
-        let device = self.document.visit.working_view.device()?;
+        let device = self.document.visit.working_view.device()?.clone();
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
         let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
         let composition = frame.composition;
@@ -657,12 +673,18 @@ impl Editor {
             && *requested_frame == frame
             && rendered.target == self.document.target()
         {
-            return Some(ImagePaint::rendered(
+            return Some(self.rendered_paint(
                 rendered.clone(),
                 mapping,
                 self.submissions.clone(),
                 context.clone(),
             ));
+        }
+        if matches!(
+            self.document.visit.working_view.error,
+            Some(Error::GpuOutOfMemory(_))
+        ) {
+            return None;
         }
         let spec = capture.source_request(frame).ok()?;
         let source = proxy
@@ -676,17 +698,19 @@ impl Editor {
                 spec,
                 self.document.target(),
             )
+            .map_err(|error| self.document.visit.working_view.presentation_failed(error))
             .ok()?;
         let rendered = crate::gpu::view::RenderedView::from_image(
-            device,
+            &device,
             source,
             capture,
             self.document.target(),
         )
+        .map_err(|error| self.document.visit.working_view.presentation_failed(error))
         .ok()?;
         let source = proxy.clone();
         self.active_canvas_mut().preview_rendered = Some((source, frame, rendered.clone()));
-        Some(ImagePaint::rendered(
+        Some(self.rendered_paint(
             rendered.clone(),
             mapping,
             self.submissions.clone(),
@@ -871,12 +895,14 @@ impl SourceView {
         let paint = if let Some(rendered) = original {
             self.preview = None;
             let mapping = rendered.mapping(layout.frame_raster(ppp));
-            Some(ImagePaint::rendered(
+            ImagePaint::rendered(
                 rendered,
                 mapping,
                 editor.submissions.clone(),
                 canvas.ui.ctx().clone(),
-            ))
+            )
+            .map_err(|error| editor.status = error.to_string())
+            .ok()
         } else {
             let frame = match preview_frame(composition, ready.proxy.size(), false) {
                 Ok(frame) => frame,
@@ -913,7 +939,7 @@ impl SourceView {
                 self.preview = Some((ready.proxy.clone(), frame, rendered.clone()));
                 Some(rendered)
             });
-            rendered.map(|rendered| {
+            rendered.and_then(|rendered| {
                 let mapping = if draw == layout.image {
                     crate::geometry::TextureMapping::IDENTITY
                 } else {
@@ -932,6 +958,8 @@ impl SourceView {
                     editor.submissions.clone(),
                     canvas.ui.ctx().clone(),
                 )
+                .map_err(|error| editor.status = error.to_string())
+                .ok()
             })
         };
         let Some(paint) = paint else {

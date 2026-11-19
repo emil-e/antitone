@@ -1,7 +1,6 @@
 //! Reconstruction authors ordinary contribution/combine/output values; the compiler owns steps.
 use super::*;
 pub(super) const SOURCE_TILE: [u32; 2] = [512, 128];
-pub(super) const PHASE_HEADROOM: u64 = 16 << 10;
 
 impl Reconstruction {
     pub(super) fn express(
@@ -9,21 +8,11 @@ impl Reconstruction {
         source: value::Calculation,
         domain: Domain,
         output: Rect,
-        budget: Budget,
+        limits: Option<&wgpu::Limits>,
     ) -> Result<value::Calculation, Error> {
         use value::{Access as InputAccess, Calculation, Operation as Mathematics, Shape};
         let demand = self.input_demand(output)?;
         let aligned_inputs = self.tiled;
-        let cells = u64::from(output.width.checked_mul(output.height).ok_or(
-            Error::InvalidParameter("evaluation raster exceeds GPU cell addressing"),
-        )?);
-        let available = budget
-            .scratch_bytes
-            .checked_sub(cells * 112 + PHASE_HEADROOM.min(budget.scratch_bytes / 4))
-            .filter(|bytes| *bytes >= 64)
-            .ok_or(Error::WorkingAllowance(
-                "unit state exceeds the working allowance",
-            ))?;
         let span = [
             self.packed.axes[0][0].abs() + self.packed.axes[1][0].abs(),
             self.packed.axes[0][1].abs() + self.packed.axes[1][1].abs(),
@@ -41,7 +30,7 @@ impl Reconstruction {
         } else {
             SOURCE_TILE
         };
-        let source_cells = (available / 64).min(u64::from(preferred[0]) * u64::from(preferred[1]));
+        let source_cells = u64::from(preferred[0]) * u64::from(preferred[1]);
         let source_cells = 1u64 << source_cells.ilog2();
         let extent = match self.input.bounds {
             Some(bounds) => [bounds.width, bounds.height],
@@ -54,10 +43,7 @@ impl Reconstruction {
         let height = (source_cells / u64::from(width))
             .min(u64::from(preferred[1]))
             .min(u64::from(extent[1])) as u32;
-        let whole = if footprint <= 65_536.
-            && u64::from(demand.width) * u64::from(demand.height) <= available / 64
-            && demand.height as usize <= value::MAX_UNIT_VALUES
-        {
+        let whole = if footprint <= 65_536. && demand.height as usize <= value::MAX_UNIT_VALUES {
             match self.source_window(demand, output) {
                 Some(part) => {
                     let fetched = if aligned_inputs {
@@ -65,7 +51,13 @@ impl Reconstruction {
                     } else {
                         part
                     };
-                    (u64::from(fetched.width) * u64::from(fetched.height) <= available / 64)
+                    // Coalescing must not make otherwise representable contributions fail.
+                    let bytes = u64::from(fetched.width) * u64::from(fetched.height) * 16;
+                    limits
+                        .is_none_or(|limits| {
+                            bytes <= limits.max_buffer_size
+                                && bytes <= limits.max_storage_buffer_binding_size
+                        })
                         .then_some((fetched, part))
                 }
                 None => None,
@@ -117,7 +109,7 @@ impl Reconstruction {
             partitions += 1;
             if partitions > value::MAX_UNIT_VALUES {
                 value::retire_gpu_graph(sum, &[source]);
-                return Err(Error::WorkingAllowance(
+                return Err(Error::EvaluationLimit(
                     "calculation exceeds the unit graph capacity",
                 ));
             }
@@ -142,7 +134,7 @@ impl Reconstruction {
                 values += 2;
                 if values > value::MAX_UNIT_VALUES {
                     value::retire_gpu_graph(sum, &[source]);
-                    return Err(Error::WorkingAllowance(
+                    return Err(Error::EvaluationLimit(
                         "calculation exceeds the unit graph capacity",
                     ));
                 }

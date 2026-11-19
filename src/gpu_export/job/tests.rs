@@ -139,7 +139,7 @@ fn repair_demand(
     device: &wgpu::Device,
     index: usize,
 ) -> Vec<crate::gpu::evaluation::CellRegion> {
-    use crate::gpu::evaluation::{self as ev, Budget, CellRegion, Domain, Grid};
+    use crate::gpu::evaluation::{self as ev, CellRegion, Domain, Grid, Tiling};
     let photo = crate::gpu::photograph::PhotographGraph::from_recipe(
         &device.limits(),
         ev::camera_source(scan).unwrap(),
@@ -161,15 +161,8 @@ fn repair_demand(
         },
     )
     .unwrap();
-    root.regions_for(
-        &repair,
-        region,
-        Budget {
-            tile: [512, 128],
-            scratch_bytes: 32 << 20,
-        },
-    )
-    .unwrap()
+    root.regions_for(&repair, region, Tiling { tile: [512, 128] })
+        .unwrap()
 }
 
 #[test]

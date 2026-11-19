@@ -65,10 +65,7 @@ fn retire_batch(independent_consumer: bool) {
     let identities = roots
         .each_ref()
         .map(|root| root.identity().unwrap().clone());
-    let budget = Budget {
-        tile: [8, 4],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [8, 4] };
     let evaluations = roots.each_ref().map(|root| {
         context
             .request(
@@ -129,7 +126,6 @@ fn retire_batch(independent_consumer: bool) {
                 queue: &owned_queue,
                 gate: &gate,
                 scope: &owned_scope,
-                budget,
                 working: &working,
                 cancelled: &cancelled,
                 progress: &|| {},
@@ -149,7 +145,7 @@ fn retire_batch(independent_consumer: bool) {
                     let unit = unit
                         .take()
                         .unwrap()
-                        .admit_for(budget, &owned_context.device().limits())?;
+                        .admit_for(&owned_context.device().limits())?;
                     total += u64::from(region.width) * u64::from(region.height) * 32;
                     Ok(super::super::super::super::batch_units::Target {
                         evaluation,
@@ -163,9 +159,7 @@ fn retire_batch(independent_consumer: bool) {
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
-            worker
-                .materialize_targets(targets, total, budget.scratch_bytes)?
-                .ok_or(Error::Cancelled)
+            worker.materialize_targets(targets)?.ok_or(Error::Cancelled)
         })
         .await
         .map_err(|_| Error::Gpu("backend batch worker panicked".into()))?

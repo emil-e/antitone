@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::{Budget, Meaning, Region, Value};
+use crate::gpu::evaluation::{Meaning, Region, Tiling, Value};
 use crate::gpu::parameters::ProcessingParameters;
 use std::sync::{Arc, Weak};
 
@@ -24,10 +24,7 @@ fn pixels(
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [7, 5],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [7, 5] },
         )
         .unwrap();
     let mut pixels = Vec::new();

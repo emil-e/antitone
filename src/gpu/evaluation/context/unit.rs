@@ -1,5 +1,6 @@
 //! Execute stage-declared units through common image production and run-owned values.
 use super::*;
+use crate::gpu::allocation::DeviceAllocationExt;
 use std::{
     future::Future,
     pin::pin,
@@ -12,7 +13,54 @@ mod assembly;
 mod tests;
 
 impl Production<'_> {
-    pub(super) fn produce_units(&self, node: &value::Value) -> Result<WorkCounts, Error> {
+    pub(super) fn copy_ready(&self, node: &value::Value) -> Result<Option<WorkCounts>, Error> {
+        if self.layout.format != ImageFormat::Rgba32Float
+            || self.layout.backing != ImageBacking::Buffer
+            || !self.pixels.usage().contains(wgpu::BufferUsages::COPY_DST)
+        {
+            return Ok(None);
+        }
+        if self.pixels.size() < self.layout.bytes() {
+            return Err(Error::InvalidParameter(
+                "covered image exceeds its destination",
+            ));
+        }
+        let mut remaining = value::MAX_UNIT_VALUES;
+        let Some(cover) = super::super::materialized::CopyCover::find(
+            self.scope,
+            node,
+            self.layout.region,
+            value::MAX_UNIT_VALUES,
+            &mut remaining,
+        )?
+        else {
+            return Ok(None);
+        };
+        if cover.regions.iter().any(|part| {
+            part.image.as_buffer() == Some(self.pixels) && part.layout.region != self.layout.region
+        }) {
+            return Ok(None);
+        }
+        let mut copies = assembly::Copies::default();
+        for part in cover.regions {
+            (self.progress)();
+            if (self.cancelled)() {
+                return Err(Error::Cancelled);
+            }
+            self.scope.used(&part.image);
+            if part.image.as_buffer() != Some(self.pixels) {
+                copies.copy(self, part.image, part.layout.region, part.region)?;
+            }
+        }
+        copies.flush(self)?;
+        Ok(Some(copies.counts))
+    }
+
+    pub(super) fn produce_units(
+        &self,
+        node: &value::Value,
+        tiling: Tiling,
+    ) -> Result<WorkCounts, Error> {
         enum Unit {
             Ready(Image<ImageLayout>),
             Produce(WorkUnit),
@@ -20,9 +68,7 @@ impl Production<'_> {
         let mut counts = WorkCounts::default();
         let mut covered = Vec::new();
         let mut copies = assembly::Copies::default();
-        let mut regions = node.operation.work_units(self.layout.region, self.budget)?;
-        let mut pending = Vec::new();
-        while let Some(region) = pending.pop().or_else(|| regions.next()) {
+        for region in node.operation.work_units(self.layout.region, tiling)? {
             (self.progress)();
             if (self.cancelled)() {
                 return Err(Error::Cancelled);
@@ -30,19 +76,13 @@ impl Production<'_> {
             let unit = if let Some(image) = self.ready_unit(node, region)? {
                 Unit::Ready(image)
             } else {
-                let candidate = super::super::unit::plan(node, region, self.budget)
-                    .and_then(|unit| unit.admit_for(self.budget, &self.context.device().limits()));
-                let unit = match candidate {
-                    Ok(unit) => unit,
-                    Err(error @ Error::WorkingAllowance(_)) => {
-                        let Some([first, second]) = super::super::unit::bisect(region) else {
-                            return Err(error);
-                        };
-                        pending.extend([second, first]);
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
+                let unit = super::super::unit::plan_with_limits(
+                    node,
+                    region,
+                    tiling,
+                    Some(&self.context.device().limits()),
+                )?
+                .admit_for(&self.context.device().limits())?;
                 validate_unit(node, &unit)?;
                 Unit::Produce(unit)
             };
@@ -140,15 +180,16 @@ impl Worker<'_> {
         if Stored::find(Some(self.scope), &[], node, region)?.is_some() {
             return Ok(None);
         }
+        let tiling = Tiling { tile: [512, 128] };
         let probe = CellRegion::new(
             [region.x, region.y],
             [
-                region.width.min(self.budget.tile[0]),
-                region.height.min(self.budget.tile[1]),
+                region.width.min(tiling.tile[0]),
+                region.height.min(tiling.tile[1]),
             ],
         );
-        let unit = match matching_unit(node, probe, self.budget) {
-            Err(Error::WorkingAllowance(_)) | Ok(None) => return Ok(None),
+        let unit = match matching_unit(node, probe, tiling, None) {
+            Err(Error::EvaluationLimit(_)) | Ok(None) => return Ok(None),
             Err(error) => return Err(error),
             Ok(Some(unit)) => unit,
         };
@@ -166,6 +207,15 @@ impl Worker<'_> {
         counts: &mut WorkCounts,
     ) -> Result<Arc<ImageValue>, Error> {
         let node = evaluation.job.image();
+        let tiling = evaluation.job.tiling();
+        let limits = self.context.device().limits();
+        if layout.bytes() > limits.max_buffer_size
+            || layout.bytes() > limits.max_storage_buffer_binding_size
+        {
+            return Err(Error::EvaluationLimit(
+                "materialized image exceeds GPU storage limits",
+            ));
+        }
         if let Some(identity) = node.output(layout.region)?.identity()
             && let Some(image) = self
                 .scope
@@ -178,40 +228,38 @@ impl Worker<'_> {
             return Ok(image.image);
         }
         if Stored::find(Some(self.scope), &[], node, layout.region)?.is_none()
-            && !super::super::unit::can_inline(node, layout.region, self.budget)?
+            && !super::super::unit::can_inline(node, layout.region, tiling, Some(&limits))?
             && matches!(
-                super::super::unit::lowering(node, layout.region, self.budget)?,
+                super::super::unit::lowering(node, layout.region, tiling, Some(&limits))?,
                 super::super::unit::Lowering::Deferred
             )
-            && let Some(unit) = matching_unit(node, layout.region, self.budget)?
+            && let Some(unit) = matching_unit(node, layout.region, tiling, Some(&limits))?
             && unit.output == layout.region
             && matches!(&unit.work, UnitWork::Gpu(_))
         {
-            match super::super::unit::plan(node, layout.region, self.budget)?
-                .admit_for(self.budget, &self.context.device().limits())
+            match super::super::unit::plan_with_limits(node, layout.region, tiling, Some(&limits))?
+                .admit_for(&self.context.device().limits())
             {
                 Ok(unit) => return self.unit_image(node, unit, counts),
-                Err(Error::WorkingAllowance(_)) => {}
+                Err(Error::EvaluationLimit(_)) => {}
                 Err(error) => return Err(error),
             }
         }
-        self.working
-            .admit_gpu(self.context.device(), 0, self.budget.scratch_bytes)?;
+        self.working.admit_gpu(self.context.device())?;
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(layout.bytes());
         let pixels = self
             .context
             .device()
-            .create_buffer(&wgpu::BufferDescriptor {
+            .try_create_buffer(&wgpu::BufferDescriptor {
                 label: Some("materialized image"),
                 size: layout.bytes(),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
+            })?;
         counts.buffers_allocated(1);
-        let _target = self.working.activate_buffer(&pixels);
         let worker = Production {
             worker: *self,
             layout,
@@ -248,9 +296,7 @@ impl Worker<'_> {
                     ImageBacking::Buffer
                 },
             };
-            let (pending, producer) =
-                self.scope
-                    .claim_unit(identity.clone(), Arc::new(layout), self.budget);
+            let (pending, producer) = self.scope.claim_unit(identity.clone(), Arc::new(layout));
             if let Some(producer) = producer {
                 let assembly_error = before_work().err();
                 // The drain belongs to this assembly, but joined consumers still own production.
@@ -307,44 +353,30 @@ impl Worker<'_> {
         }
         let bytes = rgba_bytes(unit.output)?;
         let limits = self.context.device().limits();
-        if bytes > self.budget.scratch_bytes
-            || bytes > limits.max_buffer_size
-            || bytes > limits.max_storage_buffer_binding_size
-        {
-            return Err(Error::WorkingAllowance(
-                "work-unit result exceeds the working allowance",
+        if bytes > limits.max_buffer_size || bytes > limits.max_storage_buffer_binding_size {
+            return Err(Error::EvaluationLimit(
+                "work-unit result exceeds GPU storage limits",
             ));
         }
-        let required = match &unit.work {
-            UnitWork::Gpu(work) => work
-                .state
-                .iter()
-                .try_fold(bytes, |sum, bytes| sum.checked_add(*bytes))
-                .ok_or(Error::InvalidParameter("unit state size overflows"))?,
-            _ => bytes,
-        };
-        self.working
-            .admit_gpu(self.context.device(), required, self.budget.scratch_bytes)?;
+        self.working.admit_gpu(self.context.device())?;
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(bytes);
         let output = self
             .context
             .device()
-            .create_buffer(&wgpu::BufferDescriptor {
+            .try_create_buffer(&wgpu::BufferDescriptor {
                 label: Some("declared calculation unit"),
                 size: bytes,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
+            })?;
         counts.buffers_allocated(1);
-        let _target = self.working.activate_buffer(&output);
         if matches!(&unit.work, UnitWork::Gpu(_)) {
-            let evaluation = self.query(node.clone(), unit.output, self.budget.scratch_bytes)?;
+            let evaluation = self.query(node.clone(), unit.output)?;
             let plan = evaluation.job.probe(unit.output)?;
             if !plan.requires_production(node)?
-                && plan.peak_scratch_bytes <= self.budget.scratch_bytes
                 && Executor::admit(&self.context.device().limits(), &plan).is_ok()
             {
                 counts.include(
@@ -406,7 +438,7 @@ impl Worker<'_> {
         let mut run =
             super::gpu::GpuExecution::new(self, inputs, region, work, output, &mut counts)?;
         while let Some(phase) = run.phases.next() {
-            run.execute(self, phase?, 0, &mut Vec::new(), &mut counts)?;
+            run.execute(self, phase?, &mut Vec::new(), &mut counts)?;
         }
         run.finish()?;
         Ok(counts)
@@ -424,7 +456,7 @@ impl Worker<'_> {
             (self.progress)();
             let upstream = upstream(upstreams, *read)?;
             let mut values = vec![[0.; 4]; cells(read.region)?];
-            let query = self.query(upstream.clone(), read.region, self.budget.scratch_bytes)?;
+            let query = self.query(upstream.clone(), read.region)?;
             let stats = self
                 .context
                 .read_in(
@@ -464,7 +496,6 @@ impl Worker<'_> {
         &self,
         node: value::Value,
         region: CellRegion,
-        bytes: u64,
     ) -> Result<Evaluation, Error> {
         Ok(self
             .context
@@ -475,9 +506,8 @@ impl Worker<'_> {
                     grid: node.domain().grid,
                 },
                 // Input transfer chunks follow this read, not the consumer's output tile.
-                Budget {
+                Tiling {
                     tile: [region.width.min(512), region.height.min(128)],
-                    scratch_bytes: bytes,
                 },
             )?
             .with_materializations(self.scope.clone()))
@@ -487,7 +517,8 @@ impl Worker<'_> {
 pub(super) fn matching_unit(
     node: &value::Value,
     region: CellRegion,
-    budget: Budget,
+    budget: Tiling,
+    limits: Option<&wgpu::Limits>,
 ) -> Result<Option<WorkUnit>, Error> {
     let mut regions = node.operation.work_units(region, budget)?;
     let Some(first) = regions.next() else {
@@ -496,11 +527,10 @@ pub(super) fn matching_unit(
     if regions.next().is_some() {
         return Ok(None);
     }
-    let candidate =
-        super::super::unit::plan(node, first, budget).and_then(|unit| unit.admit(budget));
+    let candidate = super::super::unit::plan_with_limits(node, first, budget, limits);
     let unit = match candidate {
         Ok(unit) => unit,
-        Err(Error::WorkingAllowance(_)) => return Ok(None),
+        Err(Error::EvaluationLimit(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
     validate_unit(node, &unit)?;

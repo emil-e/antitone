@@ -53,7 +53,7 @@ impl ImageOperation for Graph {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(("value graph witness", self.steps)))
     }
-    fn work_units(&self, region: CellRegion, _: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, region: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
         tiled_units(region, [2, 1])
     }
     fn calculation(
@@ -61,7 +61,7 @@ impl ImageOperation for Graph {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         self.plans.fetch_add(1, Ordering::Relaxed);
         let source = Calculation::input(inputs[0].request(output)?);
@@ -83,16 +83,13 @@ fn constituent_descriptions_do_not_author_values_or_parse_shader_libraries() {
             plans: Default::default(),
         },
     );
-    for scratch_bytes in [8192, 16384] {
+    for tile in [[2, 1], [1, 1]] {
         let ((unit, definitions), libraries) =
             super::super::super::sampling::library_testing::observe(|| {
                 testing::observe(0, || {
-                    let budget = Budget {
-                        tile: [2, 1],
-                        scratch_bytes,
-                    };
-                    let described = root.lower(area, budget).unwrap();
-                    described.compile(area, budget).unwrap()
+                    let tiling = Tiling { tile };
+                    let described = root.lower(area, tiling).unwrap();
+                    described.compile(area, tiling).unwrap()
                 })
             });
         assert_eq!(
@@ -132,10 +129,7 @@ fn record_value_fanout_keeps_live_branches_and_metadata_through_reused_gpu_stora
                 bounds: area,
                 grid: plate.domain.grid,
             },
-            Budget {
-                tile: [3, 2],
-                scratch_bytes: 8 << 10,
-            },
+            Tiling { tile: [3, 2] },
         )
         .unwrap();
     let mut actual = Vec::new();

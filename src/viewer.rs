@@ -1,5 +1,6 @@
 use crate::Error;
 use crate::geometry::TextureMapping;
+use crate::gpu::allocation::DeviceAllocationExt;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
@@ -9,7 +10,6 @@ use crate::renderer::GpuRenderer;
 use crate::rendering::OutputTarget;
 use glam::{DMat3, Vec4};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 mod calculation;
 mod proxy;
 pub(crate) use proxy::GpuProxy;
@@ -40,6 +40,7 @@ struct ImageProcessing {
 }
 
 pub struct GpuImage {
+    device: wgpu::Device,
     device_limits: wgpu::Limits,
     look_check: std::sync::Mutex<Option<Arc<crate::gpu::lut3d::Check>>>,
     look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::lut3d::Check>)>>,
@@ -182,7 +183,7 @@ impl GpuImage {
             return Err(Error::Gpu("preview image exceeds GPU limits".into()));
         }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let linear = device.create_texture(&wgpu::TextureDescriptor {
+        let linear = device.try_create_texture(&wgpu::TextureDescriptor {
             label: Some("linear target RGB, before presentation"),
             size: wgpu::Extent3d {
                 width,
@@ -198,15 +199,15 @@ impl GpuImage {
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
-        });
+        })?;
         let processing = source
             .map(|(renderer, source)| -> Result<_, Error> {
-                let working = device.create_buffer(&wgpu::BufferDescriptor {
+                let working = device.try_create_buffer(&wgpu::BufferDescriptor {
                     label: Some("processed AP1 preview"),
                     size: u64::from(count) * 16,
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
-                });
+                })?;
                 Ok(ImageProcessing {
                     renderer,
                     target,
@@ -225,11 +226,12 @@ impl GpuImage {
             uv_x: [0., 0., 1., 0.],
             uv_y: [0., 1., 0., 0.],
         };
-        let display_group = make_presentation_group(device, &display, &linear, presentation);
+        let display_group = make_presentation_group(device, &display, &linear, presentation)?;
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
+            device: device.clone(),
             device_limits: device.limits(),
             look_check: std::sync::Mutex::new(None),
             look_projections: std::sync::Mutex::new(Vec::new()),
@@ -482,13 +484,13 @@ impl GpuImage {
         &self,
         device: &wgpu::Device,
         uv: impl Into<TextureMapping>,
-    ) -> wgpu::BindGroup {
+    ) -> Result<wgpu::BindGroup, Error> {
         let uv = uv.into();
         let mut cached = self.visible_group.lock().unwrap();
         if let Some((previous, group)) = &*cached
             && *previous == uv
         {
-            return group.clone();
+            return Ok(group.clone());
         }
         let group = make_presentation_group(
             device,
@@ -499,9 +501,9 @@ impl GpuImage {
                 uv_y: [uv.y_axis[0], uv.y_axis[1], 0., 0.],
                 ..self.presentation
             },
-        );
+        )?;
         *cached = Some((uv, group.clone()));
-        group
+        Ok(group)
     }
 
     pub fn paint_group(&self, pass: &mut wgpu::RenderPass<'static>, group: &wgpu::BindGroup) {
@@ -520,26 +522,28 @@ fn make_presentation_group(
     display: &wgpu::RenderPipeline,
     linear: &wgpu::Texture,
     parameters: Presentation,
-) -> wgpu::BindGroup {
-    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+) -> Result<wgpu::BindGroup, Error> {
+    let uniform = device.try_create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("presentation basis, dimensions and mapping"),
         contents: bytemuck::bytes_of(&parameters),
         usage: wgpu::BufferUsages::UNIFORM,
-    });
+    })?;
     let view = linear.create_view(&Default::default());
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("managed image presentation"),
-        layout: &display.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniform.as_entire_binding(),
-            },
-        ],
+    crate::gpu::allocation::checked(device, || {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("managed image presentation"),
+            layout: &display.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        })
     })
 }
 
@@ -565,14 +569,38 @@ impl ImagePaint {
         uv: TextureMapping,
         submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
+    ) -> Result<Self, Error> {
+        let group = (uv != TextureMapping::IDENTITY)
+            .then(|| view.image.presentation_group(&view.image.device, uv))
+            .transpose()?;
+        Ok(Self {
+            image: view.image.clone(),
+            calculation: None,
+            luts: Default::default(),
+            context: Some(context.clone()),
+            uv,
+            group: std::sync::Mutex::new(group),
+            rendered: Some((view, submissions, context)),
+        })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn retained(
+        view: Arc<crate::gpu::view::RenderedView>,
+        submissions: crate::gpu::submission::SubmissionGate,
+        context: egui::Context,
     ) -> Self {
+        let previous = view.image.visible_group.lock().unwrap().clone();
+        let (uv, group) = previous.map_or((TextureMapping::IDENTITY, None), |(uv, group)| {
+            (uv, Some(group))
+        });
         Self {
             image: view.image.clone(),
             calculation: None,
             luts: Default::default(),
             context: Some(context.clone()),
             uv,
-            group: std::sync::Mutex::new(None),
+            group: std::sync::Mutex::new(group),
             rendered: Some((view, submissions, context)),
         }
     }
@@ -607,6 +635,10 @@ impl ImagePaint {
                 "look rendering requires a calculation",
             ));
         }
+        let uv = uv.into();
+        let group = (uv != TextureMapping::IDENTITY)
+            .then(|| image.presentation_group(&image.device, uv))
+            .transpose()?;
         Ok(Self {
             #[cfg(feature = "editor")]
             rendered: None,
@@ -614,8 +646,8 @@ impl ImagePaint {
             calculation,
             luts,
             context: None,
-            uv: uv.into(),
-            group: std::sync::Mutex::new(None),
+            uv,
+            group: std::sync::Mutex::new(group),
         })
     }
 
@@ -686,9 +718,6 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
                     self.context.clone(),
                 )
                 .expect("validated rendering resources");
-        }
-        if self.uv != TextureMapping::IDENTITY {
-            *self.group.lock().unwrap() = Some(self.image.presentation_group(device, self.uv));
         }
         Vec::new()
     }

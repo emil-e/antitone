@@ -60,7 +60,7 @@ impl Operation for Field {
         _: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let footprint = domain.grid.raster(output).footprint();
         let parameters = FieldParameters {
@@ -100,7 +100,7 @@ impl Operation for GrainOperation {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let raster = domain.grid.raster(output);

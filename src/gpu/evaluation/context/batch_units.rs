@@ -2,6 +2,7 @@
 use super::gpu::GpuExecution;
 use super::unit::{matching_unit, wait_image};
 use super::*;
+use crate::gpu::allocation::DeviceAllocationExt;
 
 type UnitResult = Result<Arc<ImageValue>, Error>;
 
@@ -39,11 +40,6 @@ impl Worker<'_> {
                 }
             }
         }
-        let budget = jobs
-            .iter()
-            .map(|(evaluation, _)| evaluation.job.budget().scratch_bytes)
-            .min()
-            .unwrap();
         for (evaluation, layout) in jobs {
             if Stored::find(Some(self.scope), &[], evaluation.job.image(), layout.region)?.is_some()
             {
@@ -52,11 +48,11 @@ impl Worker<'_> {
             if super::super::unit::can_inline(
                 evaluation.job.image(),
                 layout.region,
-                evaluation.job.budget(),
+                evaluation.job.tiling(),
+                Some(&self.context.device().limits()),
             )? {
                 let plan = evaluation.job.probe(layout.region)?;
-                let resident = plan.peak_scratch_bytes <= evaluation.job.budget().scratch_bytes
-                    && Executor::admit(&self.context.device().limits(), &plan).is_ok()
+                let resident = Executor::admit(&self.context.device().limits(), &plan).is_ok()
                     && !plan
                         .tiles
                         .iter()
@@ -67,62 +63,26 @@ impl Worker<'_> {
                 }
             }
         }
-        let mut held = Vec::new();
+        let mut targets = Vec::new();
         for (evaluation, layout) in jobs {
             let Some(unit) = matching_unit(
                 evaluation.job.image(),
                 layout.region,
-                evaluation.job.budget(),
+                evaluation.job.tiling(),
+                Some(&self.context.device().limits()),
             )?
             else {
                 return Ok(None);
             };
-            let unit =
-                match unit.admit_for(evaluation.job.budget(), &self.context.device().limits()) {
-                    Ok(unit) => unit,
-                    Err(Error::WorkingAllowance(_)) => return Ok(None),
-                    Err(error) => return Err(error),
-                };
-            let UnitWork::Gpu(work) = unit.work else {
-                return Ok(None);
-            };
-            if unit.output != layout.region || work.state.is_empty() {
-                return Ok(None);
-            }
-            let bytes = work
-                .state
-                .iter()
-                .try_fold(layout.bytes(), |sum, bytes| sum.checked_add(*bytes))
-                .ok_or(Error::InvalidParameter("unit state size overflows"))?;
-            held.push(bytes);
-        }
-        let Some(total) = held
-            .iter()
-            .try_fold(0u64, |sum, bytes| sum.checked_add(*bytes))
-        else {
-            return Ok(None);
-        };
-        // Leave ample input/assembly space. Large units run independently instead of
-        // letting batch concurrency turn an individually admitted job into a failure.
-        if total >= budget / 4 {
-            return Ok(None);
-        }
-        let mut targets = Vec::new();
-        for ((evaluation, layout), own) in jobs.iter().copied().zip(&held) {
-            let unit_budget = Budget {
-                scratch_bytes: budget - (total - own) - budget / 4,
-                ..evaluation.job.budget()
-            };
-            let Some(unit) = matching_unit(evaluation.job.image(), layout.region, unit_budget)?
-            else {
-                return Ok(None);
+            let unit = match unit.admit_for(&self.context.device().limits()) {
+                Ok(unit) => unit,
+                Err(Error::EvaluationLimit(_)) => return Ok(None),
+                Err(error) => return Err(error),
             };
             let UnitWork::Gpu(work) = &unit.work else {
                 return Ok(None);
             };
-            if unit.output != layout.region
-                || work.state.iter().sum::<u64>() + layout.bytes() != *own
-            {
+            if unit.output != layout.region || work.state.is_empty() {
                 return Ok(None);
             }
             targets.push(Target {
@@ -131,14 +91,12 @@ impl Worker<'_> {
                 unit: Some(unit),
             });
         }
-        self.materialize_targets(targets, total, budget)
+        self.materialize_targets(targets)
     }
 
     pub(super) fn materialize_targets(
         &self,
         mut targets: Vec<Target<'_>>,
-        total: u64,
-        budget: u64,
     ) -> Result<Option<Vec<Arc<ImageValue>>>, Error> {
         let mut claims = Vec::new();
         for target in &targets {
@@ -146,11 +104,10 @@ impl Worker<'_> {
             let Some(identity) = node.output(target.layout.region)?.identity().cloned() else {
                 return Ok(None);
             };
-            claims.push(self.scope.claim_unit(
-                identity.clone(),
-                Arc::new(target.layout),
-                target.evaluation.job.budget(),
-            ));
+            claims.push(
+                self.scope
+                    .claim_unit(identity.clone(), Arc::new(target.layout)),
+            );
         }
         let cancelled = || {
             (self.cancelled)()
@@ -160,16 +117,12 @@ impl Worker<'_> {
                     .all(|producer| producer.cancel_when_unshared())
         };
         let worker = Worker {
-            budget: Budget {
-                scratch_bytes: budget,
-                ..self.budget
-            },
             cancelled: &cancelled,
             ..*self
         };
         let mut counts = WorkCounts::default();
         let calculated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run(&worker, &mut targets, &claims, total, &mut counts)
+            run(&worker, &mut targets, &claims, &mut counts)
         }))
         .unwrap_or_else(|_| {
             claims
@@ -188,15 +141,16 @@ impl Worker<'_> {
                     return Ok(None);
                 }
                 match result {
-                    Some(Err(Error::WorkingAllowance(_))) => {
-                        let budget = target.evaluation.job.budget();
+                    Some(Err(Error::EvaluationLimit(_))) => {
+                        let budget = target.evaluation.job.tiling();
                         let unit = matching_unit(
                             target.evaluation.job.image(),
                             target.layout.region,
                             budget,
+                            Some(&self.context.device().limits()),
                         )?
                         .ok_or(Error::InvalidParameter("batch unit changed its coverage"))?;
-                        Worker { budget, ..worker }
+                        Worker { ..worker }
                             .compute_unit(target.evaluation.job.image(), unit)
                             .map(|(image, _)| Some(image))
                     }
@@ -239,14 +193,9 @@ fn run(
         ImageFuture<ImageLayout>,
         Option<super::super::materializations::InlineProducer>,
     )],
-    total: u64,
     counts: &mut WorkCounts,
 ) -> Vec<Option<UnitResult>> {
-    if let Err(error) =
-        worker
-            .working
-            .admit_gpu(worker.context.device(), total, worker.budget.scratch_bytes)
-    {
+    if let Err(error) = worker.working.admit_gpu(worker.context.device()) {
         return targets.iter().map(|_| Some(Err(error.clone()))).collect();
     }
     let mut running = Vec::new();
@@ -262,17 +211,24 @@ fn run(
         };
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(target.layout.bytes());
-        let output = worker
+        let output = match worker
             .context
             .device()
-            .create_buffer(&wgpu::BufferDescriptor {
+            .try_create_buffer(&wgpu::BufferDescriptor {
                 label: Some("related declared unit"),
                 size: target.layout.bytes(),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
+            }) {
+            Ok(output) => output,
+            Err(error) => {
+                failed[i] = Some(error);
+                running.push(None);
+                continue;
+            }
+        };
         counts.buffers_allocated(1);
         let execution = match GpuExecution::new(
             worker,
@@ -354,13 +310,7 @@ fn run(
             };
             if selected {
                 let phase = target.phase.take().unwrap();
-                if let Err(error) = target.execution.execute(
-                    worker,
-                    phase,
-                    total - target.execution.held,
-                    &mut owners,
-                    counts,
-                ) {
+                if let Err(error) = target.execution.execute(worker, phase, &mut owners, counts) {
                     target.failure = Some(error);
                     target.finished = true;
                 }

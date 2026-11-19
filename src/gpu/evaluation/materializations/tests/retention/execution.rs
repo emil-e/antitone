@@ -44,10 +44,7 @@ fn single_and_batched_materializations_preserve_independent_retention_choices() 
                     bounds: root.domain().finite().unwrap(),
                     grid: root.domain().grid,
                 },
-                Budget {
-                    tile: [2, 2],
-                    scratch_bytes: 4096,
-                },
+                Tiling { tile: [2, 2] },
             )
             .unwrap();
         let live = request.clone().without_retention();
@@ -146,24 +143,17 @@ fn inline_execution_inherits_a_live_roots_reservation() {
         format: ImageFormat::Rgba32Float,
         backing: ImageBacking::Buffer,
     });
-    let budget = Budget {
-        tile: [2, 2],
-        scratch_bytes: 4096,
-    };
     let key = RetainedKey::new("queued live root");
     let queued = scope.obtain_for(
         key.clone(),
         layout.clone(),
         64,
-        RequestPolicy {
-            budget: Some(budget),
-            retain: false,
-        },
+        RequestPolicy { retain: false },
         || async {
             panic!("inline production must fulfil the calculation before queued work starts")
         },
     );
-    let (future, producer) = scope.claim_unit(key.clone(), layout, budget);
+    let (future, producer) = scope.claim_unit(key.clone(), layout);
     producer
         .unwrap()
         .complete(Ok(ImageValue::new(buffer(&device, 5.))));

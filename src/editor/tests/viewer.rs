@@ -1114,15 +1114,23 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             }
             feature.0.pump();
             feature.0.read(|editor| {
-                assert!(
-                    editor.interaction_blocked(),
-                    "enter={enter}: {}; pick={:?}, region={:?}",
-                    editor.status,
-                    editor.test_pick(),
-                    editor.test_pick_region()
-                );
-                assert!(editor.measurement_pending());
-                assert_eq!(editor.dmin(), Some(expected * 1.05));
+                // A tiny measurement may finish in the first host poll. Until completion,
+                // input remains reserved and accepted calibration must stay unchanged.
+                if editor.measurement_pending() {
+                    assert!(
+                        editor.interaction_blocked(),
+                        "enter={enter}: {}",
+                        editor.status
+                    );
+                    assert_eq!(editor.dmin(), Some(expected * 1.05));
+                } else {
+                    assert!(
+                        !editor.interaction_blocked(),
+                        "enter={enter}: {}",
+                        editor.status
+                    );
+                    assert!(editor.test_pick().is_none());
+                }
             });
             // Progress requires no additional paint or post-draw launch call.
             feature.0.run_until(Duration::from_secs(5), |editor| {

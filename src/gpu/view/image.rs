@@ -6,7 +6,6 @@ use crate::gpu::evaluation::{self as e, BufferImage, Recorded, RecordedImage, Va
 use crate::gpu::source::SourceGeometry;
 
 // Active evaluation storage is independent of optional generated-image retention.
-const VIEW_SCRATCH_BYTES: u64 = 1280 << 20;
 
 pub struct ViewImage {
     pub spec: SourceRequest,
@@ -132,9 +131,8 @@ impl ViewImage {
                 bounds,
                 grid: domain.grid,
             },
-            e::Budget {
+            e::Tiling {
                 tile: [bounds.width, bounds.height],
-                scratch_bytes: VIEW_SCRATCH_BYTES,
             },
         )
     }

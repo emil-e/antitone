@@ -2,6 +2,77 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
+fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording() {
+    let size = [512, 2560];
+    let (input, reads) = fixture(size, vec![[-2., 3., 10_000., 8.]; 512 * 2560]);
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.materializations();
+    scope.set_retention_enabled(false);
+    let source_region = input.domain.finite().unwrap();
+    let resident = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &Default::default(),
+                &scope,
+                context
+                    .request(
+                        input.clone(),
+                        Region {
+                            bounds: source_region,
+                            grid: input.domain.grid,
+                        },
+                        Tiling { tile: size },
+                    )
+                    .unwrap(),
+                ImageFormat::Rgba32Float,
+                ImageBacking::Buffer,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    reads.lock().unwrap().clear();
+    let mapping = Mapping {
+        start: [0.; 2],
+        axes: [[512., 0.], [0., 2560.]],
+    };
+    let region = Rect::new([0, 0], [1, 1]);
+    let root = reconstruct_mapped(input, output(mapping, region), mapping).unwrap();
+    let request = context
+        .request(
+            root.clone(),
+            Region {
+                bounds: region,
+                grid: root.domain.grid,
+            },
+            Tiling { tile: [1, 1] },
+        )
+        .unwrap()
+        .with_materializations(scope);
+    let plan = request.plans().next().unwrap().unwrap();
+    assert!(
+        plan.requires_production(&root).unwrap(),
+        "resident storage must not turn a long phased unit into an unbounded recording"
+    );
+    assert!(reads.lock().unwrap().is_empty());
+    let work = context.prepare_image(request).unwrap();
+    assert!(!work.can_record());
+    let image = context
+        .produce_prepared(&queue, &Default::default(), work, || false)
+        .unwrap();
+    assert_eq!(
+        super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
+        vec![[-2., 3., 10_000., 8.]]
+    );
+    assert!(
+        reads.lock().unwrap().is_empty(),
+        "phased execution still reuses the resident source"
+    );
+    drop(resident);
+}
+
+#[test]
 fn related_small_reconstructions_keep_resident_callable_execution() {
     let (input, reads) = fixture(
         [128, 64],
@@ -12,10 +83,7 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let budget = Budget {
-        tile: [128, 64],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [128, 64] };
     let resident = pollster::block_on(
         context
             .materialize(

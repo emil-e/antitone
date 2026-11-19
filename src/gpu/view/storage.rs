@@ -1,9 +1,8 @@
-#[cfg(test)]
 use crate::Error;
-use wgpu::util::DeviceExt;
+use crate::gpu::allocation::DeviceAllocationExt;
 
-pub fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+pub fn uniform(device: &wgpu::Device, bytes: &[u8]) -> Result<wgpu::Buffer, Error> {
+    device.try_create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytes,
         usage: wgpu::BufferUsages::UNIFORM,
@@ -31,12 +30,12 @@ pub fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
 #[cfg(test)]
 pub fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, Error> {
     let bytes = view_bytes(device, size)?;
-    Ok(device.create_buffer(&wgpu::BufferDescriptor {
+    device.try_create_buffer(&wgpu::BufferDescriptor {
         label: Some("physical-view signed/HDR AP1"),
         size: bytes,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
-    }))
+    })
 }

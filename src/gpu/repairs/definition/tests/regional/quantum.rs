@@ -13,7 +13,7 @@ impl Operation for Damage {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -47,10 +47,7 @@ fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_ext
                         bounds: [41, 41, 1, 1].into(),
                         grid: damaged.domain().grid,
                     },
-                    Budget {
-                        tile: [1, 1],
-                        scratch_bytes: 1 << 20,
-                    },
+                    Tiling { tile: [1, 1] },
                 )
                 .unwrap(),
             || false,
@@ -74,9 +71,8 @@ fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_ext
         meaning: Meaning::Neutral,
     };
     let root = reconstruct(compose(damaged, &[repair(40, 32)]).unwrap(), domain).unwrap();
-    let budget = Budget {
+    let budget = Tiling {
         tile: [region.width, region.height],
-        scratch_bytes: u64::from(edge) * u64::from(edge) * 128,
     };
     let units = root
         .operation()

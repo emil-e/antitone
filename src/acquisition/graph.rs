@@ -45,19 +45,12 @@ fn dependency_bounds(
     compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
     requested: crate::gpu::evaluation::CellRegion,
 ) -> Result<crate::gpu::evaluation::CellRegion, Error> {
-    use crate::gpu::evaluation::{Budget, CellRegion};
+    use crate::gpu::evaluation::{CellRegion, Tiling};
     let processed = compose(input.clone())?;
     // Retain output cells in the contiguous layout even for translated-only reads.
     let mut low = [requested.x, requested.y];
     let mut high = [requested.right(), requested.bottom()];
-    for read in processed.regions_for(
-        input,
-        requested,
-        Budget {
-            tile: [512, 128],
-            scratch_bytes: u64::MAX,
-        },
-    )? {
+    for read in processed.regions_for(input, requested, Tiling { tile: [512, 128] })? {
         if !input.domain().contains_region(read) {
             return Err(Error::InvalidParameter(
                 "acquisition read exceeds the real input boundary",

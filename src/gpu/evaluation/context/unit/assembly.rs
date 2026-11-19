@@ -8,7 +8,6 @@ mod tests;
 pub(super) struct Copies {
     encoder: Option<wgpu::CommandEncoder>,
     images: Vec<CopyInput>,
-    bytes: u64,
     pub counts: WorkCounts,
 }
 struct CopyInput {
@@ -20,23 +19,16 @@ impl Copies {
     pub fn flush(&mut self, production: &Production<'_>) -> Result<(), Error> {
         if let Some(encoder) = self.encoder.take() {
             let images = std::mem::take(&mut self.images);
-            let bytes = std::mem::take(&mut self.bytes);
             if (production.cancelled)() {
                 return Err(Error::Cancelled);
             }
-            let gpu_only = bytes <= production.budget.scratch_bytes
-                && images.iter().all(|input| input.image.as_buffer().is_some());
+            let gpu_only = images.iter().all(|input| input.image.as_buffer().is_some());
             let mut resources = Allocations::default();
             resources.buffer(production.pixels);
             for input in &images {
                 resources.image(&input.image);
             }
-            let _active = production.working.activate(resources.clone());
-            production.working.admit_gpu(
-                production.context.device(),
-                0,
-                production.budget.scratch_bytes,
-            )?;
+            production.working.admit_gpu(production.context.device())?;
             // Queue writes cannot be withdrawn. Defer host staging until the batch
             // commits, then finish that bounded submission even if its owner retires.
             for input in &images {
@@ -60,7 +52,6 @@ impl Copies {
                     (production.queue, production.gate),
                     encoder,
                     resources,
-                    (bytes, production.budget.scratch_bytes),
                     || {},
                 )?;
             } else {
@@ -85,14 +76,6 @@ impl Copies {
         output: CellRegion,
         overlap: CellRegion,
     ) -> Result<(), Error> {
-        let bytes = rgba_bytes(output)?;
-        if self
-            .bytes
-            .checked_add(bytes)
-            .is_none_or(|total| total > production.budget.scratch_bytes)
-        {
-            self.flush(production)?;
-        }
         let encoder = self.encoder.get_or_insert_with(|| {
             production
                 .context
@@ -115,12 +98,6 @@ impl Copies {
             output,
             overlap,
         });
-        self.bytes += bytes;
-        // A single whole CPU result or independently held GPU value can exceed
-        // this allowance; preserve its existing one-unit transfer behavior.
-        if self.bytes >= production.budget.scratch_bytes {
-            self.flush(production)?;
-        }
         Ok(())
     }
 }

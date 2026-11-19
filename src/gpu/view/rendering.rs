@@ -140,7 +140,7 @@ impl Preparation {
         let values = match result {
             Ok(values) => values,
             Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
-            Err(error) => return Err(Error::Gpu(error.to_string())),
+            Err(error) => return Err((*error).clone()),
         };
         self.images
             .into_iter()

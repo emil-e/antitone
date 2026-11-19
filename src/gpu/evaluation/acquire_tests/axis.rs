@@ -52,10 +52,7 @@ fn reconstructed(
                     bounds: region,
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: size,
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: size },
             )
             .unwrap();
         images.push(
@@ -96,10 +93,7 @@ fn reconstructed(
                 bounds: output.finite().unwrap(),
                 grid: output.grid,
             },
-            Budget {
-                tile: [3, 2],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [3, 2] },
         )
         .unwrap();
     let result = pollster::block_on(

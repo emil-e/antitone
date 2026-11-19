@@ -15,6 +15,7 @@ fn generated_layout() -> ImageLayout {
 use super::*;
 use wgpu::util::DeviceExt;
 
+mod allocation;
 mod phase_inputs;
 mod recorded_values;
 mod relevance;
@@ -82,7 +83,7 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
             inputs: &[crate::gpu::evaluation::value::Value],
             domain: Domain,
             output: CellRegion,
-            _budget: crate::gpu::evaluation::Budget,
+            _budget: crate::gpu::evaluation::Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
             let function = Function::new(
@@ -130,10 +131,7 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
                     bounds: region,
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [2, 2],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [2, 2] },
             )
             .unwrap()
     };
@@ -363,6 +361,7 @@ fn selected_images_and_submitted_generated_values_update_the_common_recency_orde
                         true,
                         true,
                     )
+                    .unwrap()
                     .unwrap();
                 value.submitted();
             } else {
@@ -374,6 +373,7 @@ fn selected_images_and_submitted_generated_values_update_the_common_recency_orde
         if generated {
             let hit = values
                 .generated_image(&device, &first, generated_layout(), true, false)
+                .unwrap()
                 .unwrap();
             assert!(hit.ready());
             hit.submitted();
@@ -415,12 +415,15 @@ fn equal_byte_counts_do_not_merge_recordings_with_different_image_layouts() {
     let key = RetainedKey::new("same-byte typed recording witness");
     let first = scope
         .generated_image(&device, &key, first_layout, false, true)
+        .unwrap()
         .unwrap();
     let second = scope
         .generated_image(&device, &key, second_layout, false, true)
+        .unwrap()
         .unwrap();
     let repeated = scope
         .generated_image(&device, &key, first_layout, false, true)
+        .unwrap()
         .unwrap();
     assert!(Arc::ptr_eq(&first, &repeated));
     assert_ne!(
@@ -474,9 +477,11 @@ fn retention_changes_preserve_joined_recordings_without_restoring_optional_owner
         let key = RetainedKey::new("submitted generated samples");
         let generated = values
             .generated_image(&device, &key, generated_layout(), true, true)
+            .unwrap()
             .unwrap();
         let joined = values
             .generated_image(&device, &key, generated_layout(), true, true)
+            .unwrap()
             .unwrap();
         assert!(Arc::ptr_eq(&generated, &joined));
         assert!(

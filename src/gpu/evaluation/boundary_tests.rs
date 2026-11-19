@@ -21,7 +21,7 @@ fn comparison_helpers_reject_nan_metadata_and_truncated_output() {
 }
 
 #[test]
-fn scratch_pool_obeys_a_smaller_subsequent_budget() {
+fn scratch_pool_replaces_oversized_storage_when_the_tile_shape_shrinks() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let node = source(Arc::new(fixture()));
     let large = make_plan(node.clone(), [41, 35]);
@@ -38,15 +38,7 @@ fn scratch_pool_obeys_a_smaller_subsequent_budget() {
         height: 1,
         ..node.domain.finite().unwrap()
     };
-    let small = Plan::new(
-        node,
-        region,
-        Budget {
-            tile: [1, 1],
-            scratch_bytes: 16,
-        },
-    )
-    .unwrap();
+    let small = Plan::new(node, region, Tiling { tile: [1, 1] }).unwrap();
     let _result = executor
         .run(&device, &queue, &gate, &small, || false)
         .unwrap()
@@ -92,10 +84,7 @@ fn identity(p: vec4f, xy: vec2f) -> vec4f {
     let plan = Plan::new(
         node.clone(),
         node.domain.finite().unwrap(),
-        Budget {
-            tile: [2048, 2048],
-            scratch_bytes: 256 << 20,
-        },
+        Tiling { tile: [2048, 2048] },
     )
     .unwrap();
     let limits = wgpu::Limits {

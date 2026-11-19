@@ -60,12 +60,11 @@ fn request(context: &Context, root: Value) -> Evaluation {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
+            Tiling {
                 tile: [
                     domain.finite().unwrap().width,
                     domain.finite().unwrap().height,
                 ],
-                scratch_bytes: 1 << 20,
             },
         )
         .unwrap()

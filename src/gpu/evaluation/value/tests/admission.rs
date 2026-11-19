@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn adaptive_requests_preserve_rotated_masked_gaussian_math_and_complete_coverage() {
+fn fixed_tiles_preserve_rotated_masked_gaussian_math_and_complete_coverage() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let gate = crate::gpu::submission::SubmissionGate::default();
     let mut plate = Plate::new();
@@ -14,18 +14,12 @@ fn adaptive_requests_preserve_rotated_masked_gaussian_math_and_complete_coverage
     let gain = 1.75;
     let offset = -0.5;
     let node = gaussian(affine(source(Arc::new(plate.clone())), gain, offset), sigma).unwrap();
-    let allowance = Budget {
-        tile: [area.width, area.height],
-        scratch_bytes: 8 << 10,
-    };
-    assert!(
-        matches!(
-            node.plan_unit(area, allowance)
-                .and_then(|unit| unit.admit(allowance)),
-            Err(Error::WorkingAllowance(_))
-        ),
-        "fixture must actually require adaptive subdivision"
-    );
+    let allowance = Tiling { tile: [3, 2] };
+    node.plan_unit(area, allowance)
+        .unwrap()
+        .admit_for(&device.limits())
+        .unwrap();
+    assert_eq!(plate.reads.load(Ordering::Relaxed), 0);
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let evaluation = context
         .request(
@@ -39,6 +33,7 @@ fn adaptive_requests_preserve_rotated_masked_gaussian_math_and_complete_coverage
         .unwrap();
     let mut actual = vec![[f32::NAN; 4]; (area.width * area.height) as usize];
     let mut visited = vec![false; actual.len()];
+    let mut delivered = 0;
     context
         .read(
             &queue,
@@ -46,6 +41,8 @@ fn adaptive_requests_preserve_rotated_masked_gaussian_math_and_complete_coverage
             &evaluation,
             || false,
             |region, values| {
+                assert!(region.width <= 3 && region.height <= 2);
+                delivered += 1;
                 assert_eq!(values.len(), (region.width * region.height) as usize);
                 for (i, value) in values.iter().enumerate() {
                     let p = [
@@ -62,10 +59,7 @@ fn adaptive_requests_preserve_rotated_masked_gaussian_math_and_complete_coverage
         )
         .unwrap()
         .unwrap();
-    assert!(
-        plate.reads.load(Ordering::Relaxed) > 1,
-        "one oversized source acquisition must not bypass adaptive admission"
-    );
+    assert_eq!(delivered, area.width.div_ceil(3) * area.height.div_ceil(2));
     assert!(
         visited.into_iter().all(|value| value),
         "every output cell must be delivered exactly once"

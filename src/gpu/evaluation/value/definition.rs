@@ -71,7 +71,7 @@ impl Value {
     }
 
     #[cfg(test)]
-    pub(crate) fn plan_unit(&self, output: CellRegion, budget: Budget) -> Result<WorkUnit, Error> {
+    pub(crate) fn plan_unit(&self, output: CellRegion, budget: Tiling) -> Result<WorkUnit, Error> {
         super::super::unit::plan(self, output, budget)
     }
     pub(crate) fn pointer(&self) -> *const Definition {
@@ -167,18 +167,36 @@ impl Value {
     pub(in crate::gpu::evaluation) fn lower(
         &self,
         region: CellRegion,
-        budget: Budget,
+        budget: Tiling,
+    ) -> Result<Calculation, Error> {
+        self.lower_with_limits(region, budget, None)
+    }
+
+    pub(in crate::gpu::evaluation) fn lower_with_limits(
+        &self,
+        region: CellRegion,
+        budget: Tiling,
+        limits: Option<&wgpu::Limits>,
     ) -> Result<Calculation, Error> {
         let requested = self.request(region)?;
-        let calculation =
-            match self
-                .operation
-                .clone()
-                .calculation(&self.inputs, self.domain, region, budget)?
-            {
-                Some(calculation) => calculation,
-                None => Calculation::from_value(requested.clone())?,
-            };
+        let described = match limits {
+            Some(limits) => self.operation.clone().calculation_with_limits(
+                &self.inputs,
+                self.domain,
+                region,
+                budget,
+                limits,
+            )?,
+            None => {
+                self.operation
+                    .clone()
+                    .calculation(&self.inputs, self.domain, region, budget)?
+            }
+        };
+        let calculation = match described {
+            Some(calculation) => calculation,
+            None => Calculation::from_value(requested.clone())?,
+        };
         if calculation.domain() != self.domain {
             return Err(Error::InvalidParameter(
                 "image group returned incompatible calculation coverage",
@@ -211,9 +229,8 @@ impl Value {
             .regions_for(
                 ancestor,
                 region,
-                Budget {
+                Tiling {
                     tile: [region.width, region.height],
-                    scratch_bytes: u64::MAX,
                 },
             )?
             .into_iter();
@@ -247,7 +264,7 @@ impl Value {
         &self,
         ancestor: &Value,
         region: CellRegion,
-        budget: Budget,
+        budget: Tiling,
     ) -> Result<Vec<CellRegion>, Error> {
         if self.same_definition(ancestor) {
             return Ok(vec![region.validate()?]);

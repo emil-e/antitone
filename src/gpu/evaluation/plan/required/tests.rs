@@ -14,7 +14,7 @@ impl Operation for Leaf {
         _inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,
@@ -44,7 +44,7 @@ impl Operation for Reads {
         inputs: &[Value],
         domain: Domain,
         output: Rect,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         let operands = self
@@ -103,7 +103,6 @@ fn check(root: Value, targets: Vec<(Value, Rect)>) -> bool {
             policy: Policy::Composed,
             scope: None,
             supplied: &[],
-            scratch_bytes: 1 << 20,
             tile: [1, 1],
             limits: None,
         },

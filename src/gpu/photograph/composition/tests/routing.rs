@@ -51,10 +51,7 @@ fn pixels(
                 bounds,
                 grid: domain.grid,
             },
-            Budget {
-                tile: [64, 64],
-                scratch_bytes: 32 << 20,
-            },
+            Tiling { tile: [64, 64] },
         )
         .unwrap();
     let mut pixels = Vec::new();

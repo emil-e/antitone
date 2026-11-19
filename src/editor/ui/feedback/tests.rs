@@ -1,4 +1,6 @@
 use super::*;
+
+mod status;
 use crate::editor::ui::test_support::{key, pointer};
 use egui::{Event, FullOutput, Pos2, Rect};
 

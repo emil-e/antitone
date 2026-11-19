@@ -39,7 +39,7 @@ impl Operation for Combine {
         inputs: &[Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         let inputs = value::Calculation::references(inputs);
         let operation = value::Operation::new(
@@ -87,10 +87,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
                         bounds: input.domain().finite().unwrap(),
                         grid: input.domain().grid,
                     },
-                    Budget {
-                        tile: [64, 64],
-                        scratch_bytes: 1 << 20,
-                    },
+                    Tiling { tile: [64, 64] },
                 )
                 .unwrap()
                 .without_retention();
@@ -123,10 +120,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
                     bounds: region,
                     grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 },
-                Budget {
-                    tile: [8, 8],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [8, 8] },
             )
             .unwrap()
             .without_retention();
@@ -210,10 +204,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
                 bounds: region,
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
-            Budget {
-                tile: [8, 8],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 8] },
         )
         .unwrap()
         .without_retention();
@@ -261,7 +252,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
 }
 
 #[test]
-fn an_admitted_sequential_request_survives_an_oversized_shared_working_set() {
+fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
@@ -272,10 +263,7 @@ fn an_admitted_sequential_request_survives_an_oversized_shared_working_set() {
                 bounds: input.domain().finite().unwrap(),
                 grid: input.domain().grid,
             },
-            Budget {
-                tile: [64, 64],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [64, 64] },
         )
         .unwrap()
         .without_retention();
@@ -307,36 +295,22 @@ fn an_admitted_sequential_request_survives_an_oversized_shared_working_set() {
     let second = value::gaussian(first.clone(), 1.5).unwrap();
     let root = Value::from_operation(first.domain(), [first, second], Combine);
     let region = CellRegion::new([24, 20], [8, 8]);
-    let mut fallback = None;
-    for kibibytes in (8..=128).step_by(4) {
-        let request = context
-            .request(
-                root.clone(),
-                Region {
-                    bounds: region,
-                    grid: root.domain().grid,
-                },
-                Budget {
-                    tile: [8, 8],
-                    scratch_bytes: kibibytes << 10,
-                },
-            )
-            .unwrap()
-            .without_retention();
-        if !context
-            .prepare_base(request.clone())
-            .is_ok_and(|work| work.can_record())
-        {
-            continue;
-        }
-        let work = context.prepare_image(request).unwrap();
-        if work.can_record() && work.dependencies.is_empty() {
-            fallback = Some(work);
-            break;
-        }
-    }
-    let work = fallback.expect(
-        "the fixture must distinguish sequential admission from keeping a shared result live",
+    let request = context
+        .request(
+            root.clone(),
+            Region {
+                bounds: region,
+                grid: root.domain().grid,
+            },
+            Tiling { tile: [8, 8] },
+        )
+        .unwrap()
+        .without_retention();
+    let work = context.prepare_image(request).unwrap();
+    assert!(work.can_record());
+    assert!(
+        !work.dependencies.is_empty(),
+        "the shared value must actually be prepared"
     );
     let recorded = work.record(&context).unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -377,10 +351,7 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
                 bounds: input.domain().finite().unwrap(),
                 grid: input.domain().grid,
             },
-            Budget {
-                tile: [64, 64],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [64, 64] },
         )
         .unwrap()
         .without_retention();
@@ -408,10 +379,7 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
                 bounds: region,
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
-            Budget {
-                tile: [8, 8],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 8] },
         )
         .unwrap()
         .without_retention();
@@ -499,10 +467,7 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
                     bounds: domain.finite().unwrap(),
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [16, 16],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [16, 16] },
             )
             .unwrap()
             .without_retention()

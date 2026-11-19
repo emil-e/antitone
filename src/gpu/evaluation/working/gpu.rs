@@ -1,4 +1,4 @@
-//! Submitted GPU work owns its resources until completion; retired storage shares working admission.
+//! Completion owns submitted resources; a bounded queue limits outstanding submissions.
 use super::*;
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
@@ -8,17 +8,13 @@ macro_rules! timed {
         $body
     };
 }
-use std::sync::{
-    Weak,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // Bound driver/descriptor ownership even when many submissions reuse the same allocations.
 const QUEUED_SUBMISSIONS: usize = 32;
 
 #[derive(Default)]
 pub(super) struct GpuRun {
-    active: Mutex<Vec<Weak<Allocations>>>,
     state: Mutex<State>,
 }
 #[derive(Default)]
@@ -38,67 +34,20 @@ struct Submission {
 }
 struct Pending {
     complete: AtomicBool,
-    resources: Allocations,
+    _resources: Allocations,
 }
 
 impl GpuRun {
-    pub(super) fn activate(&self, resources: Allocations) -> Arc<Allocations> {
-        let resources = Arc::new(resources);
-        let mut active = self.active.lock().unwrap();
-        active.retain(|value| value.strong_count() != 0);
-        active.push(Arc::downgrade(&resources));
-        resources
-    }
-
-    pub(super) fn admit(
-        &self,
-        device: &wgpu::Device,
-        required: u64,
-        allowance: u64,
-    ) -> Result<(), Error> {
-        if required > allowance {
-            return Err(Error::WorkingAllowance(
-                "GPU working allocation exceeds its allowance",
-            ));
-        }
+    pub(super) fn admit(&self, device: &wgpu::Device) -> Result<(), Error> {
         loop {
-            if self.state.lock().unwrap().queued.is_empty() {
-                return Ok(());
-            }
-            device
-                .poll(wgpu::PollType::Poll)
-                .map_err(|error| Error::Gpu(error.to_string()))?;
             let mut state = self.state.lock().unwrap();
             state
                 .queued
                 .retain(|value| !value.pending.complete.load(Ordering::Acquire));
-            let mut live = Allocations::default();
-            self.active.lock().unwrap().retain(|value| {
-                if let Some(value) = value.upgrade() {
-                    live.extend(&value);
-                    true
-                } else {
-                    false
-                }
-            });
-            let mut pending = Allocations::default();
-            for value in &state.queued {
-                pending.extend(&value.pending.resources);
-            }
-            let extra = pending.bytes_except(&live);
-            if extra
-                .checked_add(required)
-                .is_some_and(|bytes| bytes <= allowance)
-                && state.queued.len() < QUEUED_SUBMISSIONS
-            {
+            if state.queued.len() < QUEUED_SUBMISSIONS {
                 return Ok(());
             }
-            let index = state
-                .queued
-                .front()
-                .expect("pending working storage")
-                .index
-                .clone();
+            let index = state.queued.front().unwrap().index.clone();
             #[cfg(test)]
             {
                 state.waited += 1;
@@ -121,14 +70,12 @@ impl GpuRun {
         (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         encoder: wgpu::CommandEncoder,
         resources: Allocations,
-        (required, allowance): (u64, u64),
         submitted: impl FnOnce(),
     ) -> Result<(), Error> {
-        let _active = self.activate(resources.clone());
-        self.admit(device, required, allowance)?;
+        self.admit(device)?;
         let pending = Arc::new(Pending {
             complete: AtomicBool::new(false),
-            resources,
+            _resources: resources,
         });
         let completion = pending.clone();
         let index = timed!(
@@ -194,20 +141,16 @@ impl GpuRun {
             .unwrap()
             .queued
             .iter()
-            .any(|value| value.pending.resources.owns(image))
+            .any(|value| value.pending._resources.owns(image))
     }
 
     #[cfg(test)]
-    pub(super) fn retired_bytes(&self) -> u64 {
-        let mut live = Allocations::default();
-        for value in self.active.lock().unwrap().iter().filter_map(Weak::upgrade) {
-            live.extend(&value);
-        }
+    pub(super) fn submitted_bytes(&self) -> u64 {
         let mut pending = Allocations::default();
         for value in &self.state.lock().unwrap().queued {
-            pending.extend(&value.pending.resources);
+            pending.extend(&value.pending._resources);
         }
-        pending.bytes_except(&live)
+        pending.bytes()
     }
 
     #[cfg(test)]
@@ -225,7 +168,7 @@ impl Drop for GpuRun {
             .unwrap_or_else(|error| error.into_inner());
         if let (Some(device), Some(last)) = (&state.device, state.queued.back()) {
             // Only worker execution enqueues here. Cancellation withdraws publication rights,
-            // not physical ownership or its admission; cleanup drains before the worker retires.
+            // not physical ownership; cleanup drains before the worker retires.
             let _ = timed!(
                 DeviceWait,
                 device.poll(wgpu::PollType::Wait {
