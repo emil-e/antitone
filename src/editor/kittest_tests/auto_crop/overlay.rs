@@ -68,8 +68,6 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
         setup(|mut h, directory| {
             set_layout(&mut h, size, width);
             stage(&mut h, "Photo");
-            h.get_by_label("Original-resolution reference").click();
-            h.step();
             workflow::wait_settled(&mut h);
             let ids = h.read(|editor| editor.document.state.project.order.clone());
             let before = h.read(|editor| editor.document.state.project.clone());

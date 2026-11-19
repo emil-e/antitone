@@ -78,7 +78,6 @@ impl Viewer<'_> {
                 .inner;
             if let Some(layout) = layout {
                 editor.canvas_frame.layout = Some((layout, ui.ctx().pixels_per_point()));
-                editor.paint_canvas_selection(ui, layout, fullscreen);
             } else if let Some(task) = editor.activities.view() {
                 task.viewer(ui, rect);
             }
@@ -136,7 +135,7 @@ impl Surface<'_> {
             ppp,
             image.zoom_action,
         );
-        let (layout, _) = editor.canvas_navigation(image.ui, image.response, layout, true, true);
+        let (layout, _) = editor.canvas_navigation(image.ui, image.response, layout, true);
         if editor.document.visit.picker.display().is_some() {
             image.paint_sample(editor, layout, editor.canvas_inspection(), cx);
         } else {
@@ -309,7 +308,6 @@ impl Editor {
             if let Some(action) = bar.action {
                 match action {
                     tool::Action::Primary => self.apply_pick(cx),
-                    tool::Action::Dismiss if self.masking() => self.finish_mask(false),
                     tool::Action::Dismiss => self.finish_pick(cx),
                 }
             }
@@ -422,7 +420,6 @@ impl Editor {
         response: &egui::Response,
         geometry: CanvasLayout,
         canvas_input: bool,
-        fullscreen: bool,
     ) -> (CanvasLayout, bool) {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let (geometry, panning) = if !canvas_input {
@@ -430,11 +427,6 @@ impl Editor {
         } else {
             self.navigate(ui, response, geometry, pixels_per_point)
         };
-        if !fullscreen
-            && (self.document.visit.masks.gesture().is_some() || self.mask_handles_available())
-        {
-            self.mask_interaction(ui, response, geometry, panning, canvas_input);
-        }
         self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
         (geometry, panning)
     }
@@ -525,38 +517,22 @@ impl Editor {
             }
         };
         let target = self.document.target();
-        if (working || capture.has_repairs())
-            && self
-                .document
+        if working || capture.has_repairs() {
+            self.document
                 .visit
                 .working_view
-                .observe(physical_frame, capture.clone(), target)
-        {
-            self.discard_original();
+                .observe(physical_frame, capture.clone(), target);
         }
-        let compare = self.comparing_original();
-        let purpose = if normal && !inspection && compare {
-            Some(OriginalPurpose::Reference)
-        } else {
-            (!source_outside_frame && !pending && image.is_sample())
-                .then_some(OriginalPurpose::Tool)
-        };
-        self.observe_original(
-            purpose,
-            self.source_context().map(|source| original_view::Demand {
+        let precision = !source_outside_frame && !pending && image.is_sample();
+        self.observe_original(self.source_context().filter(|_| precision).map(|source| {
+            original_view::Demand {
                 capture: capture.clone(),
                 target: self.document.target(),
                 view,
                 composition,
                 source,
-            }),
-        );
-        let reference_allowed = if working {
-            self.admit_view_reference(physical_frame)
-        } else {
-            self.document.thumbnails.reserve_view(0);
-            true
-        };
+            }
+        }));
         let rendered = match self.working_view(physical_frame, &capture, image, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
@@ -566,14 +542,10 @@ impl Editor {
                     working.log_failure("presentation", "current", None, &error);
                 }
                 working.error = Some(error);
-                self.document.visit.working_view.hold(target, compare)
+                self.document.visit.working_view.hold(target)
             }
         };
-        if purpose.is_some()
-            && !self.interaction_blocked()
-            && reference_allowed
-            && (!working || self.document.visit.working_view.support_ready())
-        {
+        if precision && !self.interaction_blocked() {
             self.request_original(ui.ctx(), cx);
         }
         let full_rect = geometry.screen_region(composition.area());
@@ -596,8 +568,8 @@ impl Editor {
                     && rendered.spec.frame().max == physical_frame.max
                     && rendered.capture == capture)
         });
-        let tool = if purpose == Some(OriginalPurpose::Tool) {
-            match self.original_rendered(OriginalPurpose::Tool) {
+        let tool = if precision {
+            match self.original_rendered() {
                 Ok(view) => view,
                 Err(error) => {
                     self.status = error.to_string();
@@ -745,10 +717,6 @@ impl Editor {
         ))
     }
 
-    fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, _fullscreen: bool) {
-        self.paint_mask(ui, geometry);
-    }
-
     pub(super) fn viewer_canvas(
         &mut self,
         ui: &mut egui::Ui,
@@ -805,8 +773,7 @@ impl Editor {
         };
         let composition = composition.expect("selected image composition");
         let geometry = self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
-        let (geometry, _) =
-            self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen);
+        let (geometry, _) = self.canvas_navigation(ui, &response, geometry, canvas_input);
         self.canvas_frame.layout = Some((geometry, pixels_per_point));
         let image_mode = if fullscreen && self.document.visit.picker.display().is_some() {
             if self.canvas_inspection() {
@@ -829,10 +796,7 @@ impl Editor {
                         pending,
                     ),
                 ));
-        } else if self.current_tool().is_none() {
-            return;
         }
-        self.paint_canvas_selection(ui, geometry, fullscreen);
     }
 }
 
@@ -904,16 +868,13 @@ impl SourceView {
             output: layout.output_size(layout.visible_area(), ppp),
             frame: None,
         };
-        self.original.observe(
-            OriginalPurpose::Tool,
-            original_view::Demand {
-                capture: capture.clone(),
-                target: editor.document.target(),
-                view: Some(view),
-                composition,
-                source: self.source().expect("prepared source"),
-            },
-        );
+        self.original.observe(original_view::Demand {
+            capture: capture.clone(),
+            target: editor.document.target(),
+            view: Some(view),
+            composition,
+            source: self.source().expect("prepared source"),
+        });
         if !editor.interaction_blocked()
             && let Some(services) = services
         {
@@ -924,7 +885,7 @@ impl SourceView {
                 cx,
             );
         }
-        let original = match self.original.rendered(OriginalPurpose::Tool) {
+        let original = match self.original.rendered() {
             Ok(image) => image,
             Err(error) => {
                 editor.status = error.to_string();

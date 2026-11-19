@@ -77,7 +77,6 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             });
             harness.render().unwrap();
             harness.read(|editor| assert!(!editor.document.visit.working_view.support_ready()));
-            harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
             harness.read(|editor| {
                 assert!(
                     editor

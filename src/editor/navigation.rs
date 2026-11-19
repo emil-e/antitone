@@ -75,12 +75,22 @@ pub(super) fn navigate_view(
         }
         layout = relayout(viewport);
     }
+    let can_pan = viewport.can_pan(layout);
     if panning {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if inside
         && (space || response.sense.senses_drag() && viewport.zoom.is_some() && can_pan)
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    } else if inside
+        && response.sense.senses_click()
+        && pointer.is_some_and(|point| layout.image.contains(point))
+    {
+        ui.ctx().set_cursor_icon(if viewport.zoom.is_none() {
+            egui::CursorIcon::ZoomIn
+        } else {
+            egui::CursorIcon::ZoomOut
+        });
     }
     (layout, panning)
 }
@@ -90,137 +100,20 @@ impl Editor {
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
-        mut geometry: CanvasLayout,
+        geometry: CanvasLayout,
         pixels_per_point: f32,
     ) -> (CanvasLayout, bool) {
-        if !ui.is_enabled() {
-            return (geometry, false);
-        }
-        let mask_pointer =
-            ui.input(|input| input.pointer.press_origin().or(input.pointer.hover_pos()));
-        let masking = self.tab == 1
-            && self.document.visit.masks.gesture().is_some()
-            && self.fullscreen.is_none()
-            || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
-        let captured_mask = masking
-            && self
-                .document
-                .visit
-                .masks
-                .gesture()
-                .is_some_and(MaskEdit::dragging);
-        let canvas_tool = masking && self.fullscreen.is_none();
-        let (zoom, translation, touch, pointer, space) = ui.input(|input| {
-            (
-                input.zoom_delta(),
-                input.translation_delta(),
-                input.multi_touch(),
-                input.pointer.hover_pos(),
-                input.key_down(egui::Key::Space),
-            )
-        });
-        let gesture_inside = touch.is_some_and(|touch| geometry.canvas.contains(touch.center_pos));
-        if (response.hovered() || gesture_inside) && !captured_mask {
-            if zoom != 1.
-                && let Some(anchor) = touch
-                    .map(|touch| touch.center_pos - touch.translation_delta)
-                    .or(pointer)
-            {
-                // Touch translation moves the previous center to the current center after zoom.
-                self.active_canvas_mut().viewport.zoom_at(
-                    geometry,
-                    pixels_per_point,
-                    geometry.scale * pixels_per_point * zoom,
-                    anchor,
-                );
-                geometry = self.active_canvas_mut().viewport.layout_composition(
-                    geometry.canvas,
-                    geometry.composition,
-                    pixels_per_point,
-                );
-            }
-            if translation != egui::Vec2::ZERO
-                && self.active_canvas_mut().viewport.zoom.is_some()
-                && can_pan(geometry)
-            {
-                self.active_canvas_mut()
-                    .viewport
-                    .pan(geometry, pixels_per_point, translation);
-                geometry = self.active_canvas_mut().viewport.layout_composition(
-                    geometry.canvas,
-                    geometry.composition,
-                    pixels_per_point,
-                );
-            }
-        }
-        let panning = !captured_mask
-            && (response.dragged_by(egui::PointerButton::Middle)
-                || response.dragged_by(egui::PointerButton::Primary)
-                    && (space
-                        || !canvas_tool
-                            && self.active_canvas_mut().viewport.zoom.is_some()
-                            && can_pan(geometry)));
-        if panning && can_pan(geometry) {
-            self.active_canvas_mut().viewport.pan(
-                geometry,
-                pixels_per_point,
-                response.drag_delta(),
-            );
-            geometry = self.active_canvas_mut().viewport.layout_composition(
-                geometry.canvas,
-                geometry.composition,
-                pixels_per_point,
-            );
-        }
-        if !canvas_tool
-            && !space
-            && response.clicked_by(egui::PointerButton::Primary)
-            && let Some(point) = response
-                .interact_pointer_pos()
-                .filter(|point| geometry.image.contains(*point))
-        {
-            if self.active_canvas_mut().viewport.zoom.is_none() {
-                self.active_canvas_mut()
-                    .viewport
-                    .zoom_at(geometry, pixels_per_point, 1., point);
-            } else {
-                self.active_canvas_mut().viewport.fit();
-            }
-            geometry = self.active_canvas_mut().viewport.layout_composition(
-                geometry.canvas,
-                geometry.composition,
-                pixels_per_point,
-            );
-        }
-        if response.hovered() || response.dragged() {
-            let cursor = if panning {
-                egui::CursorIcon::Grabbing
-            } else if space
-                || !canvas_tool
-                    && self.active_canvas_mut().viewport.zoom.is_some()
-                    && can_pan(geometry)
-            {
-                egui::CursorIcon::Grab
-            } else if masking {
-                egui::CursorIcon::Crosshair
-            } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !canvas_tool {
-                if self.active_canvas_mut().viewport.zoom.is_none() {
-                    egui::CursorIcon::ZoomIn
-                } else {
-                    egui::CursorIcon::ZoomOut
-                }
-            } else {
-                egui::CursorIcon::Default
-            };
-            ui.ctx().set_cursor_icon(cursor);
-        }
-        (geometry, panning)
+        let relayout = |viewport: &mut Viewport| {
+            viewport.layout_composition(geometry.canvas, geometry.composition, pixels_per_point)
+        };
+        navigate_view(
+            &mut self.active_canvas_mut().viewport,
+            ui,
+            response,
+            geometry,
+            relayout,
+        )
     }
-}
-
-fn can_pan(geometry: CanvasLayout) -> bool {
-    geometry.image.width() > geometry.canvas.width()
-        || geometry.image.height() > geometry.canvas.height()
 }
 
 pub(super) fn picker_cursor(

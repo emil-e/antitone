@@ -25,7 +25,7 @@ fn history_retains_refinement_and_release_applies_only_mask_geometry_to_restored
             });
             editor.commit_project(edit).unwrap();
             let id = start(&mut editor);
-            let mask = editor.document.visit.masks.gesture().unwrap().mask.unwrap();
+            let mask = editor.mask_preview_geometry().unwrap();
             editor.restore_history(history::Direction::Undo, &UiContext::render_only());
             let restored = editor.document.state.project.clone();
             let mut expected = restored.clone();
@@ -41,10 +41,11 @@ fn history_retains_refinement_and_release_applies_only_mask_geometry_to_restored
                 .unwrap()
                 .adjustment
                 .mask = mask;
-            assert!(editor.document.visit.masks.editing());
+            assert!(editor.masking());
             assert!(editor.mask_preview_source().is_some());
             editor.finish_mask(true);
-            assert!(!editor.document.visit.masks.editing());
+            assert!(editor.masking());
+            assert!(!editor.mask_dragging());
             assert_eq!(editor.document.state.project, expected);
             assert_eq!(
                 editor.history_label(history::Direction::Undo),

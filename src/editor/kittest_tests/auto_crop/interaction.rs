@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_layouts() {
+fn batch_owns_its_global_drawer_allows_grading_and_is_replaced_by_crop_at_both_layouts() {
     for (size, width) in [
         (egui::vec2(1100., 800.), 315.),
         (egui::vec2(800., 600.), 270.),
@@ -33,7 +33,7 @@ fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_l
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Gamma")
+                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Gamma")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -54,7 +54,7 @@ fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_l
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -69,7 +69,7 @@ fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_l
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                     .accesskit_node()
                     .is_disabled()
             );

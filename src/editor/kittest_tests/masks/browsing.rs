@@ -71,7 +71,7 @@ fn keyboard_departure_discards_held_creation_and_refinement_before_a_late_releas
                     hold_drag(&mut harness, start, end);
                     harness.read(|editor| {
                         assert!(editor.mask_dragging());
-                        assert_eq!(editor.document.visit.masks.dragging(), refining);
+                        assert_eq!(!editor.creating_mask(), refining);
                     });
                     depart(&mut harness, true);
                     pointer(&mut harness, end, false);

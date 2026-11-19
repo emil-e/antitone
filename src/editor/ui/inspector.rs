@@ -260,24 +260,28 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
     }
 }
 
-/// Single-select row with pointer capture for reordering and an independent enable toggle.
+/// A full-width selection/drag row with independent tool and enable columns.
 pub fn draggable_icon_row(
     ui: &mut Ui,
     icon: Icon,
     label: &str,
     selected: bool,
     enabled: Option<&mut bool>,
-) -> (egui::Response, Option<egui::Response>) {
+    tool: Option<super::ToolButton<'_>>,
+) -> (Response, Option<Response>, Option<Response>) {
+    let height = INSPECTOR_ROW_HEIGHT;
     let (rect, allocated) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), CONTROL_HEIGHT),
+        egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
-    let toggle_width = if enabled.is_some() {
-        CONTROL_HEIGHT
+    let action_width = if enabled.is_some() {
+        2. * height
+    } else if tool.is_some() {
+        height
     } else {
         0.
     };
-    let select_rect = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(toggle_width, 0.));
+    let select_rect = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(action_width, 0.));
     let response = ui.interact(
         select_rect,
         allocated.id.with("select"),
@@ -291,13 +295,18 @@ pub fn draggable_icon_row(
         visuals.bg_stroke,
         egui::StrokeKind::Inside,
     );
+    let foreground = if enabled.as_deref() == Some(&false) {
+        ui.visuals().weak_text_color()
+    } else {
+        visuals.fg_stroke.color
+    };
     icon.paint(
         ui,
         egui::Rect::from_center_size(
             rect.left_center() + egui::vec2(14., 0.),
             egui::vec2(16., 16.),
         ),
-        visuals.fg_stroke,
+        egui::Stroke::new(visuals.fg_stroke.width, foreground),
     );
     let text = egui::WidgetText::from(label).into_galley(
         ui,
@@ -305,10 +314,11 @@ pub fn draggable_icon_row(
         (select_rect.width() - 38.).max(1.),
         egui::TextStyle::Button,
     );
+    let truncated = text.elided;
     ui.painter().galley_with_override_text_color(
         egui::pos2(rect.left() + 30., rect.center().y - text.size().y * 0.5),
         text,
-        visuals.fg_stroke.color,
+        foreground,
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
@@ -320,22 +330,58 @@ pub fn draggable_icon_row(
     });
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_selected(selected));
+    let tool = tool.map(|tool| {
+        let tool_rect =
+            egui::Rect::from_min_size(select_rect.right_top(), egui::Vec2::splat(height));
+        ui.put(tool_rect, |ui: &mut Ui| {
+            ui.spacing_mut().interact_size.y = height;
+            tool.show(ui)
+        })
+    });
     let toggle = enabled.map(|enabled| {
-        let response = ui.put(
-            egui::Rect::from_min_max(egui::pos2(select_rect.right(), rect.top()), rect.max),
-            egui::Checkbox::without_text(enabled),
+        let name = format!("Enable {label}");
+        let help = format!("{} {label}", if *enabled { "Disable" } else { "Enable" });
+        let toggle_rect = egui::Rect::from_min_size(
+            rect.right_top() - egui::vec2(height, 0.),
+            egui::Vec2::splat(height),
         );
+        let mut response = ui.put(toggle_rect, |ui: &mut Ui| {
+            ui.scope(|ui| {
+                if !*enabled {
+                    let color = ui.visuals().weak_text_color();
+                    let widgets = &mut ui.visuals_mut().widgets;
+                    for state in [
+                        &mut widgets.inactive,
+                        &mut widgets.hovered,
+                        &mut widgets.active,
+                    ] {
+                        state.fg_stroke.color = color;
+                    }
+                }
+                icons::button_at(ui, Icon::Power, true, &name, &help, height)
+            })
+            .inner
+        });
+        if response.clicked() {
+            *enabled = !*enabled;
+            response.mark_changed();
+        }
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::Checkbox,
                 response.enabled(),
                 *enabled,
-                format!("Enable {label}"),
+                &name,
             )
         });
         response
     });
-    (response.on_hover_text(label), toggle)
+    let response = if truncated {
+        response.on_hover_text(label)
+    } else {
+        response
+    };
+    (response, toggle, tool)
 }
 
 /// A section-level tool that acts on the section's subject rather than on one value.

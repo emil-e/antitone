@@ -165,6 +165,15 @@ fn stage_tool_shelf_distinguishes_commands_active_tools_and_changed_state() {
     assert!(crop.enabled());
     assert!(dust.enabled());
     assert_eq!(node(&output, "Crop & straighten").is_selected(), Some(true));
+    assert_eq!(node(&output, "Turn left").toggled(), None);
+    assert_eq!(
+        node(&output, "Crop & straighten").toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+    assert_eq!(
+        node(&output, "Dust repair").toggled(),
+        Some(egui::accesskit::Toggled::False)
+    );
     assert_eq!(turn.rect.height(), INSPECTOR_ROW_HEIGHT);
     assert_eq!(crop.rect.height(), INSPECTOR_ROW_HEIGHT);
     assert_eq!(dust.rect.height(), INSPECTOR_ROW_HEIGHT);

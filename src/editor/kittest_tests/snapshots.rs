@@ -120,7 +120,11 @@ fn save_and_cancelled_export_leave_armed_mask_creation_ready_for_an_ordinary_dra
                 image.center() + egui::vec2(35., 25.),
             );
             h.read(|editor| {
-                assert!(!editor.masking(), "{}", editor.status);
+                assert!(
+                    editor.masking() && !editor.creating_mask() && !editor.mask_dragging(),
+                    "{}",
+                    editor.status
+                );
                 let source = editor.document.visit.current_source.unwrap();
                 assert_eq!(
                     editor

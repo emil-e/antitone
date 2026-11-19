@@ -42,7 +42,7 @@ During the Auto-crop draft the viewed frame is the uncropped oriented source, se
 
 Nonlinear processing does not commute with averaging: averaging two negative samples and then inverting them generally gives a different result from inverting each and averaging the positives. The same issue applies to display rendering:
 
-- Original-resolution reference/inspection refinement and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
+- Original-sample tool reconstruction and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
 - EXR averages the signed/HDR working positives and converts to AP0, without display rendering.
 
 A destination pixel inverse-maps to a source footprint, and exact intersection areas provide its reconstruction weights. Exact turns and integer framing retain simple permutation/rectangular paths; arbitrary-angle framing uses polygon coverage. Navigation thumbnails trade sample precision for browsing speed: their camera proxy averages bounded stratified samples before correction/inversion and grading. Initial/inspection previews also use cheaper proxy approximations. The positive working view instead filters neutral calibrated AP1 at the visible physical-pixel footprint before grading; [processing](processing.md#physical-view-processing-is-an-approximation) explains its noncommutativity with original-sample reconstruction.

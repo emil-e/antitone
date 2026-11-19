@@ -184,9 +184,7 @@ pub(super) struct WorkingView {
     wanted: Option<Arc<Demand>>,
     failed: Option<Arc<Demand>>,
     rendered: Option<Arc<RenderedView>>,
-    reference: Option<Arc<RenderedView>>,
     pub displayed: Option<Arc<RenderedView>>,
-    pub compare: bool,
     pub updating: bool,
     pub error: Option<String>,
 }
@@ -202,7 +200,6 @@ impl WorkingView {
         let mut next = Self::default();
         next.gpu = self.gpu.clone();
         next.kernels = self.kernels.clone();
-        next.compare = self.compare;
         next
     }
 
@@ -273,17 +270,9 @@ impl WorkingView {
         self.gpu.as_ref().map(|(_, queue)| queue)
     }
 
-    pub(super) fn reference_ready(&self) -> bool {
-        self.reference.is_some()
-    }
-
-    pub(super) fn hold(
-        &mut self,
-        target: OutputTarget,
-        compare: bool,
-    ) -> Option<Arc<RenderedView>> {
+    pub(super) fn hold(&mut self, target: OutputTarget) -> Option<Arc<RenderedView>> {
         self.displayed = self.wanted.as_ref().and_then(|wanted| {
-            self.present(wanted.frame, self.displayed.as_ref(), compare)
+            self.present(wanted.frame, self.displayed.as_ref())
                 .ok()
                 .flatten()
                 .or_else(|| self.rendered.clone())
@@ -319,7 +308,6 @@ impl WorkingView {
         self.wanted = None;
         self.failed = None;
         self.rendered = None;
-        self.reference = None;
         self.displayed = None;
         self.updating = false;
         self.error = None;
@@ -646,7 +634,6 @@ impl WorkingView {
         &self,
         frame: FrameRaster,
         previous: Option<&Arc<RenderedView>>,
-        compare: bool,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
@@ -655,19 +642,6 @@ impl WorkingView {
                     && wanted.capture.is_inspection() == rendered.capture.is_inspection()
             })
         };
-        if compare
-            && self
-                .wanted
-                .as_ref()
-                .is_some_and(|wanted| !wanted.capture.is_inspection())
-            && let Some(reference) = self
-                .reference
-                .as_ref()
-                .filter(|rendered| is_current_source(rendered) && rendered.spec.frame() == frame)
-        {
-            return Ok(Some(reference.clone()));
-        }
-
         let Some(detail) = self
             .rendered
             .as_ref()
@@ -801,44 +775,6 @@ pub(super) async fn acquire_images(
 }
 
 impl Editor {
-    pub(super) fn comparing_original(&self) -> bool {
-        self.document.visit.working_view.compare && !self.document.visit.masks.editing()
-    }
-
-    pub(super) fn admit_view_reference(&mut self, frame: FrameRaster) -> bool {
-        let pixels = frame.output.iter().fold(16usize, |bytes, dimension| {
-            bytes.saturating_mul(*dimension as usize)
-        });
-        if self.canvas_inspection() {
-            self.discard_original();
-            self.document.thumbnails.reserve_view(0);
-            return false;
-        }
-
-        let reservation = if self.document.visit.canvas.original.refining()
-            || self.document.visit.canvas.original.settled().is_none()
-        {
-            pixels.saturating_mul(2).saturating_add(3 << 20)
-        } else {
-            pixels
-        };
-        let allowed = if self.comparing_original() {
-            self.document.thumbnails.reserve_view(0);
-            true
-        } else if self.document.visit.canvas.original.settled().is_some() {
-            self.document.thumbnails.reserve_view(reservation)
-        } else {
-            self.document.thumbnails.reserve_view(0);
-            false
-        };
-        if !allowed {
-            self.discard_original();
-            self.document.visit.working_view.reference = None;
-        }
-
-        allowed
-    }
-
     pub(super) fn working_view(
         &mut self,
         frame: FrameRaster,
@@ -849,7 +785,6 @@ impl Editor {
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let target = self.document.target();
         let inspection = image.inspection(self.canvas_inspection());
-        let compare = self.comparing_original();
         let previous = self.document.visit.working_view.displayed.take();
         if self
             .document
@@ -877,7 +812,7 @@ impl Editor {
                 .document
                 .visit
                 .working_view
-                .present(frame, previous.as_ref(), compare)?
+                .present(frame, previous.as_ref())?
                 .filter(|rendered| rendered.target == self.document.target());
             self.document.visit.working_view.updating =
                 !self.document.visit.working_view.support_ready()
@@ -923,13 +858,12 @@ impl Editor {
                 cx,
             );
             self.document.visit.working_view.render(context)?;
-            self.document.visit.working_view.reference = None;
 
             self.document.visit.working_view.displayed = self
                 .document
                 .visit
                 .working_view
-                .present(frame, previous.as_ref(), compare)?
+                .present(frame, previous.as_ref())?
                 .filter(|rendered| rendered.target == self.document.target());
             self.document.visit.working_view.updating |= self
                 .document
@@ -967,15 +901,11 @@ impl Editor {
         );
         self.document.visit.working_view.render(context)?;
 
-        self.document.visit.working_view.reference = self
-            .original_rendered(OriginalPurpose::Reference)?
-            .filter(|rendered| rendered.spec.frame() == frame);
-
         self.document.visit.working_view.displayed = self
             .document
             .visit
             .working_view
-            .present(frame, previous.as_ref(), compare)?
+            .present(frame, previous.as_ref())?
             .filter(|rendered| rendered.target == self.document.target());
         self.document.visit.working_view.updating |= self
             .document

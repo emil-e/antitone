@@ -43,7 +43,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             exposure.scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
+                !h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -52,6 +52,8 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                 assert!(editor.photo_crop().is_none());
                 assert_eq!(editor.photo_settings().exposure, 0.75);
             });
+            workflow::enter_numeric(&mut h, "Exposure", "0.5");
+            h.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, draft));
             let mut expected = h.read(|editor| editor.document.state.project.clone());
             let source = h.read(|editor| editor.document.visit.current_source.unwrap());
             if exit == "Apply" {
@@ -69,7 +71,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             });
             h.read(|editor| {
                 assert_eq!(editor.document.state.project, expected);
-                assert_eq!(editor.photo_settings().exposure, 0.75);
+                assert_eq!(editor.photo_settings().exposure, 0.5);
                 if exit == "Dust repair" {
                     assert!(editor.dusting());
                 }
@@ -97,7 +99,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                 wait_for(&mut h, |editor| !editor.interaction_blocked());
                 h.read(|editor| {
                     assert!(editor.photo_crop().is_none());
-                    assert_eq!(editor.photo_settings().exposure, 0.75);
+                    assert_eq!(editor.photo_settings().exposure, 0.5);
                 });
             }
             h.read(|editor| {
@@ -106,6 +108,10 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                     Some("Photo settings")
                 )
             });
+            h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+            h.step();
+            wait_for(&mut h, |editor| !editor.interaction_blocked());
+            h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.75));
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
             wait_for(&mut h, |editor| !editor.interaction_blocked());

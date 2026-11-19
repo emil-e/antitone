@@ -353,11 +353,14 @@ fn selected_mask_artwork_stays_out_of_the_source_review_during_moved_out_paintin
     }
     editor_harness(|mut harness, _| {
         calibrated_roll(&mut harness);
-        stage(&mut harness, "Photo");
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
+            .click();
+        harness.run_steps(2);
         harness.get_by_label("Add linear").scroll_to_me();
-        harness.try_run_realtime().unwrap();
+        harness.run_steps(2);
         harness.get_by_label("Add linear").click();
-        harness.step();
+        wait_for(&mut harness, |editor| editor.canvas_frame.layout.is_some());
         let image = harness.read(|editor| editor.canvas_frame.layout.unwrap().0.image);
         drag(
             &mut harness,
@@ -371,9 +374,15 @@ fn selected_mask_artwork_stays_out_of_the_source_review_during_moved_out_paintin
                 "accepted selected gradient must paint before review"
             );
         });
-        stage(&mut harness, "Roll");
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Tab, "Roll")
+            .click();
+        harness.run_steps(2);
         show_confirmation(&mut harness);
-        stage(&mut harness, "Photo");
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
+            .click();
+        harness.run_steps(2);
         harness.update(|editor| {
             editor
                 .with_current_tool(|_, editor| {
@@ -386,11 +395,28 @@ fn selected_mask_artwork_stays_out_of_the_source_review_during_moved_out_paintin
                 .unwrap();
         });
         harness.get_by_label("Cancel").click();
-        harness.step();
+        wait_for(&mut harness, |editor| editor.canvas_frame.layout.is_some());
+        harness.read(|editor| {
+            assert_eq!(
+                artwork(editor),
+                0,
+                "a retired mask tool does not resume implicitly"
+            );
+        });
+        adjustment_layers::show_layers(&mut harness);
+        let name = harness.read(|editor| {
+            adjustment_layers::layers(editor)
+                .layers
+                .last()
+                .unwrap()
+                .name
+                .clone()
+        });
+        adjustment_layers::click(&mut harness, &format!("Edit {name}"));
         harness.read(|editor| {
             assert!(
                 artwork(editor) > 0,
-                "retirement must restore the unchanged selected gradient"
+                "explicit Edit restores the unchanged selected gradient"
             )
         });
     });

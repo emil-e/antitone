@@ -622,7 +622,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 egui::accesskit::Role::SpinButton,
             ] {
                 assert!(
-                    harness
+                    !harness
                         .get_by_role_and_label(role, "Exposure")
                         .accesskit_node()
                         .is_disabled()
@@ -632,15 +632,14 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             for reset in
                 harness.get_all_by_role_and_label(egui::accesskit::Role::Button, "Reset Exposure")
             {
-                assert!(reset.accesskit_node().is_disabled());
-                reset.click();
+                assert!(!reset.accesskit_node().is_disabled());
                 resets += 1;
             }
             assert!(resets > 0);
             harness.run();
             stage(&mut harness, "Rendering");
             assert!(
-                harness
+                !harness
                     .get_by(|node| node.role() == egui::accesskit::Role::ComboBox
                         && node.value().as_deref() == Some("Display P3"))
                     .accesskit_node()

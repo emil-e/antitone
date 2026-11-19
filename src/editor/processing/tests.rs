@@ -443,10 +443,9 @@ fn offscreen_unrenderable_layer_does_not_veto_calibration_picks() {
 }
 
 #[test]
-fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_stale_results() {
+fn original_requests_and_scopes_capture_the_same_immutable_stack_and_reject_stale_results() {
     pollster::block_on(async {
         let (mut editor, device, _) = fixture().await;
-        editor.document.visit.working_view.compare = true;
         editor.scopes = Scopes::new(&device);
         let id = editor.document.visit.current_source.unwrap();
         let context = egui::Context::default();
@@ -454,6 +453,28 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         let accepted = positive(&editor);
         let (_, scope, _) = editor.scope_input().unwrap();
         assert_eq!(scope.clone(), accepted.clone());
+        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
+        let raster = layout.physical_frame_raster(1.);
+        let demand = original_view::Demand {
+            capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+                editor
+                    .positive_recipe(
+                        editor.input(),
+                        editor.document.project.roll,
+                        editor.photo_settings(),
+                    )
+                    .unwrap(),
+            )),
+            target: editor.document.target(),
+            view: Some(ViewRequest {
+                area: raster.bounds().unwrap(),
+                output: raster.output,
+                frame: Some(raster),
+            }),
+            composition: layout.composition,
+            source: editor.source_context().unwrap(),
+        };
+        editor.document.visit.canvas.original.observe(demand);
         editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         let request = editor.document.visit.canvas.original.request().unwrap();
@@ -519,7 +540,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         );
         assert!(
             editor.document.visit.canvas.original.wanted.is_none(),
-            "source inspection never requests photographic comparison"
+            "ordinary source inspection does not request original tool rendering"
         );
         assert!(view.area.width > 0);
     });
@@ -536,7 +557,6 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
 
     pollster::block_on(async {
         let (mut editor, device, queue) = fixture().await;
-        editor.document.visit.working_view.compare = true;
         let recipe = Arc::new(
             editor
                 .positive_recipe(
@@ -634,9 +654,12 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                 .unwrap();
             let target = editor.document.target();
             let source = editor.source_context().unwrap();
-            editor.document.visit.canvas.original.observe(
-                OriginalPurpose::Reference,
-                original_view::Demand {
+            editor
+                .document
+                .visit
+                .canvas
+                .original
+                .observe(original_view::Demand {
                     capture: PhotographRequest::Recipe(Arc::new(recipe)),
                     target,
                     view: Some(ViewRequest {
@@ -646,8 +669,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                     }),
                     composition: layout.composition,
                     source,
-                },
-            );
+                });
             editor.document.visit.canvas.original.last_edit =
                 Instant::now() - Duration::from_secs(1);
         };

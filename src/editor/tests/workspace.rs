@@ -456,7 +456,7 @@ fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_control
 }
 
 #[test]
-fn rendering_target_and_reset_preserve_grading_and_wait_for_crop_to_end() {
+fn rendering_target_and_reset_preserve_grading_and_the_live_crop_draft() {
     let mut editor = fixture();
     editor.tab = 2;
     let grade = (
@@ -504,7 +504,7 @@ fn rendering_target_and_reset_preserve_grading_and_wait_for_crop_to_end() {
     editor.begin_crop();
     let draft = editor.document.crop_edit().unwrap().draft;
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.document.target(), OutputTarget::Srgb);
+    assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(
         (
@@ -517,6 +517,7 @@ fn rendering_target_and_reset_preserve_grading_and_wait_for_crop_to_end() {
         grade
     );
     editor.hosted_action(tool::Action::Dismiss);
+    editor.document.set_target(OutputTarget::Srgb);
     click_section_reset(&mut editor, &context, "Target");
     assert_eq!(editor.document.target(), OutputTarget::DisplayP3);
     editor.tab = 1;

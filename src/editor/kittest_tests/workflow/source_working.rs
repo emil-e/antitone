@@ -647,9 +647,6 @@ fn uncalibrated_source_keeps_coherent_detail_and_inspection_through_zero_retenti
         });
         assert!(retained.capture.is_inspection());
         let mut project = harness.read(|editor| editor.document.state.project.clone());
-        // A remembered positive comparison must neither replace source working detail on idle nor
-        // force an optional reference past the zero budget while its control is hidden.
-        harness.update(|editor| editor.document.visit.working_view.compare = true);
         for (index, delta) in [egui::vec2(400., 0.), egui::vec2(-800., 100.)]
             .into_iter()
             .enumerate()
@@ -726,7 +723,6 @@ fn uncalibrated_source_keeps_coherent_detail_and_inspection_through_zero_retenti
                     &editor.canvas_frame.displayed.as_ref().unwrap().view
                 ));
             });
-            harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
             harness.read(|editor| assert!(!editor.document.visit.canvas.original.refining()));
             harness.read(|editor| {
                 assert_eq!(

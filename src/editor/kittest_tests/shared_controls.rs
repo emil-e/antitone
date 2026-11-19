@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor::history::Direction;
 
-fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
+fn control_state(h: &mut Harness<'_, Editor>, tool_active: bool) {
     use egui::accesskit::Role;
     for (tab, controls) in [
         (
@@ -44,10 +44,10 @@ fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
                 let command = h.get_by_role_and_label(Role::Button, label);
                 assert_eq!(
                     command.accesskit_node().is_disabled(),
-                    disabled,
+                    tool_active,
                     "Roll shelf: {label}"
                 );
-                if disabled {
+                if tool_active {
                     command.click();
                     h.step();
                     h.step();
@@ -76,7 +76,7 @@ fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
                     .expect("Negative input-stage dropdown")
                     .accesskit_node()
                     .is_disabled(),
-                disabled,
+                tool_active,
                 "Input stage"
             );
         }
@@ -93,11 +93,7 @@ fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
             } else {
                 h.get_by_role_and_label(role, label)
             };
-            assert_eq!(
-                node.accesskit_node().is_disabled(),
-                disabled,
-                "{tab}: {label}"
-            );
+            assert!(!node.accesskit_node().is_disabled(), "{tab}: {label}");
         }
     }
 }
@@ -131,7 +127,7 @@ fn click(h: &mut Harness<'_, Editor>, label: &str) {
 }
 
 #[test]
-fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
+fn digital_texture_controls_remain_live_during_photo_tools_and_survive_retirement() {
     editor_harness(|mut h, _| {
         h.update(|editor| {
             editor.document.project.input = InputSettings::Digital;
@@ -171,11 +167,21 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
                 h.get_by_role_and_label(role, "Enable").scroll_to_me();
                 h.try_run_realtime().unwrap();
                 assert!(
-                    h.get_by_role_and_label(role, "Enable")
+                    !h.get_by_role_and_label(role, "Enable")
                         .accesskit_node()
                         .is_disabled(),
                     "{tool} {name}"
                 );
+                h.get_by_role_and_label(role, "Enable").click();
+                h.step();
+                let graded = h.read(|editor| {
+                    assert!(editor.has_hosted_tool());
+                    assert_ne!(
+                        editor.document.project.output.grain.enabled,
+                        before.output.grain.enabled
+                    );
+                    editor.document.project.clone()
+                });
                 save_capture(
                     &h.render().unwrap(),
                     &format!(
@@ -193,7 +199,7 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
                 );
                 h.read(|editor| {
                     assert!(!editor.tool_interacting());
-                    assert_eq!(editor.document.project, before);
+                    assert_eq!(editor.document.project, graded);
                 });
                 assert!(
                     !h.get_by_role_and_label(role, "Enable")
@@ -206,8 +212,7 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
 }
 
 #[test]
-fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_controls_and_replacements()
- {
+fn tools_allow_shared_grading_and_replace_mask_artwork_without_resuming_it_implicitly() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
         click(&mut h, "Turn left");
@@ -220,8 +225,8 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
             image.min + image.size() * 0.25,
             image.min + image.size() * 0.75,
         );
-        h.read(|editor| assert!(!editor.tool_interacting()));
-        control_state(&mut h, false);
+        h.read(|editor| assert!(editor.masking() && !editor.creating_mask()));
+        control_state(&mut h, true);
         for tool in [
             "Crop & straighten",
             "Dust repair",
@@ -239,7 +244,7 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
             h.read(|editor| {
                 assert!(
                     mask_artwork(editor) > 0,
-                    "{tool}: ordinary selected gradient must paint"
+                    "{tool}: active mask tool must paint"
                 )
             });
             let before = h.read(|editor| editor.document.project.clone());
@@ -299,7 +304,7 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
                         assert_eq!(
                             mask_artwork(editor),
                             0,
-                            "{tool}: moved-out owner excludes contextual artwork"
+                            "{tool}: replacement owns its own canvas artwork"
                         )
                     })
                     .unwrap();
@@ -321,12 +326,30 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
                     history.as_deref(),
                     "{tool}"
                 );
-                assert!(
-                    mask_artwork(editor) > 0,
-                    "{tool}: unchanged contextual artwork returns"
+                assert_eq!(
+                    mask_artwork(editor),
+                    0,
+                    "{tool}: retiring a replacement does not reopen mask editing"
                 );
             });
+            adjustment_layers::show_layers(&mut h);
+            let name = h.read(|editor| {
+                adjustment_layers::layers(editor)
+                    .layers
+                    .last()
+                    .unwrap()
+                    .name
+                    .clone()
+            });
+            click(&mut h, &format!("Edit {name}"));
+            h.read(|editor| {
+                assert!(
+                    mask_artwork(editor) > 0,
+                    "explicit Edit restores the unchanged mask"
+                )
+            });
         }
+        click(&mut h, "Done");
         control_state(&mut h, false);
         stage(&mut h, "Roll");
         click(&mut h, "Reset scan orientation");

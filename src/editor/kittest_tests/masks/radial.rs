@@ -92,7 +92,13 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
                 .composition
                 .frame_to_source(layout.frame_point(pressed));
             drag(&mut harness, pressed, pressed + egui::vec2(70., 45.));
-            harness.read(|editor| assert!(!editor.masking(), "{}", editor.status));
+            harness.read(|editor| {
+                assert!(
+                    editor.masking() && !editor.creating_mask(),
+                    "{}",
+                    editor.status
+                )
+            });
             let layers = harness.read(adjustment_layers::layers);
             let record = layers.layers.last().unwrap();
             let AdjustmentLayerCoverage::Radial {
@@ -122,7 +128,7 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
                 unreachable!()
             };
             assert_eq!(feather, 0.);
-            harness.read(|editor| assert!(!editor.masking()));
+            harness.read(|editor| assert!(editor.masking() && !editor.mask_dragging()));
             harness.read(|editor| serde_json::to_value(&editor.document.project).unwrap());
         }
     });
@@ -145,12 +151,12 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             ("narrow", egui::vec2(800., 600.), 270.),
         ] {
             set_layout(&mut harness, size, width);
-            click(&mut harness, "Sky");
+            click(&mut harness, "Edit Sky");
             workflow::wait_settled(&mut harness);
             let before = harness.read(|editor| editor.document.state.project.clone());
             let original = harness.read(accepted_mask);
             let center_screen = harness.read(|editor| screen(editor, point(original, DVec2::ZERO)));
-            harness.read(|editor| assert!(editor.mask_handles_available(), "handles unavailable"));
+            harness.read(|editor| assert!(editor.masking(), "mask tool unavailable"));
             harness.read(|editor| {
                 assert!(
                     editor
@@ -166,13 +172,9 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             });
             harness.read(|editor| {
                 assert!(
-                    editor.mask_pointer_interest(
-                        editor.active_canvas().last_layout.unwrap().0,
-                        center_screen
-                    ),
-                    "target={:?} mask={original:?}",
-                    editor.adjustment_layer_target()
-                )
+                    editor.mask_target().is_some(),
+                    "selected mask has an edit target"
+                );
             });
             hold_drag(
                 &mut harness,
@@ -184,13 +186,8 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 assert!(
                     editor.mask_preview_source().is_some(),
                     "gesture={} error={:?} status={}",
-                    editor.document.visit.masks.gesture().is_some(),
-                    editor
-                        .document
-                        .visit
-                        .masks
-                        .gesture()
-                        .and_then(MaskEdit::error),
+                    editor.masking(),
+                    editor.current_tool().unwrap().presentation().warning,
                     editor.status
                 )
             });
@@ -205,7 +202,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             let axis = harness.read(|editor| screen(editor, point(original, DVec2::X)));
             let along = (axis - center_screen).normalized();
             drag(&mut harness, axis, axis + along * 12.);
-            harness.read(|editor| assert!(!editor.masking()));
+            harness.read(|editor| assert!(editor.masking() && !editor.mask_dragging()));
             let resized = harness.read(accepted_mask);
             let AdjustmentLayerCoverage::Radial {
                 center: original_center,
@@ -284,8 +281,8 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             workflow::enter_numeric(&mut harness, "Feather", "0.375");
             harness.read(|editor| {
                 assert!(
-                    !editor.masking(),
-                    "numeric Enter is not a geometry-session action"
+                    editor.masking() && !editor.mask_dragging(),
+                    "numeric Enter preserves the active mask tool without starting a gesture"
                 )
             });
             let AdjustmentLayerCoverage::Radial { feather, angle, .. } =
@@ -307,11 +304,15 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                     .adjustment
                     .mask = accepted_mask(editor)
             });
-            harness.read(|editor| assert_eq!(
-            editor.document.state.project,
-            expected,
-            "IDs, allocator, photographic values, other layers and composition survive geometry edits"
-        ));
+            harness.read(|editor| {
+                assert_eq!(
+                    editor.document.state.project,
+                    expected,
+                    "IDs, allocator, photographic values, other layers and composition survive geometry edits"
+                );
+            });
+            click(&mut harness, "Done");
+            harness.read(|editor| assert!(!editor.masking()));
         }
     });
 }

@@ -62,7 +62,11 @@ fn controls_and_layers_remain_authorable_until_calibration_can_render() {
                 masks::pointer(&mut h, image.center() - egui::vec2(30., 20.), true);
                 masks::pointer(&mut h, image.center() + egui::vec2(30., 20.), false);
                 h.read(|editor| {
-                    assert!(!editor.has_hosted_tool(), "{}", editor.status);
+                    assert!(
+                        editor.masking() && !editor.creating_mask() && !editor.mask_dragging(),
+                        "{}",
+                        editor.status
+                    );
                     assert_eq!(adjustment_layers::layers(editor).layers.len(), count + 2);
                 });
             }

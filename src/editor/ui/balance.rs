@@ -1,7 +1,7 @@
 use super::{
     ControlResponse, ParameterRow, SectionTool,
     icons::Icon,
-    interaction::{control_active, control_started, record_control_interaction},
+    interaction::{control_active, control_started},
 };
 use crate::color::{Balance, ap1_to_cones, opponent, opponent_coordinates};
 use egui::{Color32, Response, Ui};
@@ -204,7 +204,6 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance, size: f32) -> Res
         4.,
         ui.visuals().text_color(),
     );
-    record_control_interaction(ui, &response);
     response.on_hover_text(
         "Drag to shift the balance; hold Shift for finer motion. Double-click resets.",
     )

@@ -589,7 +589,7 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
                     before
                 );
                 assert!(!editor.document.visit.adjustment_layers.dragging());
-                assert!(editor.document.visit.masks.gesture().is_none());
+                assert!(editor.mask_preview_geometry().is_none());
             });
         }
     });
@@ -876,13 +876,14 @@ fn mask_center(editor: &Editor) -> egui::Pos2 {
 }
 
 #[test]
-fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
+fn collapsed_layers_keep_active_mask_artwork_and_editing() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(install_layers);
         harness.step();
         show_layers(&mut harness);
         for name in ["Sky", "Foreground"] {
             click(&mut harness, name);
+            click(&mut harness, &format!("Edit {name}"));
             if !harness.read(|editor| editor.document.visit.adjustment_layers.show_coverage) {
                 click(&mut harness, "Mask overlay");
             }
@@ -891,30 +892,33 @@ fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
                 let point = mask_center(editor);
                 let layout = editor.active_canvas().last_layout.unwrap().0;
                 assert!(layout.canvas.contains(point));
-                assert!(editor.mask_pointer_interest(layout, point));
+                assert!(editor.masking());
             });
             let before = harness.read(|editor| editor.document.state.project.clone());
             click(&mut harness, "Layers");
-            let point =
-                harness.read(|editor| {
-                    assert_eq!(mask_artwork(editor), 0);
-                    assert!(editor.document.visit.adjustment_layers.show_coverage);
-                    let point = mask_center(editor);
-                    assert!(!editor.mask_pointer_interest(
-                        editor.active_canvas().last_layout.unwrap().0,
-                        point
-                    ));
-                    point
-                });
+            let point = harness.read(|editor| {
+                assert!(mask_artwork(editor) > 0);
+                assert!(editor.document.visit.adjustment_layers.show_coverage);
+                let point = mask_center(editor);
+                assert!(editor.masking());
+                point
+            });
             super::masks::hold_drag(&mut harness, point, point + egui::vec2(18., 12.));
             super::masks::pointer(&mut harness, point + egui::vec2(18., 12.), false);
             harness.read(|editor| {
-                assert!(editor.document.visit.masks.gesture().is_none());
-                assert_eq!(editor.document.state.project, before);
+                assert!(editor.mask_preview_geometry().is_none());
+                assert_ne!(editor.document.state.project, before);
             });
+            harness.read(|editor| assert!(editor.masking(), "before reopening: {}", editor.status));
             click(&mut harness, "Layers");
             harness.read(|editor| {
-                assert!(mask_artwork(editor) > 0);
+                assert!(
+                    mask_artwork(editor) > 0,
+                    "after reopening: masking={} selected={:?} status={}",
+                    editor.masking(),
+                    editor.adjustment_layer_target(),
+                    editor.status
+                );
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
             });
         }
@@ -922,13 +926,14 @@ fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
 }
 
 #[test]
-fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference() {
+fn value_adjustments_keep_active_masks_and_the_coverage_preference() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(install_layers);
         harness.step();
         show_layers(&mut harness);
         for name in ["Sky", "Foreground"] {
             click(&mut harness, name);
+            click(&mut harness, &format!("Edit {name}"));
             if !harness.read(|editor| editor.document.visit.adjustment_layers.show_coverage) {
                 click(&mut harness, "Mask overlay");
             }
@@ -953,7 +958,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.run_steps(3);
             harness.read(|editor| {
                 assert_eq!(editor.photo_settings().exposure, before);
-                assert_eq!(mask_artwork(editor), 0);
+                assert!(mask_artwork(editor) > 0);
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
             });
             let end = point + egui::vec2(18., 0.);
@@ -961,7 +966,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.step();
             harness.read(|editor| {
                 assert_ne!(editor.photo_settings().exposure, before);
-                assert_eq!(mask_artwork(editor), 0);
+                assert!(mask_artwork(editor) > 0);
             });
             harness.event(egui::Event::PointerButton {
                 pos: end,
@@ -976,7 +981,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
 
             pending_exposure(&mut harness, "0.375");
             assert!(harness.ctx.text_edit_focused());
-            harness.read(|editor| assert_eq!(mask_artwork(editor), 0));
+            harness.read(|editor| assert!(mask_artwork(editor) > 0));
             harness.event(egui::Event::Key {
                 key: egui::Key::Enter,
                 physical_key: None,
@@ -995,7 +1000,7 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.try_run_realtime().unwrap();
             let point = harness.get_by_label("White balance wheel").rect().center();
             super::masks::hold_drag(&mut harness, point, point + egui::vec2(2., -1.));
-            harness.read(|editor| assert_eq!(mask_artwork(editor), 0));
+            harness.read(|editor| assert!(mask_artwork(editor) > 0));
             super::masks::pointer(&mut harness, point + egui::vec2(2., -1.), false);
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
@@ -1052,14 +1057,13 @@ fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
             super::masks::pointer(&mut harness, end, false);
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert!(!editor.masking());
+                assert!(editor.masking() && !editor.creating_mask());
                 assert_eq!(layers(editor).layers.len(), before + 1);
-                assert_eq!(mask_artwork(editor), 0);
+                assert!(mask_artwork(editor) > 0);
             });
-            assert_eq!(
-                canvas_handles(&harness),
-                0,
-                "the collapsed inspector hides accepted handles"
+            assert!(
+                canvas_handles(&harness) > 0,
+                "accepted handles remain in the active tool"
             );
         }
     });

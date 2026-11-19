@@ -42,8 +42,31 @@ fn history(h: &mut Harness<'_, Editor>, redo: bool) {
     wait_for(h, |editor| !editor.interaction_blocked());
 }
 
+fn mask_mode(h: &Harness<'_, Editor>) {
+    h.read(|editor| {
+        assert!(editor.masking() && !editor.creating_mask());
+        assert!(editor.current_tool().unwrap().is::<mask_editor::MaskTool>());
+    });
+    assert!(
+        !h.get_by_role_and_label(egui::accesskit::Role::Button, "Done")
+            .accesskit_node()
+            .is_disabled()
+    );
+    for label in ["Apply", "Cancel"] {
+        assert!(
+            h.query_by_role_and_label(egui::accesskit::Role::Button, label)
+                .is_none()
+        );
+    }
+    assert!(
+        !h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
+            .accesskit_node()
+            .is_disabled()
+    );
+}
+
 #[test]
-fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independently() {
+fn grading_and_mask_refinement_share_one_tool_and_undo_independently() {
     for (radial, size, width) in [
         (false, egui::vec2(1100., 800.), 315.),
         (true, egui::vec2(800., 600.), 270.),
@@ -58,15 +81,15 @@ fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independe
                 image.center() + egui::vec2(60., 35.),
             );
             workflow::enter_numeric(&mut h, "Exposure", "0.25");
-            no_mode(&h);
+            mask_mode(&h);
             let graded = h.read(|editor| editor.document.state.project.clone());
             let original_mask = h.read(accepted_mask);
             let start = h.read(handle);
             let end = start + egui::vec2(24., -12.);
             hold_drag(&mut h, start, end);
-            no_mode(&h);
+            mask_mode(&h);
             h.read(|editor| {
-                assert!(editor.document.visit.masks.dragging());
+                assert!(editor.mask_dragging());
                 assert_eq!(editor.document.state.project, graded);
                 assert!(editor.mask_preview_source().is_some());
             });
@@ -79,7 +102,7 @@ fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independe
                 },
             );
             pointer(&mut h, end, false);
-            no_mode(&h);
+            mask_mode(&h);
             let refined = h.read(|editor| editor.document.state.project.clone());
             assert_ne!(h.read(accepted_mask), original_mask);
             assert_ne!(refined, graded);
@@ -89,7 +112,7 @@ fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independe
             let start = h.read(handle);
             let end = start + egui::vec2(-18., 16.);
             drag(&mut h, start, end);
-            no_mode(&h);
+            mask_mode(&h);
             let refined_again = h.read(|editor| editor.document.state.project.clone());
             assert_ne!(refined_again, regraded);
 
@@ -100,7 +123,7 @@ fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independe
             let start = h.read(handle);
             let end = start + egui::vec2(14., 10.);
             hold_drag(&mut h, start, end);
-            h.read(|editor| assert!(editor.document.visit.masks.dragging()));
+            h.read(|editor| assert!(editor.mask_dragging()));
             h.key_press(egui::Key::Escape);
             h.step();
             pointer(&mut h, end, false);
@@ -109,13 +132,13 @@ fn grading_and_contextual_refinement_alternate_without_a_mode_and_undo_independe
                 history(&mut h, true);
                 h.read(|editor| assert_eq!(&editor.document.state.project, expected));
             }
-            no_mode(&h);
+            mask_mode(&h);
         });
     }
 }
 
 #[test]
-fn refinement_paints_its_draft_without_changing_the_comparison_preference() {
+fn refinement_paints_its_current_draft_and_escape_restores_accepted_geometry() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         arm(&mut h, false);
         let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
@@ -124,27 +147,13 @@ fn refinement_paints_its_draft_without_changing_the_comparison_preference() {
             image.center() - egui::vec2(60., 35.),
             image.center() + egui::vec2(60., 35.),
         );
-        click(&mut h, "Original-resolution reference");
         workflow::wait_settled(&mut h);
-        h.update(|editor| {
-            assert!(editor.comparing_original());
-            let reference = editor
-                .original_rendered(OriginalPurpose::Reference)
-                .unwrap()
-                .unwrap();
-            assert!(Arc::ptr_eq(
-                &editor.canvas_frame.displayed.as_ref().unwrap().view.image,
-                &reference.image
-            ));
-        });
         let before = h.read(|editor| editor.document.state.project.clone());
         let start = h.read(handle);
         let end = start + egui::vec2(24., -12.);
         hold_drag(&mut h, start, end);
         let wanted = h.read(|editor| {
-            assert!(editor.document.visit.masks.dragging());
-            assert!(editor.document.visit.working_view.compare);
-            assert!(!editor.comparing_original());
+            assert!(editor.mask_dragging());
             assert_eq!(editor.document.state.project, before);
             let source = editor.document.visit.current_source.unwrap();
             let candidate = editor
@@ -194,13 +203,12 @@ fn refinement_paints_its_draft_without_changing_the_comparison_preference() {
                 .as_ref()
                 .is_some_and(|painted| painted.view.capture == wanted)
         });
-        save_capture(&h.render().unwrap(), "contextual-refinement-over-reference");
+        save_capture(&h.render().unwrap(), "mask-refinement-current-draft");
         h.key_press(egui::Key::Escape);
         h.step();
         pointer(&mut h, end, false);
         workflow::wait_settled(&mut h);
         h.read(|editor| {
-            assert!(editor.comparing_original());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -217,7 +225,6 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
             image.center() + egui::vec2(60., 35.),
         );
         workflow::enter_numeric(&mut h, "Exposure", "0.5");
-        h.update(|editor| editor.document.visit.working_view.compare = true);
         let before = h.read(|editor| editor.document.state.project.clone());
         let before_history =
             h.read(|editor| editor.history_label(crate::editor::history::Direction::Undo));
@@ -226,9 +233,7 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
         let end = start + egui::vec2(25., -10.);
         hold_drag(&mut h, start, end);
         h.read(|editor| {
-            assert!(editor.document.visit.masks.dragging());
-            assert!(editor.document.visit.working_view.compare);
-            assert!(!editor.comparing_original());
+            assert!(editor.mask_dragging());
         });
         let next = h.read(|editor| {
             let id = editor.document.project.order[1];
@@ -241,8 +246,7 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
         });
         h.read(|editor| {
             assert_ne!(editor.document.visit.current_source, Some(first));
-            assert!(!editor.document.visit.masks.editing());
-            assert!(editor.document.visit.working_view.compare);
+            assert!(!editor.masking());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
@@ -254,15 +258,25 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
         wait_for(&mut h, |editor| {
             !editor.document.visit.source.pending() && editor.active_canvas().last_layout.is_some()
         });
+        adjustment_layers::show_layers(&mut h);
+        let name = h.read(|editor| {
+            adjustment_layers::layers(editor)
+                .layers
+                .last()
+                .unwrap()
+                .name
+                .clone()
+        });
+        click(&mut h, &format!("Edit {name}"));
         let start = h.read(handle);
         let end = start + egui::vec2(20., 15.);
         hold_drag(&mut h, start, end);
-        h.read(|editor| assert!(editor.document.visit.masks.dragging()));
+        h.read(|editor| assert!(editor.mask_dragging()));
         h.update(Editor::begin_crop);
         pointer(&mut h, end, false);
         h.read(|editor| {
             assert!(editor.cropping());
-            assert!(!editor.document.visit.masks.editing());
+            assert!(!editor.masking());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),

@@ -60,15 +60,18 @@ coverage differs.
 - Layers process **bottom to top**. Drag rows to reorder; new layers appear above the
   selection. Put a global contrast layer above a sky gradient to soften the balanced
   photograph, rather than changing what the gradient receives.
-- Draw gradients on the canvas and refine their handles. **Strength** attenuates the
+- Draw gradients on the canvas; release creates the layer and keeps its editing tool open.
+  Use the **pencil** on a linear or radial row to return to its handles. **Strength** attenuates the
   adjustment, **Invert mask** swaps coverage, and radial **Feather** changes the fade.
   Half coverage of +1 EV means +0.5 EV, not half a rendered-pixel blend.
 - Select a row to target the shared controls, double-click to rename, or press
   Delete/Backspace to remove it with confirmation. The initial global layer can also be
-  moved, disabled or deleted.
+  moved, disabled or deleted. The **power** icon enables or bypasses a layer;
+  bypassed names and icons are muted.
 
-Collapse **Layers** for a clean view. Mask coverage and handles also hide while you
-adjust values, then return. Drawing or moving a gradient keeps its guides visible.
+Grade while editing the shape; collapsing **Layers** keeps active handles visible.
+**Done**, or clicking the active pencil again, ends mask editing for a clean view without undoing accepted changes. **Escape**
+cancels an unfinished refinement first, or exits the tool while idle.
 
 ## Dust repair
 

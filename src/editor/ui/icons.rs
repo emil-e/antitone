@@ -5,6 +5,8 @@ use egui::{Rect, Response, Stroke, Ui, Vec2};
 #[derive(Clone, Copy)]
 pub(in crate::editor) enum Icon {
     Reset,
+    Edit,
+    Power,
     Fit,
     Fullscreen,
     ExitFullscreen,
@@ -95,6 +97,29 @@ impl Icon {
                     stroke,
                 ));
                 ui.painter().circle_stroke(point(8., 8.), 2.5, stroke);
+            }
+            Self::Edit => {
+                line(&[
+                    [3., 10.],
+                    [11., 2.],
+                    [14., 5.],
+                    [6., 13.],
+                    [2., 14.],
+                    [3., 10.],
+                ]);
+                line(&[[9., 4.], [12., 7.]]);
+            }
+            Self::Power => {
+                let arc = (0..=32)
+                    .map(|i| {
+                        let angle = std::f32::consts::FRAC_PI_4
+                            + i as f32 * (std::f32::consts::TAU - std::f32::consts::FRAC_PI_2)
+                                / 32.;
+                        point(8. + 6. * angle.sin(), 8. - 6. * angle.cos())
+                    })
+                    .collect();
+                ui.painter().add(egui::Shape::line(arc, stroke));
+                line(&[[8., 1.], [8., 8.]]);
             }
             Self::Reset => {
                 let arc = (0..=24)

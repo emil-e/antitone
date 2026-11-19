@@ -161,9 +161,7 @@ impl Editor {
             && !ui.ctx().egui_wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx())
         {
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-                && !self.mask_dragging()
-            {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
                 self.with_tool_viewport(Viewport::fit);
             }
             self.select_active_shortcut(ui.ctx());
@@ -200,11 +198,6 @@ impl Editor {
                 self.dispatch_tool(tool::Action::Primary, cx);
                 ui.ctx().request_repaint();
             }
-        }
-        if self.document.visit.masks.gesture().is_some()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.finish_mask(false);
         }
     }
 
@@ -344,20 +337,6 @@ impl Editor {
     }
 
     pub(super) fn edit_frame_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
-    ) -> Option<ScopeSlot> {
-        let scope_slot = self.workspace_controls(ui, cx);
-        let adjusting = ui::values_are_being_adjusted(ui.ctx());
-        if self.document.visit.adjustment_layers.adjusting_values != adjusting {
-            self.document.visit.adjustment_layers.adjusting_values = adjusting;
-            ui.ctx().request_repaint();
-        }
-        scope_slot
-    }
-
-    fn workspace_controls(
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,

@@ -170,10 +170,9 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
         harness.update(|e| {
             e.scopes.visible = false;
             e.document.visit.canvas.viewport.zoom = Some(1.375);
-            e.document.visit.working_view.compare = true;
         });
         wait_settled(&mut harness);
-        let (photo, viewport, mode, displayed, original, revision, visit) = harness.update(|e| {
+        let (photo, viewport, mode, displayed, revision, visit) = harness.update(|e| {
             let canvas = &e.document.visit.canvas;
             (
                 canvas.ready.as_ref().unwrap().developed.clone(),
@@ -187,7 +186,6 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
                     .unwrap()
                     .image
                     .clone(),
-                canvas.original.settled().unwrap().1,
                 canvas.original.continuation(),
                 e.document.visit.view,
             )
@@ -215,10 +213,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
                     .unwrap()
                     .image
             ));
-            assert!(Arc::ptr_eq(
-                &original,
-                &canvas.original.settled().unwrap().1
-            ));
+            assert!(canvas.original.wanted.is_none() && canvas.original.settled().is_none());
             assert_eq!(canvas.original.continuation(), revision);
         };
         harness.update(|e| {
