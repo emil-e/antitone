@@ -1,4 +1,6 @@
 use super::*;
+
+mod rendering;
 use crate::editor::history::Direction;
 
 mod history_tests;

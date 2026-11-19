@@ -517,12 +517,6 @@ impl Editor {
             }
         };
         let target = self.document.target();
-        if working || capture.has_repairs() {
-            self.document
-                .visit
-                .working_view
-                .observe(physical_frame, capture.clone(), target);
-        }
         let precision = !source_outside_frame && !pending && image.is_sample();
         self.observe_original(self.source_context().filter(|_| precision).map(|source| {
             original_view::Demand {
@@ -533,7 +527,7 @@ impl Editor {
                 source,
             }
         }));
-        let rendered = match self.working_view(physical_frame, &capture, image, ui.ctx(), cx) {
+        let rendered = match self.working_view(physical_frame, &capture, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
                 let error = error.to_string();
@@ -545,7 +539,7 @@ impl Editor {
                 self.document.visit.working_view.hold(target)
             }
         };
-        if precision && !self.interaction_blocked() {
+        if precision {
             self.request_original(ui.ctx(), cx);
         }
         let full_rect = geometry.screen_region(composition.area());
@@ -596,23 +590,12 @@ impl Editor {
                 self.submissions.clone(),
                 ui.ctx().clone(),
             )
-        } else if let Some(paint) = self.preview_paint(
-            &proxy,
-            geometry,
-            &capture,
-            pending,
-            source_outside_frame,
-            ui.ctx(),
-        ) {
+        } else if let Some(paint) =
+            self.preview_paint(&proxy, geometry, &capture, source_outside_frame, ui.ctx())
+        {
             paint
         } else {
-            ui.label(
-                if capture.has_repairs() && self.document.visit.working_view.error.is_none() {
-                    "Updating repairs…"
-                } else {
-                    "Preview unavailable"
-                },
-            );
+            ui.label("Preview unavailable");
             return None;
         };
         self.canvas_frame.displayed =
@@ -634,15 +617,9 @@ impl Editor {
         proxy: &crate::viewer::GpuProxy,
         geometry: CanvasLayout,
         capture: &crate::gpu::photograph::request::PhotographRequest,
-        placeholder: bool,
         source_outside_frame: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
-        // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
-        // those views; a cached selected preview may stand in until the working view arrives.
-        if capture.has_repairs() && !placeholder {
-            return None;
-        }
         let device = self.document.visit.working_view.device()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
         let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
@@ -875,9 +852,7 @@ impl SourceView {
             composition,
             source: self.source().expect("prepared source"),
         });
-        if !editor.interaction_blocked()
-            && let Some(services) = services
-        {
+        if let Some(services) = services {
             self.original.request_with(
                 services.clone(),
                 editor.submissions.clone(),

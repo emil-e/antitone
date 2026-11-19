@@ -1,6 +1,8 @@
 use super::workflow::{enter_numeric, wait_settled};
 use super::*;
 
+mod rendering;
+
 fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
     harness.get_by_label(action).scroll_to_me();
     harness.try_run_realtime().unwrap();

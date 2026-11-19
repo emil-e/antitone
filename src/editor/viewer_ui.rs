@@ -221,6 +221,13 @@ impl Editor {
                             .size()
                             .x
                     };
+                let view_error_width =
+                    if look_error.is_none() && self.document.visit.working_view.error.is_some() {
+                        ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP
+                    } else {
+                        0.
+                    };
+                let trailing_width = trailing_width + view_error_width;
                 let source_controls = 2;
                 // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
                 let navigation_icons = 4 + source_controls;
@@ -304,8 +311,17 @@ impl Editor {
                         self.look_render_failed(error.to_string());
                     }
                 } else if let Some(error) = &self.document.visit.working_view.error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable")
-                        .on_hover_text(error);
+                    let (_, response) = ui.allocate_exact_size(
+                        egui::Vec2::splat(ui::CONTROL_HEIGHT),
+                        egui::Sense::hover(),
+                    );
+                    ui::status_icon(
+                        ui,
+                        response,
+                        "View unavailable",
+                        ui::StatusLevel::Error,
+                        error,
+                    );
                 }
                 let help = ui::icons::button(
                     ui,

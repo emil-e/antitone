@@ -413,7 +413,11 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
             .1
             .center();
         click(&mut editor, &context, size, help);
-        assert!(egui::Popup::is_any_open(&context));
+        assert!(
+            egui::Popup::is_any_open(&context),
+            "cropping={cropping}, help={help:?}, error={:?}",
+            editor.document.visit.working_view.error
+        );
         let canvas = editor
             .document
             .crop_edit()
@@ -837,7 +841,28 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             .unwrap();
                         assert_eq!(bounds.y1 - bounds.y0, 28.);
                         assert!(bounds.y0 as f32 >= canvas.bottom());
-                        assert!(bounds.x1 as f32 <= canvas.right() + 4.);
+                        assert!(
+                            bounds.x1 as f32 <= canvas.right() + 4.,
+                            "{size:?} cropping={cropping} source={source} tab={tab} {name}: {bounds:?} canvas={canvas:?} error={:?}",
+                            editor.document.visit.working_view.error
+                        );
+                    }
+                    if editor.document.visit.working_view.error.is_some() {
+                        let error = &output
+                            .platform_output
+                            .accesskit_update
+                            .as_ref()
+                            .unwrap()
+                            .nodes
+                            .iter()
+                            .find(|(_, node)| node.label() == Some("View unavailable"))
+                            .expect("rendering errors remain visible")
+                            .1;
+                        let bounds = error.bounds().unwrap();
+                        assert_eq!(bounds.x1 - bounds.x0, 28.);
+                        assert!(bounds.x0 as f32 >= canvas.left());
+                        assert!(bounds.x1 as f32 <= canvas.right());
+                        assert!(error.description().is_some());
                     }
                     let painted = painted_labels(&output);
                     let text = ui_labels(output.clone());

@@ -10,6 +10,7 @@ use std::sync::atomic::Ordering;
 
 mod coalescing;
 mod inputs;
+mod modality;
 mod regional_identity;
 mod retention;
 
@@ -938,7 +939,7 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
 }
 
 #[test]
-fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working_demand() {
+fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     editor.document.source = true;
     let input = editor.source_context().unwrap();
@@ -976,7 +977,7 @@ fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working
         reached.recv_timeout(Duration::from_secs(15)).unwrap();
         // Park only the later working acquisition; the write is already at its own physical boundary.
         let working = crate::background::testing::pause();
-        app.enter(|editor, cx| request_working(editor, spec.clone(), input, cx));
+        app.enter(|editor, cx| request_working(editor, spec.clone(), input.clone(), cx));
         app.pump();
         app.read(|editor| {
             assert!(
@@ -986,7 +987,7 @@ fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working
         });
         let context = egui::Context::default();
         crate::editor::tests::app_frame(app, &context, vec![]);
-        app.read(|editor| {
+        let requested = app.read(|editor| {
             assert!(
                 editor.document.visit.canvas.last_layout.is_some(),
                 "paint the ordinary composed canvas"
@@ -1004,6 +1005,10 @@ fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working
                     .is_some(),
                 "input modality must not withdraw captured physical demand"
             );
+            let requested = editor.document.visit.working_view.wanted.clone().unwrap();
+            assert!(requested.pixels.source.identity() == input.source.identity());
+            assert!(requested.capture.is_inspection());
+            requested
         });
         drop(working);
         app.run_until(Duration::from_secs(15), |editor| {
@@ -1011,7 +1016,9 @@ fn ordinary_canvas_painting_during_save_preserves_and_completes_existing_working
         });
         app.read(|editor| {
             assert!(editor.document.write.pending() && editor.interaction_blocked());
-            assert!(editor.document.visit.working_view.source().unwrap().spec == spec);
+            let source = editor.document.visit.working_view.source().unwrap();
+            assert_eq!(source.spec.frame(), requested.frame);
+            assert!(image_matches(&requested, source));
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
         });
         drop(release);

@@ -329,6 +329,7 @@ impl WorkingView {
             .map(|frame| &frame.request.capture)
     }
 
+    #[cfg(test)]
     pub(super) fn support_ready(&self) -> bool {
         self.frame
             .as_ref()
@@ -368,13 +369,11 @@ impl WorkingView {
             self.frame = None;
         }
         let demand = Arc::new(demand);
-        if let Some(recipe) = demand
-            .capture
-            .recipe()
-            .filter(|recipe| !recipe.repairs.is_empty())
-        {
-            log::info!(repairs = recipe.repairs.len(), width = demand.frame.output[0], height = demand.frame.output[1]; "working_view_requested");
-        }
+        log::debug!(
+            width = demand.frame.output[0],
+            height = demand.frame.output[1];
+            "working_view_requested"
+        );
         self.wanted = Some(demand.clone());
         state.sequence += 1;
         state.demand = Some(demand);
@@ -430,13 +429,7 @@ impl WorkingView {
             }
             return;
         }
-        if let Some(recipe) = demand
-            .capture
-            .recipe()
-            .filter(|recipe| !recipe.repairs.is_empty())
-        {
-            log::info!(repairs = recipe.repairs.len(), succeeded = result.is_ok(); "working_view_acquired");
-        }
+        log::debug!(succeeded = result.is_ok(); "working_view_acquired");
         match result {
             Ok(frame) if frame.satisfies(&demand) => {
                 self.frame = Some(frame);
@@ -475,8 +468,6 @@ impl WorkingView {
             error = error,
             request_frame:? = request.map(|demand| demand.frame),
             wanted_frame:? = self.wanted.as_ref().map(|demand| demand.frame),
-            request_repairs:? = request.and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
-            wanted_repairs:? = self.wanted.as_ref().and_then(|demand| demand.capture.recipe()).map(|recipe| recipe.repairs.len()),
             inspection:? = request.map(|demand| demand.capture.is_inspection()),
             pressure:? = crate::sys::memory_pressure();
             "working_view_failed"
@@ -693,13 +684,15 @@ pub(super) async fn acquire_images(
         let frame = demand.frame;
         let started = std::time::Instant::now();
         let trace = |phase: &str| {
-            if let Some(recipe) = demand
-                .capture
-                .recipe()
-                .filter(|recipe| !recipe.repairs.is_empty())
-            {
-                log::info!(phase = phase, repairs = recipe.repairs.len(), seconds = started.elapsed().as_secs_f64(), width = frame.output[0], height = frame.output[1], retained_bytes = renderer.evaluation().retained_bytes(), cache_limit = renderer.evaluation().cache_policy().generated_bytes; "working_view_phase");
-            }
+            log::debug!(
+                phase = phase,
+                seconds = started.elapsed().as_secs_f64(),
+                width = frame.output[0],
+                height = frame.output[1],
+                retained_bytes = renderer.evaluation().retained_bytes(),
+                cache_limit = renderer.evaluation().cache_policy().generated_bytes;
+                "working_view_phase"
+            );
         };
         trace("acquisition_started");
         let cancelled = || {
@@ -779,115 +772,22 @@ impl Editor {
         &mut self,
         frame: FrameRaster,
         capture: &PhotographRequest,
-        image: super::canvas::ImageMode,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let target = self.document.target();
-        let inspection = image.inspection(self.canvas_inspection());
         let previous = self.document.visit.working_view.displayed.take();
-        if self
-            .document
-            .visit
-            .working_view
-            .wanted
-            .as_ref()
-            .is_some_and(|wanted| wanted.capture.is_inspection() != inspection)
-        {
-            self.document.visit.working_view.retire_support();
-        }
         if !self.document.visit.working_view.enabled() {
             return Ok(None);
         }
-
-        if self.interaction_blocked() && !image.is_sample() && !self.cropping() {
-            if inspection && let Some(wanted) = self.document.visit.working_view.wanted.clone() {
-                let mut demand = (*wanted).clone();
-                demand.capture = capture.clone();
-                self.request_working(demand, cx);
-                self.document.visit.working_view.render(context)?;
-            }
-
-            self.document.visit.working_view.displayed = self
-                .document
-                .visit
-                .working_view
-                .present(frame, previous.as_ref())?
-                .filter(|rendered| rendered.target == self.document.target());
-            self.document.visit.working_view.updating =
-                !self.document.visit.working_view.support_ready()
-                    || self
-                        .document
-                        .visit
-                        .working_view
-                        .displayed
-                        .as_ref()
-                        .is_none_or(|rendered| {
-                            rendered.spec.frame() != frame
-                                || !rendered.matches_capture(
-                                    &rendered.spec,
-                                    capture,
-                                    self.document.target(),
-                                )
-                        });
-            return Ok(self.document.visit.working_view.displayed.clone());
-        }
-
-        if !capture.has_repairs()
-            && (image.is_sample() || self.fullscreen.is_none() && self.cropping())
-        {
+        let Some(source_input) = self.source_context() else {
             self.document.visit.working_view.clear();
             return Ok(None);
-        }
-
-        if self.document.visit.canvas.ready.is_none() {
-            self.document.visit.working_view.clear();
-            return Ok(None);
-        }
-
-        let source_input = self.source_context().expect("ready working source");
-        if inspection {
-            self.request_working(
-                Demand {
-                    frame,
-                    pixels: source_input,
-                    capture: capture.clone(),
-                    target,
-                    rendering: OnceLock::new(),
-                },
-                cx,
-            );
-            self.document.visit.working_view.render(context)?;
-
-            self.document.visit.working_view.displayed = self
-                .document
-                .visit
-                .working_view
-                .present(frame, previous.as_ref())?
-                .filter(|rendered| rendered.target == self.document.target());
-            self.document.visit.working_view.updating |= self
-                .document
-                .visit
-                .working_view
-                .displayed
-                .as_ref()
-                .is_none_or(|rendered| {
-                    self.document
-                        .visit
-                        .working_view
-                        .wanted
-                        .as_ref()
-                        .is_none_or(|wanted| {
-                            !(rendered.spec.frame() == wanted.frame
-                                && rendered.matches_capture(
-                                    &rendered.spec,
-                                    capture,
-                                    self.document.target(),
-                                ))
-                        })
-                });
-            return Ok(self.document.visit.working_view.displayed.clone());
-        }
+        };
+        self.document
+            .visit
+            .working_view
+            .observe(frame, capture.clone(), target);
 
         self.request_working(
             Demand {

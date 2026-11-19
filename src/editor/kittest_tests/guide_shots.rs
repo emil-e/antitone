@@ -82,7 +82,22 @@ fn documented_states_render() {
                 editor.status
             )
         });
-        frames(&mut harness);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |editor| {
+            editor
+                .active_canvas()
+                .original
+                .settled()
+                .is_some_and(|(_, image)| {
+                    editor
+                        .canvas_frame
+                        .displayed
+                        .as_ref()
+                        .is_some_and(|painted| {
+                            painted.view.capture.is_inspection()
+                                && Arc::ptr_eq(&painted.view.image, &image)
+                        })
+                })
+        });
         capture(&mut harness, "analyze-review");
 
         // Confirm the review so every later shot shows the analyzed grade, the
