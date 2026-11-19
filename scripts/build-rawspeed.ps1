@@ -28,7 +28,7 @@ $configure = @(
     "-DCMAKE_CXX_COMPILER=`"$($tools.Clang)`"",
     "-DCMAKE_CXX_COMPILER_TARGET=$($tools.Target)",
     "-DCMAKE_INSTALL_PREFIX=`"$prefix`"",
-    "-DRAWSPEED_SOURCE=`"$source`"", "-DPUGIXML_SOURCE=`"$pugi`"",
+    "-DRAWSPEED_SOURCE:PATH=`"$source`"", "-DPUGIXML_SOURCE:PATH=`"$pugi`"",
     "-DRAWSPEED_REVISION=$revision",
     # The upstream flag-only probe misses VS Clang's lack of debug-compression zlib.
     '-DCOMPILER_SUPPORTS_DEBUG_INFO_COMPRESSION=OFF',
