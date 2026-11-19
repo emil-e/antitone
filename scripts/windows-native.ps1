@@ -28,8 +28,38 @@ function Get-NativeWindowsTools {
 
 function Invoke-NativeWindowsCommand {
     param($Tools, [string]$Command)
-    & cmd.exe /d /c "call `"$($Tools.DevCmd)`" -arch=$($Tools.Arch) -host_arch=$($Tools.HostArch) >nul && $Command"
-    if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
+    # Initialize first: cmd expands %PATH% across an entire && chain before executing it.
+    $setup = New-Object System.Diagnostics.ProcessStartInfo
+    $setup.FileName = $env:ComSpec
+    $setup.Arguments = "/d /v:off /u /s /c `"call `"$($Tools.DevCmd)`" -arch=$($Tools.Arch) -host_arch=$($Tools.HostArch) >nul && set`""
+    $setup.WorkingDirectory = (Get-Location).ProviderPath
+    $setup.UseShellExecute = $false
+    $setup.RedirectStandardOutput = $true
+    $setup.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+    $process = [System.Diagnostics.Process]::Start($setup)
+    try {
+        $environment = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "Visual Studio environment setup failed with exit code $($process.ExitCode)" }
+    } finally { $process.Dispose() }
+
+    $build = New-Object System.Diagnostics.ProcessStartInfo
+    $build.FileName = $env:ComSpec
+    $build.Arguments = "/d /v:off /s /c `"$Command`""
+    $build.WorkingDirectory = (Get-Location).ProviderPath
+    $build.UseShellExecute = $false
+    $build.EnvironmentVariables.Clear()
+    foreach ($line in ($environment -split "`r?`n")) {
+        $separator = $line.IndexOf('=')
+        if ($separator -gt 0) {
+            $build.EnvironmentVariables[$line.Substring(0, $separator)] = $line.Substring($separator + 1)
+        }
+    }
+    $process = [System.Diagnostics.Process]::Start($build)
+    try {
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "Native build failed with exit code $($process.ExitCode)" }
+    } finally { $process.Dispose() }
 }
 
 function Get-PinnedNativeSource {
