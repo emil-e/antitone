@@ -212,7 +212,7 @@ Positive navigation cards capture the complete [photographic intent](processing.
 
 Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. The document's recorded starting EV survives pixel eviction; a Digital positive waits for that value before consuming shared proxy pixels.
 
-Cards retain actual camera arguments and calculated values. Each update authors its desired graph: matching stored calculations supply it, while changed interpretation or correction can recompute from resident camera data. Document replacement releases cards; disk-cached proxies provide reuse across opens. While updating, the previous card remains visible if source, correction, framing and target match; that presentation choice does not establish mathematical reuse. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
+Cards retain actual camera arguments and calculated values. Each update authors its desired graph: matching stored calculations supply it, while changed interpretation or correction can recompute from resident camera data. Document replacement releases cards; disk-cached proxies provide reuse across opens. When source, correction, framing and target match, a previous card stays visible and refresh waits briefly for the next request to stabilize. The refresh then proceeds in card priority order, coalescing intermediate grades without inspecting editing activity. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 
 ### Retention settings and pressure
 

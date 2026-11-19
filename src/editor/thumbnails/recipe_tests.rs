@@ -455,7 +455,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
                     .exposure = exposure;
                 editor.photo_settings_mut().exposure = exposure;
             });
-            let output = frame(app);
+            let mut output = frame(app);
             assert!(
                 output
                     .shapes
@@ -476,8 +476,20 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
                     .any(|(_, node)| node.label() == Some("Photo updating")),
                 "previous pixels must not claim to be a current grade"
             );
-            app.pump();
-            let submission = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let submission = loop {
+                app.pump();
+                if let Ok(submission) = requests.try_recv() {
+                    break submission;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "thumbnail never refreshed"
+                );
+                let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+                std::thread::sleep(delay.min(Duration::from_millis(10)));
+                output = frame(app);
+            };
             let provider = app.read(|editor| editor.document.thumbnails.acquisition().unwrap());
             let outcome =
                 pollster::block_on(worker.clone().process(submission.job, provider)).unwrap();

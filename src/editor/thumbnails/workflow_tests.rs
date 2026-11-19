@@ -128,6 +128,66 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
 }
 
 #[test]
+fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest_roll() {
+    let (mut document, _sources) = document(2);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    let visible = document.project.order.clone();
+    let disk = tempfile::tempdir().unwrap();
+    let scheduler = source_loading::SourceLoader::new();
+    let editor = editor(document, disk.path(), scheduler.clone());
+    let context = egui::Context::default();
+    with_application(editor, |app| {
+        app.enter(|editor, access| {
+            editor.document.thumbnails.repaint.set(context).unwrap();
+            begin(editor, access, visible.clone());
+        });
+        let ready_count = |editor: &Editor| {
+            editor
+                .document
+                .thumbnails
+                .ready_count(&editor.document, editor.document.target())
+        };
+        app.run_until(Duration::from_secs(30), |editor| ready_count(editor) == 2);
+
+        let now = std::time::Instant::now();
+        let first_deadline = now + REFRESH_QUIET_PERIOD;
+        let changed_again = first_deadline - Duration::from_millis(1);
+        app.enter(|editor, access| {
+            editor.set_gamma(0.75);
+            editor.schedule_thumbnail(access, now, false);
+            assert!(!editor.document.thumbnail_work.pending());
+
+            // A different control produces another key and supersedes the waiting recipe.
+            editor.document.state.project.roll.exposure = 0.5;
+            editor.schedule_thumbnail(access, changed_again, false);
+            editor.schedule_thumbnail(access, first_deadline, false);
+            assert!(!editor.document.thumbnail_work.pending());
+            assert_eq!(ready_count(editor), 0);
+            for id in &visible {
+                let source = editor.document.state.project.source(*id).unwrap();
+                let path = editor.document.source_path(*id).unwrap();
+                let wanted = editor.thumbnail_key(source, &path, true).unwrap();
+                assert!(
+                    editor
+                        .document
+                        .thumbnails
+                        .previous_product(&wanted)
+                        .is_some()
+                );
+            }
+
+            editor.schedule_thumbnail(access, changed_again + REFRESH_QUIET_PERIOD, false);
+            assert!(editor.document.thumbnail_work.pending());
+        });
+
+        // Completion can drive the rest of the roll without more paints or quiet periods.
+        app.run_until(Duration::from_secs(30), |editor| ready_count(editor) == 2);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn composed_modal_keeps_processed_card_demand_at_normal_and_narrow_sizes() {
     for width in [1100., 800.] {
         let (document, _sources) = document(2);
