@@ -30,6 +30,8 @@ $configure = @(
     "-DCMAKE_INSTALL_PREFIX=`"$prefix`"",
     "-DRAWSPEED_SOURCE=`"$source`"", "-DPUGIXML_SOURCE=`"$pugi`"",
     "-DRAWSPEED_REVISION=$revision",
+    # The upstream flag-only probe misses VS Clang's lack of debug-compression zlib.
+    '-DCOMPILER_SUPPORTS_DEBUG_INFO_COMPRESSION=OFF',
     '-DOpenMP_CXX_FLAGS=-fopenmp', '-DOpenMP_CXX_LIB_NAMES=omp',
     "-DOpenMP_omp_LIBRARY=`"$openmp/lib/libomp.lib`"",
     "-DOpenMP_CXX_INCLUDE_DIR=`"$openmp/include`""
