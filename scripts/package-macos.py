@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / ".cache" / "app"
 APP = OUTPUT / "Antitone.app"
 ARCHIVE = OUTPUT / "Antitone-macos-arm64.zip"
-OPENMP = ROOT / ".cache/native-deps/openmp-22.1.8-install/lib/libomp.dylib"
 
 
 def run(*command, **kwargs):
@@ -158,6 +157,29 @@ def copy_monochrome_notices(notices):
             copy_notice(path, notices / relative.parent)
 
 
+def native_pins(component):
+    return dict(
+        line.split("=", 1)
+        for line in (ROOT / f"native/{component}/pins.txt").read_text().splitlines()
+    )
+
+
+def openmp_prefix():
+    return ROOT / f".cache/native-deps/openmp-{native_pins('openmp')['version']}-install"
+
+
+def rawspeed_prefix():
+    return (
+        ROOT / f".cache/native-deps/rawspeed-{native_pins('rawspeed')['revision'][:12]}-macos-arm64"
+    )
+
+
+def copy_rawspeed_notices(notices):
+    for name in ["RawSpeed-LGPL.txt", "RawSpeed-credits.txt", "cameras.xml", "pugixml.txt"]:
+        copy_notice(rawspeed_prefix() / "share/licenses" / name, notices / "RawSpeed")
+    copy_notice("native/rawspeed/pins.txt", notices / "RawSpeed")
+
+
 def libraw_source():
     if "LIBRAW_SOURCE" in os.environ:
         return Path(os.environ["LIBRAW_SOURCE"])
@@ -165,7 +187,16 @@ def libraw_source():
         line.split("=", 1)
         for line in (ROOT / "native/libraw/dht-hashes.txt").read_text().splitlines()
     )
-    return ROOT / f".cache/native-deps/LibRaw-0.22.3-{hashes['patched'][:12]}-openmp"
+    return ROOT / f".cache/native-deps/LibRaw-0.22.3-{hashes['patched'][:12]}-rawspeed-openmp"
+
+
+def copy_dht_notices(notices):
+    for path in [
+        "native/dht/README.md",
+        "native/dht/LICENSE.LGPL-2.1",
+        "src/gpu/demosaic/dht.wgsl",
+    ]:
+        copy_notice(path, notices / "DHT")
 
 
 def copy_spektrafilm_notices(notices):
@@ -214,10 +245,9 @@ def write_notices(resources):
         copy_notice(raw / name, notices / "LibRaw")
     for name in ["dht.patch", "dht-hashes.txt"]:
         copy_notice(f"native/libraw/{name}", notices / "LibRaw")
-    copy_notice(
-        ".cache/native-deps/openmp-22.1.8-install/share/licenses/LLVM-OpenMP.txt",
-        notices / "OpenMP",
-    )
+    copy_rawspeed_notices(notices)
+    copy_dht_notices(notices)
+    copy_notice(openmp_prefix() / "share/licenses/LLVM-OpenMP.txt", notices / "OpenMP")
 
     # Include the selected production dependency graph's declared licenses and
     # shipped notice files. This is an inventory, not automated legal clearance.
@@ -320,6 +350,7 @@ def package(data):
         raise RuntimeError("Build the production editor first: cargo xtask package")
     if text("lipo", "-archs", binary).strip() != "arm64":
         raise RuntimeError("Expected the Apple Silicon production executable")
+    openmp = openmp_prefix() / "lib/libomp.dylib"
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="staging-", dir=OUTPUT) as temporary:
         bundle = Path(temporary) / "Antitone.app"
@@ -330,12 +361,12 @@ def package(data):
         for directory in [executable.parent, runtime.parent, resources]:
             directory.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, executable)
-        shutil.copy2(OPENMP, runtime)
+        shutil.copy2(openmp, runtime)
         shutil.copy2(ROOT / "assets/branding/icon.icns", resources / "Antitone.icns")
         for name in dependencies(text("otool", "-L", executable)):
             if system_library(name):
                 continue
-            if name not in ("@rpath/libomp.dylib", str(OPENMP), str(OPENMP.resolve())):
+            if name not in ("@rpath/libomp.dylib", str(openmp), str(openmp.resolve())):
                 raise RuntimeError(f"Production binary has an unexpected dependency: {name}")
             if name != "@rpath/libomp.dylib":
                 run("install_name_tool", "-change", name, "@rpath/libomp.dylib", executable)

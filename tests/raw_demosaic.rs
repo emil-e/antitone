@@ -37,8 +37,50 @@ fn source(rgb: impl Fn(u32, u32) -> [f64; 3]) -> fixture_path::FixturePath {
     })
 }
 
+#[cfg(feature = "gpu")]
+fn gpu_context() -> &'static (wgpu::Device, wgpu::Queue) {
+    static CONTEXT: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+    CONTEXT.get_or_init(|| {
+        pollster::block_on(async {
+            let adapter = antitone::gpu::instance()
+                .request_adapter(&Default::default())
+                .await
+                .unwrap();
+            let limits = adapter.limits();
+            adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    required_limits: wgpu::Limits {
+                        max_storage_buffers_per_shader_stage: 10,
+                        max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+                        max_buffer_size: limits.max_buffer_size,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+        })
+    })
+}
+
 fn open(file: &fixture_path::FixturePath) -> Scan {
+    #[cfg(feature = "gpu")]
+    let scan = {
+        let (device, queue) = gpu_context();
+        let mut raw = antitone::raw::RawFile::open(file.path()).unwrap();
+        raw.set_demosaicer(Some(std::sync::Arc::new(
+            antitone::gpu::demosaic::Demosaicer::new(device, queue, Default::default(), 4 << 30),
+        )));
+        Scan::from_raw(raw, Some([1.; 4])).unwrap()
+    };
+    #[cfg(not(feature = "gpu"))]
     let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    #[cfg(feature = "gpu")]
+    assert_eq!(
+        scan.source().demosaic_backend(),
+        antitone::raw::DemosaicBackend::GpuDht,
+        "photographic checks require consumed GPU output, not CPU fallback"
+    );
     assert_eq!(scan.dimensions().unwrap(), (64, 64));
     assert_eq!(scan.white_balance, [1.; 4]);
     assert_eq!(scan.source().metadata().black, BLACK as u32);
@@ -205,11 +247,9 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
     });
     let scan = open(&file);
     let (device, queue, renderer) = pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
-        (device, queue, renderer)
+        let (device, queue) = gpu_context();
+        let renderer = GpuRenderer::new(device, queue).await.unwrap();
+        (device.clone(), queue.clone(), renderer)
     });
     let base = DVec3::from_array(BASE) / RANGE;
     let input = InputSettings::Negative {

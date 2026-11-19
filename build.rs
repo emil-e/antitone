@@ -28,95 +28,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native/logging.h");
     println!("cargo:rerun-if-changed=native/highlights.h");
     #[cfg(feature = "raw")]
-    {
-        println!("cargo:rerun-if-changed=native/libraw/dht-hashes.txt");
-        let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
-        let root = std::env::var_os("LIBRAW_SOURCE")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                let hashes = std::fs::read_to_string("native/libraw/dht-hashes.txt")
-                    .expect("pinned LibRaw correction hashes");
-                let revision = hashes
-                    .lines()
-                    .find_map(|line| line.strip_prefix("patched="))
-                    .expect("patched LibRaw source hash");
-                assert!(revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit()));
-                let platform = if target_os == "windows" {
-                    "msvc"
-                } else {
-                    "openmp"
-                };
-                std::path::PathBuf::from(".cache/native-deps")
-                    .join(format!("LibRaw-0.22.3-{}-{platform}", &revision[..12]))
-            });
-        if target_os == "windows" {
-            assert!(
-                root.join("lib/libraw_static.lib").exists(),
-                "Run scripts/build-libraw.ps1 before building with --features raw"
-            );
-            println!(
-                "cargo:rerun-if-changed={}",
-                root.join("lib/libraw_static.lib").display()
-            );
-            cpp_bridge()
-                .define("WIN32", None)
-                .define("LIBRAW_NODLL", None)
-                .flag("/openmp")
-                .include(&root)
-                .file("native/raw_bridge.cpp")
-                .compile("antitone_raw_bridge");
-            println!(
-                "cargo:rustc-link-search=native={}",
-                root.join("lib").display()
-            );
-            println!("cargo:rustc-link-lib=static=libraw_static");
-            println!("cargo:rustc-link-lib=vcomp");
-        } else {
-            assert!(
-                root.join("lib/libraw_r.a").exists(),
-                "Run scripts/build-libraw.sh before building with --features raw"
-            );
-            let openmp = std::path::PathBuf::from(".cache/native-deps/openmp-22.1.8-install")
-                .canonicalize()
-                .expect("Run scripts/build-openmp.sh before building with --features raw");
-            assert!(
-                openmp.join("include/omp.h").exists() && openmp.join("lib/libomp.dylib").exists(),
-                "Incomplete checkout-local OpenMP runtime"
-            );
-            println!(
-                "cargo:rerun-if-changed={}",
-                root.join("lib/libraw_r.a").display()
-            );
-            println!(
-                "cargo:rerun-if-changed={}",
-                openmp.join("lib/libomp.dylib").display()
-            );
-            cpp_bridge()
-                .flag("-mmacosx-version-min=14.0")
-                .flag("-Xclang")
-                .flag("-fopenmp")
-                .include(openmp.join("include"))
-                .include(&root)
-                .file("native/raw_bridge.cpp")
-                .compile("antitone_raw_bridge");
-            println!(
-                "cargo:rustc-link-search=native={}",
-                root.join("lib").display()
-            );
-            println!("cargo:rustc-link-lib=static=raw_r");
-            println!("cargo:rustc-link-lib=z");
-            println!(
-                "cargo:rustc-link-search=native={}",
-                openmp.join("lib").display()
-            );
-            println!("cargo:rustc-link-lib=omp");
-            println!(
-                "cargo:rustc-link-arg=-Wl,-rpath,{}",
-                openmp.join("lib").display()
-            );
-            println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
-        }
-    }
+    build_raw();
     #[cfg(feature = "dng-sdk")]
     build_dng();
     #[cfg(feature = "ocio-reference")]
@@ -149,6 +61,189 @@ fn main() {
             root.join("lib").display()
         );
     }
+}
+
+#[cfg(feature = "raw")]
+fn native_pin(path: &str, key: &str) -> String {
+    println!("cargo:rerun-if-changed={path}");
+    let text = std::fs::read_to_string(path).expect("native dependency pins");
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(name, _)| *name == key)
+        .unwrap_or_else(|| panic!("Missing {key} in {path}"))
+        .1
+        .to_owned()
+}
+
+#[cfg(feature = "raw")]
+fn build_raw() {
+    use std::{fs, path::PathBuf};
+    println!("cargo:rerun-if-changed=native/rawspeed");
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let revision = native_pin("native/libraw/dht-hashes.txt", "patched");
+    let speed_revision = native_pin("native/rawspeed/pins.txt", "revision");
+    for (pin, length) in [(&revision, 64), (&speed_revision, 40)] {
+        assert!(pin.len() == length && pin.bytes().all(|c| c.is_ascii_hexdigit()));
+    }
+    let omp_version = native_pin("native/openmp/pins.txt", "version");
+    let cache = PathBuf::from(".cache/native-deps");
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("x86_64") => "x64",
+        Ok("aarch64") => "arm64",
+        _ => panic!("RAW native setup supports x64 and arm64 targets"),
+    };
+    let platform = if windows {
+        format!("llvm-{arch}")
+    } else {
+        "openmp".to_owned()
+    };
+    let root = std::env::var_os("LIBRAW_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            cache.join(format!(
+                "LibRaw-0.22.3-{}-rawspeed-{platform}",
+                &revision[..12]
+            ))
+        })
+        .canonicalize()
+        .expect("Run scripts/build-libraw.sh (macOS) or scripts/build-libraw.ps1 (Windows)");
+    let speed_platform = if windows {
+        format!("windows-{arch}")
+    } else {
+        "macos-arm64".to_owned()
+    };
+    let speed = cache
+        .join(format!(
+            "rawspeed-{}-{speed_platform}",
+            &speed_revision[..12]
+        ))
+        .canonicalize()
+        .expect("Run the checkout's LibRaw build script to prepare RawSpeed");
+    let omp_directory = if windows {
+        format!("openmp-{omp_version}-windows-{arch}-install")
+    } else {
+        format!("openmp-{omp_version}-install")
+    };
+    let openmp = cache
+        .join(omp_directory)
+        .canonicalize()
+        .expect("Run the checkout's LibRaw build script to prepare LLVM OpenMP");
+    let features = root.join("antitone-features.txt");
+    assert_eq!(
+        fs::read_to_string(&features).unwrap_or_default().trim(),
+        format!("rawspeed3;llvm-openmp-{omp_version}"),
+        "LibRaw lacks the pinned RAW build features; rerun its checkout build script"
+    );
+    let libraw = if windows {
+        "libraw_static.lib"
+    } else {
+        "libraw_r.a"
+    };
+    let speed_lib = if windows {
+        "rawspeed.lib"
+    } else {
+        "librawspeed.a"
+    };
+    let pugi_lib = if windows {
+        "pugixml.lib"
+    } else {
+        "libpugixml.a"
+    };
+    let runtime = openmp.join(if windows {
+        "bin/libomp.dll"
+    } else {
+        "lib/libomp.dylib"
+    });
+    for file in [
+        features,
+        root.join("lib").join(libraw),
+        speed.join("lib").join(speed_lib),
+        speed.join("lib").join(pugi_lib),
+        speed.join("include/antitone_rawspeed_camera_db.h"),
+        openmp.join("include/omp.h"),
+        runtime.clone(),
+    ] {
+        assert!(
+            file.exists(),
+            "Incomplete native dependency: {}",
+            file.display()
+        );
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
+    let mut bridge = cpp_bridge();
+    if windows {
+        let compiler_file = speed.join("share/antitone/compiler.txt");
+        println!("cargo:rerun-if-changed={}", compiler_file.display());
+        let compiler = fs::read_to_string(compiler_file).expect("RawSpeed compiler identity");
+        let clang = PathBuf::from(compiler.trim()).with_file_name("clang-cl.exe");
+        assert!(
+            clang.exists(),
+            "RawSpeed's clang-cl is missing; rerun Windows setup"
+        );
+        bridge
+            .compiler(clang)
+            .define("WIN32", None)
+            .define("LIBRAW_NODLL", None)
+            .flag("/clang:-fopenmp");
+        for (key, value) in developer_environment() {
+            bridge.env(key, value);
+        }
+        // A plain PowerShell cargo test/run must find the same DLL as the release
+        // package. Do not depend on a system-installed or VS-bundled OpenMP runtime.
+        let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+        let profile = out
+            .ancestors()
+            .nth(3)
+            .expect("Cargo profile output directory");
+        let bytes = fs::read(&runtime).expect("Pinned LLVM OpenMP DLL");
+        for directory in [profile.to_owned(), profile.join("deps")] {
+            fs::create_dir_all(&directory).unwrap();
+            let target = directory.join("libomp.dll");
+            if fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
+                fs::copy(&runtime, &target).unwrap_or_else(|error| {
+                    panic!(
+                        "Cannot stage pinned {}: {error}; close any running Antitone first",
+                        target.display()
+                    )
+                });
+            }
+        }
+    } else {
+        bridge
+            .flag("-mmacosx-version-min=14.0")
+            .flag("-Xclang")
+            .flag("-fopenmp");
+    }
+    bridge.include(openmp.join("include"));
+    let mut adapter = bridge.clone();
+    bridge
+        .include(&root)
+        .file("native/raw_bridge.cpp")
+        .compile("antitone_raw_bridge");
+    adapter
+        .std("c++20")
+        .include(speed.join("include"))
+        .include(speed.join("include/rawspeed"))
+        .file("native/rawspeed/adapter.cpp")
+        .compile("antitone_rawspeed_adapter");
+    for directory in [root.join("lib"), speed.join("lib"), openmp.join("lib")] {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
+    if windows {
+        println!("cargo:rustc-link-lib=static=libraw_static");
+        println!("cargo:rustc-link-lib=dylib=libomp");
+    } else {
+        println!("cargo:rustc-link-lib=static=raw_r");
+        println!("cargo:rustc-link-lib=z");
+        println!("cargo:rustc-link-lib=dylib=omp");
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            openmp.join("lib").display()
+        );
+        println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
+    }
+    println!("cargo:rustc-link-lib=static=rawspeed");
+    println!("cargo:rustc-link-lib=static=pugixml");
 }
 
 /// CMake and Ninja wherever this checkout keeps them, and the MSVC/SDK environment that a
@@ -217,7 +312,7 @@ fn cmake_tools() -> (std::path::PathBuf, Vec<(String, String)>) {
 }
 
 /// Variables the Visual Studio developer prompt exports, captured from `VsDevCmd.bat` itself.
-#[cfg(feature = "dng-sdk")]
+#[cfg(any(feature = "raw", feature = "dng-sdk"))]
 fn developer_environment() -> Vec<(String, String)> {
     let vswhere = std::path::Path::new(&std::env::var("ProgramFiles(x86)").unwrap_or_default())
         .join("Microsoft Visual Studio/Installer/vswhere.exe");

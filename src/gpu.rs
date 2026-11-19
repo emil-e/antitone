@@ -4,6 +4,8 @@
 pub(crate) mod aces;
 #[cfg(feature = "editor")]
 pub(crate) mod analysis;
+#[cfg(feature = "raw")]
+pub mod demosaic;
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;

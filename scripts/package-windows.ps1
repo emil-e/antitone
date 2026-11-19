@@ -45,7 +45,15 @@ Get-VcRuntimeFiles -RedistRoot (Join-Path $installation 'VC/Redist/MSVC') | ForE
     Copy-Item -LiteralPath $_ -Destination $stage
 }
 
-foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
+$omp = Get-Content -Raw (Join-Path $root 'native/openmp/pins.txt') | ConvertFrom-StringData
+$openmp = Join-Path $root ".cache/native-deps/openmp-$($omp.version)-windows-x64-install"
+Copy-Item -LiteralPath (Get-LlvmOpenMPRuntime -Prefix $openmp) -Destination $stage
+$devcmd = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
+$imports = & cmd.exe /d /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul && dumpbin /dependents `"$binary`""
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the production OpenMP imports.' }
+Assert-LlvmOpenMPImports -Lines $imports
+
+foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'libomp.dll')) {
     if (-not (Test-Path (Join-Path $stage $name))) { throw "Runtime file $name was not staged" }
 }
 
@@ -69,7 +77,7 @@ $rawHashes = Get-Content -Raw (Join-Path $root 'native/libraw/dht-hashes.txt') |
 $rawSource = if ($env:LIBRAW_SOURCE) {
     $env:LIBRAW_SOURCE
 } else {
-    Join-Path $root ".cache/native-deps/LibRaw-0.22.3-$($rawHashes.patched.Substring(0, 12))-msvc"
+    Join-Path $root ".cache/native-deps/LibRaw-0.22.3-$($rawHashes.patched.Substring(0, 12))-rawspeed-llvm-x64"
 }
 $rawNotices = Join-Path $notices 'LibRaw'
 New-Item -ItemType Directory -Force $rawNotices | Out-Null
@@ -79,6 +87,21 @@ foreach ($name in @('COPYRIGHT', 'LICENSE.LGPL', 'LICENSE.CDDL')) {
 foreach ($name in @('dht.patch', 'dht-hashes.txt')) {
     Copy-Item (Join-Path $root "native/libraw/$name") (Join-Path $rawNotices $name)
 }
+$rs = Get-Content -Raw (Join-Path $root 'native/rawspeed/pins.txt') | ConvertFrom-StringData
+$rawspeed = Join-Path $root ".cache/native-deps/rawspeed-$($rs.revision.Substring(0, 12))-windows-x64"
+$rsNotices = Join-Path $notices 'RawSpeed'
+$ompNotices = Join-Path $notices 'OpenMP'
+New-Item -ItemType Directory -Force $rsNotices, $ompNotices | Out-Null
+foreach ($name in @('RawSpeed-LGPL.txt', 'RawSpeed-credits.txt', 'cameras.xml', 'pugixml.txt')) {
+    Copy-Item (Join-Path $rawspeed "share/licenses/$name") (Join-Path $rsNotices $name)
+}
+$dhtNotices = Join-Path $notices 'DHT'
+New-Item -ItemType Directory -Force $dhtNotices | Out-Null
+foreach ($path in @('native/dht/README.md', 'native/dht/LICENSE.LGPL-2.1', 'src/gpu/demosaic/dht.wgsl')) {
+    Copy-Item (Join-Path $root $path) $dhtNotices
+}
+Copy-Item (Join-Path $root 'native/rawspeed/pins.txt') $rsNotices
+Copy-Item (Join-Path $openmp 'share/licenses/LLVM-OpenMP.txt') $ompNotices
 $spektrafilm = Join-Path $notices 'spektrafilm'
 New-Item -ItemType Directory -Force $spektrafilm | Out-Null
 foreach ($name in @('LICENSE-code.txt', 'LICENSE-data.txt', 'NOTICE-Academy-APD.txt', 'CHANGELOG.txt', 'provenance.json')) {
@@ -129,7 +152,7 @@ $relocated = Join-Path $dist ('relocated package ' + [guid]::NewGuid().ToString(
 try {
     Expand-Archive -LiteralPath $archive -DestinationPath $relocated
     $unpacked = Join-Path $relocated 'Antitone-windows-x64'
-    foreach ($name in @('antitone.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
+    foreach ($name in @('antitone.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'libomp.dll')) {
         $expected = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage $name)).Hash
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $unpacked $name)).Hash
         if ($expected -ne $actual) { throw "Archived file differs: $name" }

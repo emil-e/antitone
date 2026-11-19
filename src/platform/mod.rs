@@ -38,6 +38,9 @@ pub(crate) struct Presentation {
 
 pub fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
+        max_storage_buffers_per_shader_stage: supported
+            .max_storage_buffers_per_shader_stage
+            .min(10),
         max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
         max_buffer_size: supported.max_buffer_size,
         max_texture_dimension_2d: supported.max_texture_dimension_2d,
@@ -49,7 +52,21 @@ pub fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
 mod tests {
 
     #[test]
-    fn device_limits_raise_only_view_storage_capacities_to_supported_values() {
+    fn bayer_binding_capacity_never_exceeds_supported_limits() {
+        for supported in [8, 9, 10, 31] {
+            let limits = wgpu::Limits {
+                max_storage_buffers_per_shader_stage: supported,
+                ..Default::default()
+            };
+            assert_eq!(
+                super::device_limits(limits).max_storage_buffers_per_shader_stage,
+                supported.min(10)
+            );
+        }
+    }
+
+    #[test]
+    fn device_limits_raise_supported_view_and_bayer_capacities() {
         for (binding, buffer) in [
             (128 << 20, 256 << 20),
             (1 << 30, 1 << 30),
@@ -62,6 +79,9 @@ mod tests {
                 ..Default::default()
             };
             let expected = wgpu::Limits {
+                max_storage_buffers_per_shader_stage: supported
+                    .max_storage_buffers_per_shader_stage
+                    .min(10),
                 max_storage_buffer_binding_size: binding,
                 max_buffer_size: buffer,
                 max_texture_dimension_2d: 32768,

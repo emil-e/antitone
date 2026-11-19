@@ -11,6 +11,8 @@ use crate::sampling::mean;
 
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
+#[cfg(feature = "gpu")]
+mod demosaic;
 #[cfg(all(test, feature = "editor"))]
 mod highlights_observation;
 mod lens_source;
@@ -384,6 +386,7 @@ struct NativeView {
     maximum: u32,
     data_maximum: u32,
     warnings: u32,
+    custom_demosaic: u32,
     pre_mul: [f64; 4],
 }
 
@@ -409,6 +412,9 @@ pub(crate) struct EmbeddedThumbnail {
 
 unsafe extern "C" {
     fn antitone_raw_version() -> *const c_char;
+    fn antitone_rawspeed_version() -> *const c_char;
+    fn antitone_raw_unpack_backend(handle: *const c_void) -> *const c_char;
+    fn antitone_raw_unpack_status(handle: *const c_void) -> c_int;
     fn antitone_raw_open(
         path: *const c_char,
         metadata: *mut NativeMetadata,
@@ -453,7 +459,17 @@ pub fn version() -> String {
 
 /// Pixel-producer provenance, including changes to our pinned LibRaw development choices.
 pub fn development_version() -> String {
-    format!("{};bayer-dht-v2;blend-highlights-v4", version())
+    // The adapter owns a static, NUL-terminated build identity.
+    let unpacker = unsafe { CStr::from_ptr(antitone_rawspeed_version()) }.to_string_lossy();
+    let demosaic = if cfg!(feature = "gpu") {
+        "bayer-dht-gpu-v1-or-libraw-v2"
+    } else {
+        "bayer-dht-v2"
+    };
+    format!(
+        "{};rawspeed={unpacker};{demosaic};blend-highlights-v4",
+        version()
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -478,6 +494,14 @@ impl DevelopmentPriority {
     }
 }
 
+/// Implementation that produced camera samples, including successful fallback selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemosaicBackend {
+    LibRaw,
+    GpuDht,
+    DngSdk,
+}
+
 /// Mutable SDK ownership stays worker-local, unlike a consumed frozen source.
 /// Concurrent use would break the bridge's lend contract; forbidding even
 /// sequential thread migration is a deliberate conservative boundary, not a
@@ -499,6 +523,8 @@ pub struct RawFile {
     priority: DevelopmentPriority,
     share: usize,
     camera_view: Option<NativeView>,
+    #[cfg(feature = "gpu")]
+    demosaicer: Option<std::sync::Arc<crate::gpu::demosaic::Demosaicer>>,
     correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
@@ -549,6 +575,8 @@ impl RawFile {
             priority: DevelopmentPriority::default(),
             share: 1,
             camera_view: None,
+            #[cfg(feature = "gpu")]
+            demosaicer: None,
             correction: None,
             corrected: None,
             #[cfg(feature = "dng-sdk")]
@@ -694,8 +722,38 @@ impl RawFile {
         if code != 0 {
             return Err(native_error("unpack", &error));
         }
+        // Both diagnostic values belong to this still-live, uniquely owned decoder.
+        let backend = unsafe { CStr::from_ptr(antitone_raw_unpack_backend(self.handle.as_ptr())) };
+        let status = unsafe { antitone_raw_unpack_status(self.handle.as_ptr()) };
+        log::debug!(
+            "RAW unpack backend={} rawspeed_status={status}",
+            backend.to_string_lossy()
+        );
         self.unpacked = true;
         Ok(())
+    }
+
+    /// Successful camera-development path, not merely an attempted accelerator.
+    pub fn demosaic_backend(&self) -> Option<DemosaicBackend> {
+        #[cfg(feature = "dng-sdk")]
+        if self.dng_source.is_some() {
+            return Some(DemosaicBackend::DngSdk);
+        }
+        self.camera_view.map(|view| {
+            if view.custom_demosaic != 0 {
+                DemosaicBackend::GpuDht
+            } else {
+                DemosaicBackend::LibRaw
+            }
+        })
+    }
+
+    #[cfg(feature = "gpu")]
+    pub fn set_demosaicer(
+        &mut self,
+        demosaicer: Option<std::sync::Arc<crate::gpu::demosaic::Demosaicer>>,
+    ) {
+        self.demosaicer = demosaicer;
     }
 
     pub fn develop_camera(&mut self, white_balance: [f64; 4]) -> Result<Developed<'_>, Error> {
@@ -757,7 +815,19 @@ impl RawFile {
         self.corrected = None;
         let mut view = std::mem::MaybeUninit::<NativeView>::zeroed();
         let mut error = [0; 512];
+        #[cfg(feature = "gpu")]
+        let code = unsafe {
+            demosaic::develop(
+                self,
+                &white_balance,
+                output_color,
+                threads,
+                view.as_mut_ptr(),
+                &mut error,
+            )
+        };
         // A successful bridge call lends its image until the next mutable call or handle destruction.
+        #[cfg(not(feature = "gpu"))]
         let code = unsafe {
             antitone_raw_develop(
                 self.handle.as_ptr(),
@@ -779,7 +849,8 @@ impl RawFile {
             priority:? = self.priority,
             threads,
             unpack_seconds,
-            process_seconds = tick.elapsed().as_secs_f64();
+            process_seconds = tick.elapsed().as_secs_f64(),
+            demosaic = if view.custom_demosaic != 0 { "gpu-dht" } else { "libraw" };
             "raw_development"
         );
 
@@ -814,35 +885,43 @@ impl RawFile {
     }
 
     pub(crate) fn freeze(self) -> Result<FrozenRaw, Error> {
-        if !self.unpacked {
+        #[cfg(feature = "gpu")]
+        let raw = {
+            let mut raw = self;
+            raw.demosaicer = None;
+            raw
+        };
+        #[cfg(not(feature = "gpu"))]
+        let raw = self;
+        if !raw.unpacked {
             return Err(Error::Raw("cannot freeze a source before unpacking".into()));
         }
-        let image = self.camera_image()?;
-        if [image.width, image.height] != self.metadata.source_dimensions()? {
+        let image = raw.camera_image()?;
+        if [image.width, image.height] != raw.metadata.source_dimensions()? {
             return Err(Error::Raw(
                 "camera development dimensions disagree with metadata".into(),
             ));
         }
         // Unique ownership still holds here; snapshot before immutable publication.
-        let bytes = unsafe { antitone_raw_retained_bytes(self.handle.as_ptr()) };
-        let extra = (self
+        let bytes = unsafe { antitone_raw_retained_bytes(raw.handle.as_ptr()) };
+        let extra = (raw
             .corrected
             .as_ref()
             .map_or(0, |image| image.retained_bytes())
-            + self
+            + raw
                 .correction
                 .as_ref()
                 .map_or(0, |geometry| geometry.retained_bytes())) as u64;
         #[cfg(feature = "dng-sdk")]
         let extra = extra
             .checked_add(
-                self.dng_source
+                raw.dng_source
                     .as_ref()
                     .map_or(0, crate::dng::Source::retained_bytes),
             )
             .ok_or(Error::NumericalOverflow)?;
         Ok(FrozenRaw {
-            raw: self,
+            raw,
             retained_bytes: (bytes != 0).then(|| bytes.checked_add(extra)).flatten(),
         })
     }
@@ -951,6 +1030,12 @@ impl FrozenRaw {
 
     pub(crate) fn metadata(&self) -> Metadata {
         self.raw.metadata
+    }
+
+    pub(crate) fn demosaic_backend(&self) -> DemosaicBackend {
+        self.raw
+            .demosaic_backend()
+            .expect("frozen source has completed camera development")
     }
 
     pub(crate) fn camera_image(&self) -> Result<Developed<'_>, Error> {

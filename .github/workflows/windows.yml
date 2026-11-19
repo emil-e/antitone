@@ -35,7 +35,7 @@ jobs:
           path: |
             .cache/tools
             .cache/native-deps
-          key: windows-native-${{ hashFiles('native/libraw/**', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
           restore-keys: |
             windows-native-
       - name: Cache Cargo downloads
@@ -59,6 +59,13 @@ jobs:
         run: cargo clippy --locked --features editor --all-targets
       - name: Numerical core tests
         run: cargo test --locked --no-default-features
+      - name: Authored RAW bridge tests
+        run: |
+          $tests = @(cargo test --locked --features raw --test raw_dng -- --list)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests | Write-Output
+          if (@($tests | Where-Object { $_ -match ': test$' }).Count -eq 0) { throw 'No authored RAW tests discovered' }
+          cargo test --locked --features raw --test raw_dng
       - name: Direct-SDK adapter tests
         run: "cargo test --locked --features dng-sdk --lib dng::"
 
@@ -78,7 +85,7 @@ jobs:
           path: |
             .cache/tools
             .cache/native-deps
-          key: windows-native-${{ hashFiles('native/libraw/**', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
           restore-keys: |
             windows-native-
       - name: Restore the Cargo downloads

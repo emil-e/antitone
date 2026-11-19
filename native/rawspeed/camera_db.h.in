@@ -1,0 +1,3 @@
+#pragma once
+#define ANTITONE_RAWSPEED_REVISION "@RAWSPEED_REVISION@"
+inline constexpr char antitone_rawspeed_camera_db[] = R"RSDB(@CAMERA_XML@)RSDB";

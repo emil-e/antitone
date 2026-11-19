@@ -66,6 +66,41 @@ fn prebalanced_non_cfa_raw_preserves_camera_light_and_explicit_wb() {
     assert_eq!(fs::read(path).unwrap(), original);
 }
 
+#[cfg(feature = "gpu")]
+#[test]
+fn supplied_accelerator_does_not_change_prebalanced_non_cfa_development() {
+    let (device, queue) = pollster::block_on(async {
+        let adapter = antitone::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    let accelerator = std::sync::Arc::new(antitone::gpu::demosaic::Demosaicer::new(
+        &device,
+        &queue,
+        Default::default(),
+        0,
+    ));
+    let file = sony_ycc::source();
+    for wb in [[1.; 4], sony_ycc::WB, [4096., 1024., 1536., 65536.]] {
+        let expected = Scan::open(file.path(), Some(wb)).unwrap();
+        let mut raw = RawFile::open(file.path()).unwrap();
+        raw.set_demosaicer(Some(accelerator.clone()));
+        let actual = Scan::from_raw(raw, Some(wb)).unwrap();
+        assert_eq!(
+            actual.source().demosaic_backend(),
+            antitone::raw::DemosaicBackend::LibRaw
+        );
+        assert_eq!(actual.dimensions().unwrap(), expected.dimensions().unwrap());
+        for y in 0..64 {
+            for x in 0..128 {
+                assert_eq!(actual.pixel(x, y).unwrap(), expected.pixel(x, y).unwrap());
+            }
+        }
+    }
+}
+
 #[test]
 fn selected_ycbcr_raw_ifd_supplies_automatic_sony_shading() {
     let fixture = sony_ycc::source_with_profile(Some([2048, 1024, 1536]), true);

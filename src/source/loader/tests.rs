@@ -388,6 +388,88 @@ fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
     }
 }
 
+#[cfg(all(feature = "gpu", feature = "project"))]
+#[test]
+fn native_source_acquisition_submits_bayer_work_through_the_shared_gpu_gate() {
+    let _session = std::env::var_os("ANTITONE_LOG_DIR").and_then(|_| crate::logging::init());
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (device, queue) = pollster::block_on(async {
+        let adapter = crate::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        let supported = adapter.limits();
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits {
+                    max_storage_buffers_per_shader_stage: 10,
+                    max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
+                    max_buffer_size: supported.max_buffer_size,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+    });
+    let gate = crate::gpu::submission::SubmissionGate::default();
+    let submitted = Arc::new(AtomicUsize::new(0));
+    let observed = submitted.clone();
+    gate.observe_submissions(Arc::new(move || {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let demosaicer = Arc::new(crate::gpu::demosaic::Demosaicer::new(
+        &device,
+        &queue,
+        gate.clone(),
+        4 << 20,
+    ));
+    let scheduler = SourceLoader::start_native(Arc::new(|_, _, _| Ok(())), Some(demosaicer));
+    let base = [837u16, 537, 537, 133];
+    let file = crate::raw::sony_fixture::source_with_pixels(|x, y| {
+        512 + base[((y % 2) * 2 + x % 2) as usize]
+    });
+    let result = scheduler
+        .load(request(file.path()), Priority::Foreground, || false)
+        .unwrap();
+    assert_eq!(
+        submitted.load(Ordering::Relaxed),
+        1,
+        "CPU fallback must not pass this routing check"
+    );
+    assert!(
+        !gate.pending(),
+        "native readback must be completed before publication"
+    );
+    assert_eq!(
+        result.demosaic_backend(),
+        crate::raw::DemosaicBackend::GpuDht,
+        "submitting then rejecting GPU output must fail this check"
+    );
+    #[cfg(feature = "dng-sdk")]
+    {
+        let file = fixture::bayer_dng();
+        let sdk = scheduler
+            .load(request(file.path()), Priority::Foreground, || false)
+            .unwrap();
+        assert_eq!(sdk.demosaic_backend(), crate::raw::DemosaicBackend::DngSdk);
+        assert_eq!(
+            submitted.load(Ordering::Relaxed),
+            1,
+            "SDK DNG must not enter GPU DHT"
+        );
+    }
+    let image = result.camera_image().unwrap();
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let pixel = image.pixel(x, y).unwrap();
+            for (channel, expected) in [837., 537., 133.].into_iter().enumerate() {
+                assert!((pixel[channel] - expected / (16383. - 512.)).abs() <= 1. / 65535. + 2e-8);
+            }
+        }
+    }
+}
+
 /// Timing diagnostic for the two-owner schedule at production priorities: solo latency,
 /// overlapped pair throughput and per-image contention, and foreground latency while
 /// an eager background development runs. Wall times are printed, never asserted —

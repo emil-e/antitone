@@ -21,9 +21,9 @@ Cargo and native builds select Apple Clang; no GCC installation is needed. Setup
 
 Windows 11 on x64 with an MSVC toolchain builds from a plain PowerShell session; no developer prompt is needed.
 
-- Visual Studio 2022 with the C++ tools (or Build Tools) and a Windows 11 SDK. `build.rs` finds MSVC itself and captures `VsDevCmd.bat`'s environment for the CMake steps, which need the SDK resource compiler.
+- Visual Studio 2022 with the C++ tools (or Build Tools), **C++ Clang tools for Windows**, and a Windows 11 SDK. RAW components use Clang with the MSVC ABI; `build.rs` finds the toolchain and captures `VsDevCmd.bat`'s environment for the CMake steps, which need the SDK resource compiler.
 - Rust through rustup with the `x86_64-pc-windows-msvc` target.
-- CMake, Ninja and the DirectX Shader Compiler are not installed system-wide: `scripts/setup-windows.ps1` downloads pinned, hash-verified copies into the ignored `.cache/tools/` and builds LibRaw 0.22.3 into `.cache/native-deps/`.
+- CMake, Ninja and the DirectX Shader Compiler are not installed system-wide: `scripts/setup-windows.ps1` downloads pinned, hash-verified copies into the ignored `.cache/tools/` and builds pinned LibRaw, RawSpeed/pugixml and their shared LLVM OpenMP runtime into `.cache/native-deps/`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
@@ -70,7 +70,7 @@ After native setup, build and package with:
 powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 ```
 
-The outputs are `.cache/dist/Antitone-windows-x64.zip` and `.cache/dist/SHA256SUMS`. The ZIP includes the app-local Visual C++/OpenMP runtime; packaging smoke-tests both staging and a freshly extracted copy. Use `-SkipBuild` to package an existing release binary.
+The outputs are `.cache/dist/Antitone-windows-x64.zip` and `.cache/dist/SHA256SUMS`. The ZIP includes the app-local Visual C++ CRT and pinned LLVM OpenMP runtime; packaging smoke-tests both staging and a freshly extracted copy. Use `-SkipBuild` to package an existing release binary.
 
 ### End-to-end local delivery on macOS
 

@@ -6,7 +6,7 @@ The [build and run](build-and-run.md) guide owns prerequisites and commands. Loc
 
 Cargo builds Rust and selects feature-specific native dependencies. `build.rs` compiles small bridges with `cc`, builds the vendored Adobe SDK through `native/dng/CMakeLists.txt` and publishes link settings to Cargo. CMake/Ninja owns that native build; it is not an outer build system that runs Cargo. Core-only Cargo commands still need no native libraries or desktop stack.
 
-LibRaw/OpenMP and the independent OCIO test dependency use the maintained native setup scripts. Their archives are pinned and SHA-256 checked before extraction/building. The SDK is already source in the checkout, with provenance and per-file checksums; its native library is assembled from source libraries rather than an Adobe validator executable's object cache.
+LibRaw/RawSpeed/pugixml/OpenMP and the independent OCIO test dependency use the maintained native setup scripts. RawSpeed and its embedded camera database have no runtime resource lookup; Cargo compiles the small C++20 unpack adapter against the installed headers. Their archives are pinned and SHA-256 checked before extraction/building. The SDK is already source in the checkout, with provenance and per-file checksums; its native library is assembled from source libraries rather than an Adobe validator executable's object cache.
 
 `cargo xtask` is a small host-side orchestration crate, independent of application/native dependencies. It sequences the existing setup/format/package tools and Cargo commands. The Python standard-library packager remains responsible for macOS bundle metadata, dependency loading, notices and archive verification. Neither layer implements an incremental build engine. `build.rs` never downloads SDK source, installs tools, packages or signs the app.
 
@@ -24,7 +24,7 @@ Use `DEVELOPER_DIR` to select Xcode and the normal Cargo target-directory overri
 
 ## Package boundary
 
-On Windows, `scripts/package-windows.ps1` builds the editor and stages `antitone.exe`, the app-local Visual C++/OpenMP runtime DLLs and component notices into a portable ZIP. It checks the staged executable with `--version`, extracts the ZIP into a fresh path containing spaces, checks executable/runtime hashes and repeats the smoke test there. A `SHA256SUMS` file accompanies the ZIP; keep the DLLs beside the executable when distributing or moving the folder.
+On Windows, `scripts/package-windows.ps1` builds the editor and stages `antitone.exe`, the app-local Visual C++ CRT, pinned LLVM OpenMP DLL and component notices into a portable ZIP. It rejects missing or mixed OpenMP imports, checks the staged executable with `--version`, extracts the ZIP into a fresh path containing spaces, checks executable/runtime hashes and repeats the smoke test there. A `SHA256SUMS` file accompanies the ZIP; keep the DLLs beside the executable when distributing or moving the folder.
 
 On macOS, `package` first builds the production editor, then creates the bundle in staging. The packager accepts system libraries plus the explicitly bundled OpenMP runtime; unexpected non-system dependencies fail, including OCIO. It removes checkout-local search paths, installs a bundle-relative runtime path, copies notices and signs the runtime/app ad hoc. It never modifies the Cargo-built executable in place.
 
@@ -52,7 +52,7 @@ CI covers the hardware-independent subset only. The split of responsibility:
 | Numerical-core tests | macOS `checks` job, hosted |
 | Native setup, vendored-SDK adapter tests, Lightroom protocol/CLI tests, production and all-features clippy | macOS `editor-checks` job, hosted (Metal-free stages) |
 | Native setup, package build, relocated ZIP verification and ZIP artifact | macOS `package` job, hosted |
-| Windows formatting, clippy, numerical-core and direct-SDK tests | Windows `lint-and-tests` job, hosted |
+| Windows formatting, clippy, numerical-core, authored RAW and direct-SDK tests | Windows `lint-and-tests` job, hosted |
 | Windows editor build and portable ZIP artifact | Windows `package` job, hosted |
 | Lightroom Lua SDK mocks using an open-source Lua 5.1 runtime | Linux `lua` job in the Lightroom workflow, hosted |
 | Other editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |

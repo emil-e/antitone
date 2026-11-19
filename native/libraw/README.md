@@ -73,13 +73,17 @@ For additional checks on macOS, after native setup:
 
 ```sh
 revision=$(awk -F= '$1 == "patched" {print substr($2, 1, 12)}' native/libraw/dht-hashes.txt)
-libraw="$PWD/.cache/native-deps/LibRaw-0.22.3-$revision-openmp"
-openmp="$PWD/.cache/native-deps/openmp-22.1.8-install"
+libraw="$PWD/.cache/native-deps/LibRaw-0.22.3-$revision-rawspeed-openmp"
+speed_revision=$(awk -F= '$1 == "revision" {print substr($2, 1, 12)}' native/rawspeed/pins.txt)
+rawspeed="$PWD/.cache/native-deps/rawspeed-$speed_revision-macos-arm64"
+omp_version=$(awk -F= '$1 == "version" {print $2}' native/openmp/pins.txt)
+openmp="$PWD/.cache/native-deps/openmp-$omp_version-install"
 mkdir -p .cache/libraw-checks
 for sanitizer in thread address,undefined,float-cast-overflow; do
     name=$(printf '%s' "$sanitizer" | tr , -)
     clang++ -std=c++17 -g -O1 -fsanitize="$sanitizer" -I"$libraw" \
-        native/libraw/dht_safety.cpp "$libraw/lib/libraw_r.a" \
+        native/libraw/dht_safety.cpp "$libraw/lib/rawspeed_adapter.o" "$libraw/lib/libraw_r.a" \
+        "$rawspeed/lib/librawspeed.a" "$rawspeed/lib/libpugixml.a" \
         -L"$openmp/lib" -Wl,-rpath,"$openmp/lib" -lomp -lz \
         -o ".cache/libraw-checks/$name"
     TSAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \

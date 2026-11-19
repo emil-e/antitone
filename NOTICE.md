@@ -10,6 +10,9 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 - This software is based in part on the work of the Independent JPEG Group.
 - XMP includes the RSA Data Security, Inc. MD5 Message-Digest Algorithm and UUID support with their retained notices.
 - LibRaw 0.22.3: dual LGPL/CDDL licensing. Original copyright and license files accompany packages.
+- GPU DHT shader: derived from Anton Petrusevich's DHT, copyright 2013, with LGPL 2.1 selected. Source, modifications and license are retained in `src/gpu/demosaic/dht.wgsl` and `native/dht/`; packages include these materials.
+- RawSpeed, revision [`804ae3bcc70c`](https://github.com/darktable-org/rawspeed/tree/804ae3bcc70c9362518dab8a039310d26516af1d): LGPL; original license and credits accompany packages. The embedded camera database is retained unmodified under CC BY-SA 3.0, with attribution to RawSpeed contributors and its original license declaration.
+- pugixml 1.15: MIT, copyright Arseny Kapoulkine; the original license accompanies packages.
 - LLVM OpenMP 22.1.8: the original LLVM OpenMP license accompanies the bundled runtime.
 - IBM Plex fonts: SIL Open Font License 1.1, retained in `assets/fonts/OFL.txt`.
 - OpenColorIO-derived rendering algorithms: retained notice in `assets/ocio/LICENSE-OpenColorIO.txt`. The production executable does not dynamically link the OCIO reference library.
@@ -21,5 +24,7 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 ## Local packages versus public releases
 
 The maintained package command currently produces local test artifacts, not a declaration of release clearance. The generated license inventory is evidence for review, not a legal compatibility decision. Native bundled components, Cargo dependencies and asset provenance all matter; Spektrafilm-derived code and assets retain the separate terms documented in `assets/spektrafilm/README.md`.
+
+RawSpeed is statically linked and the LGPL DHT shader is embedded. Before public binary distribution, supply the corresponding source/relinking materials their LGPL terms require; bundled license text alone is insufficient.
 
 Before publishing binaries publicly, review the dependency and asset license inventory again: match each bundled component's own terms, keep its notices, and re-check the Adobe SDK commercial-distribution clause. Release also involves Developer ID signing/notarization if chosen, clean-machine execution and broader platform acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.
