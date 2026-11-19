@@ -273,7 +273,6 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let mut editor = fixture();
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
-    editor.refresh_adjustment_layer_selection();
     editor.document.project.roll.exposure = 1.23456789;
     *editor.document = editor
         .document
@@ -305,7 +304,6 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let mut reopened = fixture();
     with_camera_basis(&mut reopened);
     reopened.document.visit.current_source = reopened.document.project.order.first().copied();
-    reopened.refresh_adjustment_layer_selection();
     reopened.apply_preferences(restored);
     reopened.preference_store = Some(store);
     let fresh = egui::Context::default();

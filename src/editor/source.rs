@@ -462,7 +462,6 @@ impl Editor {
             &self.document.state.project.order,
             self.document.visit.current_source,
         );
-        self.refresh_adjustment_layer_selection();
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();

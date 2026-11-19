@@ -431,7 +431,6 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                     .source_mut(e.document.visit.current_source.unwrap())
                     .unwrap()
                     .adjustment_layers = Some(layers);
-                e.refresh_adjustment_layer_selection();
                 e.select_adjustment_layer(adjustment_layers::Target::Layer(selected_layer));
                 (
                     (e.dmin(), e.dmax()),

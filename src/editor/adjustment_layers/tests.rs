@@ -311,6 +311,53 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
 }
 
 #[test]
+fn selection_makes_itself_valid_after_arbitrary_stack_changes_without_resurrecting_a_removed_target()
+ {
+    pollster::block_on(async {
+        let (mut editor, _, _) = processing::tests::fixture().await;
+        let source = editor.document.visit.current_source.unwrap();
+        let order = ids(&editor);
+        editor.select_adjustment_layer(Target::Layer(order[1]));
+        let original = editor.document.project.clone();
+        editor
+            .document
+            .project
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .remove(order[1])
+            .unwrap();
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
+        assert_eq!(
+            editor.photo_settings(),
+            editor.selected_adjustment_layer_settings().unwrap()
+        );
+        editor.document.state.project = original.clone();
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
+        editor
+            .document
+            .project
+            .source_mut(source)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers
+            .clear();
+        assert_eq!(editor.adjustment_layer_target(), Target::None);
+        editor.document.state.project = original;
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
+        editor.select_adjustment_layer(Target::Layer(order[0]));
+        editor.document.visit.current_source = None;
+        assert_eq!(editor.adjustment_layer_target(), Target::None);
+        editor.document.visit.current_source = Some(source);
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
+    });
+}
+
+#[test]
 fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
@@ -661,7 +708,6 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
         let subject = layers.layers[3].id;
         let allocator = layers.next_id;
         source.adjustment_layers = Some(layers);
-        editor.refresh_adjustment_layer_selection();
         editor.select_adjustment_layer(Target::Layer(subject));
         let before = editor
             .positive_processing(

@@ -238,7 +238,6 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             .source_mut(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers = Some(local_records());
-        editor.refresh_adjustment_layer_selection();
         let settings_before = editor.photo_settings();
         let before = editor.document.state.project.clone();
         let request = capture_request(&editor);

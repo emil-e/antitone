@@ -374,8 +374,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
             });
             if !failure {
                 // A new visit needs actual readiness; restore it through normal source loading.
-                let path =
-                    app.read(|editor| editor.document.source_path(anchor.recipe.source).unwrap());
+                let path = _file.path().to_owned();
                 app.enter(|editor, cx| editor.load(path, cx));
                 app.run_until(Duration::from_secs(10), |editor| {
                     !editor.interaction_blocked() && !editor.document.visit.source.pending()
@@ -512,7 +511,171 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
 }
 
 #[test]
-fn downstream_changes_preserve_evidence_and_basis_or_source_removal_retires_it() {
+fn accepted_pivot_value_survives_response_history_and_removal_of_its_source() {
+    let (_file, editor) = setup();
+    with_application(editor, |app| {
+        lock(app);
+        let anchor = app.read(|editor| editor.document.gamma_pivot.anchor.clone().unwrap());
+        app.enter(|editor, _| {
+            let mut edit = editor.edit_project("Response").unwrap();
+            edit.update(|project| {
+                if let InputSettings::Negative { response, .. } = &mut project.input {
+                    response.toe = 1.2;
+                }
+            });
+            editor.commit_project(edit).unwrap();
+            assert!(editor.document.gamma_pivot.locked());
+        });
+        for direction in [
+            super::super::history::Direction::Undo,
+            super::super::history::Direction::Redo,
+        ] {
+            app.enter(|editor, cx| editor.restore_history(direction, cx));
+            app.read(|editor| {
+                assert!(Arc::ptr_eq(
+                    editor.document.gamma_pivot.anchor.as_ref().unwrap(),
+                    &anchor
+                ))
+            });
+        }
+        app.enter(|editor, _| {
+            let source = editor.document.visit.current_source.unwrap();
+            let mut edit = editor.edit_project("Remove photo").unwrap();
+            edit.update(|project| project.remove_from_filmstrip(source))
+                .unwrap();
+            editor.commit_project(edit).unwrap();
+            assert!(editor.document.project.order.is_empty());
+            assert!(Arc::ptr_eq(
+                editor.document.gamma_pivot.anchor.as_ref().unwrap(),
+                &anchor
+            ));
+        });
+        propose(app, 0.8, false);
+        settle(app);
+        app.read(|editor| {
+            assert_eq!(
+                editor.document.project.input.gamma(),
+                0.8,
+                "{}",
+                editor.status
+            );
+            assert_ne!(editor.document.project.roll.wb, Balance::default());
+            assert!(Arc::ptr_eq(
+                editor.document.gamma_pivot.anchor.as_ref().unwrap(),
+                &anchor
+            ));
+        });
+    });
+}
+
+#[test]
+fn correction_changes_do_not_replace_the_picked_value_or_change_its_gamma_response() {
+    let (_file, editor) = setup();
+    with_application(editor, |app| {
+        lock(app);
+        let anchor = app.read(|editor| editor.document.gamma_pivot.anchor.clone().unwrap());
+        propose(app, 0.8, false);
+        settle(app);
+        let expected = app.read(|editor| {
+            (
+                editor.document.project.input,
+                editor.document.project.roll.wb,
+            )
+        });
+        app.enter(|editor, cx| editor.restore_history(super::super::history::Direction::Undo, cx));
+        app.enter(|editor, cx| {
+            let mut candidate = editor.document.capture();
+            let area = candidate.project.sources[0].development.active_area;
+            let map = crate::flat_field::FlatField::from_nodes(
+                area,
+                [2, 2],
+                vec![glam::DVec3::splat(1.1); 4],
+            )
+            .unwrap();
+            candidate
+                .project
+                .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                    "pivot-value-reference.dng",
+                    Arc::new(map),
+                )))
+                .unwrap();
+            editor.start_correction(candidate, cx);
+        });
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.flat_correction.is_none()
+        });
+        app.read(|editor| {
+            assert!(
+                editor.document.correction.prepared().is_some(),
+                "{}",
+                editor.status
+            );
+            assert!(Arc::ptr_eq(
+                editor.document.gamma_pivot.anchor.as_ref().unwrap(),
+                &anchor
+            ));
+        });
+        propose(app, 0.8, false);
+        settle(app);
+        app.read(|editor| {
+            assert_eq!(
+                (
+                    editor.document.project.input,
+                    editor.document.project.roll.wb
+                ),
+                expected
+            )
+        });
+    });
+}
+
+#[test]
+fn a_pending_gamma_result_cannot_overwrite_newer_calibration_response_or_wb() {
+    for field in ["calibration", "response", "WB"] {
+        let (_file, editor) = setup();
+        with_application(editor, |app| {
+            lock(app);
+            let gate = measurement::testing::Gate::after_work();
+            app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
+            propose(app, 0.8, false);
+            let late = gate.next(app);
+            let changed = app.enter(|editor, _| {
+                let mut edit = editor.edit_project("Newer control").unwrap();
+                edit.update(|project| match field {
+                    "calibration" => {
+                        project.set_dmin(Some([0.85; 3]));
+                    }
+                    "response" => {
+                        if let InputSettings::Negative { response, .. } = &mut project.input {
+                            response.toe = 1.2;
+                        }
+                    }
+                    "WB" => project.roll.wb.warmth = 0.2,
+                    _ => unreachable!(),
+                });
+                editor.commit_project(edit).unwrap();
+                editor.history_snapshot()
+            });
+            assert!(
+                !late.cancelled.is_cancelled(),
+                "accepted colour is independent of {field}"
+            );
+            late.run();
+            settle(app);
+            app.read(|editor| {
+                assert_eq!(editor.document.project, changed, "{field}");
+                assert!(editor.document.gamma_pivot.locked());
+                assert_eq!(
+                    editor.history_label(super::super::history::Direction::Undo),
+                    Some("Newer control")
+                );
+            });
+        });
+    }
+}
+
+#[test]
+fn downstream_changes_preserve_the_picked_value() {
     let (_file, editor) = setup();
     with_application(editor, |app| {
         lock(app);
@@ -521,19 +684,8 @@ fn downstream_changes_preserve_evidence_and_basis_or_source_removal_retires_it()
             editor.document.set_target(super::super::OutputTarget::Srgb);
             editor.photo_settings_mut().exposure = -1.;
             editor.document.visit.canvas.viewport.fit();
-            editor.observe_gamma_pivot();
-            assert!(editor.document.gamma_pivot.anchor.is_some());
-            if let InputSettings::Negative { response, .. } = &mut editor.document.project.input {
-                response.toe = 1.2;
-            }
-            editor.observe_gamma_pivot();
-            assert!(editor.document.gamma_pivot.anchor.is_none());
-        });
-        lock(app);
-        app.update(|editor| {
-            editor.document.project.order.clear();
-            editor.observe_gamma_pivot();
-            assert!(editor.document.gamma_pivot.anchor.is_none());
+            editor.receive_frame();
+            assert!(editor.document.gamma_pivot.locked());
         });
     });
 }
