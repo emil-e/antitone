@@ -1,4 +1,4 @@
-#![cfg(all(feature = "raw", target_os = "macos"))]
+#![cfg(all(feature = "raw", any(target_os = "macos", target_os = "windows")))]
 use antitone::{
     geometry::SourceRaster,
     raw::{DevelopmentPriority, RawFile, Rect},
@@ -478,7 +478,7 @@ fn authored_dng_model5_exports_reopen_as_rgb16_tiff_and_ap0_exr() {
     }
 }
 
-#[cfg(all(feature = "export", feature = "ocio-reference"))]
+#[cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
 #[test]
 #[ignore = "independent macOS ImageIO reference; compiles with Apple Clang"]
 fn authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles() {

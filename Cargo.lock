@@ -141,6 +141,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "clap",
+ "dunce",
  "egui",
  "egui-wgpu",
  "egui-winit",

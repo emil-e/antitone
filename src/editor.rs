@@ -285,7 +285,8 @@ impl Editor {
         let submissions = crate::platform::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
         renderers.prewarm(device.clone(), queue.clone());
-        let developments = source_loading::SourceLoader::new();
+        let developments =
+            source_loading::SourceLoader::with_gpu(device, queue, submissions.clone());
         let thumbnails = Thumbnails::new(
             device.clone(),
             queue.clone(),

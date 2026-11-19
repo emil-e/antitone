@@ -100,6 +100,10 @@ impl DevelopedSource {
         self.raw.metadata()
     }
 
+    pub fn demosaic_backend(&self) -> crate::raw::DemosaicBackend {
+        self.raw.demosaic_backend()
+    }
+
     /// Recorded colour basis; positive image production uses `positive_matrix`.
     pub fn camera_to_ap1(&self) -> DMat3 {
         self.camera_to_ap1
@@ -297,7 +301,8 @@ impl Scan {
         Self::from_raw(raw, white_balance)
     }
 
-    pub(crate) fn from_raw(raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
+    /// Develop and freeze a caller-configured, uniquely owned RAW handle.
+    pub fn from_raw(raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
         Ok(Self::from_source(Arc::new(DevelopedSource::from_raw(
             raw,
             white_balance,

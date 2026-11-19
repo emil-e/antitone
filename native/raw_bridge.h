@@ -32,7 +32,16 @@ struct AntitoneRawView {
     const uint16_t *pixels;
     const float *rgb; // Optional continuous camera RGB, three floats per pixel.
     uint32_t width, height, maximum, data_maximum, warnings;
+    uint32_t custom_demosaic;
     double pre_mul[4];
+};
+
+// Borrowed only during development. Success replaces the complete prepared RGBG image;
+// failure must leave it unchanged so LibRaw can demosaic on the CPU.
+struct AntitoneRawDemosaicer {
+    void *context;
+    int (*run)(void *context, uint16_t *image, uint32_t width, uint32_t height,
+               const uint8_t *bayer);
 };
 
 struct AntitoneRawThumbnail {
@@ -50,8 +59,13 @@ int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *thumbnail, char *
                            size_t error_size);
 int antitone_raw_is_dng(const void *handle);
 int antitone_raw_unpack(void *handle, int threads, char *error, size_t error_size);
+const char *antitone_raw_unpack_backend(const void *handle);
+int antitone_raw_unpack_status(const void *handle);
 int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
                          AntitoneRawView *view, char *error, size_t error_size);
+int antitone_raw_develop_with_demosaic(void *handle, const double *wb, int output_color,
+                                       int threads, const AntitoneRawDemosaicer *demosaicer,
+                                       AntitoneRawView *view, char *error, size_t error_size);
 // Snapshot explicit owner/buffer allocations before freeze; zero means unavailable.
 uint64_t antitone_raw_retained_bytes(void *handle);
 // Release LibRaw's developed RGB after materializing corrected camera RGB.

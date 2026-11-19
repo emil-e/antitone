@@ -1,6 +1,7 @@
 #include "raw_bridge.h"
 #include "logging.h"
 #include "highlights.h"
+#include "rawspeed/adapter.h"
 #include <libraw/libraw.h>
 #include <algorithm>
 #include <array>
@@ -28,9 +29,123 @@ static_assert(sizeof(AntitoneRawThumbnail) == 32);
 namespace {
 class PreviewRaw : public LibRaw {
     std::array<bool, LIBRAW_IFD_MAXCOUNT> oriented_ifds{};
+    const AntitoneRawDemosaicer *demosaicer = nullptr;
+    bool custom_demosaic = false;
+
+    bool bayer_layout() {
+        if (imgdata.idata.colors != 3 || imgdata.idata.filters <= 1000)
+            return false;
+        static constexpr int patterns[4][4] = {
+            {0, 1, 1, 2}, {2, 1, 1, 0}, {1, 0, 2, 1}, {1, 2, 0, 1}};
+        for (const auto &pattern : patterns) {
+            bool matches = true;
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 2; ++x) {
+                    int color = COLOR(y, x);
+                    if (color == 3)
+                        color = 1;
+                    matches &= color == pattern[(y & 1) * 2 + x];
+                }
+            if (matches)
+                return true;
+        }
+        return false;
+    }
+
+    static void demosaic_bayer(void *owner) {
+        auto &raw = *static_cast<PreviewRaw *>(static_cast<LibRaw *>(owner));
+        uint8_t pattern[4];
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x)
+                pattern[y * 2 + x] = raw.COLOR(y, x);
+        const auto &sizes = raw.imgdata.sizes;
+        // pre_interpolate must have merged the second green before borrowing RGBG.
+        const bool merged =
+            std::all_of(std::begin(pattern), std::end(pattern), [](uint8_t c) { return c <= 2; });
+        if (merged && raw.imgdata.image &&
+            raw.demosaicer->run(raw.demosaicer->context, raw.imgdata.image[0], sizes.iwidth,
+                                sizes.iheight, pattern) == 0) {
+            raw.custom_demosaic = true;
+            return;
+        }
+        raw.dht_interpolate();
+    }
 
 public:
     std::vector<float> highlight_rgb;
+
+    bool used_custom_demosaic() const {
+        return custom_demosaic;
+    }
+
+    int process_with_demosaic(const AntitoneRawDemosaicer *borrowed) {
+        custom_demosaic = false;
+
+        struct Reset {
+            PreviewRaw &raw;
+
+            ~Reset() {
+                raw.callbacks.interpolate_bayer_cb = nullptr;
+                raw.demosaicer = nullptr;
+            }
+        } reset{*this};
+
+        if (borrowed && borrowed->run && bayer_layout()) {
+            demosaicer = borrowed;
+            callbacks.interpolate_bayer_cb = demosaic_bayer;
+        }
+        return dcraw_process();
+    }
+
+    int get_decoder_info(libraw_decoder_info_t *info) override {
+        const int code = LibRaw::get_decoder_info(info);
+        if (code)
+            return code;
+        // These codec families were added to RawSpeed after LibRaw's integration pin.
+        // Its own support check and our raster validation still decide each attempt.
+        static constexpr const char *modern[] = {
+            "sony_ljpeg_load_raw()",           "fuji_compressed_load_raw()",
+            "panasonicC6_load_raw()",          "panasonicC7_load_raw()",
+            "panasonicC8_load_raw()",          "unpacked_load_raw()",
+            "nikon_load_striped_packed_raw()", "nikon_load_padded_packed_raw()",
+            "nikon_14bit_load_raw()"};
+        if (std::any_of(std::begin(modern), std::end(modern), [&](const char *name) {
+                return std::strcmp(info->decoder_name, name) == 0;
+            }))
+            info->decoder_flags |= LIBRAW_DECODER_TRYRAWSPEED3;
+        return 0;
+    }
+
+    void prepare_unpack() {
+        imgdata.rawparams.use_rawspeed = LIBRAW_RAWSPEEDV3_USE | LIBRAW_RAWSPEEDV3_FAILONUNKNOWN;
+        libraw_decoder_info_t info{};
+        if (get_decoder_info(&info) || !(info.decoder_flags & LIBRAW_DECODER_TRYRAWSPEED3))
+            return;
+        if (!_rawspeed3_handle)
+            _rawspeed3_handle = rawspeed3_initdefault();
+        if (!_rawspeed3_handle)
+            return;
+        const uint16_t *curve = nullptr;
+        if (info.decoder_flags & LIBRAW_DECODER_HASCURVE)
+            for (unsigned i = 0; i < 65536; ++i)
+                if (imgdata.color.curve[i] != i) {
+                    curve = imgdata.color.curve;
+                    break;
+                }
+        const auto &s = imgdata.sizes;
+        const auto &id = imgdata.idata;
+        const uint32_t cpp = id.filters || id.colors == 1 ? 1 : id.colors;
+        const AntitoneRawSpeedRequest request{s.raw_width, s.raw_height, cpp, id.filters, curve};
+        antitone_rawspeed_prepare(_rawspeed3_handle, &request);
+    }
+
+    uint64_t unpack_retained_bytes() const {
+        return antitone_rawspeed_retained_bytes(_rawspeed3_handle);
+    }
+
+    int rawspeed_status() const {
+        return antitone_rawspeed_status(_rawspeed3_handle);
+    }
 
     void repair_highlights(int threads, float white_shortfall) {
         const auto &d = imgdata;
@@ -146,12 +261,8 @@ class ThreadBudget {
 public:
     explicit ThreadBudget(int count) {
         static std::once_flag blocktime;
-#if defined(__APPLE__) || defined(__linux__)
         // Sleeping workers must not compete with UI work after a tile/job.
         std::call_once(blocktime, [] { kmp_set_blocktime(0); });
-#else
-        (void)blocktime;
-#endif
         omp_set_dynamic(0);
         omp_set_num_threads(count);
     }
@@ -386,7 +497,8 @@ extern "C" uint64_t antitone_raw_retained_bytes(void *handle) {
         d.idata.xmpdata};
     for (size_t i = 0; i < LIBRAW_AFDATA_MAXCOUNT; ++i)
         blocks[11 + i] = d.makernotes.common.afdata[i].AFInfoData;
-    uint64_t total = static_cast<PreviewRaw &>(raw).highlight_rgb.capacity() * sizeof(float);
+    const auto &owner = static_cast<PreviewRaw &>(raw);
+    uint64_t total = owner.highlight_rgb.capacity() * sizeof(float) + owner.unpack_retained_bytes();
     for (size_t i = 0; i < blocks.size(); ++i) {
         const auto *block = blocks[i];
         if (!block || std::find(blocks.begin(), blocks.begin() + i, block) != blocks.begin() + i)
@@ -545,7 +657,8 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
     if (check_threads(threads, error, size))
         return -1;
     ThreadBudget budget(threads);
-    auto &raw = *static_cast<LibRaw *>(handle);
+    auto &raw = *static_cast<PreviewRaw *>(static_cast<LibRaw *>(handle));
+    raw.prepare_unpack();
     int code = raw.unpack();
     if (code != 0)
         diagnostic.complete(code, 2);
@@ -555,8 +668,26 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
     return 0;
 }
 
+extern "C" const char *antitone_raw_unpack_backend(const void *handle) {
+    const auto &raw = *static_cast<const LibRaw *>(handle);
+    return raw.imgdata.process_warnings & LIBRAW_WARN_RAWSPEED3_PROCESSED ? "rawspeed" : "libraw";
+}
+
+extern "C" int antitone_raw_unpack_status(const void *handle) {
+    return static_cast<const PreviewRaw *>(static_cast<const LibRaw *>(handle))->rawspeed_status();
+}
+
 extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
-                                    AntitoneRawView *view, char *error, size_t size) try {
+                                    AntitoneRawView *view, char *error, size_t size) {
+    return antitone_raw_develop_with_demosaic(handle, wb, output_color, threads, nullptr, view,
+                                              error, size);
+}
+
+extern "C" int antitone_raw_develop_with_demosaic(void *handle, const double *wb, int output_color,
+                                                  int threads,
+                                                  const AntitoneRawDemosaicer *demosaicer,
+                                                  AntitoneRawView *view, char *error,
+                                                  size_t size) try {
     antitone::NativeLog diagnostic("raw", "develop");
     if (check_threads(threads, error, size))
         return -1;
@@ -605,7 +736,7 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
         if (endpoint > 0)
             white_shortfall = float(raw.imgdata.color.maximum - endpoint);
     }
-    int code = raw.dcraw_process();
+    int code = raw.process_with_demosaic(demosaicer);
     if (code != 0)
         diagnostic.complete(code, 2);
     if (check(code, error, size))
@@ -624,6 +755,7 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     view->maximum = d.color.maximum;
     view->data_maximum = d.color.data_maximum;
     view->warnings = d.process_warnings;
+    view->custom_demosaic = raw.used_custom_demosaic();
     for (int c = 0; c < 4; ++c)
         view->pre_mul[c] = d.color.pre_mul[c];
     diagnostic.complete();

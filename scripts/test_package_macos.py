@@ -76,11 +76,65 @@ class NoticeCollection(unittest.TestCase):
             ):
                 for digest in ["a" * 64, "b" * 64]:
                     manifest.write_text(f"upstream={'0' * 64}\npatched={digest}\n")
-                    expected = root / f".cache/native-deps/LibRaw-0.22.3-{digest[:12]}-openmp"
+                    expected = (
+                        root / f".cache/native-deps/LibRaw-0.22.3-{digest[:12]}-rawspeed-openmp"
+                    )
                     self.assertEqual(packager.libraw_source(), expected)
                 manifest.unlink()
                 with patch.dict(packager.os.environ, {"LIBRAW_SOURCE": str(root / "shared")}):
                     self.assertEqual(packager.libraw_source(), root / "shared")
+
+    def test_rawspeed_notices_keep_the_embedded_database_and_dependency_pins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pins = root / "native/rawspeed/pins.txt"
+            pins.parent.mkdir(parents=True)
+            pins.write_text(f"revision={'a' * 40}\npugixml_version=1.15\n")
+            prefix = root / f".cache/native-deps/rawspeed-{'a' * 12}-macos-arm64/share/licenses"
+            prefix.mkdir(parents=True)
+            names = ["RawSpeed-LGPL.txt", "RawSpeed-credits.txt", "cameras.xml", "pugixml.txt"]
+            for name in names:
+                (prefix / name).write_text(f"upstream {name}\n")
+            output = root / "notices"
+            with patch.object(packager, "ROOT", root):
+                packager.copy_rawspeed_notices(output)
+            self.assertEqual(
+                {p.name for p in (output / "RawSpeed").iterdir()}, set(names + ["pins.txt"])
+            )
+            self.assertEqual((output / "RawSpeed/pins.txt").read_bytes(), pins.read_bytes())
+            for name in names:
+                self.assertEqual(
+                    (output / "RawSpeed" / name).read_bytes(), (prefix / name).read_bytes()
+                )
+            (prefix / "cameras.xml").unlink()
+            with patch.object(packager, "ROOT", root), self.assertRaises(FileNotFoundError):
+                packager.copy_rawspeed_notices(output)
+
+    def test_dht_notices_retain_shader_source_modifications_and_license(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = [
+                "native/dht/README.md",
+                "native/dht/LICENSE.LGPL-2.1",
+                "src/gpu/demosaic/dht.wgsl",
+            ]
+            for path in paths:
+                source = root / path
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(path.encode())
+            output = root / "notices"
+            with patch.object(packager, "ROOT", root):
+                packager.copy_dht_notices(output)
+            self.assertEqual(
+                {p.name for p in (output / "DHT").iterdir()}, {Path(p).name for p in paths}
+            )
+            for path in paths:
+                self.assertEqual(
+                    (output / "DHT" / Path(path).name).read_bytes(), (root / path).read_bytes()
+                )
+            (root / paths[-1]).unlink()
+            with patch.object(packager, "ROOT", root), self.assertRaises(FileNotFoundError):
+                packager.copy_dht_notices(output)
 
     def test_colour_material_notices_include_the_academy_terms_without_runtime_blobs(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -68,7 +68,7 @@ logging = ["dep:serde_json", "dep:tempfile"]
 editor = ["dep:clap", "logging", "ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:event-listener", "dep:futures-lite", "dep:blocking"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "dep:libc", "dep:half", "glam/serde"]
 ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda", "dep:async-executor", "dep:futures-channel"]
-raw = ["dep:cc", "dep:libc", "dep:blake3", "dep:image", "dep:lcms2"]
+raw = ["dep:cc", "dep:dunce", "dep:libc", "dep:blake3", "dep:image", "dep:lcms2"]
 # Direct SDK remains separately usable without LibRaw or the desktop stack.
 dng-sdk = ["dep:cc", "dep:blake3", "dep:tempfile"]
 render = ["dep:lcms2"]
@@ -83,6 +83,7 @@ naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in", "
 
 [build-dependencies]
 cc = { version = "=1.2.62", optional = true }
+dunce = { version = "=1.0.5", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds the application icon and version details in the executable.

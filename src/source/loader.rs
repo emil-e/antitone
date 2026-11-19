@@ -301,14 +301,33 @@ impl SourceLoader {
     }
 
     pub fn new() -> Self {
-        #[cfg(test)]
-        {
-            Self::start_native(Arc::new(|_, _, _| Ok(())))
-        }
-        #[cfg(not(test))]
-        {
-            Self::start_native()
-        }
+        Self::start_native(
+            #[cfg(test)]
+            Arc::new(|_, _, _| Ok(())),
+            #[cfg(feature = "gpu")]
+            None,
+        )
+    }
+
+    /// Accelerate admitted Bayer development on the host's existing device and queue.
+    #[cfg(feature = "gpu")]
+    pub fn with_gpu(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: crate::gpu::submission::SubmissionGate,
+    ) -> Self {
+        // One serialized working set, separate from optional image retention. Unknown
+        // hardware memory gives zero admission and retains native CPU development.
+        let working_bytes = (crate::sys::physical_memory() / 4).min(3 << 30);
+        let demosaicer = Arc::new(
+            crate::gpu::demosaic::Demosaicer::new(device, queue, submissions, working_bytes)
+                .with_system_pressure(),
+        );
+        Self::start_native(
+            #[cfg(test)]
+            Arc::new(|_, _, _| Ok(())),
+            Some(demosaicer),
+        )
     }
 
     #[cfg(test)]
@@ -322,11 +341,20 @@ impl SourceLoader {
         + Sync
         + 'static,
     ) -> Self {
-        Self::start_native(Arc::new(observe))
+        Self::start_native(
+            Arc::new(observe),
+            #[cfg(feature = "gpu")]
+            None,
+        )
     }
 
-    fn start_native(#[cfg(test)] observe: NativeObserver) -> Self {
+    fn start_native(
+        #[cfg(test)] observe: NativeObserver,
+        #[cfg(feature = "gpu")] demosaicer: Option<Arc<crate::gpu::demosaic::Demosaicer>>,
+    ) -> Self {
         Self::start_workers(2, move |_, shared| {
+            #[cfg(feature = "gpu")]
+            let demosaicer = demosaicer.clone();
             #[cfg(test)]
             let observe = observe.clone();
             // LibRaw decoded handles and SDK inspected headers stay worker-local across
@@ -346,6 +374,8 @@ impl SourceLoader {
                         Some(&input.raw.metadata),
                     )?;
                     let mut raw = input.raw;
+                    #[cfg(feature = "gpu")]
+                    raw.set_demosaicer(demosaicer.clone());
                     raw.set_development_share(task.share.load(Ordering::Relaxed));
                     let scan = Scan::from_raw(raw, task.request.wb).map_err(|e| e.to_string())?;
                     #[cfg(test)]

@@ -4,7 +4,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 cache=.cache/native-deps
-version=22.1.8
+version=$(awk -F= '$1 == "version" {print $2}' native/openmp/pins.txt)
+hash=$(awk -F= '$1 == "sha256" {print $2}' native/openmp/pins.txt)
 archive="$cache/llvm-project-$version.src.tar.xz"
 source="$cache/llvm-project-$version.src"
 prefix="$PWD/$cache/openmp-$version-install"
@@ -14,7 +15,7 @@ if [ ! -f "$archive" ]; then
     curl --fail --location "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/llvm-project-$version.src.tar.xz" -o "$archive.tmp"
     mv "$archive.tmp" "$archive"
 fi
-printf '%s  %s\n' 922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888 "$archive" | shasum -a 256 -c -
+printf '%s  %s\n' "$hash" "$archive" | shasum -a 256 -c -
 if [ ! -d "$source/openmp" ]; then
     tar -xf "$archive" -C "$cache" \
         "llvm-project-$version.src/openmp" "llvm-project-$version.src/cmake" \
