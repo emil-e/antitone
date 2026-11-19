@@ -18,6 +18,7 @@ mod worker_tests;
 #[cfg(test)]
 mod workflow_tests;
 const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
+const REFRESH_QUIET_PERIOD: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Debug, PartialEq)]
 struct SourceKey {
@@ -380,6 +381,7 @@ pub(super) struct Thumbnails {
     preview: Preview,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
+    refresh: Option<(ImageKey, std::time::Instant)>,
     #[cfg(test)]
     pressure_override: Option<memory::Pressure>,
 }
@@ -429,6 +431,7 @@ impl Default for Thumbnails {
             preview: Preview::default(),
             generation: Arc::default(),
             pending: None,
+            refresh: None,
             #[cfg(test)]
             pressure_override: Some(memory::Pressure::Normal),
         }
@@ -826,7 +829,7 @@ impl Thumbnails {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn complete(&mut self, outcome: Outcome, document: &Document) {
+    fn complete(&mut self, outcome: Outcome, document: &Document) -> bool {
         let matching = self
             .pending
             .as_ref()
@@ -859,17 +862,47 @@ impl Thumbnails {
             && outcome.key.field.as_ref().map(|f| &f.0)
                 == document.project.active_flat_field().map(|f| &f.map)
         {
-            match outcome.image {
+            let rendered = match outcome.image {
                 Ok(Some(image)) => {
                     // A new version replaces this source's old outputs, not another photo.
                     self.cache.retain(|key, _| key.source != outcome.key.source);
                     self.cache.insert(outcome.key, Ok(image));
+                    true
                 }
-                Err(error) => self.cache.insert(outcome.key, Err(error)),
-                Ok(None) => {}
-            }
+                Err(error) => {
+                    self.cache.insert(outcome.key, Err(error));
+                    false
+                }
+                Ok(None) => false,
+            };
             self.sync_image_budget();
+            return rendered;
         }
+        false
+    }
+
+    fn defer_refresh(&mut self, key: &ImageKey, now: std::time::Instant) -> bool {
+        let Some(repaint) = self.repaint.get() else {
+            return false;
+        };
+        if self
+            .refresh
+            .as_ref()
+            .is_none_or(|(waiting, _)| waiting != key)
+        {
+            self.refresh = Some((key.clone(), now + REFRESH_QUIET_PERIOD));
+        }
+        let remaining = self
+            .refresh
+            .as_ref()
+            .unwrap()
+            .1
+            .saturating_duration_since(now);
+        if remaining.is_zero() {
+            return false;
+        }
+        repaint.request_repaint_after(remaining);
+        true
     }
 
     fn stopped(&mut self, ticket: u64, key: ImageKey) {
@@ -1066,6 +1099,10 @@ impl Editor {
     }
 
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
+        self.document
+            .thumbnails
+            .repaint
+            .get_or_init(|| ui.ctx().clone());
         self.document.thumbnails.visible.clear();
         self.document.thumbnails.refresh_hidden_memory();
         self.advance_thumbnail_demand(cx);
@@ -1613,6 +1650,7 @@ impl Editor {
                     return;
                 };
                 let pending = editor.document.thumbnail_work.tasks.swap_remove(index);
+                let mut rendered = false;
                 if Arc::ptr_eq(&identity, &editor.document.thumbnails.generation) {
                     editor
                         .document
@@ -1627,14 +1665,14 @@ impl Editor {
                                 log::warn!(error = error.to_string().as_str(); "thumbnail_proxy_publication_failed");
                             }
                             let current = editor.document.effective_document();
-                            editor.document.thumbnails.complete(outcome, &current);
+                            rendered = editor.document.thumbnails.complete(outcome, &current);
                         }
                         Err(_) => editor.document.thumbnails.stopped(ticket, key),
                     }
                 }
                 drop(pending);
                 editor.document.thumbnails.update_memory();
-                editor.advance_thumbnail_demand(&cx);
+                editor.schedule_thumbnail(&cx, std::time::Instant::now(), rendered);
             });
         }) else {
             self.document.thumbnails.stopped(ticket, fallback_key);
@@ -1649,6 +1687,15 @@ impl Editor {
     }
 
     pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
+        self.schedule_thumbnail(cx, std::time::Instant::now(), false);
+    }
+
+    fn schedule_thumbnail(
+        &mut self,
+        cx: &UiContext<'_, Self>,
+        now: std::time::Instant,
+        continuing: bool,
+    ) {
         let visible = self.document.thumbnails.visible.clone();
 
         let pressure = self.document.thumbnails.budgets.pressure;
@@ -1743,6 +1790,16 @@ impl Editor {
             {
                 continue;
             }
+            // An existing compatible card can stand in while the next request changes.
+            // Once a current card completes, drain subsequent work without another quiet period.
+            if !continuing
+                && render
+                && self.document.thumbnails.previous_product(&key).is_some()
+                && self.document.thumbnails.defer_refresh(&key, now)
+            {
+                return;
+            }
+            self.document.thumbnails.refresh = None;
             self.request_thumbnail(
                 key,
                 render,
@@ -1753,8 +1810,9 @@ impl Editor {
                 },
                 cx,
             );
-            break;
+            return;
         }
+        self.document.thumbnails.refresh = None;
     }
 }
 

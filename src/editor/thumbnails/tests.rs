@@ -114,7 +114,9 @@ pub(super) fn complete_service_request(thumbnails: &mut Thumbnails, document: &D
     let key = job.key.clone();
     thumbnails.pending = Some((ticket, key.clone()));
     match run_service_request(thumbnails, job) {
-        Ok(outcome) => thumbnails.complete(outcome, document),
+        Ok(outcome) => {
+            thumbnails.complete(outcome, document);
+        }
         Err(_) => thumbnails.stopped(ticket, key),
     }
 }
