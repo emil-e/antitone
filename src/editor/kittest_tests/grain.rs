@@ -84,7 +84,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                 };
             });
             stage(&mut h, "Rendering");
-            h.run();
+            painted(&mut h);
             let before_collapse = h.read(|e| e.document.project.clone());
             h.get_by_label("Film texture").scroll_to_me();
             h.try_run_realtime().unwrap();
@@ -198,7 +198,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                 !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             stage(&mut h, "Rendering");
-            h.run();
+            painted(&mut h);
             h.read(|e| {
                 assert_eq!(
                     (

@@ -539,7 +539,6 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
         harness.step();
         show_layers(&mut harness);
         for escape in [false, true] {
-            click(&mut harness, "Sky");
             let before = harness.read(|editor| {
                 (
                     editor.document.state.project.clone(),

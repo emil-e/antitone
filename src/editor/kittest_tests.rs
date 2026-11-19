@@ -1022,12 +1022,50 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+#[track_caller]
+fn scroll_to_control(harness: &mut Harness<'_, Editor>, role: egui::accesskit::Role, label: &str) {
+    let layout = |harness: &Harness<'_, Editor>| {
+        harness
+            .query_by_role_and_label(role, label)
+            .and_then(|control| {
+                let rect = control.rect();
+                // Accessibility bounds can include controls still clipped by expansion or scrolling.
+                (!control.accesskit_node().is_disabled()
+                    && rect.is_positive()
+                    && harness.ctx.content_rect().contains_rect(rect)
+                    && harness.ctx.interactive_rects_last_pass().contains(&rect))
+                .then(|| (control.accesskit_node().locate(), rect))
+            })
+    };
+    let mut previous = None;
+    for _ in 0..UI_MAX_STEPS {
+        let scroll = layout(harness).is_none();
+        if scroll && let Some(control) = harness.query_by_role_and_label(role, label) {
+            control.scroll_to_me();
+        }
+        harness.step();
+        let ready = layout(harness);
+        if !scroll && ready.is_some() && ready == previous {
+            return;
+        }
+        // Observe idle passes: a scroll request can change the next pass's offset.
+        previous = if scroll { None } else { ready };
+        std::thread::sleep(Duration::from_secs_f32(UI_STEP_DT));
+    }
+    panic!("{role:?} {label:?} did not produce a stable visible enabled layout: {previous:?}");
+}
+
 fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Tab, name)
-        .click();
-    harness.step();
-    harness.try_run_realtime().unwrap();
+    let role = egui::accesskit::Role::Tab;
+    harness.get_by_role_and_label(role, name).click();
+    scroll_to_control(harness, role, name);
+    assert_eq!(
+        harness
+            .get_by_role_and_label(role, name)
+            .accesskit_node()
+            .is_selected(),
+        Some(true)
+    );
 }
 
 fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {

@@ -25,7 +25,7 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
                 .unwrap()
                 .native_pixels_per_point = Some(scale);
             stage(&mut h, "Rendering");
-            h.run();
+            painted(&mut h);
             if !h.read(|e| e.document.project.output.halation.enabled) {
                 h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Enable halation")
                     .scroll_to_me();
