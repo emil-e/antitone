@@ -80,10 +80,9 @@ fn affine(input: Value, gain: f64, offset: f64) -> Value {
     )
     .unwrap()
 }
-fn budget(r: CellRegion) -> Budget {
-    Budget {
+fn budget(r: CellRegion) -> Tiling {
+    Tiling {
         tile: [r.width, r.height],
-        scratch_bytes: 32 << 20,
     }
 }
 fn run(
@@ -168,7 +167,7 @@ fn matching_value_keys_reuse_supersets_and_pass_through_without_source_reads() {
             inputs: &[crate::gpu::evaluation::value::Value],
             _: Domain,
             r: CellRegion,
-            _budget: crate::gpu::evaluation::Budget,
+            _budget: crate::gpu::evaluation::Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
             Ok(Some(inputs[0].request(r)?))
@@ -401,7 +400,7 @@ fn materialized_chain_recycles_retired_scratch_without_overwriting_active_inputs
         images(&tile.slots) < images(&tile.fragment.resources),
         "the fixture must actually recycle a retired image allocation"
     );
-    assert!(plan.peak_scratch_bytes <= budget(region).scratch_bytes);
+    assert!(plan.scheduled_bytes() < tile.fragment.resources.iter().map(Storage::bytes).sum());
     let execution = execute::Executor::default()
         .run(&device, &queue, &Default::default(), &plan, || false)
         .unwrap()

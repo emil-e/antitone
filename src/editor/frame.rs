@@ -292,6 +292,8 @@ impl Editor {
             .show(ui, |ui| {
                 if let Some(view) = self.activities.view() {
                     view.compact(ui);
+                } else if let Some((status, error)) = self.preview_failure_status() {
+                    status.compact(ui).on_hover_text(error.to_string());
                 } else {
                     ui.add(egui::Label::new(&self.status).truncate())
                         .on_hover_text(&self.status);

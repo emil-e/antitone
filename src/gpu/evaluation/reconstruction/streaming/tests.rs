@@ -60,7 +60,7 @@ impl Operation for Square {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function {
@@ -80,6 +80,93 @@ impl Operation for Square {
     }
 }
 
+// The same square with explicit natural units exercises producer assembly and sharing.
+struct TiledSquare;
+impl Operation for TiledSquare {
+    fn key(&self) -> Option<RetainedKey> {
+        Square.key()
+    }
+    fn work_units(&self, region: Rect, _: Tiling) -> Result<WorkUnits, Error> {
+        tiled_units(region, [32, 32])
+    }
+    fn calculation(
+        self: Arc<Self>,
+        inputs: &[Value],
+        domain: Domain,
+        region: Rect,
+        tiling: Tiling,
+    ) -> Result<Option<value::Calculation>, Error> {
+        Arc::new(Square).calculation(inputs, domain, region, tiling)
+    }
+}
+
+struct GpuIdentity;
+impl Operation for GpuIdentity {
+    fn key(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new("test GPU worker boundary"))
+    }
+    fn calculation(
+        self: Arc<Self>,
+        inputs: &[Value],
+        domain: Domain,
+        region: Rect,
+        _: Tiling,
+    ) -> Result<Option<value::Calculation>, Error> {
+        value::Calculation::new(
+            domain,
+            region,
+            vec![value::Calculation::input(inputs[0].request(region)?)],
+            value::Operation::new(
+                "test GPU worker boundary",
+                (),
+                "fn pixel(p:vec2i,at:vec2f,value:vec4f)->vec4f { return value; }",
+                "pixel",
+                value::Access::Pointwise,
+            ),
+        )
+        .map(Some)
+    }
+}
+struct CpuIdentity;
+impl Operation for CpuIdentity {
+    fn key(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new("test CPU worker boundary"))
+    }
+    fn calculation(
+        self: Arc<Self>,
+        inputs: &[Value],
+        domain: Domain,
+        region: Rect,
+        _: Tiling,
+    ) -> Result<Option<value::Calculation>, Error> {
+        value::Calculation::new(
+            domain,
+            region,
+            vec![value::Calculation::input(inputs[0].request(region)?)],
+            value::Operation::cpu("test CPU worker boundary", self.key(), self),
+        )
+        .map(Some)
+    }
+}
+impl CpuKernel for CpuIdentity {
+    fn run(
+        &self,
+        inputs: &[CpuImage],
+        _: Rect,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Option<Vec<[f32; 4]>>, Error> {
+        if cancelled() {
+            return Ok(None);
+        }
+        Ok(Some(inputs[0].pixels.clone()))
+    }
+}
+// GPU -> CPU -> GPU exercises real worker production and readback without changing samples.
+fn cpu_boundary(input: Value) -> Value {
+    let input = Value::from_operation(input.domain, [input], GpuIdentity);
+    Value::from_operation(input.domain, [input], CpuIdentity)
+}
+
 fn output(mapping: Mapping, region: Rect) -> Domain {
     Domain {
         bounds: Some(region),
@@ -92,7 +179,7 @@ fn output(mapping: Mapping, region: Rect) -> Domain {
         meaning: Meaning::Graded,
     }
 }
-fn materialize(root: Value, tile: [u32; 2], scratch_bytes: u64) -> Vec<[f32; 4]> {
+fn materialize(root: Value, tile: [u32; 2]) -> Vec<[f32; 4]> {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -110,10 +197,7 @@ fn materialize(root: Value, tile: [u32; 2], scratch_bytes: u64) -> Vec<[f32; 4]>
                             bounds: domain.finite().unwrap(),
                             grid: domain.grid,
                         },
-                        Budget {
-                            tile,
-                            scratch_bytes,
-                        },
+                        Tiling { tile },
                     )
                     .unwrap(),
                 ImageFormat::Rgba32Float,
@@ -148,10 +232,8 @@ fn nested_large_aperture_stays_bounded_and_does_not_move_nonlinear_operations_ac
         !crate::gpu::evaluation::unit::can_inline(
             &coarse,
             coarse.domain.finite().unwrap(),
-            Budget {
-                tile: [2, 1],
-                scratch_bytes: 32 << 20
-            }
+            Tiling { tile: [2, 1] },
+            None
         )
         .unwrap(),
         "control: the inner aperture must actually require bounded production"
@@ -168,7 +250,7 @@ fn nested_large_aperture_stays_bounded_and_does_not_move_nonlinear_operations_ac
         (squared_mean, [6.25, 0.390625, 6.25, 11.]),
     ] {
         let first_read = reads.lock().unwrap().len();
-        let values = materialize(root, [1, 1], 2 << 20);
+        let values = materialize(root, [1, 1]);
         let mut covered = vec![false; (size[0] * size[1]) as usize];
         for region in &reads.lock().unwrap()[first_read..] {
             for y in region.y..region.bottom() {
@@ -197,7 +279,7 @@ fn nested_large_aperture_stays_bounded_and_does_not_move_nonlinear_operations_ac
 }
 
 #[test]
-fn a_recordable_nested_aperture_uses_worker_production_when_its_input_exceeds_admission() {
+fn a_coalesced_nested_aperture_keeps_upstream_math_without_artificial_subdivision() {
     let size = [1024, 512];
     let (input, reads) = fixture(
         size,
@@ -217,35 +299,50 @@ fn a_recordable_nested_aperture_uses_worker_production_when_its_input_exceeds_ad
         crate::gpu::evaluation::unit::can_inline(
             &inner,
             Rect::new([0, 0], [1, 1]),
-            Budget {
-                tile: [64, 32],
-                scratch_bytes: 2 << 20
-            }
+            Tiling { tile: [64, 32] },
+            None
         )
         .unwrap(),
         "control: the same aperture supports a callable with a locally fitting dependency"
     );
     let root = Value::from_operation(inner.domain, Some(inner), Square);
-    let actual = materialize(root, [64, 32], 512 << 10);
+    let actual = materialize(root, [64, 32]);
     for pixel in actual {
         for (a, b) in pixel.into_iter().zip([1., 4., 1., 8.]) {
             assert!((a - b).abs() < 3e-5, "{pixel:?} expected {b}");
         }
     }
-    let reads = reads.lock().unwrap();
-    assert!(reads.len() > 1);
-    assert!(reads.iter().all(|r| r.width <= 512 && r.height <= 128));
+    assert_eq!(
+        *reads.lock().unwrap(),
+        vec![Rect::new([0, 0], [1024, 512])],
+        "the representable source window is acquired without artificial subdivision"
+    );
 }
 
 #[test]
-fn nested_admission_observes_individual_gpu_binding_limits_not_only_total_scratch() {
+fn nested_reconstruction_uses_natural_contributions_when_coalescing_exceeds_a_binding() {
+    struct Alias;
+    impl Operation for Alias {
+        fn key(&self) -> Option<RetainedKey> {
+            Some(RetainedKey::new("test transparent reconstruction alias"))
+        }
+        fn calculation(
+            self: Arc<Self>,
+            inputs: &[Value],
+            _domain: Domain,
+            output: Rect,
+            _tiling: Tiling,
+        ) -> Result<Option<value::Calculation>, Error> {
+            Ok(Some(value::Calculation::input(inputs[0].request(output)?)))
+        }
+    }
     let (input, reads) = fixture([512, 512], vec![[0.25, -2., 3., 0.]; 512 * 512]);
     let map = Mapping {
         start: [0.; 2],
         axes: [[16., 0.], [0., 16.]],
     };
     let inner = reconstruct_mapped(input, output(map, [0, 0, 32, 32].into()), map).unwrap();
-    let root = Value::from_operation(inner.domain, Some(inner), Square);
+    let alias = Value::from_operation(inner.domain, Some(inner), Alias);
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -256,16 +353,23 @@ fn nested_admission_observes_individual_gpu_binding_limits_not_only_total_scratc
         ..Default::default()
     }))
     .unwrap();
+    let limits = device.limits();
+    let budget = Tiling { tile: [32, 32] };
+    crate::gpu::evaluation::unit::plan_with_limits(
+        &alias,
+        alias.domain.finite().unwrap(),
+        budget,
+        Some(&limits),
+    )
+    .unwrap()
+    .admit_for(&limits)
+    .unwrap();
+    let root = Value::from_operation(alias.domain, Some(alias), Square);
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let budget = Budget {
-        tile: [32, 32],
-        scratch_bytes: 32 << 20,
-    };
     assert!(
-        512 * 512 * 16 > device.limits().max_storage_buffer_binding_size
-            && 512 * 512 * 16 < budget.scratch_bytes,
-        "control: the whole upstream input must fit scratch but not a storage binding"
+        512 * 512 * 16 > device.limits().max_storage_buffer_binding_size,
+        "control: the whole upstream input exceeds a storage binding"
     );
     let request = context
         .request(
@@ -288,7 +392,7 @@ fn nested_admission_observes_individual_gpu_binding_limits_not_only_total_scratc
                     layout.bytes() <= device.limits().max_storage_buffer_binding_size,
                 _ => true,
             }),
-        "every physical input binding must respect the device, not merely total scratch"
+        "the nested reconstruction stays within individual binding limits"
     );
     assert!(reads.lock().unwrap().is_empty());
     let image = pollster::block_on(
@@ -304,10 +408,17 @@ fn nested_admission_observes_individual_gpu_binding_limits_not_only_total_scratc
             .unwrap(),
     )
     .unwrap();
-    for pixel in super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()) {
-        assert_eq!(pixel, [0.0625, 4., 9., 8.]);
-    }
-    assert!(reads.lock().unwrap().len() > 1);
+    let actual = super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+    assert_eq!(actual, vec![[0.0625, 4., 9., 8.]; 32 * 32]);
+    let reads = reads.lock().unwrap();
+    assert!(
+        reads.len() > 1,
+        "execution uses natural contributions, not an oversized whole binding"
+    );
+    assert!(reads.iter().all(
+        |region| u64::from(region.width) * u64::from(region.height) * 16
+            <= device.limits().max_storage_buffer_binding_size
+    ));
     assert_eq!(context.retained_bytes(), 0);
 }
 
@@ -334,14 +445,12 @@ fn nested_reductions_execute_recursively_without_flattening_their_source_grids()
         !crate::gpu::evaluation::unit::can_inline(
             &root,
             root.domain.finite().unwrap(),
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 32 << 20
-            }
+            Tiling { tile: [1, 1] },
+            None
         )
         .unwrap()
     );
-    let actual = materialize(root, [1, 1], 32 << 20);
+    let actual = materialize(root, [1, 1]);
     let expected = 256.25_f32 / 257.;
     for (a, b) in actual[0].into_iter().zip([expected, expected, 4., 8.]) {
         assert!(
@@ -356,43 +465,38 @@ fn nested_reductions_execute_recursively_without_flattening_their_source_grids()
 }
 
 #[test]
-fn nested_worker_admission_rejects_before_original_reads() {
+fn nested_workers_execute_without_a_parent_residual_byte_allowance() {
     let (input, reads) = fixture([512, 256], vec![[1.; 4]; 512 * 256]);
     let map = Mapping {
         start: [0.; 2],
         axes: [[512., 0.], [0., 256.]],
     };
-    let inner = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
+    let inner =
+        reconstruct_mapped(cpu_boundary(input), output(map, [0, 0, 1, 1].into()), map).unwrap();
     let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let request_for = |scratch_bytes| {
-        context.request(
+    let request = context
+        .request(
             root.clone(),
             Region {
                 bounds: root.domain.finite().unwrap(),
                 grid: root.domain.grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes,
-            },
+            Tiling { tile: [1, 1] },
         )
-    };
-    let parent_bytes = request_for(1024)
-        .unwrap()
-        .plans()
-        .next()
-        .unwrap()
-        .unwrap()
-        .peak_scratch_bytes;
-    let request = request_for(parent_bytes).unwrap();
+        .unwrap();
     let plan = request.plans().next().unwrap().unwrap();
     assert!(
-        plan.peak_scratch_bytes == parent_bytes
-            && matches!(plan.tiles[0].fragment.work[0], Work::Produce { .. }),
-        "control: the parent plan fits; the child worker's remaining allowance must reject"
+        plan.tiles
+            .iter()
+            .flat_map(|tile| &tile.fragment.work)
+            .any(|work| matches!(work, Work::Produce { .. }))
+    );
+    assert!(
+        reads.lock().unwrap().is_empty(),
+        "planning remains metadata-only"
     );
     let result = pollster::block_on(
         context
@@ -406,10 +510,20 @@ fn nested_worker_admission_rejects_before_original_reads() {
             )
             .unwrap(),
     );
-    assert!(
-        matches!(result,Err(error) if matches!(error.as_ref(),Error::WorkingAllowance("unit state exceeds the working allowance")))
+    let image = result.unwrap();
+    assert_eq!(
+        super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
+        vec![[1., 1., 1., 9.]]
     );
-    assert!(reads.lock().unwrap().is_empty());
+    assert_eq!(
+        reads
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.width * r.height)
+            .sum::<u32>(),
+        512 * 256
+    );
     assert_eq!(context.retained_bytes(), 0);
 }
 
@@ -417,12 +531,13 @@ fn nested_worker_admission_rejects_before_original_reads() {
 fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_more_originals() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use wgpu::util::DeviceExt;
-    let (input, reads) = fixture([512, 256], vec![[1.; 4]; 512 * 256]);
+    let (input, reads) = fixture([512, 384], vec![[1.; 4]; 512 * 384]);
     let map = Mapping {
         start: [0.; 2],
-        axes: [[512., 0.], [0., 256.]],
+        axes: [[512., 0.], [0., 384.]],
     };
-    let inner = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
+    let inner =
+        reconstruct_mapped(cpu_boundary(input), output(map, [0, 0, 1, 1].into()), map).unwrap();
     let root = Value::from_operation(inner.domain, Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
@@ -443,10 +558,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
             stop.store(true, Ordering::SeqCst);
         }
     }));
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 2 << 20,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let evaluation = context
         .request(
             root.clone(),
@@ -464,7 +576,6 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget,
             working: &RunWorkingSet::default(),
             cancelled: &|| stopped.load(Ordering::SeqCst),
             progress: &|| {},
@@ -480,7 +591,13 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
     .produce(&evaluation);
     assert!(matches!(result, Err(Error::Cancelled)));
     assert_eq!(submissions.load(Ordering::SeqCst), 2);
-    assert_eq!(reads.lock().unwrap().len(), 1);
+    let acquired = reads.lock().unwrap();
+    assert_eq!(acquired.len(), 2);
+    assert_eq!(
+        acquired.iter().map(|r| r.width * r.height).sum::<u32>(),
+        512 * 256,
+        "cancellation stops before the third input block"
+    );
     assert_eq!(
         super::super::super::execute::read(&device, &queue, &pixels),
         vec![[1234.; 4]]
@@ -488,7 +605,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
 }
 
 #[test]
-fn shared_neighbourhood_admission_falls_back_when_individual_requests_fit() {
+fn shared_neighbourhoods_preserve_individual_results_without_reacquiring_the_same_source() {
     let (input, reads) = fixture([128, 64], vec![[-2., 3., 4., 1.]; 128 * 64]);
     let input = super::super::super::operators::gaussian(input, 1.).unwrap();
     let roots: Vec<_> = [128., 127.]
@@ -502,13 +619,10 @@ fn shared_neighbourhood_admission_falls_back_when_individual_requests_fit() {
                 .unwrap()
         })
         .collect();
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 33 << 10,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let expected: Vec<_> = roots
         .iter()
-        .map(|root| materialize(root.clone(), budget.tile, budget.scratch_bytes))
+        .map(|root| materialize(root.clone(), budget.tile))
         .collect();
     reads.lock().unwrap().clear();
     let (device, queue, _) = crate::gpu::test_support::render_context();
@@ -546,7 +660,15 @@ fn shared_neighbourhood_admission_falls_back_when_individual_requests_fit() {
             );
         }
     }
-    assert!(reads.lock().unwrap().len() > 1);
+    assert_eq!(
+        reads
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.width * r.height)
+            .sum::<u32>(),
+        128 * 64
+    );
 }
 
 #[test]
@@ -583,10 +705,7 @@ fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
                         bounds: d.finite().unwrap(),
                         grid: d.grid,
                     },
-                    Budget {
-                        tile: [1, 1],
-                        scratch_bytes: 64 << 10,
-                    },
+                    Tiling { tile: [1, 1] },
                 )
                 .unwrap()
         })
@@ -619,7 +738,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
         })
         .collect();
     let (input, reads) = fixture([128, 64], values);
-    let input = Value::from_operation(input.domain, Some(input), Square);
+    let input = Value::from_operation(input.domain, Some(input), TiledSquare);
     let detail = Mapping {
         start: [32., 16.],
         axes: [[32., 0.], [0., 16.]],
@@ -645,10 +764,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
                         bounds: d.finite().unwrap(),
                         grid: d.grid,
                     },
-                    Budget {
-                        tile: [2, 2],
-                        scratch_bytes: 64 << 10,
-                    },
+                    Tiling { tile: [2, 2] },
                 )
                 .unwrap()
         })
@@ -682,7 +798,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
 
 #[test]
 fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging() {
-    let size = [128, 64];
+    let size = [1024, 128];
     let values = (0..size[1])
         .flat_map(|y| {
             (0..size[0]).map(move |x| {
@@ -696,10 +812,10 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
         })
         .collect();
     let (input, reads) = fixture(size, values);
-    let input = Value::from_operation(input.domain, Some(input), Square);
+    let input = Value::from_operation(input.domain, Some(input), TiledSquare);
     let map = Mapping {
         start: [0.; 2],
-        axes: [[128., 0.], [0., 64.]],
+        axes: [[1024., 0.], [0., 128.]],
     };
     let root = reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap();
     let (device, queue, _) = crate::gpu::test_support::render_context();
@@ -711,27 +827,29 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
                 bounds: root.domain.finite().unwrap(),
                 grid: root.domain.grid,
             },
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 64 << 10,
-            },
+            Tiling { tile: [1, 1] },
         )
         .unwrap();
+    let unit = root
+        .plan_unit(root.domain.finite().unwrap(), Tiling { tile: [1, 1] })
+        .unwrap();
+    let UnitWork::Gpu(gpu) = unit.work else {
+        panic!("GPU reconstruction expected")
+    };
+    let contributions = gpu
+        .phases
+        .map(|phase| phase.unwrap())
+        .filter(|phase| !phase.reads.is_empty())
+        .count();
     assert!(
-        evaluation
-            .plans()
-            .any(|plan| plan.unwrap().tiles.iter().any(|tile| tile
-                .fragment
-                .work
-                .iter()
-                .any(|work| matches!(work, Work::Produce { .. })))),
-        "this calculation must require bounded worker production"
+        contributions > 1,
+        "the aperture naturally spans multiple source contributions"
     );
 
     for delivery in ["materialize", "read", "sink"] {
         reads.lock().unwrap().clear();
         let actual = match delivery {
-            "materialize" => materialize(root.clone(), [1, 1], 64 << 10),
+            "materialize" => materialize(root.clone(), [1, 1]),
             "read" => {
                 let mut actual = Vec::new();
                 context
@@ -801,17 +919,13 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
             reads.len() > 1,
             "{delivery}: the fixture must use streamed source units"
         );
-        assert!(
-            reads
-                .iter()
-                .all(|r| u64::from(r.width) * u64::from(r.height) * 16 <= 64 << 10)
-        );
+        assert!(reads.iter().all(|r| r.width <= 512 && r.height <= 128));
         assert_eq!(
             reads
                 .iter()
                 .map(|r| u64::from(r.width) * u64::from(r.height))
                 .sum::<u64>(),
-            8192
+            1024 * 128
         );
     }
     reads.lock().unwrap().clear();
@@ -836,26 +950,25 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
 
 #[test]
 fn streamed_diamond_excludes_zero_area_corners_and_bounds_do_not_replace_its_polygon() {
-    let size = [128, 128];
-    let mut values = vec![[-2., 3., 5., 1.]; 128 * 128];
-    for y in 0..8 {
-        for x in 0..8 {
-            for (x, y) in [(x, y), (127 - x, y), (x, 127 - y), (127 - x, 127 - y)] {
-                values[y * 128 + x] = [9999.; 4];
-                values[y * 128 + x][3] = 4.;
+    let size = [512, 512];
+    let mut values = vec![[-2., 3., 5., 1.]; 512 * 512];
+    for y in 0..32 {
+        for x in 0..32 {
+            for (x, y) in [(x, y), (511 - x, y), (x, 511 - y), (511 - x, 511 - y)] {
+                values[y * 512 + x] = [9999.; 4];
+                values[y * 512 + x][3] = 4.;
             }
         }
     }
-    values[62 * 128] = [9999., 9999., 9999., 2.]; // touches only one diamond vertex
+    values[254 * 512] = [9999., 9999., 9999., 2.]; // touches only one diamond vertex
     let (input, reads) = fixture(size, values);
     let map = Mapping {
-        start: [64., 0.],
-        axes: [[64., 64.], [-64., 64.]],
+        start: [256., 0.],
+        axes: [[256., 256.], [-256., 256.]],
     };
     let actual = materialize(
         reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap(),
         [1, 1],
-        64 << 10,
     );
     assert!(reads.lock().unwrap().len() > 1);
     assert_eq!(
@@ -869,18 +982,18 @@ fn streamed_diamond_excludes_zero_area_corners_and_bounds_do_not_replace_its_pol
 
 #[test]
 fn streamed_source_units_keep_real_neighbours_for_an_upstream_spatial_operation() {
-    let mut values = vec![[0., -2., 4., 1.]; 128 * 64];
-    values[30 * 128 + 64][0] = 8192.;
-    let (input, reads) = fixture([128, 64], values);
+    let mut values = vec![[0., -2., 4., 1.]; 512 * 256];
+    values[128 * 512 + 256][0] = 131_072.;
+    let (input, reads) = fixture([512, 256], values);
     let input = super::super::super::operators::gaussian(input, 1.).unwrap();
+    let input = cpu_boundary(input);
     let map = Mapping {
         start: [0.; 2],
-        axes: [[128., 0.], [0., 64.]],
+        axes: [[512., 0.], [0., 256.]],
     };
     let actual = materialize(
         reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap(),
         [1, 1],
-        32 << 10,
     );
     // The isolated interior impulse keeps its mass under a unit-sum blur, across source units.
     for (a, b) in actual[0][..3].iter().zip([1., -2., 4.]) {
@@ -889,7 +1002,11 @@ fn streamed_source_units_keep_real_neighbours_for_an_upstream_spatial_operation(
     assert_eq!(actual[0][3], 9.);
     let reads = reads.lock().unwrap();
     assert!(reads.len() > 1);
-    assert!(reads.iter().all(|r| r.width * r.height * 16 < 32 << 10));
+    assert!(
+        reads.iter().all(
+            |r| r.width <= phases::SOURCE_TILE[0] + 8 && r.height <= phases::SOURCE_TILE[1] + 8
+        )
+    );
 }
 
 #[test]
@@ -908,7 +1025,6 @@ fn mean_differences_can_overflow_without_overflowing_the_representable_mean() {
     let actual = materialize(
         reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap(),
         [1, 1],
-        64 << 10,
     );
     assert_eq!(actual, vec![[0., f32::MAX, 1e-20, 11.]]);
 }
@@ -940,7 +1056,6 @@ fn streamed_reconstruction_keeps_signed_hdr_means_and_failure_markers() {
     let actual = materialize(
         reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap(),
         [1, 1],
-        64 << 10,
     );
     for (a, b) in actual[0][..3].iter().zip([5e35_f32, -3e35, 4e36]) {
         assert!(a.is_finite() && ((*a - b) / b).abs() < 2e-5, "{actual:?}");
@@ -960,10 +1075,7 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let budget = Budget {
-        tile: [512, 256],
-        scratch_bytes: 64 << 20,
-    };
+    let budget = Tiling { tile: [512, 256] };
     let gate = crate::gpu::submission::SubmissionGate::default();
     let resident = pollster::block_on(
         context
@@ -1013,12 +1125,11 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
         Vec::new(),
     );
     let direct = direct.unwrap();
-    assert!(direct.scratch_bytes() <= budget.scratch_bytes);
     drop(direct);
     let unit = root
         .plan_unit(root.domain.finite().unwrap(), budget)
         .unwrap()
-        .admit(budget)
+        .admit_for(&device.limits())
         .unwrap();
     let UnitWork::Gpu(work) = unit.work else {
         panic!("GPU reconstruction");
@@ -1072,7 +1183,7 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
 }
 
 #[test]
-fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
+fn invalid_addressing_rejects_before_io_and_valid_neighbourhoods_propagate_source_failure() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Unreadable(Arc<AtomicUsize>);
@@ -1094,10 +1205,7 @@ fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     for (sigma, expected) in [
-        (
-            100.,
-            Error::WorkingAllowance("phase reads exceed the working allowance"),
-        ),
+        (100., Error::Gpu("unexpected source IO".into())),
         (
             20_000.,
             Error::InvalidParameter("evaluation raster exceeds GPU cell addressing"),
@@ -1120,10 +1228,7 @@ fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
                     bounds: domain.finite().unwrap(),
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [16; 2],
-                    scratch_bytes: 64 << 10,
-                },
+                Tiling { tile: [16; 2] },
             )
             .unwrap();
         let result = context.read(
@@ -1133,17 +1238,21 @@ fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
             || false,
             |_, _| panic!("inadmissible neighbourhood delivered"),
         );
-        assert!(
-            matches!((&result, &expected), (Err(Error::WorkingAllowance(message)), Error::WorkingAllowance(expected)) | (Err(Error::InvalidParameter(message)), Error::InvalidParameter(expected)) if message==expected),
-            "{result:?}"
-        );
-        assert_eq!(reads.load(Ordering::Relaxed), 0);
+        let correct = match (&result, &expected) {
+            (Err(Error::Gpu(actual)), Error::Gpu(expected)) => actual == expected,
+            (Err(Error::InvalidParameter(actual)), Error::InvalidParameter(expected)) => {
+                actual == expected
+            }
+            _ => false,
+        };
+        assert!(correct, "{result:?}");
+        assert_eq!(reads.swap(0, Ordering::Relaxed), usize::from(sigma == 100.));
     }
 }
 
 #[test]
-fn insufficient_reduction_storage_rejects_before_acquiring_source_pixels() {
-    let (input, reads) = fixture([128, 64], vec![[1.; 4]; 128 * 64]);
+fn a_normal_reduction_executes_without_a_per_request_byte_allowance() {
+    let (input, reads) = fixture([128, 64], vec![[1., -2., 3., 8.]; 128 * 64]);
     let map = Mapping {
         start: [0.; 2],
         axes: [[128., 0.], [0., 64.]],
@@ -1165,10 +1274,7 @@ fn insufficient_reduction_storage_rejects_before_acquiring_source_pixels() {
                             bounds: domain.finite().unwrap(),
                             grid: domain.grid,
                         },
-                        Budget {
-                            tile: [1, 1],
-                            scratch_bytes: 16,
-                        },
+                        Tiling { tile: [1, 1] },
                     )
                     .unwrap(),
                 ImageFormat::Rgba32Float,
@@ -1176,31 +1282,40 @@ fn insufficient_reduction_storage_rejects_before_acquiring_source_pixels() {
             )
             .unwrap(),
     );
-    assert!(
-        matches!(result,Err(error) if matches!(error.as_ref(),Error::WorkingAllowance("unit state exceeds the working allowance")))
+    let image = result.unwrap();
+    assert_eq!(
+        super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
+        vec![[1., -2., 3., 8.]]
     );
-    assert!(reads.lock().unwrap().is_empty());
+    assert_eq!(*reads.lock().unwrap(), vec![Rect::new([0, 0], [128, 64])]);
 }
 
 #[test]
 fn reflected_fractional_streaming_extends_real_edges_and_addresses_nonzero_tiled_outputs() {
-    let size = [128, 65];
+    let size = [2048, 1040];
     let (input, reads) = fixture(
         size,
-        (0..65)
+        (0..1040)
             .flat_map(|y| {
-                (0..128).map(move |x| [x as f32 - 64., y as f32 - 32., (x * y) as f32 / 128., 1.])
+                (0..2048).map(move |x| {
+                    [
+                        x as f32 / 16. - 64.,
+                        y as f32 / 16. - 32.,
+                        (x * y) as f32 / 32768.,
+                        1.,
+                    ]
+                })
             })
             .collect(),
     );
     let region: Rect = [7, 9, 3, 2].into();
     let map = Mapping {
-        start: [132.4 + 7. * 45.2, -3.25 - 9. * 40.3],
-        axes: [[-45.2, 0.], [0., 40.3]],
+        start: [(132.4 + 7. * 45.2) * 16., (-3.25 - 9. * 40.3) * 16.],
+        axes: [[-45.2 * 16., 0.], [0., 40.3 * 16.]],
     };
     let root = reconstruct_mapped(input, output(map, region), map).unwrap();
-    let whole = materialize(root.clone(), [3, 2], 32 << 10);
-    let tiles = materialize(root, [1, 1], 32 << 10);
+    let whole = materialize(root.clone(), [3, 2]);
+    let tiles = materialize(root, [1, 1]);
     assert!(reads.lock().unwrap().len() > 2);
     // Integral of the unit-cell staircase, including constant extension outside the source.
     let integral = |t: f64, n: f64| {
@@ -1214,8 +1329,16 @@ fn reflected_fractional_streaming_extends_real_edges_and_addresses_nonzero_tiled
         for (i, p) in image.iter().enumerate() {
             let x = i % 3;
             let y = i / 3;
-            let mx = mean(132.4 - x as f64 * 45.2, 132.4 - (x + 1) as f64 * 45.2, 128.);
-            let my = mean(-3.25 + y as f64 * 40.3, -3.25 + (y + 1) as f64 * 40.3, 65.);
+            let mx = mean(
+                (132.4 - x as f64 * 45.2) * 16.,
+                (132.4 - (x + 1) as f64 * 45.2) * 16.,
+                2048.,
+            ) / 16.;
+            let my = mean(
+                (-3.25 + y as f64 * 40.3) * 16.,
+                (-3.25 + (y + 1) as f64 * 40.3) * 16.,
+                1040.,
+            ) / 16.;
             assert_eq!(p[3], 9.);
             for (a, b) in p[..3].iter().zip([mx - 64., my - 32., mx * my / 128.]) {
                 assert!(

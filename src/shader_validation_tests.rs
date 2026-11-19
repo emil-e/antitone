@@ -52,16 +52,7 @@ fn photographic_functions_and_masked_composition_validate() {
         crate::dust_repair::SupportMask::new([1, 1], [2, 2], vec![true, false, false, false])
             .unwrap();
     let root = gpu::repairs::definition::compose_images(base, vec![(mask, replacement)]).unwrap();
-    let plan = Plan::with_policy(
-        root,
-        region,
-        Budget {
-            tile: [4, 4],
-            scratch_bytes: 1 << 20,
-        },
-        Policy::Composed,
-    )
-    .unwrap();
+    let plan = Plan::with_policy(root, region, Tiling { tile: [4, 4] }, Policy::Composed).unwrap();
     let mut computes = 0;
     for work in plan.tiles.iter().flat_map(|tile| &tile.fragment.work) {
         if let Work::Compute { code, entry, .. } = work {

@@ -143,31 +143,6 @@ impl Primitive {
 }
 
 impl Primitive {
-    pub(in crate::gpu::evaluation) fn working_bytes(&self) -> u64 {
-        let Body::Gpu(body) = self.operation.body.as_ref() else {
-            return 0;
-        };
-        80 + self.reads.len() as u64 * 16
-            + body
-                .uniform
-                .as_ref()
-                .map_or(0, |(_, bytes)| bytes.len() as u64)
-            + body
-                .tables
-                .iter()
-                .map(|rows| rows.len() as u64 * 16)
-                .sum::<u64>()
-            + body
-                .bindings
-                .iter()
-                .map(|(_, binding)| match binding {
-                    FunctionBinding::Shared(_) => 0,
-                    FunctionBinding::Uniform(bytes) | FunctionBinding::Storage(bytes) => {
-                        bytes.len() as u64
-                    }
-                })
-                .sum::<u64>()
-    }
     pub(super) fn output_region(&self, requested: CellRegion) -> CellRegion {
         if matches!(self.operation.body.as_ref(), Body::Concatenate) && !self.same_position_copy() {
             self.coverage
@@ -220,7 +195,7 @@ impl Primitive {
         upstream: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<WorkUnit, Error> {
         match self.operation.body.as_ref() {
             Body::Source(source) => Ok(WorkUnit {
@@ -336,7 +311,7 @@ impl Primitive {
                     continue;
                 }
                 if u64::from(read.height) + fragment.work.len() as u64 > MAX_UNIT_VALUES as u64 {
-                    return Err(Error::WorkingAllowance(
+                    return Err(Error::EvaluationLimit(
                         "calculation exceeds the unit graph capacity",
                     ));
                 }

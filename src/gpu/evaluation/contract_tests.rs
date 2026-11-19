@@ -74,28 +74,28 @@ fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
 }
 
 #[test]
-fn pure_admission_rejects_insufficient_budget_and_invalid_demands() {
+fn pure_planning_validates_tile_shapes_domains_and_device_storage() {
     let data = fixture();
     let root = source(Arc::new(data));
+    let plan = Plan::new(
+        root.clone(),
+        root.domain.finite().unwrap(),
+        Tiling { tile: [16, 16] },
+    )
+    .unwrap();
+    let limits = wgpu::Limits {
+        max_storage_buffer_binding_size: 64,
+        ..Default::default()
+    };
+    assert!(matches!(
+        Executor::admit(&limits, &plan),
+        Err(Error::EvaluationLimit(_))
+    ));
     assert!(
         Plan::new(
             root.clone(),
             root.domain.finite().unwrap(),
-            Budget {
-                tile: [16, 16],
-                scratch_bytes: 1
-            }
-        )
-        .is_err()
-    );
-    assert!(
-        Plan::new(
-            root.clone(),
-            root.domain.finite().unwrap(),
-            Budget {
-                tile: [0, 16],
-                scratch_bytes: 1 << 20
-            }
+            Tiling { tile: [0, 16] }
         )
         .is_err()
     );
@@ -105,17 +105,7 @@ fn pure_admission_rejects_insufficient_budget_and_invalid_demands() {
         width: 16,
         height: 16,
     };
-    assert!(
-        Plan::new(
-            root,
-            exterior,
-            Budget {
-                tile: [16, 16],
-                scratch_bytes: 1 << 20
-            }
-        )
-        .is_err()
-    );
+    assert!(Plan::new(root, exterior, Tiling { tile: [16, 16] }).is_err());
 }
 
 #[test]
@@ -187,6 +177,6 @@ fn fragment_scheduling_rejects_undeclared_production_before_any_gpu_work() {
         ],
         output.cells(),
     );
-    let error = Plan::from_work(fragment, output, 1 << 20).err().unwrap();
+    let error = Plan::from_work(fragment, output).err().unwrap();
     assert!(error.to_string().contains("uninitialized"));
 }

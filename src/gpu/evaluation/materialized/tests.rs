@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod copies;
 mod lifetimes;
 
 fn domain(meaning: Meaning) -> Domain {
@@ -90,9 +91,8 @@ fn request(context: &Context, image: Value, region: Rect) -> Evaluation {
                 bounds: region,
                 grid: image.domain.grid,
             },
-            Budget {
+            Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: 4 << 20,
             },
         )
         .unwrap()
@@ -196,12 +196,11 @@ fn roundtrip(
                 bounds: output.finite().unwrap(),
                 grid: output.grid,
             },
-            Budget {
+            Tiling {
                 tile: [
                     output.finite().unwrap().width,
                     output.finite().unwrap().height,
                 ],
-                scratch_bytes: 16 << 20,
             },
         )
         .unwrap();
@@ -778,7 +777,7 @@ impl Operation for Gain {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(

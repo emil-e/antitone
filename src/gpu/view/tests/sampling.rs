@@ -323,7 +323,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .commands
             .as_ref()
             .unwrap()
-            .scratch_bytes();
+            .scheduled_bytes();
         if let Some(expected) = expected_scratch {
             assert_eq!(
                 scratch, expected,

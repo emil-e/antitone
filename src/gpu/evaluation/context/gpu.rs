@@ -1,5 +1,6 @@
 //! Persistent GPU state and phase-local ordinary image ownership.
 use super::*;
+use crate::gpu::allocation::DeviceAllocationExt;
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
@@ -9,35 +10,19 @@ pub(super) struct GpuExecution {
     states: Vec<wgpu::Buffer>,
     output: wgpu::Buffer,
     pub(super) phases: Box<dyn Iterator<Item = Result<GpuPhase, Error>> + Send>,
-    pub(super) held: u64,
     has_output: bool,
-    _active: Arc<Allocations>,
 }
 impl GpuExecution {
     pub(super) fn new(
         worker: &Worker<'_>,
         inputs: Vec<value::Value>,
-        region: CellRegion,
+        _region: CellRegion,
         work: GpuUnit,
         output: &wgpu::Buffer,
         counts: &mut WorkCounts,
     ) -> Result<Self, Error> {
-        let bytes = u64::from(region.width) * u64::from(region.height) * 16;
         let limits = worker.context.device().limits();
-        let state_bytes = work
-            .state
-            .iter()
-            .try_fold(0u64, |sum, size| sum.checked_add(*size))
-            .ok_or(Error::InvalidParameter("unit state size overflows"))?;
-        let held = bytes
-            .checked_add(state_bytes)
-            .filter(|held| *held < worker.budget.scratch_bytes)
-            .ok_or(Error::WorkingAllowance(
-                "unit state exceeds the working allowance",
-            ))?;
-        worker
-            .working
-            .admit_gpu(worker.context.device(), held, worker.budget.scratch_bytes)?;
+        worker.working.admit_gpu(worker.context.device())?;
         let states = work
             .state
             .into_iter()
@@ -53,34 +38,26 @@ impl GpuExecution {
                 }
                 #[cfg(all(test, feature = "editor"))]
                 crate::gpu::test_support::evaluation_buffer_created(size);
-                Ok(worker
+                worker
                     .context
                     .device()
-                    .create_buffer(&wgpu::BufferDescriptor {
+                    .try_create_buffer(&wgpu::BufferDescriptor {
                         label: Some("calculation unit state"),
                         size,
                         usage: wgpu::BufferUsages::STORAGE
                             | wgpu::BufferUsages::COPY_SRC
                             | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
-                    }))
+                    })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         counts.buffers_allocated(states.len());
-        let mut resources = Allocations::default();
-        resources.buffer(output);
-        for state in &states {
-            resources.buffer(state);
-        }
-        let active = worker.working.activate(resources);
         Ok(Self {
             inputs,
             states,
             output: output.clone(),
             phases: work.phases,
-            held,
             has_output: false,
-            _active: active,
         })
     }
 
@@ -88,7 +65,6 @@ impl GpuExecution {
         &mut self,
         worker: &Worker<'_>,
         phase: GpuPhase,
-        other_state: u64,
         reads_owner: &mut Vec<Arc<ImageValue>>,
         counts: &mut WorkCounts,
     ) -> Result<(), Error> {
@@ -98,23 +74,6 @@ impl GpuExecution {
         }
         self.has_output |= phase.inputs.contains(&UnitValue::Output);
         let limits = worker.context.device().limits();
-        let owned_bytes: u64 = reads_owner
-            .iter()
-            .filter_map(|image| image.as_buffer())
-            .map(wgpu::Buffer::size)
-            .sum();
-        let mut available = worker
-            .budget
-            .scratch_bytes
-            .checked_sub(self.held + other_state + owned_bytes)
-            .ok_or(Error::WorkingAllowance(
-                "unit state exceeds the working allowance",
-            ))?;
-        let mut live_reads = Allocations::default();
-        for image in reads_owner.iter() {
-            live_reads.image(image);
-        }
-        let mut active_reads = vec![worker.working.activate(live_reads)];
         let mut reads = Vec::with_capacity(phase.reads.len());
         let mut captures = Vec::<(value::Value, CellRegion, Arc<ImageValue>)>::new();
         for read in phase.reads {
@@ -161,21 +120,9 @@ impl GpuExecution {
                 reads.push(image.image.clone());
                 continue;
             }
-            available = available.checked_sub(bytes).ok_or(Error::WorkingAllowance(
-                "phase reads exceed the working allowance",
-            ))?;
-            let input = Worker {
-                budget: Budget {
-                    scratch_bytes: available,
-                    tile: [read.region.width.min(512), read.region.height.min(128)],
-                },
-                ..*worker
-            };
-            let query = input.query(upstream.clone(), read.region, available)?;
+            let input = Worker { ..*worker };
+            let query = input.query(upstream.clone(), read.region)?;
             let image = input.materialize_image(&query, layout, counts)?;
-            let mut resources = Allocations::default();
-            resources.image(&image);
-            active_reads.push(worker.working.activate(resources));
             if let Some(identity) = output.identity() {
                 worker.scope.submitted_image(&Image {
                     inputs: Default::default(),
@@ -220,8 +167,7 @@ impl GpuExecution {
             buffers.push(buffer);
         }
         let result = phase.kernel.lower(&mut fragment, &slots)?;
-        counts
-            .include(worker.submit_work(Plan::from_work(fragment, result, available)?, &buffers)?);
+        counts.include(worker.submit_work(Plan::from_work(fragment, result)?, &buffers, &reads)?);
         Ok(())
     }
 

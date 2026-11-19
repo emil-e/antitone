@@ -30,7 +30,7 @@ fn copy(
     resources.image(source);
     resources.buffer(destination);
     working
-        .submit_gpu(device, (queue, gate), encoder, resources, (0, 128), || {})
+        .submit_gpu(device, (queue, gate), encoder, resources, || {})
         .unwrap();
 }
 fn read(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u32> {
@@ -75,21 +75,22 @@ fn submitted_values_survive_logical_retirement_and_release_at_completion() {
 }
 
 #[test]
-fn retired_physical_storage_is_deduplicated_and_drained_before_new_admission() {
+fn submitted_storage_is_deduplicated_without_a_separate_byte_allowance() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let working = RunWorkingSet::default();
     let source = ImageValue::new(buffer(&device, 11));
     let weak = Arc::downgrade(&source);
     let destination = target(&device);
-    let _target = working.activate_buffer(&destination);
     let gate = Default::default();
     copy(&working, &device, &queue, &gate, &source, &destination);
     copy(&working, &device, &queue, &gate, &source, &destination);
     drop(source);
-    assert_eq!(working.gpu.retired_bytes(), 64);
-    working.admit_gpu(&device, 128, 128).unwrap();
+    assert_eq!(working.gpu.submitted_bytes(), 128);
+    assert_eq!(working.gpu.counts(), (2, 0));
+    assert!(weak.upgrade().is_some());
+    working.finish_gpu().unwrap();
     assert!(weak.upgrade().is_none());
-    assert_eq!(working.gpu.retired_bytes(), 0);
+    assert_eq!(working.gpu.submitted_bytes(), 0);
     assert_eq!(read(&device, &destination), vec![11; 16]);
 }
 
@@ -116,7 +117,7 @@ fn deferred_submissions_preserve_interleaved_queue_write_order() {
     assert_eq!(
         working.gpu.counts(),
         (2, 0),
-        "fitting GPU-only submissions do not wait for completion"
+        "submissions using the same live working set do not wait for completion"
     );
     working.finish_gpu().unwrap();
     assert_eq!(read(&device, &first), vec![1; 16]);
@@ -124,7 +125,7 @@ fn deferred_submissions_preserve_interleaved_queue_write_order() {
 }
 
 #[test]
-fn rejected_admission_does_not_submit_publish_or_retain_storage() {
+fn submission_establishes_completion_ownership_before_publication() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let working = RunWorkingSet::default();
     let source = ImageValue::new(buffer(&device, 31));
@@ -142,14 +143,24 @@ fn rejected_admission_does_not_submit_publish_or_retain_storage() {
         (&queue, &Default::default()),
         encoder,
         resources,
-        (129, 128),
-        || published = true,
+        || {
+            let image = weak
+                .upgrade()
+                .expect("publication retains the physical source");
+            assert!(
+                working.gpu.owns(&image),
+                "the submission owns storage before publication"
+            );
+            published = true;
+        },
     );
-    assert!(matches!(result, Err(Error::WorkingAllowance(_))));
-    assert!(!published);
-    assert_eq!(working.gpu.counts(), (0, 0));
+    result.unwrap();
+    assert!(published);
+    assert_eq!(working.gpu.counts(), (1, 0));
+    assert!(weak.upgrade().is_some());
+    working.finish_gpu().unwrap();
     assert!(weak.upgrade().is_none());
-    assert_eq!(read(&device, &destination), vec![0; 16]);
+    assert_eq!(read(&device, &destination), vec![31; 16]);
 }
 
 #[test]
@@ -184,14 +195,9 @@ fn publication_unwinding_keeps_completion_owned_cleanup() {
         resources.buffer(&destination);
         drop(source);
         working
-            .submit_gpu(
-                &device,
-                (&queue, &gate),
-                encoder,
-                resources,
-                (0, 128),
-                || panic!("publication failed"),
-            )
+            .submit_gpu(&device, (&queue, &gate), encoder, resources, || {
+                panic!("publication failed")
+            })
             .unwrap();
     }));
     assert!(result.is_err());

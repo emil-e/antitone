@@ -161,10 +161,7 @@ fn read(
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [3, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [3, 1] },
         )
         .unwrap();
     let mut pixels = Vec::new();

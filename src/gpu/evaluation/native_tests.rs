@@ -136,10 +136,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
         let plan = Plan::with_policy(
             case.node.clone(),
             case.node.domain.finite().unwrap(),
-            Budget {
-                tile: [29, 19],
-                scratch_bytes: 32 << 20,
-            },
+            Tiling { tile: [29, 19] },
             policy,
         )
         .unwrap();
@@ -194,10 +191,7 @@ fn native_evaluation_resource_comparison() {
         let plan = Plan::with_policy(
             case.node.clone(),
             case.node.domain.finite().unwrap(),
-            Budget {
-                tile: [96, 19],
-                scratch_bytes: 32 << 20,
-            },
+            Tiling { tile: [96, 19] },
             policy,
         )
         .unwrap();
@@ -205,7 +199,7 @@ fn native_evaluation_resource_comparison() {
             "evaluation_plan seconds={:.9} tiles={} scheduled_scratch={}",
             start.elapsed().as_secs_f64(),
             plan.tiles.len(),
-            plan.peak_scratch_bytes
+            plan.scheduled_bytes()
         );
         let start = std::time::Instant::now();
         executor.compile(&device, &plan).unwrap();

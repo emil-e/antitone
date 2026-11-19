@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod recording;
+
 struct Pixels(Arc<AtomicUsize>);
 impl Source for Pixels {
     fn domain(&self) -> Domain {
@@ -29,13 +31,49 @@ fn request(context: &Context, root: Value) -> Evaluation {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 4] },
         )
         .unwrap()
         .without_retention()
+}
+
+#[test]
+fn recording_capacity_includes_prerequisites_not_only_the_root_plan() {
+    let (device, _, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    let evaluation = request(&context, source(Arc::new(Pixels(reads.clone()))));
+    let plan = || {
+        let mut fragment = Fragment::default();
+        let output = fragment.image(evaluation.job.image().domain(), evaluation.job.region());
+        for _ in 0..=Plan::MAX_RECORDING_PASSES / 2 {
+            fragment.compute(
+                "@group(0) @binding(0) var<storage,read_write> output:array<vec4f>;\n                 @compute @workgroup_size(64) fn coordinates(@builtin(global_invocation_id) p:vec3u) {\n                 if p.x < 32u { output[p.x]=vec4f(f32(p.x%8u),f32(p.x/8u),-2.,8.); } }",
+                "coordinates", vec![(0, Binding::Write(output.resource))], 1,
+            );
+        }
+        Plan::from_work(fragment, output).unwrap()
+    };
+    let mut prepared = Preparation::new(evaluation.clone(), PreparedWork::Gpu(plan()));
+    assert!(
+        prepared.can_record(),
+        "each program separately fits the recording capacity"
+    );
+    prepared.dependencies.push(Preparation::new(
+        evaluation.clone(),
+        PreparedWork::Gpu(plan()),
+    ));
+    assert!(
+        !prepared.can_record(),
+        "the caller's encoder would contain both programs"
+    );
+    assert!(matches!(
+        prepared.record(&context),
+        Err(Error::InvalidParameter(
+            "image preparation requires production before recording"
+        ))
+    ));
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -74,7 +112,7 @@ impl Operation for UndeclaredReads {
         inputs: &[Value],
         domain: Domain,
         output: CellRegion,
-        budget: Budget,
+        budget: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         Arc::new(Sum).calculation(inputs, domain, output, budget)
     }
@@ -137,7 +175,7 @@ impl Operation for Sum {
         inputs: &[Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         let inputs = value::Calculation::references(inputs);
         let operation = value::Operation::new(
@@ -158,64 +196,51 @@ impl Operation for Sum {
 }
 
 #[test]
-fn multiple_missing_operands_reserve_storage_or_use_bounded_execution() {
+fn multiple_missing_operands_execute_without_completed_source_pins() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    for keep_operands in [false, true] {
-        let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-        let reads = Arc::new(AtomicUsize::new(0));
-        let inputs = [0, 1].map(|identity| {
-            source(Arc::new(SeparatePixels {
-                reads: reads.clone(),
-                identity,
-            }))
-        });
-        let root = Value::from_operation(inputs[0].domain(), inputs, Sum);
-        let mut evaluation = request(&context, root);
-        let original = evaluation.job.probe(evaluation.job.region()).unwrap();
-        let original_bytes = original.peak_scratch_bytes;
-        let operands = 2 * 8 * 4 * 16;
-        let budget = Budget {
-            scratch_bytes: original_bytes + if keep_operands { operands } else { 0 },
-            ..evaluation.job.budget()
-        };
-        evaluation.job = evaluation.job.with_budget(budget);
-        let prepared = context.prepare_image(evaluation).unwrap();
-        assert!(matches!(prepared.work, PreparedWork::Produce(_)));
-        assert!(prepared.dependencies.is_empty());
-        let scope = context.materializations();
-        let working = RunWorkingSet::default();
-        let worker = Worker {
-            context: &context,
-            queue: &queue,
-            gate: &renderer.submissions,
-            scope: &scope,
-            budget,
-            working: &working,
-            cancelled: &|| false,
-            progress: &|| {},
-        };
-        let layout = ImageLayout {
-            domain: prepared.evaluation.job.image().domain(),
-            region: [0, 0, 8, 4].into(),
-            format: ImageFormat::Rgba32Float,
-            backing: ImageBacking::Buffer,
-        };
-        let image = prepared.produce(&worker, layout).unwrap();
-        assert_eq!(image.inputs.len(), if keep_operands { 2 } else { 0 });
-        let owned: u64 = image
-            .inputs
-            .iter()
-            .map(|input| input.as_buffer().unwrap().size())
-            .sum();
-        assert_eq!(owned, if keep_operands { operands } else { 0 });
-        assert!(owned + original_bytes <= budget.scratch_bytes);
-        let pixels =
-            super::super::super::execute::read(&device, &queue, image.image.as_buffer().unwrap());
-        assert_eq!(pixels[0], [0., 0., -4., 8.]);
-        assert_eq!(pixels[31], [14., 6., -4., 8.]);
-        assert!(reads.load(Ordering::SeqCst) >= 2);
-        assert_eq!(context.retained_bytes(), 0);
-    }
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    let inputs = [0, 1].map(|identity| {
+        source(Arc::new(SeparatePixels {
+            reads: reads.clone(),
+            identity,
+        }))
+    });
+    let root = Value::from_operation(inputs[0].domain(), inputs, Sum);
+    let evaluation = request(&context, root);
+    let prepared = context.prepare_image(evaluation).unwrap();
+    assert!(matches!(prepared.work, PreparedWork::Produce(_)));
+    assert!(prepared.dependencies.is_empty());
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    let scope = context.materializations();
+    let working = RunWorkingSet::default();
+    let worker = Worker {
+        context: &context,
+        queue: &queue,
+        gate: &renderer.submissions,
+        scope: &scope,
+        working: &working,
+        cancelled: &|| false,
+        progress: &|| {},
+    };
+    let layout = ImageLayout {
+        domain: prepared.evaluation.job.image().domain(),
+        region: [0, 0, 8, 4].into(),
+        format: ImageFormat::Rgba32Float,
+        backing: ImageBacking::Buffer,
+    };
+    let image = prepared.produce(&worker, layout).unwrap();
+    working.finish_gpu().unwrap();
+    assert!(
+        image.inputs.is_empty(),
+        "completed results do not pin source operands"
+    );
+    let pixels =
+        super::super::super::execute::read(&device, &queue, image.image.as_buffer().unwrap());
+    assert_eq!(pixels[0], [0., 0., -4., 8.]);
+    assert_eq!(pixels[31], [14., 6., -4., 8.]);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert_eq!(context.retained_bytes(), 0);
 }
 
 fn shifted(source: Value, delta: f32) -> Value {
@@ -231,11 +256,17 @@ fn shifted(source: Value, delta: f32) -> Value {
 }
 
 #[test]
-fn prepared_requests_share_production_and_keep_live_inputs_without_optional_retention() {
+fn prepared_requests_share_production_without_pinning_finished_source_inputs() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Pixels(reads.clone())));
+    let key = input
+        .output([0, 0, 8, 4].into())
+        .unwrap()
+        .identity()
+        .unwrap()
+        .clone();
     let root = shifted(input.clone(), 3.);
     let mut requests = context
         .materialize_many(
@@ -249,10 +280,16 @@ fn prepared_requests_share_production_and_keep_live_inputs_without_optional_rete
     let second = pollster::block_on(requests.remove(0)).unwrap();
     assert!(Arc::ptr_eq(&first.image, &second.image));
     assert_eq!(reads.load(Ordering::SeqCst), 1);
-    assert!(!first.inputs.is_empty());
-    let previous = Arc::downgrade(&first.inputs[0]);
+    assert!(first.inputs.is_empty());
+    assert!(second.inputs.is_empty());
+    assert!(
+        context
+            .materializations()
+            .ready::<ImageLayout>(&key)
+            .is_empty(),
+        "completed outputs do not pin their finished source uploads"
+    );
     drop(first);
-    assert!(previous.upgrade().is_some());
     let changed = pollster::block_on(
         context
             .materialize_many(
@@ -267,8 +304,8 @@ fn prepared_requests_share_production_and_keep_live_inputs_without_optional_rete
     .unwrap();
     assert_eq!(
         reads.load(Ordering::SeqCst),
-        1,
-        "a new calculation discovers the live input through the common store"
+        2,
+        "zero optional retention does not promise reuse after the last source consumer"
     );
     let pixels = super::super::super::execute::read(&device, &queue, changed.as_buffer().unwrap());
     assert_eq!(pixels[0], [5., 0., -2., 8.]);
@@ -276,7 +313,9 @@ fn prepared_requests_share_production_and_keep_live_inputs_without_optional_rete
     assert_eq!(context.retained_bytes(), 0);
     drop((second, changed));
     assert!(
-        previous.upgrade().is_none(),
-        "optional metadata cannot keep retired execution inputs alive"
+        context
+            .materializations()
+            .ready::<ImageLayout>(&key)
+            .is_empty()
     );
 }

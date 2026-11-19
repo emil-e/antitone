@@ -71,7 +71,7 @@ impl Operation for Mosaic {
         inputs: &[Value],
         domain: Domain,
         output: Rect,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         let calculation = if !overlaps(output, self.0) {
             value::Calculation::input(inputs[0].request(output)?)
@@ -194,14 +194,7 @@ fn regional_content_does_not_hide_a_captured_dependency() {
     );
     let (regions, calculations) = value::testing::observe_calculations(0, || {
         requested
-            .regions_for(
-                &complete,
-                region,
-                Budget {
-                    tile: [64, 32],
-                    scratch_bytes: 1 << 20,
-                },
-            )
+            .regions_for(&complete, region, Tiling { tile: [64, 32] })
             .unwrap()
     });
     assert_eq!(regions, vec![region]);
@@ -265,7 +258,7 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
                 bounds: None,
                 grid: Grid {
                     coverage: 8,
-                    ..Grid::axis_aligned([0.; 2], [2.; 2])
+                    ..Grid::axis_aligned([0.; 2], [1., 2.])
                 },
                 meaning: Meaning::Neutral,
             },
@@ -280,9 +273,8 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
                     bounds: region,
                     grid: root.domain().grid,
                 },
-                Budget {
+                Tiling {
                     tile: [region.width, region.height],
-                    scratch_bytes: 2 << 20,
                 },
             )
             .unwrap();
@@ -301,7 +293,7 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
         .unwrap()
     };
     let tile = |root: &Value| {
-        let region: Rect = [128, 0, 128, 128].into();
+        let region: Rect = [256, 0, 256, 128].into();
         scope
             .find_ready::<ImageLayout>(root.output(region).unwrap().identity().unwrap(), |layout| {
                 layout.region == region
@@ -315,9 +307,9 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
         assert_eq!(pixels.len(), region.width as usize * region.height as usize);
         for y in region.y..region.bottom() {
             for x in region.x..region.right() {
-                let inset_mass = ((2. * x as f32 + phase + 2. - 512.) / 2.).clamp(0., 1.);
+                let inset_mass = (x as f32 + phase + 1. - 512.).clamp(0., 1.);
                 let expected = [
-                    1. + (2. * x as f32 + 0.5 + phase) / 256.,
+                    1. + (x as f32 + phase) / 256.,
                     -0.5 - (2. * y as f32 + 0.5) / 256.,
                     0.25 + blue as f32 * inset_mass,
                     8.,
@@ -327,14 +319,14 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
                 for c in 0..3 {
                     assert!(
                         (actual[c] - expected[c]).abs() < 2e-6,
-                        "analytic 2x2 mean differs at {x},{y}: {actual:?} vs {expected:?}"
+                        "analytic 1x2 mean differs at {x},{y}: {actual:?} vs {expected:?}"
                     );
                 }
             }
         }
     };
     let first = make(1);
-    let region: Rect = [0, 0, 384, 128].into();
+    let region: Rect = [0, 0, 768, 128].into();
     let cold = materialize(&first, region);
     check(&cold, 1, 0.);
     let before = tile(&first);
@@ -367,7 +359,7 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
         );
     }
     reads.lock().unwrap().clear();
-    let panned = materialize(&changed, [128, 0, 384, 128].into());
+    let panned = materialize(&changed, [256, 0, 768, 128].into());
     check(&panned, 2, 0.);
     assert!(Arc::ptr_eq(&before.image, &tile(&changed).image));
     let acquired = reads.lock().unwrap();
@@ -384,7 +376,7 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
     shifted_domain.grid.origin[0] = 0.25;
     let shifted =
         reconstruct_tiled(mosaic(2, [512, 0, 512, 256].into(), &reads), shifted_domain).unwrap();
-    let shifted_region = [128, 0, 128, 128].into();
+    let shifted_region = [256, 0, 256, 128].into();
     assert_ne!(
         changed.output(shifted_region).unwrap(),
         shifted.output(shifted_region).unwrap(),

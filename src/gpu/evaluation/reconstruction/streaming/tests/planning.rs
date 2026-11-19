@@ -17,6 +17,19 @@ impl Source for Unreadable {
     }
 }
 
+struct WideUnreadable;
+impl Source for WideUnreadable {
+    fn domain(&self) -> Domain {
+        Domain {
+            bounds: Some(Rect::new([0, 0], [1_000_000; 2])),
+            ..Unreadable.domain()
+        }
+    }
+    fn read(&self, _: Rect) -> Result<Vec<[f32; 4]>, Error> {
+        panic!("description must not read original pixels")
+    }
+}
+
 #[test]
 fn a_bounded_rectangular_contribution_checks_device_storage_before_source_io() {
     let (input, reads) = fixture([512, 512], vec![[0.; 4]; 512 * 512]);
@@ -26,10 +39,7 @@ fn a_bounded_rectangular_contribution_checks_device_storage_before_source_io() {
     };
     let region = Rect::new([0, 0], [64, 64]);
     let root = reconstruct_mapped(input, output(map, region), map).unwrap();
-    let budget = Budget {
-        tile: [64, 64],
-        scratch_bytes: 32 << 20,
-    };
+    let budget = Tiling { tile: [64, 64] };
     let mut unit = root.plan_unit(region, budget).unwrap();
     let UnitWork::Gpu(work) = &mut unit.work else {
         panic!("expected a GPU calculation")
@@ -43,7 +53,7 @@ fn a_bounded_rectangular_contribution_checks_device_storage_before_source_io() {
     assert_eq!(
         source_reads,
         [Rect::new([0, 0], [512, 512])],
-        "a small-footprint rectangular contribution need not fragment a source that fits its allowance"
+        "a small-footprint rectangular contribution may coalesce its source window"
     );
     let limits = wgpu::Limits {
         max_storage_buffer_binding_size: 1 << 20,
@@ -59,10 +69,8 @@ fn a_bounded_rectangular_contribution_checks_device_storage_before_source_io() {
             <= limits.max_storage_buffer_binding_size
     );
     assert!(matches!(
-        root.plan_unit(region, budget)
-            .unwrap()
-            .admit_for(budget, &limits),
-        Err(Error::WorkingAllowance(
+        root.plan_unit(region, budget).unwrap().admit_for(&limits),
+        Err(Error::EvaluationLimit(
             "GPU unit exceeds device storage limits"
         ))
     ));
@@ -85,10 +93,7 @@ fn a_large_request_captures_output_without_expanding_calculations_under_its_full
             super::super::super::super::plan::Job::new(
                 root.clone(),
                 region,
-                Budget {
-                    tile: [1024; 2],
-                    scratch_bytes: 16,
-                },
+                Tiling { tile: [1024; 2] },
             )
             .unwrap(),
             root.output(region).unwrap(),
@@ -106,68 +111,7 @@ fn a_large_request_captures_output_without_expanding_calculations_under_its_full
 }
 
 #[test]
-fn large_reconstruction_rejects_irreducible_storage_before_allocating_value_descriptions() {
-    let input = source(Arc::new(Unreadable));
-    let map = Mapping {
-        start: [0.; 2],
-        axes: [[8192., 0.], [0., 6144.]],
-    };
-    let region = Rect::new([0, 0], [1, 1]);
-    let domain = output(map, region);
-    let root = reconstruct_mapped(input, domain, map).unwrap();
-    let (result, created) = crate::gpu::evaluation::value::testing::observe_calculations(4, || {
-        root.plan_unit(
-            region,
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 16,
-            },
-        )
-    });
-    assert!(matches!(
-        result,
-        Err(Error::WorkingAllowance(
-            "unit state exceeds the working allowance"
-        ))
-    ));
-    assert_eq!(
-        created, 0,
-        "irreducible admission precedes graph expansion, not just source IO"
-    );
-}
-
-#[test]
-fn thin_rotated_footprints_bound_scanning_of_noncontributing_source_partitions() {
-    let input = source(Arc::new(Unreadable));
-    let map = Mapping {
-        start: [0.; 2],
-        axes: [[8192., 6144.], [8192., 6145.]],
-    };
-    let region = Rect::new([0, 0], [1, 1]);
-    let domain = output(map, region);
-    let root = reconstruct_mapped(input, domain, map).unwrap();
-    let (result, _) = value::testing::observe_calculations(value::MAX_UNIT_VALUES + 4, || {
-        root.plan_unit(
-            region,
-            Budget {
-                tile: [1, 1],
-                scratch_bytes: 32 << 10,
-            },
-        )
-    });
-    assert!(
-        matches!(
-            result,
-            Err(Error::WorkingAllowance(
-                "calculation exceeds the unit graph capacity"
-            ))
-        ),
-        "empty partitions also consume bounded planning work"
-    );
-}
-
-#[test]
-fn very_small_source_partitions_have_bounded_unit_description_storage() {
+fn large_aperture_describes_normal_contributions_without_a_memory_allowance_or_source_io() {
     let input = source(Arc::new(Unreadable));
     let map = Mapping {
         start: [0.; 2],
@@ -178,19 +122,57 @@ fn very_small_source_partitions_have_bounded_unit_description_storage() {
     let root = reconstruct_mapped(input, domain, map).unwrap();
     let (result, created) = crate::gpu::evaluation::value::testing::observe_calculations(
         value::MAX_UNIT_VALUES + 4,
-        || {
-            root.plan_unit(
-                region,
-                Budget {
-                    tile: [1, 1],
-                    scratch_bytes: 32 << 10,
-                },
-            )
-        },
+        || root.plan_unit(region, Tiling { tile: [1, 1] }),
+    );
+    let unit = result.unwrap();
+    assert!(matches!(unit.work, UnitWork::Gpu(_)));
+    assert!(
+        created > 4 && created <= value::MAX_UNIT_VALUES,
+        "source geometry produces bounded descriptions, not a working-byte rejection"
+    );
+}
+
+#[test]
+fn thin_rotated_footprints_bound_scanning_of_noncontributing_source_partitions() {
+    let input = source(Arc::new(WideUnreadable));
+    let map = Mapping {
+        start: [0.; 2],
+        axes: [[131_072., 100_000.], [131_072., 100_001.]],
+    };
+    let region = Rect::new([0, 0], [1, 1]);
+    let domain = output(map, region);
+    let root = reconstruct_mapped(input, domain, map).unwrap();
+    let (result, _) = value::testing::observe_calculations(value::MAX_UNIT_VALUES + 4, || {
+        root.plan_unit(region, Tiling { tile: [1, 1] })
+    });
+    assert!(
+        matches!(
+            result,
+            Err(Error::EvaluationLimit(
+                "calculation exceeds the unit graph capacity"
+            ))
+        ),
+        "empty partitions also consume bounded planning work"
+    );
+}
+
+#[test]
+fn large_source_domains_have_bounded_unit_description_storage() {
+    let input = source(Arc::new(WideUnreadable));
+    let map = Mapping {
+        start: [0.; 2],
+        axes: [[131_072., 0.], [0., 131_072.]],
+    };
+    let region = Rect::new([0, 0], [1, 1]);
+    let domain = output(map, region);
+    let root = reconstruct_mapped(input, domain, map).unwrap();
+    let (result, created) = crate::gpu::evaluation::value::testing::observe_calculations(
+        value::MAX_UNIT_VALUES + 4,
+        || root.plan_unit(region, Tiling { tile: [1, 1] }),
     );
     assert!(matches!(
         result,
-        Err(Error::WorkingAllowance(
+        Err(Error::EvaluationLimit(
             "calculation exceeds the unit graph capacity"
         ))
     ));

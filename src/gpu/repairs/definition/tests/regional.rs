@@ -8,14 +8,21 @@ use std::sync::Mutex;
 struct ObservedPlate(Arc<Mutex<Vec<CellRegion>>>);
 impl Source for ObservedPlate {
     fn domain(&self) -> Domain {
-        Plate.domain()
+        Domain {
+            bounds: Some([0, 0, 1024, 256].into()),
+            ..Plate.domain()
+        }
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Plate.identity()
+        Some(RetainedKey::new("regional plate with one damaged sample"))
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         self.0.lock().unwrap().push(region);
-        Plate.read(region)
+        let mut pixels = Plate.read(region)?;
+        if region.contains_region([721, 41, 1, 1].into()) {
+            pixels[region.index([721, 41])][0] += 1.;
+        }
+        Ok(pixels)
     }
 }
 
@@ -72,11 +79,7 @@ fn query(context: &Context, root: Value) -> Evaluation {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [256, 128],
-                // Keep multiple natural units in this small reuse fixture.
-                scratch_bytes: 2 << 20,
-            },
+            Tiling { tile: [256, 128] },
         )
         .unwrap()
 }
@@ -189,11 +192,15 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
     let reads = Arc::new(Mutex::new(Vec::new()));
     let make = |repairs: &[Repair]| {
         let base = source(Arc::new(ObservedPlate(reads.clone())));
-        reconstruct(compose(base, repairs).unwrap(), view(repairs).domain()).unwrap()
+        let domain = Domain {
+            bounds: Some([0, 0, 512, 128].into()),
+            ..view(&[]).domain()
+        };
+        reconstruct(compose(base, repairs).unwrap(), domain).unwrap()
     };
     let original = make(&[repair(40, 32)]);
-    let changed = make(&[repair(40, 32), repair(360, 32)]);
-    let region: CellRegion = [0, 0, 128, 128].into();
+    let changed = make(&[repair(40, 32), repair(720, 32)]);
+    let region: CellRegion = [0, 0, 256, 128].into();
     let output = original.output(region).unwrap();
     let held = pollster::block_on(
         context
@@ -212,7 +219,7 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
         .find_ready::<ImageLayout>(output.identity().unwrap(), |layout| layout.region == region)
         .expect("the regional GPU result must actually have been produced");
     assert!(
-        reads.lock().unwrap().iter().any(|r| r.x < 256),
+        reads.lock().unwrap().iter().any(|r| r.x < 512),
         "the cold calculation must actually acquire unchanged-region inputs"
     );
     reads.lock().unwrap().clear();
@@ -239,13 +246,19 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
         Arc::ptr_eq(&before.image, &after.image),
         "reuse must mean the physical GPU value, not merely equivalent definitions"
     );
+    let before_pixels =
+        crate::gpu::evaluation::read_buffer(&device, &queue, held.as_buffer().unwrap());
+    let after_pixels =
+        crate::gpu::evaluation::read_buffer(&device, &queue, updated.as_buffer().unwrap());
+    // The new repair removes one +1 source sample from this 2x2 view cell.
+    // Its linear neighbours/donor recover the undamaged ramp's exact cell mean.
+    let cell = 20 * 512 + 360;
+    let undamaged = 1. + 720.5 / 512.;
+    assert_eq!(before_pixels[cell][0], undamaged + 0.25);
+    assert_eq!(after_pixels[cell][0], undamaged);
     let acquired = reads.lock().unwrap();
     assert!(
-        !acquired.is_empty(),
-        "the changed region must actually execute, not leave the old full frame in place"
-    );
-    assert!(
-        acquired.iter().all(|r| r.x >= 256),
+        acquired.iter().all(|r| r.x >= 512),
         "the new frame must consume the retained left tile instead of recomputing it: {acquired:?}"
     );
     drop((held, updated));
@@ -320,10 +333,7 @@ fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
                     bounds,
                     grid: root.domain().grid,
                 },
-                Budget {
-                    tile: [128, 128],
-                    scratch_bytes: 16 << 20,
-                },
+                Tiling { tile: [128, 128] },
             )
             .unwrap();
         context.read(&queue, &Default::default(), &query, || false, |_, _| Ok(()))
@@ -363,10 +373,7 @@ fn admitted_repairs_keep_partial_views_renderable() {
                     bounds,
                     grid: root.domain().grid,
                 },
-                Budget {
-                    tile: [128, 128],
-                    scratch_bytes: 16 << 20,
-                },
+                Tiling { tile: [128, 128] },
             )
             .unwrap();
         context.read(
@@ -406,10 +413,7 @@ fn regional_units_fit_small_allowances_without_changing_demand() {
     let root = view(&[repair(40, 32)]);
     // Leave working storage beyond the output itself for upstream reconstruction.
     let region: CellRegion = [0, 0, 32, 32].into();
-    let budget = Budget {
-        tile: [32, 32],
-        scratch_bytes: 64 << 10,
-    };
+    let budget = Tiling { tile: [32, 32] };
     let units = root
         .operation()
         .work_units(region, budget)
@@ -468,10 +472,7 @@ fn unbounded_view_regions_with_negative_origins_keep_real_source_edges() {
                     bounds: region,
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [151, 83],
-                    scratch_bytes: 16 << 20,
-                },
+                Tiling { tile: [151, 83] },
             )
             .unwrap();
         let mut values = vec![[0.; 4]; 151 * 83];

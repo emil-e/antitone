@@ -77,7 +77,7 @@ impl RenderedView {
                 0.,
             ]));
         }
-        let parameters = uniform(device, &bytes);
+        let parameters = uniform(device, &bytes)?;
         let textures =
             [&detail, &underlay].map(|p| p.image.linear.create_view(&Default::default()));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {

@@ -33,7 +33,7 @@ impl Group for Pointwise {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         Ok(Some(Calculation::new(
@@ -147,7 +147,7 @@ impl Group for Gaussian {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let (horizontal_region, source_region) = self.regions(output)?;

@@ -11,7 +11,7 @@ fn regional_callable_candidates_do_not_bypass_reusable_unit_boundaries() {
     impl Source for Unread {
         fn domain(&self) -> Domain {
             Domain {
-                bounds: Some([0, 0, 256, 128].into()),
+                bounds: Some([0, 0, 512, 128].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 meaning: Meaning::Neutral,
             }
@@ -41,17 +41,14 @@ fn regional_callable_candidates_do_not_bypass_reusable_unit_boundaries() {
     let composition = crate::gpu::repairs::definition::compose(input, &[repair]).unwrap();
     let root = crate::gpu::evaluation::reconstruct_tiled(composition, domain).unwrap();
     let full = domain.finite().unwrap();
-    let unit = CellRegion::new([0, 0], [128, 128]);
-    let budget = Budget {
-        tile: [256, 128],
-        scratch_bytes: 2 << 20,
-    };
+    let unit = CellRegion::new([0, 0], [256, 128]);
+    let budget = Tiling { tile: [512, 128] };
     assert!(
-        !super::super::super::unit::can_inline(&root, full, budget).unwrap(),
+        !super::super::super::unit::can_inline(&root, full, budget, None).unwrap(),
         "a whole-frame callable must not replace independently reusable regional units"
     );
     assert!(
-        super::super::super::unit::can_inline(&root, unit, budget).unwrap(),
+        super::super::super::unit::can_inline(&root, unit, budget, None).unwrap(),
         "individual regional units must retain the ordinary callable implementation"
     );
     let plan = Plan::with_policy(root.clone(), full, budget, Policy::Composed).unwrap();
@@ -95,7 +92,7 @@ fn self_production_uses_declared_outputs_not_logical_or_lowered_node_pointers() 
         image: calculation,
         output,
     });
-    let plan = Plan::from_work(fragment, output, 32 << 10).unwrap();
+    let plan = Plan::from_work(fragment, output).unwrap();
     assert!(
         plan.requires_production(&root).unwrap(),
         "an equivalent self-demand must not be delivered as an independent dependency"
@@ -141,6 +138,13 @@ struct Candidate {
     events: Arc<Mutex<Vec<Event>>>,
 }
 impl Operation for Candidate {
+    fn work_units(&self, region: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
+        let width = (self.max_cells / u64::from(region.height))
+            .max(1)
+            .min(u64::from(region.width)) as u32;
+        tiled_units(region, [width, region.height])
+    }
+
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new((
             "retry scaled coordinates",
@@ -153,14 +157,14 @@ impl Operation for Candidate {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         region: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         if self.invalid || u64::from(region.width) * u64::from(region.height) > self.max_cells {
             self.events.lock().unwrap().push(Event::Rejected(region));
             return Err(if self.invalid {
                 Error::InvalidParameter("invalid calculation witness")
             } else {
-                Error::WorkingAllowance("candidate description is too large")
+                Error::EvaluationLimit("candidate description is too large")
             });
         }
         self.events.lock().unwrap().push(Event::Accepted(region));
@@ -193,10 +197,7 @@ fn query(context: &Context, root: Value) -> Evaluation {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [7, 5],
-                scratch_bytes: 32 << 10,
-            },
+            Tiling { tile: [7, 5] },
         )
         .unwrap()
 }
@@ -215,7 +216,7 @@ fn check_pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image<ImageL
 }
 
 #[test]
-fn candidate_descriptions_split_before_execution_and_completed_outputs_ignore_partitioning() {
+fn declared_units_execute_without_search_and_completed_outputs_ignore_partitioning() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
@@ -250,8 +251,8 @@ fn candidate_descriptions_split_before_execution_and_completed_outputs_ignore_pa
         assert!(
             events
                 .iter()
-                .any(|event| matches!(event, Event::Rejected(r) if r.width == 7 && r.height == 5)),
-            "the control must reject the original candidate"
+                .all(|event| !matches!(event, Event::Rejected(_))),
+            "declared normal units must not need reject-and-refine search"
         );
         assert!(
             accepted.len() >= 3,
@@ -269,7 +270,7 @@ fn candidate_descriptions_split_before_execution_and_completed_outputs_ignore_pa
         assert!(
             events[..first_read]
                 .iter()
-                .any(|event| matches!(event, Event::Rejected(_)))
+                .all(|event| !matches!(event, Event::Rejected(_)))
         );
         assert!(
             events[..first_read]
@@ -293,7 +294,7 @@ fn candidate_descriptions_split_before_execution_and_completed_outputs_ignore_pa
     assert_eq!(first.identity, second.identity);
     assert!(
         Arc::ptr_eq(&first.image, &second.image),
-        "a different partition allowance must reuse the actual completed value"
+        "different declared partitions reuse the actual completed value"
     );
     assert!(
         events.lock().unwrap().is_empty(),
@@ -344,10 +345,6 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
                 queue: &queue,
                 gate: &gate,
                 scope: &scope,
-                budget: Budget {
-                    tile: [7, 5],
-                    scratch_bytes: 32 << 10,
-                },
                 working: &working,
                 cancelled: &|| false,
                 progress: &|| {},
@@ -355,7 +352,14 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
             layout,
             pixels: &pixels,
         };
-        let error = production.produce_units(&root).unwrap_err();
+        let tiling = Tiling { tile: [4, 4] };
+        let declared = root
+            .operation()
+            .work_units(layout.region, tiling)
+            .unwrap()
+            .next()
+            .unwrap();
+        let error = production.produce_units(&root, tiling).unwrap_err();
         let events = events.lock().unwrap();
         if invalid {
             assert_eq!(
@@ -363,20 +367,18 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
                 Error::InvalidParameter("invalid calculation witness")
             );
             assert!(
-                matches!(events.as_slice(), [Event::Rejected(region)] if *region == layout.region),
+                matches!(events.as_slice(), [Event::Rejected(region)] if *region == declared),
                 "semantic errors must not trigger subdivision: {events:?}"
             );
         } else {
             assert_eq!(
                 error,
-                Error::WorkingAllowance("candidate description is too large")
+                Error::EvaluationLimit("candidate description is too large")
             );
+            assert!(matches!(events.last(), Some(Event::Rejected(region)) if *region == declared));
             assert!(
-                matches!(events.last(), Some(Event::Rejected(region)) if region.width == 1 && region.height == 1)
-            );
-            assert!(
-                events.len() > 1,
-                "the control must attempt smaller descriptions before the irreducible error"
+                events.len() == 1,
+                "a failed declared unit is not retried under different shapes"
             );
         }
         assert!(

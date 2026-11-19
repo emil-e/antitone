@@ -47,10 +47,7 @@ fn packed_replacements_cover_bin_edges_collisions_and_overlapping_unselected_env
                 bounds: region,
                 grid: root.domain().grid,
             },
-            Budget {
-                tile: [712, 46],
-                scratch_bytes: 4 << 20,
-            },
+            Tiling { tile: [712, 46] },
         )
         .unwrap();
     let mut actual = vec![[0.; 4]; region.width as usize * region.height as usize];
@@ -97,7 +94,7 @@ impl Operation for HostValue {
         _inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,
@@ -148,10 +145,7 @@ fn standalone_host_materialization_submits_before_publishing_a_gpu_value() {
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [2, 2],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [2, 2] },
         )
         .unwrap();
     let image = pollster::block_on(

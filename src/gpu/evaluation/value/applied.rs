@@ -114,7 +114,7 @@ impl super::super::Operation for Applied {
             .map(|(input, region)| Read::new(input, region))
             .collect())
     }
-    fn work_units(&self, output: CellRegion, _: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, output: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
         if let Some(region) = self.natural {
             if !region.contains_region(output) {
                 return Err(Error::InvalidParameter(

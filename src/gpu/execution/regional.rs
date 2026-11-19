@@ -104,10 +104,7 @@ pub(crate) fn execute(
     }
     let started = std::time::Instant::now();
     let tile_size = [512, 128];
-    let budget = evaluation::Budget {
-        tile: tile_size,
-        scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
-    };
+    let budget = evaluation::Tiling { tile: tile_size };
     let pixels = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("bounded reconstructed reference pixels"),
         size: u64::from(tile_size[0]) * u64::from(tile_size[1]) * 16,
@@ -169,7 +166,6 @@ pub(crate) fn execute(
                     queue,
                     gate,
                     scope: &scope,
-                    budget,
                     working: &evaluation::RunWorkingSet::default(),
                     cancelled: &cancelled,
                     progress: &|| {},

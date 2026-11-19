@@ -176,7 +176,7 @@ impl Operation for Camera {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let capture = &self.captured;
@@ -265,7 +265,7 @@ impl Operation for Native {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         value::Calculation::new(
@@ -334,7 +334,7 @@ impl Operation for Working {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         value::Calculation::new(
@@ -402,7 +402,7 @@ impl Operation for ResidentCamera {
         _: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let (element, value) = if self.continuous {
             ("vec4f", "return resident_codes[index];")

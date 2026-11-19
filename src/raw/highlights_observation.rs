@@ -49,10 +49,7 @@ fn render(
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [256, 128],
-                scratch_bytes: 64 << 20,
-            },
+            Tiling { tile: [256, 128] },
         )
         .unwrap();
     let mut rgb = image::RgbImage::new(size[0], size[1]);

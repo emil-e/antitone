@@ -87,7 +87,7 @@ fn captured_pixel_math_can_extend_its_initial_demand_without_authoring_another_v
 }
 
 #[test]
-fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_under_new_allowances() {
+fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_without_source_io() {
     fn send_sync<T: Send + Sync>() {}
     send_sync::<Value>();
     send_sync::<crate::gpu::test_inputs::AuthoredPhotograph>();
@@ -121,19 +121,15 @@ fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_under_n
     assert!(reads.lock().unwrap().is_empty());
 
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    for (region, allowance) in [
-        (first.coverage(), 32 << 10),
-        (CellRegion::new([40, 5], [48, 6]), 64 << 10),
-    ] {
+    for region in [first.coverage(), CellRegion::new([40, 5], [48, 6])] {
         let demand = wide.request(region).unwrap();
         let before = reads.lock().unwrap().len();
         let ((calculation, instructions), definitions) = testing::observe(0, || {
             testing::observe_calculations(MAX_UNIT_VALUES, || {
                 wide.lower(
                     region,
-                    Budget {
+                    Tiling {
                         tile: [region.width, region.height],
-                        scratch_bytes: allowance,
                     },
                 )
                 .unwrap()
@@ -158,9 +154,8 @@ fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_under_n
                     bounds: region,
                     grid: wide.domain().grid,
                 },
-                Budget {
+                Tiling {
                     tile: [region.width, region.height],
-                    scratch_bytes: allowance,
                 },
             )
             .unwrap();

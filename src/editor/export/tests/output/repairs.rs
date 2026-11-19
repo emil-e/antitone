@@ -85,7 +85,7 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
     );
     let limits = editor.source_services.as_ref().unwrap().device.limits();
     let requires_repair = |recipe: &crate::image_recipe::ImageRecipe| {
-        use crate::gpu::evaluation::{self as ev, Budget, CellRegion};
+        use crate::gpu::evaluation::{self as ev, CellRegion, Tiling};
         let graph = crate::gpu::photograph::PhotographGraph::from_recipe(
             &limits,
             ev::camera_source(&scan).unwrap(),
@@ -101,10 +101,7 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
             .regions_for(
                 &healing,
                 CellRegion::new([area.x as i32 + 9, area.y as i32 + 16], [32, 32]),
-                Budget {
-                    tile: [512, 128],
-                    scratch_bytes: 32 << 20,
-                },
+                Tiling { tile: [512, 128] },
             )
             .unwrap()
             .is_empty()

@@ -40,10 +40,7 @@ fn interrupted_acquisition_releases_completed_slices_without_publishing_the_cons
                     bounds: region,
                     grid: root.domain().grid,
                 },
-                Budget {
-                    tile: [64, 64],
-                    scratch_bytes: (64 << 10) + 512,
-                },
+                Tiling { tile: [64, 64] },
             )
             .unwrap()
             .without_retention();
@@ -112,13 +109,10 @@ fn prefetched_units_do_not_bypass_complete_result_storage_limits() {
         SlicedPlane::new(&context, reads.clone(), &[8; 8]),
     );
     let region = root.domain().finite().unwrap();
-    let budget = Budget {
-        tile: [64, 64],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [64, 64] };
     super::super::super::super::super::unit::plan(&root, [0, 0, 8, 64].into(), budget)
         .unwrap()
-        .admit_for(budget, &device.limits())
+        .admit_for(&device.limits())
         .expect("the individual unit fits the device");
     assert!(64 * 64 * 16 > device.limits().max_storage_buffer_binding_size);
     let request = context
@@ -134,7 +128,7 @@ fn prefetched_units_do_not_bypass_complete_result_storage_limits() {
     assert!(
         matches!(
             context.prepare_image(request),
-            Err(Error::WorkingAllowance(_))
+            Err(Error::EvaluationLimit(_))
         ),
         "a prepared image still needs a complete destination, not only fitting units"
     );
@@ -193,7 +187,7 @@ impl Operation for SlicedPlane {
             .collect())
     }
 
-    fn work_units(&self, output: CellRegion, _: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, output: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
         tiled_units(output, [8, 64])
     }
 
@@ -202,7 +196,7 @@ impl Operation for SlicedPlane {
         inputs: &[Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         if output.width < 8 || output.height < 64 {
             self.subdivisions.fetch_add(1, Ordering::Relaxed);
@@ -260,12 +254,7 @@ fn prefetch_keeps_useful_slices_without_subdividing_the_consumer_to_fit_them() {
         let observed_source = operation.observed_source.clone();
         let root = Value::from_operation(source.domain(), [source], operation);
         let region = root.domain().finite().unwrap();
-        // Slice production can nearly fill the allowance. Its accepted outputs
-        // must still leave space for a consumer unit and that unit's reads.
-        let budget = Budget {
-            tile: [64, 64],
-            scratch_bytes: (64 << 10) + 512,
-        };
+        let budget = Tiling { tile: [64, 64] };
         let request = context
             .request(
                 root.clone(),
@@ -283,33 +272,14 @@ fn prefetch_keeps_useful_slices_without_subdividing_the_consumer_to_fit_them() {
             0,
             "preparation performs no source IO"
         );
-        assert!(
-            !prepared.dependencies.is_empty(),
-            "admission must not disable useful prefetch wholesale"
+        assert_eq!(
+            prepared.dependencies.len(),
+            widths.len(),
+            "valid declared slices need no artificial prefetch reserve"
         );
-        assert!(
-            prepared.dependencies.len() < widths.len(),
-            "not every slice fits alongside the consumer"
-        );
-        assert!(prepared.evaluation.job.budget().scratch_bytes >= 8 * 64 * 16);
-        let destinations: u64 = prepared
-            .dependencies
-            .iter()
-            .map(|dependency| {
-                let region = dependency.evaluation.job.region();
-                u64::from(region.width) * u64::from(region.height) * 16
-            })
-            .sum();
         for dependency in &prepared.dependencies {
-            assert!(
-                destinations + dependency.scratch_bytes() <= budget.scratch_bytes,
-                "each producer peak must fit with every already-allocated destination"
-            );
-            assert!(
-                destinations + dependency.evaluation.job.budget().scratch_bytes
-                    <= budget.scratch_bytes,
-                "execution must use the allowance left by the final destination set"
-            );
+            let region = dependency.evaluation.job.region();
+            assert!(region.width > 0 && dependency.destination.is_some());
         }
         assert_eq!(
             subdivisions.load(Ordering::Relaxed),

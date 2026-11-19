@@ -1,6 +1,6 @@
 //! Produce source-bearing image requests independently of their consuming command encoders.
 use super::*;
-use wgpu::util::DeviceExt;
+use crate::gpu::allocation::DeviceAllocationExt;
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
@@ -142,7 +142,7 @@ impl Context {
                                 if stop.is_cancelled() {
                                     return Err(Error::Cancelled);
                                 }
-                                ImageValue::new(context.device.create_buffer_init(
+                                ImageValue::new(context.device.try_create_buffer_init(
                                     &wgpu::util::BufferInitDescriptor {
                                         label: Some("materialized source image"),
                                         contents: upload.bytes(),
@@ -150,11 +150,11 @@ impl Context {
                                             | wgpu::BufferUsages::COPY_SRC
                                             | wgpu::BufferUsages::COPY_DST,
                                     },
-                                ))
+                                )?)
                             }
                             ImageBacking::Texture => {
-                                let texture =
-                                    context.device.create_texture(&wgpu::TextureDescriptor {
+                                let texture = context.device.try_create_texture(
+                                    &wgpu::TextureDescriptor {
                                         label: Some("materialized source image"),
                                         size: wgpu::Extent3d {
                                             width: layout.region.width,
@@ -176,7 +176,8 @@ impl Context {
                                             | wgpu::TextureUsages::COPY_DST
                                             | wgpu::TextureUsages::COPY_SRC,
                                         view_formats: &[],
-                                    });
+                                    },
+                                )?;
                                 // Bound CPU and queued upload storage independently of image size.
                                 let row_bytes =
                                     u64::from(layout.region.width) * format.pixel_bytes();
@@ -255,7 +256,6 @@ impl Context {
                             queue: &queue,
                             gate: &gate,
                             scope: &products,
-                            budget: evaluation.job.budget(),
                             working: &working,
                             cancelled: &|| stop.is_cancelled(),
                             progress: &|| wake.wake(),

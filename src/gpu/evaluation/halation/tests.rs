@@ -50,16 +50,7 @@ fn render(
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
     let region = root.domain.finite().unwrap();
-    let plan = Plan::with_policy(
-        root,
-        region,
-        Budget {
-            tile,
-            scratch_bytes: 16 << 20,
-        },
-        Policy::Composed,
-    )
-    .unwrap();
+    let plan = Plan::with_policy(root, region, Tiling { tile }, Policy::Composed).unwrap();
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation test readback"),
         size: u64::from(region.width) * u64::from(region.height) * 16,
@@ -443,10 +434,7 @@ fn zero_strength_bypasses_and_abandoned_recordings_leave_input_unchanged() {
     let plan = Plan::with_policy(
         root,
         data.domain.finite().unwrap(),
-        Budget {
-            tile: [19, 17],
-            scratch_bytes: 1 << 20,
-        },
+        Tiling { tile: [19, 17] },
         Policy::Composed,
     )
     .unwrap();

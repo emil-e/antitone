@@ -152,7 +152,7 @@ fn emitted_record_functions_execute_the_polynomial_on_supplied_pixels() {
     assert_eq!(source_visits, 1);
     let output = fragment.image(root.domain(), region);
     sample.materialize(&mut fragment, output).unwrap();
-    let plan = Plan::from_work(fragment, output, budget(region).scratch_bytes).unwrap();
+    let plan = Plan::from_work(fragment, output).unwrap();
     let result = Executor::default()
         .run(&device, &queue, &Default::default(), &plan, || false)
         .unwrap()

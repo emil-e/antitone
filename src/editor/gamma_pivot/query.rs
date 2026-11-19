@@ -6,7 +6,7 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRegion,
     gpu::{
-        evaluation::{self, Budget, CellRegion, Domain, Grid, Meaning, Region, Value},
+        evaluation::{self, CellRegion, Domain, Grid, Meaning, Region, Tiling, Value},
         flat::GpuFlatField,
     },
     processing::NegativeInput,
@@ -17,9 +17,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 const EDGE: u32 = 64;
 const LIMIT: u64 = (EDGE * EDGE) as u64;
-const BUDGET: Budget = Budget {
+const BUDGET: Tiling = Tiling {
     tile: [1, EDGE * EDGE],
-    scratch_bytes: 8 << 20,
 };
 
 #[cfg(test)]

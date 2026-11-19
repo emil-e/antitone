@@ -17,7 +17,7 @@ struct Required<'a> {
     visited: HashSet<(*const value::Definition, i32, i32, u32, u32)>,
     found: Vec<bool>,
     remaining: usize,
-    budget: Budget,
+    budget: Tiling,
     expanded: Vec<value::Value>,
 }
 
@@ -127,9 +127,8 @@ pub(super) fn productions_are_required(
     if targets.is_empty() {
         return Ok(true);
     }
-    let budget = Budget {
+    let budget = Tiling {
         tile: planning.tile,
-        scratch_bytes: planning.scratch_bytes,
     };
     let mut exact = HashMap::<*const value::Definition, Vec<usize>>::new();
     for (index, (target, _)) in targets.iter().enumerate() {
@@ -151,7 +150,7 @@ fn prove(
     root: &value::Value,
     region: Rect,
     targets: Vec<(&value::Value, Rect)>,
-    budget: Budget,
+    budget: Tiling,
     exact: Option<HashMap<*const value::Definition, Vec<usize>>>,
 ) -> Result<bool, Error> {
     let mut required = Required {

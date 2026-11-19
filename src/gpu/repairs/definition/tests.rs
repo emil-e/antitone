@@ -39,7 +39,7 @@ impl Operation for Damage {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -95,10 +95,7 @@ fn pixels_with_policy(
                 bounds: region,
                 grid: image.domain().grid,
             },
-            Budget {
-                tile: [2, 2],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [2, 2] },
         )?
         .with_policy(policy);
     let mut pixels = vec![[0.; 4]; region.width as usize * region.height as usize];
@@ -431,10 +428,7 @@ fn a_required_natural_heal_can_be_hoisted_without_deferring_the_whole_reconstruc
     let plan = Plan::with_policy(
         root.clone(),
         region,
-        Budget {
-            tile: [5, 5],
-            scratch_bytes: 1 << 20,
-        },
+        Tiling { tile: [5, 5] },
         Policy::Composed,
     )
     .unwrap();

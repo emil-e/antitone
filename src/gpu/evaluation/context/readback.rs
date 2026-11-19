@@ -1,4 +1,5 @@
 //! Bounded host delivery of image blocks evaluated by the common worker.
+use crate::gpu::allocation::DeviceAllocationExt;
 
 use super::*;
 use std::{sync::mpsc, time::Duration};
@@ -56,7 +57,6 @@ impl Context {
             gate,
             scope: &scope,
             working: &working,
-            budget: evaluation.job.budget(),
             cancelled,
             progress,
         };
@@ -68,7 +68,7 @@ impl Context {
             };
         if let Some((region, image)) = host {
             let values = image.as_host().expect("host image delivery");
-            for block in tiled_units(evaluation.job.region(), evaluation.job.budget().tile)? {
+            for block in tiled_units(evaluation.job.region(), evaluation.job.tiling().tile)? {
                 if cancelled() {
                     return Ok(None);
                 }
@@ -84,7 +84,7 @@ impl Context {
         let plans = super::production::admitted_plans(
             evaluation.clone(),
             evaluation.job.region(),
-            evaluation.job.budget(),
+            evaluation.job.tiling(),
             self.device.limits(),
             (cancelled, progress),
         )?;
@@ -138,12 +138,16 @@ impl Worker<'_> {
             }
 
             if readback.as_ref().is_none_or(|buffer| buffer.size() < bytes) {
-                readback = Some(self.context.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("bounded image-query readback"),
-                    size: bytes,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                }));
+                #[cfg(all(test, feature = "editor"))]
+                crate::gpu::test_support::evaluation_buffer_created(bytes);
+                readback = Some(self.context.device.try_create_buffer(
+                    &wgpu::BufferDescriptor {
+                        label: Some("bounded image-query readback"),
+                        size: bytes,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    },
+                )?);
                 total.buffers_allocated(1);
             }
             let buffer = readback.as_ref().unwrap();

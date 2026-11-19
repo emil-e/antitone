@@ -160,12 +160,11 @@ impl CameraFixture {
                 bounds: image.domain().finite().unwrap(),
                 grid: image.domain().grid,
             },
-            Budget {
+            Tiling {
                 tile: [
                     image.domain().finite().unwrap().width,
                     image.domain().finite().unwrap().height,
                 ],
-                scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
             },
         )?;
         self.context

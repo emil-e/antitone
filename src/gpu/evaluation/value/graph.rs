@@ -335,7 +335,7 @@ pub(crate) fn compile(root: Calculation, boundaries: &[Value]) -> Result<GpuUnit
     let mut outputs = HashMap::<Id, PlannedImage>::new();
     let mut steps = Vec::new();
     if nodes.len() > MAX_UNIT_VALUES {
-        return Err(Error::WorkingAllowance(
+        return Err(Error::EvaluationLimit(
             "calculation exceeds the unit graph capacity",
         ));
     }
@@ -358,7 +358,7 @@ pub(crate) fn compile(root: Calculation, boundaries: &[Value]) -> Result<GpuUnit
         let cells = region
             .width
             .checked_mul(region.height)
-            .ok_or(Error::WorkingAllowance(
+            .ok_or(Error::EvaluationLimit(
                 "unit state exceeds GPU cell addressing",
             ))?;
         let bytes = u64::from(cells) * primitive.shape().bytes();
@@ -488,9 +488,6 @@ impl Kernel {
     }
 }
 impl GpuKernel for Kernel {
-    fn working_bytes(&self) -> u64 {
-        self.primitive.working_bytes()
-    }
     fn lower(&self, fragment: &mut Fragment, slots: &[Resource]) -> Result<PlannedImage, Error> {
         if slots.len() != self.inputs.len() + 1 {
             return Err(Error::InvalidParameter(

@@ -326,7 +326,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
             inputs: &[crate::gpu::evaluation::value::Value],
             domain: Domain,
             output: CellRegion,
-            budget: Budget,
+            budget: Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -348,10 +348,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     let job = Job::new(
         root.clone(),
         root.domain.finite().unwrap(),
-        Budget {
-            tile: [512, 128],
-            scratch_bytes: 8 << 20,
-        },
+        Tiling { tile: [512, 128] },
     )
     .unwrap();
     assert_eq!(
@@ -363,7 +360,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     let first = tiles.next().unwrap().unwrap();
     assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!([first.region.width, first.region.height], [512, 128]);
-    assert!(first.peak_scratch_bytes <= 8 << 20);
+    assert!(first.scheduled_bytes() <= 8 << 20);
     let second = tiles.next().unwrap().unwrap();
     assert_eq!(second.region.x, 512);
     assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 2);

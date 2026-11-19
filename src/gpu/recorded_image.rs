@@ -64,9 +64,8 @@ impl Prepared {
                 bounds: region,
                 grid: expected.grid,
             },
-            evaluation::Budget {
+            evaluation::Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
             },
         )?;
         let execution = context.record(request, context.materializations(), Vec::new())?;

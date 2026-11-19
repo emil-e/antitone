@@ -287,7 +287,9 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                 } else {
                     egui::Modifiers::NONE
                 };
-                let start = layout.screen_point(egui::pos2(200., 120.));
+                // This service-free fixture shows preview feedback at the upper left.
+                // Keep the stroke on image content rather than its Retry/Details controls.
+                let start = layout.screen_point(egui::pos2(350., 120.));
                 frame(
                     e,
                     &ctx,
@@ -307,9 +309,9 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                 'stroke: for row in 0..7 {
                     for step in 0..=10 {
                         let x = if row % 2 == 0 {
-                            200 + step * 25
+                            350 + step * 40
                         } else {
-                            450 - step * 25
+                            750 - step * 40
                         };
                         end = layout.screen_point(egui::pos2(x as f32, (120 + row * 45) as f32));
                         frame(

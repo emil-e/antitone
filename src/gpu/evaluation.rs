@@ -37,7 +37,7 @@ pub use context::{CachePolicy, Context, Evaluation, Production, Region, Worker};
 #[cfg(feature = "editor")]
 pub(crate) use context::{Preparation, RecordedImage};
 pub use execute::{Sink, WorkCounts};
-pub use plan::Budget;
+pub use plan::Tiling;
 
 #[cfg(all(test, feature = "editor"))]
 mod contract_tests;

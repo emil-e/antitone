@@ -61,14 +61,11 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
         [128., 64.],
     )
     .unwrap();
-    let budget = Budget {
-        tile: [1, 1],
-        scratch_bytes: 64 << 10,
-    };
+    let budget = Tiling { tile: [1, 1] };
     let unit = root
         .plan_unit(region, budget)
         .unwrap()
-        .admit_for(budget, &device.limits())
+        .admit_for(&device.limits())
         .unwrap();
     let UnitWork::Gpu(mut work) = unit.work else {
         panic!("GPU reconstruction fixture")
@@ -106,7 +103,6 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
         queue: &queue,
         gate: &gate,
         scope: &scope,
-        budget,
         working: &working,
         cancelled: &cancelled,
         progress: &|| {},

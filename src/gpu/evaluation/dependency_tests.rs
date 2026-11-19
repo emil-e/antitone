@@ -50,7 +50,7 @@ impl Operation for Pair {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let reads = self.reads(output)?;
@@ -106,27 +106,13 @@ fn declared_disjoint_reads_keep_parent_order_and_do_not_acquire_the_intervening_
     };
     let root = Value::from_operation(domain, [a.clone(), b.clone()], Pair);
     assert_eq!(
-        root.regions_for(
-            &a,
-            region,
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20
-            }
-        )
-        .unwrap(),
+        root.regions_for(&a, region, Tiling { tile: [8, 4] })
+            .unwrap(),
         vec![region]
     );
     assert_eq!(
-        root.regions_for(
-            &b,
-            region,
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20
-            }
-        )
-        .unwrap(),
+        root.regions_for(&b, region, Tiling { tile: [8, 4] })
+            .unwrap(),
         vec![CellRegion::new([402, 13], [8, 4])]
     );
     let swapped = Value::from_operation(domain, [b, a], Pair);
@@ -142,10 +128,7 @@ fn declared_disjoint_reads_keep_parent_order_and_do_not_acquire_the_intervening_
                 bounds: region,
                 grid: domain.grid,
             },
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 4] },
         )
         .unwrap();
     let mut pixels = Vec::new();
@@ -209,10 +192,7 @@ fn distinct_source_uploads_survive_nonoverlapping_encoded_lifetimes() {
                 bounds: region,
                 grid: domain.grid,
             },
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [8, 4] },
         )
         .unwrap();
     let mut pixels = Vec::new();
@@ -259,7 +239,7 @@ fn stage_planning_preserves_a_natural_unit_without_reading_or_running_it() {
         fn reads(&self, _: CellRegion) -> Result<Vec<Read>, crate::Error> {
             Ok(vec![Read::new(0, self.region)])
         }
-        fn work_units(&self, _: CellRegion, _: Budget) -> Result<WorkUnits, crate::Error> {
+        fn work_units(&self, _: CellRegion, _: Tiling) -> Result<WorkUnits, crate::Error> {
             Ok(Box::new(std::iter::once(self.region)))
         }
         fn calculation(
@@ -267,7 +247,7 @@ fn stage_planning_preserves_a_natural_unit_without_reading_or_running_it() {
             inputs: &[crate::gpu::evaluation::value::Value],
             domain: Domain,
             _: CellRegion,
-            _: Budget,
+            _: Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
             Ok(Some(value::Calculation::new(
                 domain,
@@ -290,10 +270,7 @@ fn stage_planning_preserves_a_natural_unit_without_reading_or_running_it() {
     let operation = Arc::new(Whole { region: whole });
     let requested = CellRegion::new([3, 4], [1, 1]);
     for tile in [[1, 1], [8, 4]] {
-        let budget = Budget {
-            tile,
-            scratch_bytes: 1 << 20,
-        };
+        let budget = Tiling { tile };
         let units = operation
             .work_units(requested, budget)
             .unwrap()
@@ -342,7 +319,7 @@ fn dependency_queries_do_not_lower_gpu_work_or_read_pixels() {
             inputs: &[value::Value],
             domain: Domain,
             output: CellRegion,
-            _: Budget,
+            _: Tiling,
         ) -> Result<Option<value::Calculation>, Error> {
             Ok(Some(value::Calculation::new(
                 domain,
@@ -373,15 +350,8 @@ fn dependency_queries_do_not_lower_gpu_work_or_read_pixels() {
         Deferred,
     );
     assert_eq!(
-        node.regions_for(
-            &source,
-            region,
-            Budget {
-                tile: [8, 4],
-                scratch_bytes: 1 << 20
-            }
-        )
-        .unwrap(),
+        node.regions_for(&source, region, Tiling { tile: [8, 4] })
+            .unwrap(),
         vec![region]
     );
     assert!(observed.lock().unwrap().is_empty());
@@ -405,10 +375,7 @@ fn declared_gpu_phase_lowers_against_its_resident_input_bindings() {
         bounds: Some(region),
         ..source_a.domain()
     };
-    let budget = Budget {
-        tile: [8, 4],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [8, 4] };
     let authored = Value::from_operation(
         domain,
         [source(source_a.clone()), source(source_b.clone())],

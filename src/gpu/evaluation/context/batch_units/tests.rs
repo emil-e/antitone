@@ -146,16 +146,11 @@ fn declared_gpu_phases_keep_accumulator_state_across_disconnected_upstream_reads
     let scope = context.test_materializations(false);
     let gate = crate::gpu::submission::SubmissionGate::default();
     let working = RunWorkingSet::default();
-    let allowance = Budget {
-        tile: [4, 1],
-        scratch_bytes: 1 << 20,
-    };
     let worker = Worker {
         context: &context,
         queue: &queue,
         gate: &gate,
         scope: &scope,
-        budget: allowance,
         working: &working,
         cancelled: &|| false,
         progress: &|| {},
@@ -168,7 +163,7 @@ fn declared_gpu_phases_keep_accumulator_state_across_disconnected_upstream_reads
         ..input.domain()
     };
     let unit = sum_unit(vec![input], domain, region)
-        .admit_for(allowance, &device.limits())
+        .admit_for(&device.limits())
         .unwrap();
     assert!(reads.lock().unwrap().is_empty());
     let UnitWork::Gpu(work) = unit.work else {
@@ -266,25 +261,17 @@ fn related_declared_units_share_containing_reads_and_release_them_after_completi
                             bounds: region,
                             grid: root.domain().grid,
                         },
-                        Budget {
-                            tile: [4, 1],
-                            scratch_bytes: 64 << 10,
-                        },
+                        Tiling { tile: [4, 1] },
                     )
                     .unwrap()
             })
             .to_vec();
-        let allowance = Budget {
-            tile: [4, 1],
-            scratch_bytes: 64 << 10,
-        };
         let gate = crate::gpu::submission::SubmissionGate::default();
         let worker = Worker {
             context: &context,
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget: allowance,
             working: &working,
             cancelled: &|| false,
             progress: &|| {},
@@ -296,7 +283,7 @@ fn related_declared_units_share_containing_reads_and_release_them_after_completi
                 let region = evaluation.region().bounds;
                 let domain = evaluation.job.image().domain();
                 let unit = sum_unit(vec![input.clone()], domain, region)
-                    .admit_for(allowance, &device.limits())
+                    .admit_for(&device.limits())
                     .unwrap();
                 total += u64::from(region.width) * u64::from(region.height) * 32;
                 Target {
@@ -311,10 +298,7 @@ fn related_declared_units_share_containing_reads_and_release_them_after_completi
                 }
             })
             .collect();
-        let images = worker
-            .materialize_targets(targets, total, allowance.scratch_bytes)
-            .unwrap()
-            .unwrap();
+        let images = worker.materialize_targets(targets).unwrap().unwrap();
         working.finish_gpu().unwrap();
         for (image, width) in images.iter().zip([2, 4]) {
             let expected = (0..width)

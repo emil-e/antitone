@@ -37,6 +37,21 @@ impl ContextualStatus {
         }
     }
 
+    pub fn compact(&self, ui: &mut Ui) -> egui::Response {
+        ui.horizontal(|ui| {
+            let (_, response) =
+                ui.allocate_exact_size(egui::Vec2::splat(16.), egui::Sense::hover());
+            let name = match self.level {
+                StatusLevel::Activity => "Activity",
+                StatusLevel::Warning => "Warning",
+                StatusLevel::Error => "Error",
+            };
+            status_icon(ui, response, name, self.level, &self.reason);
+            ui.add(egui::Label::new(&self.reason).truncate())
+        })
+        .inner
+    }
+
     pub fn combine(self, other: Self) -> Self {
         let level = self.level.max(other.level);
         let reason = if self.reason == other.reason {

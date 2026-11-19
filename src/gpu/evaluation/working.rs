@@ -44,23 +44,8 @@ impl RunWorkingSet {
         self.gpu.finish()
     }
 
-    pub(super) fn activate(&self, resources: Allocations) -> Arc<Allocations> {
-        self.gpu.activate(resources)
-    }
-
-    pub(super) fn activate_buffer(&self, buffer: &wgpu::Buffer) -> Arc<Allocations> {
-        let mut resources = Allocations::default();
-        resources.buffer(buffer);
-        self.activate(resources)
-    }
-
-    pub(super) fn admit_gpu(
-        &self,
-        device: &wgpu::Device,
-        bytes: u64,
-        allowance: u64,
-    ) -> Result<(), Error> {
-        self.gpu.admit(device, bytes, allowance)
+    pub(super) fn admit_gpu(&self, device: &wgpu::Device) -> Result<(), Error> {
+        self.gpu.admit(device)
     }
 
     pub(super) fn submit_gpu(
@@ -69,11 +54,10 @@ impl RunWorkingSet {
         queue: (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         encoder: wgpu::CommandEncoder,
         resources: Allocations,
-        admission: (u64, u64),
         submitted: impl FnOnce(),
     ) -> Result<(), Error> {
         self.gpu
-            .submit(device, queue, encoder, resources, admission, submitted)
+            .submit(device, queue, encoder, resources, submitted)
     }
 
     pub(super) fn hold(&self, image: Arc<ImageValue>) {

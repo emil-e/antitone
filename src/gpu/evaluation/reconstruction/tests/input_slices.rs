@@ -71,16 +71,6 @@ fn render_root(
     root: Value,
     bounds: Rect,
 ) -> Image<ImageLayout> {
-    render_budgeted(context, queue, root, bounds, 8 << 20)
-}
-
-fn render_budgeted(
-    context: &Context,
-    queue: &wgpu::Queue,
-    root: Value,
-    bounds: Rect,
-    scratch_bytes: u64,
-) -> Image<ImageLayout> {
     let work = context
         .prepare_image(
             context
@@ -90,9 +80,8 @@ fn render_budgeted(
                         bounds,
                         grid: root.domain().grid,
                     },
-                    Budget {
+                    Tiling {
                         tile: [bounds.width, bounds.height],
-                        scratch_bytes,
                     },
                 )
                 .unwrap(),
@@ -372,7 +361,7 @@ impl Source for WidePlane {
 }
 
 #[test]
-fn source_prefetch_preserves_renderability_when_its_reservations_exhaust_the_allowance() {
+fn source_prefetch_preserves_renderability_without_reserving_a_consumer_byte_allowance() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let bounds: Rect = [0, 0, 1280, 720].into();
     for prepared in [false, true] {
@@ -380,7 +369,7 @@ fn source_prefetch_preserves_renderability_when_its_reservations_exhaust_the_all
         let source = source(Arc::new(WidePlane(Arc::new(Mutex::new(Vec::new())))));
         let root = view(source, [1536.25, 1152.375]);
         let image = if prepared {
-            render_budgeted(&context, &queue, root, bounds, 12 << 20)
+            render_root(&context, &queue, root, bounds)
         } else {
             let request = context
                 .request(
@@ -389,9 +378,8 @@ fn source_prefetch_preserves_renderability_when_its_reservations_exhaust_the_all
                         bounds,
                         grid: root.domain().grid,
                     },
-                    Budget {
+                    Tiling {
                         tile: [bounds.width, bounds.height],
-                        scratch_bytes: 12 << 20,
                     },
                 )
                 .unwrap();
@@ -437,7 +425,7 @@ fn a_large_view_acquires_source_slices_once_and_reuses_ordinary_retention_across
     let input = squared(source.clone());
     let root = view(input.clone(), origin);
     let declared = root.operation().reads(bounds).unwrap();
-    let first = render_budgeted(&context, &queue, root, bounds, 128 << 20);
+    let first = render_root(&context, &queue, root, bounds);
     let acquired = reads.lock().unwrap().clone();
     assert!(!acquired.is_empty());
     for (i, a) in acquired.iter().enumerate() {
@@ -460,13 +448,7 @@ fn a_large_view_acquires_source_slices_once_and_reuses_ordinary_retention_across
     );
     let mut previous = first;
     for origin in [[1537.125, 1152.625], [1567.875, 1152.875]] {
-        let next = render_budgeted(
-            &context,
-            &queue,
-            view(input.clone(), origin),
-            bounds,
-            128 << 20,
-        );
+        let next = render_root(&context, &queue, view(input.clone(), origin), bounds);
         assert_ne!(previous.image, next.image);
         assert_eq!(
             *reads.lock().unwrap(),
@@ -475,12 +457,11 @@ fn a_large_view_acquires_source_slices_once_and_reuses_ordinary_retention_across
         );
         previous = next;
     }
-    let exposed = render_budgeted(
+    let exposed = render_root(
         &context,
         &queue,
         view(input.clone(), [1700.125, 1152.875]),
         bounds,
-        128 << 20,
     );
     let after = reads.lock().unwrap().clone();
     assert!(after.len() > acquired.len());
@@ -510,13 +491,7 @@ fn a_large_view_acquires_source_slices_once_and_reuses_ordinary_retention_across
         sources.iter().all(|image| image.upgrade().is_none()),
         "completed frames must not pin prefetched source slices after ordinary eviction"
     );
-    let reacquired = render_budgeted(
-        &context,
-        &queue,
-        view(input, [1700.25, 1152.875]),
-        bounds,
-        128 << 20,
-    );
+    let reacquired = render_root(&context, &queue, view(input, [1700.25, 1152.875]), bounds);
     assert!(
         reads.lock().unwrap().len() > after.len(),
         "the next sampling phase must reacquire evicted source slices"
@@ -560,10 +535,7 @@ fn source_slices_survive_execution_but_retire_while_completed_outputs_remain_liv
                     bounds,
                     grid: root.domain().grid,
                 },
-                Budget {
-                    tile: [1280, 720],
-                    scratch_bytes: 128 << 20,
-                },
+                Tiling { tile: [1280, 720] },
             )
             .unwrap();
         let work = context.prepare_image(request).unwrap();

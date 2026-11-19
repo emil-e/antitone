@@ -14,11 +14,10 @@ pub enum Policy {
     Composed,
 }
 
-/// Per-calculation working allowance, separate from optional cache retention.
+/// Preferred traversal dimensions; operations may declare their own natural units.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Budget {
+pub struct Tiling {
     pub tile: [u32; 2],
-    pub scratch_bytes: u64,
 }
 
 pub struct Tile {
@@ -34,7 +33,7 @@ pub struct Tile {
 pub struct Job {
     root: value::Value,
     region: Rect,
-    budget: Budget,
+    tiling: Tiling,
     policy: Policy,
     materializations: Option<Materializations>,
     supplied: Arc<[SuppliedImage]>,
@@ -42,17 +41,17 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(root: impl Into<value::Value>, region: Rect, budget: Budget) -> Result<Self, Error> {
+    pub fn new(root: impl Into<value::Value>, region: Rect, tiling: Tiling) -> Result<Self, Error> {
         let root = root.into();
         region.validate()?;
-        if budget.tile.contains(&0) || !root.domain.contains_region(region) {
+        if tiling.tile.contains(&0) || !root.domain.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation job demand"));
         }
 
         Ok(Self {
             root,
             region,
-            budget,
+            tiling,
             policy: Policy::Materialized,
             materializations: None,
             supplied: Arc::from([]),
@@ -72,8 +71,8 @@ impl Job {
         self.materializations.as_ref()
     }
 
-    pub(super) fn budget(&self) -> Budget {
-        self.budget
+    pub(super) fn tiling(&self) -> Tiling {
+        self.tiling
     }
 
     pub(super) fn region(&self) -> Rect {
@@ -87,12 +86,6 @@ impl Job {
 
     pub(super) fn with_materializations(mut self, scope: Materializations) -> Self {
         self.materializations = Some(scope);
-        self
-    }
-
-    #[cfg(feature = "editor")]
-    pub(super) fn with_budget(mut self, budget: Budget) -> Self {
-        self.budget = budget;
         self
     }
 
@@ -120,12 +113,11 @@ impl Job {
                 policy: self.policy,
                 scope: self.materializations.as_ref(),
                 supplied: &self.supplied,
-                scratch_bytes: self.budget.scratch_bytes,
-                tile: self.budget.tile,
+                tile: self.tiling.tile,
                 limits: self.limits.as_ref(),
             },
         )?;
-        Plan::from_work(fragment, result, u64::MAX)
+        Plan::from_work(fragment, result)
     }
 
     #[cfg(feature = "render")]
@@ -139,8 +131,8 @@ impl Job {
                 .usage()
                 .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
             || [texture.width(), texture.height()] != [self.region.width, self.region.height]
-            || self.budget.tile[0] < self.region.width
-            || self.budget.tile[1] < self.region.height
+            || self.tiling.tile[0] < self.region.width
+            || self.tiling.tile[1] < self.region.height
         {
             return Err(Error::InvalidParameter(
                 "display attachment differs from composed image",
@@ -150,8 +142,7 @@ impl Job {
             policy: self.policy,
             scope: self.materializations.as_ref(),
             supplied: &self.supplied,
-            scratch_bytes: self.budget.scratch_bytes,
-            tile: self.budget.tile,
+            tile: self.tiling.tile,
             limits: self.limits.as_ref(),
         };
         for callable in [true, false] {
@@ -177,12 +168,12 @@ impl Job {
                 };
                 sample.render(&mut fragment, output)?;
                 if planning.fits(&fragment, output)? {
-                    return Plan::from_work(fragment, output, self.budget.scratch_bytes);
+                    return Plan::from_work(fragment, output);
                 }
             }
         }
         Err(Error::InvalidParameter(
-            "display attachment exceeds the working allowance",
+            "image cannot be recorded into the display attachment",
         ))
     }
 
@@ -190,21 +181,21 @@ impl Job {
         let area = self.region;
 
         (area.y..area.bottom())
-            .step_by(self.budget.tile[1] as usize)
+            .step_by(self.tiling.tile[1] as usize)
             .flat_map(move |y| {
                 (area.x..area.right())
-                    .step_by(self.budget.tile[0] as usize)
+                    .step_by(self.tiling.tile[0] as usize)
                     .map(move |x| {
                         let r = Rect {
                             x,
                             y,
-                            width: self.budget.tile[0].min((area.right() - x) as u32),
-                            height: self.budget.tile[1].min((area.bottom() - y) as u32),
+                            width: self.tiling.tile[0].min((area.right() - x) as u32),
+                            height: self.tiling.tile[1].min((area.bottom() - y) as u32),
                         };
                         Plan::with_materializations(
                             self.root.clone(),
                             r,
-                            self.budget,
+                            self.tiling,
                             self.policy,
                             self.materializations.as_ref(),
                             &self.supplied,
@@ -219,11 +210,31 @@ pub struct Plan {
     pub domain: Domain,
     pub region: Rect,
     pub tiles: Vec<Tile>,
-    pub peak_scratch_bytes: u64,
-    pub scratch_budget: u64,
 }
 
 impl Plan {
+    // wgpu-core creates raw pass-body and pre-pass command buffers. Keep caller
+    // recordings small; larger programs execute in phases on workers.
+    pub(super) const MAX_RECORDING_PASSES: usize = 32;
+
+    pub(super) fn recording_passes(&self) -> usize {
+        self.tiles
+            .iter()
+            .flat_map(|tile| &tile.fragment.work)
+            .filter(|work| matches!(work, Work::Compute { .. } | Work::Render { .. }))
+            .count()
+    }
+
+    /// Largest declared slot set, not a native allocation or complete live-memory peak.
+    #[cfg(test)]
+    pub(crate) fn scheduled_bytes(&self) -> u64 {
+        self.tiles
+            .iter()
+            .map(|tile| tile.slots.iter().map(Storage::bytes).sum())
+            .max()
+            .unwrap_or(0)
+    }
+
     pub(super) fn requires_production(&self, root: &value::Value) -> Result<bool, Error> {
         for work in self.tiles.iter().flat_map(|tile| &tile.fragment.work) {
             if let Work::Produce { image, output } = work
@@ -239,11 +250,7 @@ impl Plan {
         Ok(false)
     }
 
-    pub(super) fn from_work(
-        fragment: Fragment,
-        result: PlannedImage,
-        budget: u64,
-    ) -> Result<Self, Error> {
+    pub(super) fn from_work(fragment: Fragment, result: PlannedImage) -> Result<Self, Error> {
         result.region.validate()?;
         if !result.domain.contains_region(result.region) {
             return Err(Error::InvalidParameter(
@@ -254,60 +261,51 @@ impl Plan {
         let domain = result.domain;
         let region = result.region;
         let tile = schedule(fragment, result)?;
-        let bytes = tile.slots.iter().map(Storage::bytes).sum();
-        if bytes > budget {
-            return Err(Error::WorkingAllowance(
-                "evaluation tile exceeds scratch budget",
-            ));
-        }
         Ok(Self {
             domain,
             region,
             tiles: vec![tile],
-            peak_scratch_bytes: bytes,
-            scratch_budget: budget,
         })
     }
 
     #[cfg(all(test, feature = "editor"))]
-    pub fn new(root: impl Into<value::Value>, region: Rect, budget: Budget) -> Result<Self, Error> {
-        Self::with_policy(root, region, budget, Policy::Materialized)
+    pub fn new(root: impl Into<value::Value>, region: Rect, tiling: Tiling) -> Result<Self, Error> {
+        Self::with_policy(root, region, tiling, Policy::Materialized)
     }
 
     #[cfg(test)]
     pub fn with_policy(
         root: impl Into<value::Value>,
         region: Rect,
-        budget: Budget,
+        tiling: Tiling,
         policy: Policy,
     ) -> Result<Self, Error> {
-        Self::with_materializations(root.into(), region, budget, policy, None, &[], None)
+        Self::with_materializations(root.into(), region, tiling, policy, None, &[], None)
     }
 
     fn with_materializations(
         root: value::Value,
         region: Rect,
-        budget: Budget,
+        tiling: Tiling,
         policy: Policy,
         scope: Option<&Materializations>,
         supplied: &[SuppliedImage],
         limits: Option<&wgpu::Limits>,
     ) -> Result<Self, Error> {
         region.validate()?;
-        if budget.tile.contains(&0) || !root.domain.contains_region(region) {
+        if tiling.tile.contains(&0) || !root.domain.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation demand"));
         }
 
         let mut tiles = Vec::new();
-        let mut peak_scratch_bytes = 0;
 
-        for y in (region.y..region.bottom()).step_by(budget.tile[1] as usize) {
-            for x in (region.x..region.right()).step_by(budget.tile[0] as usize) {
+        for y in (region.y..region.bottom()).step_by(tiling.tile[1] as usize) {
+            for x in (region.x..region.right()).step_by(tiling.tile[0] as usize) {
                 let region = Rect {
                     x,
                     y,
-                    width: budget.tile[0].min((region.right() - x) as u32),
-                    height: budget.tile[1].min((region.bottom() - y) as u32),
+                    width: tiling.tile[0].min((region.right() - x) as u32),
+                    height: tiling.tile[1].min((region.bottom() - y) as u32),
                 };
 
                 let mut fragment =
@@ -320,20 +318,12 @@ impl Plan {
                         policy,
                         scope,
                         supplied,
-                        scratch_bytes: budget.scratch_bytes,
-                        tile: budget.tile,
+                        tile: tiling.tile,
                         limits,
                     },
                 )?;
                 let tile = schedule(fragment, result)?;
 
-                let bytes = tile.slots.iter().map(Storage::bytes).sum();
-                if bytes > budget.scratch_bytes {
-                    return Err(Error::WorkingAllowance(
-                        "evaluation tile exceeds scratch budget",
-                    ));
-                }
-                peak_scratch_bytes = peak_scratch_bytes.max(bytes);
                 tiles.push(tile);
             }
         }
@@ -342,8 +332,6 @@ impl Plan {
             domain: root.domain,
             region,
             tiles,
-            peak_scratch_bytes,
-            scratch_budget: budget.scratch_bytes,
         })
     }
 }
@@ -353,17 +341,26 @@ pub(super) struct Planning<'a> {
     pub policy: Policy,
     pub scope: Option<&'a Materializations>,
     pub supplied: &'a [SuppliedImage],
-    pub scratch_bytes: u64,
     pub tile: [u32; 2],
     pub limits: Option<&'a wgpu::Limits>,
 }
 
 impl Planning<'_> {
     fn fits(self, fragment: &Fragment, result: PlannedImage) -> Result<bool, Error> {
-        let tile = schedule(fragment.clone(), result)?;
-        if tile.slots.iter().map(Storage::bytes).sum::<u64>() > self.scratch_bytes {
+        // wgpu opens separate raw command buffers for pass bodies and barriers.
+        // Large multi-pass programs stay phased on workers, not in caller encoders.
+        if fragment
+            .work
+            .iter()
+            .filter(|work| matches!(work, Work::Compute { .. } | Work::Render { .. }))
+            .take(Plan::MAX_RECORDING_PASSES + 1)
+            .count()
+            > Plan::MAX_RECORDING_PASSES
+        {
             return Ok(false);
         }
+
+        let tile = schedule(fragment.clone(), result)?;
         let baseline = wgpu::Limits::default();
         if !tile
             .fragment
@@ -458,11 +455,10 @@ pub(super) fn evaluate_region(
     }
 
     let original = node.request(region)?;
-    let budget = Budget {
+    let tiling = Tiling {
         tile: planning.tile,
-        scratch_bytes: planning.scratch_bytes,
     };
-    if !unit::single_unit(node, region, budget)? {
+    if !unit::single_unit(node, region, tiling)? {
         let output = value::image_resource(fragment, node, region, false);
         fragment.work.push(Work::Produce {
             image: original,
@@ -470,9 +466,9 @@ pub(super) fn evaluate_region(
         });
         return Ok(output);
     }
-    let calculation = match unit::calculation(node, region, budget) {
+    let calculation = match unit::calculation_with_limits(node, region, tiling, planning.limits) {
         Ok(calculation) => calculation,
-        Err(Error::WorkingAllowance(_)) => {
+        Err(Error::EvaluationLimit(_)) => {
             let output = value::image_resource(fragment, node, region, false);
             fragment.work.push(Work::Produce {
                 image: original,
@@ -525,7 +521,7 @@ pub(super) fn evaluate_region(
         return Ok(output);
     }
 
-    let lowering = super::unit::lowered(calculation, region, budget)?;
+    let lowering = super::unit::lowered(calculation, region, tiling, planning.limits)?;
     if matches!(lowering, super::unit::Lowering::Deferred) {
         let output = value::image_resource(fragment, &original, region, discover);
         fragment.work.push(Work::Produce {
@@ -623,18 +619,17 @@ pub(super) fn sample_region(
     if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
         return Ok(stored.sample(fragment));
     }
-    let budget = Budget {
+    let tiling = Tiling {
         tile: planning.tile,
-        scratch_bytes: planning.scratch_bytes,
     };
-    if !unit::single_unit(node, region, budget)? {
+    if !unit::single_unit(node, region, tiling)? {
         let input = evaluate_region(node, region, fragment, planning)?;
         return Ok(Sampled::raster(fragment, input));
     }
     let original = node;
-    let calculation = match unit::calculation(node, region, budget) {
+    let calculation = match unit::calculation_with_limits(node, region, tiling, planning.limits) {
         Ok(calculation) => calculation,
-        Err(Error::WorkingAllowance(_)) => {
+        Err(Error::EvaluationLimit(_)) => {
             let input = evaluate_region(original, region, fragment, planning)?;
             return Ok(Sampled::raster(fragment, input));
         }

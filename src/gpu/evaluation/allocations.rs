@@ -131,20 +131,6 @@ impl Allocations {
             || self.images.iter().any(|held| Arc::ptr_eq(held, image))
     }
 
-    pub(super) fn bytes_except(&self, active: &Self) -> u64 {
-        self.buffers
-            .iter()
-            .filter(|buffer| !active.buffers.contains(buffer))
-            .map(wgpu::Buffer::size)
-            .sum::<u64>()
-            + self
-                .textures
-                .iter()
-                .filter(|(texture, _)| !active.textures.iter().any(|(held, _)| held == texture))
-                .map(|(_, bytes)| bytes)
-                .sum::<u64>()
-    }
-
     pub(crate) fn bytes(&self) -> u64 {
         self.buffers.iter().map(wgpu::Buffer::size).sum::<u64>()
             + self.textures.iter().map(|(_, bytes)| bytes).sum::<u64>()

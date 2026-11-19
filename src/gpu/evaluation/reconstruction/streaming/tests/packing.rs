@@ -26,20 +26,12 @@ fn oblique_reconstruction_bounds_read_count_by_source_tiles_instead_of_edge_step
         let (sin, cos) = degrees.to_radians().sin_cos();
         let map = Mapping {
             start: [128., 128.],
-            axes: [[2.5 * cos, 2.5 * sin], [-2.5 * sin, 2.5 * cos]],
+            axes: [[640. * cos, 640. * sin], [-640. * sin, 640. * cos]],
         };
-        let region = Rect::new([0, 0], [256, 256]);
+        let region = Rect::new([0, 0], [1, 1]);
         let root =
             reconstruct_mapped(source(Arc::new(PlanningSource)), output(map, region), map).unwrap();
-        let mut unit = root
-            .plan_unit(
-                region,
-                Budget {
-                    tile: [256, 256],
-                    scratch_bytes: 16 << 20,
-                },
-            )
-            .unwrap();
+        let mut unit = root.plan_unit(region, Tiling { tile: [1, 1] }).unwrap();
         let UnitWork::Gpu(work) = &mut unit.work else {
             panic!("expected a GPU reconstruction");
         };
@@ -82,7 +74,6 @@ fn an_enclosing_source_read_does_not_give_unused_diamond_corners_area_or_flags()
     let actual = materialize(
         reconstruct_mapped(input, output(map, [0, 0, 1, 1].into()), map).unwrap(),
         [1, 1],
-        8 << 20,
     );
 
     assert_eq!(

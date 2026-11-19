@@ -51,24 +51,12 @@ fn repeated_named_and_anonymous_phase_reads_share_their_actual_captured_input() 
             "fn pixel(p:vec2i,position:vec2f,a:vec4f,b:vec4f)->vec4f { return vec4f(a.rgb+2.0*b.rgb,a.w); }",
             "pixel", value::Access::Pointwise,
         )).unwrap();
-        let UnitWork::Gpu(mut compiled) = sum
-            .plan_unit(
-                region,
-                Budget {
-                    tile: [4, 4],
-                    scratch_bytes: 1 << 20,
-                },
-            )
-            .unwrap()
-            .work
+        let UnitWork::Gpu(mut compiled) =
+            sum.plan_unit(region, Tiling { tile: [4, 4] }).unwrap().work
         else {
             panic!("GPU fixture");
         };
         let kernel = compiled.phases.next().unwrap().unwrap().kernel;
-        let allowance = Budget {
-            tile: [4, 4],
-            scratch_bytes: 700,
-        };
         let unit = WorkUnit {
             inputs: operands,
             domain,
@@ -84,7 +72,7 @@ fn repeated_named_and_anonymous_phase_reads_share_their_actual_captured_input() 
                 })),
             }),
         }
-        .admit(allowance)
+        .admit_for(&device.limits())
         .unwrap();
         assert_eq!(cells.load(Ordering::Relaxed), 0);
         let UnitWork::Gpu(work) = unit.work else {
@@ -99,7 +87,6 @@ fn repeated_named_and_anonymous_phase_reads_share_their_actual_captured_input() 
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget: allowance,
             working: &working,
             cancelled: &|| false,
             progress: &|| {},

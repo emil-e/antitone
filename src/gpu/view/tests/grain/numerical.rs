@@ -67,7 +67,7 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
             let size = if mode == 2 { [256, 256] } else { [64, 1] };
             let count: u32 = size[0] * size[1];
             let output = float_buffer(&device, size).unwrap();
-            let view = uniform(&device, bytemuck::bytes_of(&[v, mode as f32, 0., 0.]));
+            let view = uniform(&device, bytemuck::bytes_of(&[v, mode as f32, 0., 0.])).unwrap();
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),

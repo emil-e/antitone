@@ -10,6 +10,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             e.document.visit.working_view.support_ready()
         });
         harness.render().unwrap();
+        wait_for(&mut harness, |e| e.document.visit.working_view.idle());
         let retained = harness.read(|editor| {
             editor
                 .document
@@ -18,6 +19,13 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                 .regional()
                 .unwrap()
                 .clone()
+        });
+        harness.read(|editor| {
+            assert_eq!(
+                Some(retained.spec.frame()),
+                editor.document.visit.working_view.current_frame(),
+                "retain the completed zoomed view before blocking acquisition"
+            );
         });
         harness.update(|editor| {
             editor

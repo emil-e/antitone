@@ -1,4 +1,5 @@
 //! Device-scoped evaluation policy; optional retention is separate from required work budgets.
+use crate::gpu::allocation::DeviceAllocationExt;
 
 use super::CellRegion;
 use super::*;
@@ -104,7 +105,7 @@ impl Context {
         &self,
         image: impl Into<value::Value>,
         region: Region,
-        budget: Budget,
+        budget: Tiling,
     ) -> Result<Evaluation, Error> {
         let image = image.into();
         if image.shape() != value::Shape::Pixel {
@@ -150,9 +151,8 @@ impl Context {
                 bounds,
                 grid: domain.grid,
             },
-            Budget {
+            Tiling {
                 tile: [bounds.width, bounds.height],
-                scratch_bytes: self.device.limits().max_buffer_size,
             },
         )?;
         for plan in evaluation.plans() {
@@ -197,7 +197,7 @@ impl Context {
     #[cfg(feature = "render")]
     pub(crate) fn prewarm_texture(&self, image: Value) -> Result<(), Error> {
         let region = image.domain().finite()?;
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = self.device.try_create_texture(&wgpu::TextureDescriptor {
             label: Some("attachment program preparation"),
             size: wgpu::Extent3d {
                 width: region.width,
@@ -210,13 +210,12 @@ impl Context {
             format: wgpu::TextureFormat::Rgba32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
-        });
+        })?;
         let job = Job::new(
             image,
             region,
-            Budget {
+            Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: self.device.limits().max_buffer_size,
             },
         )?
         .with_policy(Policy::Composed)
@@ -255,10 +254,8 @@ impl Context {
         fragment: Fragment,
         result: PlannedImage,
     ) -> Result<Recorded, Error> {
-        self.executor().prepare(
-            &self.device,
-            Plan::from_work(fragment, result, self.device.limits().max_buffer_size)?,
-        )
+        self.executor()
+            .prepare(&self.device, Plan::from_work(fragment, result)?)
     }
 
     pub(crate) fn encode_work(
@@ -391,7 +388,6 @@ impl Evaluation {
 
     pub(super) fn request_policy(&self) -> super::materializations::RequestPolicy {
         super::materializations::RequestPolicy {
-            budget: Some(self.job.budget()),
             retain: self.retain,
         }
     }

@@ -1,4 +1,6 @@
 use super::*;
+
+mod retry;
 use crate::geometry::{Composition, FramePoint};
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::request::PhotographRequest;
@@ -259,7 +261,7 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
     working.acquired(Completion {
         owner: Arc::downgrade(&working.mailbox),
         demand: Completion::fixture_demand(&working, first),
-        result: Err("obsolete failure".into()),
+        result: Err(Error::Gpu("obsolete failure".into())),
     });
     working.request(Demand::fixture(last.clone(), input.clone()));
     assert!(working.error.is_none());
@@ -267,12 +269,15 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
     working.acquired(Completion {
         owner: Arc::downgrade(&working.mailbox),
         demand: Completion::fixture_demand(&working, last.clone()),
-        result: Err("current failure".into()),
+        result: Err(Error::Gpu("current failure".into())),
     });
     for _ in 0..5 {
         working.request(Demand::fixture(last.clone(), input.clone()));
     }
-    assert_eq!(working.error.as_deref(), Some("current failure"));
+    assert_eq!(
+        working.error.as_ref(),
+        Some(&Error::Gpu("current failure".into()))
+    );
     assert!(
         working.acquisition().is_none(),
         "unchanged failure does not spin retries"
@@ -302,16 +307,19 @@ fn the_same_captured_demand_does_not_give_a_departed_owner_continuation_rights()
     current.acquired(Completion {
         owner: departed,
         demand: Completion::fixture_demand(&current, captured.clone()),
-        result: Err("departed failure".into()),
+        result: Err(Error::Gpu("departed failure".into())),
     });
     assert!(current.error.is_none());
     assert!(current.failed.is_none());
     current.acquired(Completion {
         owner: Arc::downgrade(&current.mailbox),
         demand: Completion::fixture_demand(&current, captured),
-        result: Err("live failure".into()),
+        result: Err(Error::Gpu("live failure".into())),
     });
-    assert_eq!(current.error.as_deref(), Some("live failure"));
+    assert_eq!(
+        current.error.as_ref(),
+        Some(&Error::Gpu("live failure".into()))
+    );
 }
 
 #[test]
@@ -342,7 +350,7 @@ fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_reques
     let departed = Completion {
         owner: Arc::downgrade(&working.mailbox),
         demand: working.mailbox.0.lock().unwrap().demand.clone().unwrap(),
-        result: Err("old downstream failure".into()),
+        result: Err(Error::Gpu("old downstream failure".into())),
     };
     let mut latest = first;
     latest.capture = PhotographRequest::Fixture(
@@ -366,10 +374,13 @@ fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_reques
     let current = Completion {
         owner: Arc::downgrade(&working.mailbox),
         demand: working.mailbox.0.lock().unwrap().demand.clone().unwrap(),
-        result: Err("current downstream failure".into()),
+        result: Err(Error::Gpu("current downstream failure".into())),
     };
     working.acquired(current);
-    assert_eq!(working.error.as_deref(), Some("current downstream failure"));
+    assert_eq!(
+        working.error.as_ref(),
+        Some(&Error::Gpu("current downstream failure".into()))
+    );
     working.request(latest);
     assert!(
         working.acquisition().is_none(),

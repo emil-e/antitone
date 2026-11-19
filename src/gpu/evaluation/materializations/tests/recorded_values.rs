@@ -62,6 +62,7 @@ fn recorded_value_images_publish_after_commit_without_blocking_independent_produ
         let key = RetainedKey::new("constant recorded image witness");
         let recorded = scope
             .generated_image(&device, &key, layout, true, true)
+            .unwrap()
             .unwrap();
         assert!(!recorded.ready());
         assert!(
@@ -132,10 +133,7 @@ fn cold_recorded_calculation_keeps_intermediate_publication_through_real_zero_re
                 bounds: region,
                 grid: domain.grid,
             },
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 1] },
         )
         .unwrap()
         .with_policy(Policy::Materialized);
@@ -212,10 +210,7 @@ fn abandoned_recording_releases_its_materialization_reservation_without_publicat
                 bounds: region,
                 grid: domain.grid,
             },
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 1] },
         )
         .unwrap()
         .with_policy(Policy::Materialized);
@@ -247,10 +242,7 @@ fn submitted_compiler_values_share_retention_with_independent_image_demands() {
                     bounds: region,
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [4, 1],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [4, 1] },
             )
             .unwrap()
     };

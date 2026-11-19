@@ -11,19 +11,18 @@ pub(super) fn record(
     if value::constituents(calculation)?.is_none() {
         return Ok(None);
     }
-    let budget = Budget {
+    let budget = Tiling {
         tile: planning.tile,
-        scratch_bytes: planning.scratch_bytes,
     };
-    let candidate = value::compile_unit(calculation, region, budget)?;
+    let candidate = value::compile_unit(calculation, region, budget, planning.limits)?;
     let candidate = if let Some(limits) = planning.limits {
-        candidate.admit_for(budget, limits)
+        candidate.admit_for(limits)
     } else {
-        candidate.admit(budget)
+        Ok(candidate)
     };
     let unit = match candidate {
         Ok(unit) => unit,
-        Err(Error::WorkingAllowance(_)) => return Ok(None),
+        Err(Error::EvaluationLimit(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
     if unit.output != region || unit.domain != original.domain() {
@@ -107,7 +106,7 @@ pub(super) fn record(
                 planning,
             ) {
                 Ok(()) => continue,
-                Err(Error::WorkingAllowance(_)) => {
+                Err(Error::EvaluationLimit(_)) => {
                     for (sample, read) in reads.iter_mut().zip(&phase.reads) {
                         if let SampleInput::Callable(callable) = sample {
                             let input = &unit.inputs[read.input];
@@ -252,7 +251,7 @@ fn lower_callable_step(
     let baseline = wgpu::Limits::default();
     let limits = planning.limits.unwrap_or(&baseline);
     if !step.work.iter().all(|work| bindings_fit(work, limits)) {
-        return Err(Error::WorkingAllowance(
+        return Err(Error::EvaluationLimit(
             "composed phase exceeds device bindings",
         ));
     }

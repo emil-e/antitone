@@ -72,10 +72,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                         bounds,
                         grid: root.domain().grid,
                     },
-                    e::Budget {
-                        tile: [128; 2],
-                        scratch_bytes: 4 << 20,
-                    },
+                    e::Tiling { tile: [128; 2] },
                 )
                 .unwrap();
             let value = pollster::block_on(

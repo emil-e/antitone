@@ -73,10 +73,7 @@ fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction
             let plan = Plan::with_policy(
                 photo.unrepaired.clone(),
                 region.try_into().unwrap(),
-                Budget {
-                    tile: [3, 3],
-                    scratch_bytes: 4 << 20,
-                },
+                Tiling { tile: [3, 3] },
                 policy,
             )
             .unwrap();

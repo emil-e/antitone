@@ -18,10 +18,7 @@ fn fused_values_preserve_acquisition_and_pixels_with_lower_transient_storage() {
                 Some(target),
                 0.9,
             );
-            let budget = Budget {
-                tile: [13, 11],
-                scratch_bytes: 32 << 20,
-            };
+            let budget = Tiling { tile: [13, 11] };
             let baseline = Plan::new(root.clone(), root.domain.finite().unwrap(), budget).unwrap();
             let composed = Plan::with_policy(
                 root.clone(),
@@ -30,7 +27,7 @@ fn fused_values_preserve_acquisition_and_pixels_with_lower_transient_storage() {
                 Policy::Composed,
             )
             .unwrap();
-            assert!(composed.peak_scratch_bytes < baseline.peak_scratch_bytes);
+            assert!(composed.scheduled_bytes() < baseline.scheduled_bytes());
             assert_eq!(baseline.tiles.len(), composed.tiles.len());
             for (before, after) in baseline.tiles.iter().zip(&composed.tiles) {
                 let regions = |tile: &Tile| {
@@ -87,10 +84,7 @@ fn sampling_an_effect_result_is_not_a_mandatory_image_allocation() {
     let plan = Plan::with_policy(
         root.clone(),
         root.domain.finite().unwrap(),
-        Budget {
-            tile: [13, 11],
-            scratch_bytes: 32 << 20,
-        },
+        Tiling { tile: [13, 11] },
         Policy::Composed,
     )
     .unwrap();
@@ -127,10 +121,7 @@ fn apply(pixel: vec4f, position: vec2f) -> vec4f {
         Meaning::Graded,
         Function::new(module, "apply").with_uniform(0, &[-0.5f32, 0.25, 0., 0.]),
     );
-    let budget = Budget {
-        tile: [13, 11],
-        scratch_bytes: 32 << 20,
-    };
+    let budget = Tiling { tile: [13, 11] };
     let plans = [Policy::Materialized, Policy::Composed]
         .map(|policy| Plan::with_policy(root.clone(), area, budget, policy).unwrap());
     assert_eq!(
@@ -179,7 +170,7 @@ fn an_independently_authored_pixel_function_composes_with_sampling() {
             inputs: &[crate::gpu::evaluation::value::Value],
             domain: Domain,
             output: CellRegion,
-            _budget: crate::gpu::evaluation::Budget,
+            _budget: crate::gpu::evaluation::Tiling,
         ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
             let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
             let function = Function {
@@ -207,10 +198,7 @@ fn independent_map(p: vec4f, position: vec2f) -> vec4f {
     let input = root.unary_input().unwrap();
     let extra = Value::from_operation(input.domain, Some(input.clone()), Gain);
     let changed = Value::captured(root.domain, Some(extra), root.operation.clone());
-    let budget = Budget {
-        tile: [13, 11],
-        scratch_bytes: 32 << 20,
-    };
+    let budget = Tiling { tile: [13, 11] };
     let original = Plan::with_policy(
         root.clone(),
         root.domain.finite().unwrap(),

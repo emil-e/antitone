@@ -53,7 +53,7 @@ impl Operation for Tiles {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new("assembly coordinate field"))
     }
-    fn work_units(&self, _: CellRegion, _: Budget) -> Result<WorkUnits, Error> {
+    fn work_units(&self, _: CellRegion, _: Tiling) -> Result<WorkUnits, Error> {
         Ok(Box::new(units().into_iter()))
     }
     fn calculation(
@@ -61,7 +61,7 @@ impl Operation for Tiles {
         _inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         region: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,
@@ -84,9 +84,9 @@ impl CpuKernel for Tiles {
 }
 
 #[test]
-fn cached_units_assemble_partial_nonlocal_regions_in_byte_bounded_groups() {
+fn cached_units_assemble_partial_nonlocal_regions_as_one_ready_group() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    for scratch in [128, 160, 192, 512] {
+    {
         let context = Context::new(
             &device,
             CachePolicy {
@@ -105,10 +105,7 @@ fn cached_units_assemble_partial_nonlocal_regions_in_byte_bounded_groups() {
                     bounds: region,
                     grid: domain().grid,
                 },
-                Budget {
-                    tile: [6, 2],
-                    scratch_bytes: scratch,
-                },
+                Tiling { tile: [6, 2] },
             )
             .unwrap()
             .without_retention();
@@ -153,11 +150,10 @@ fn cached_units_assemble_partial_nonlocal_regions_in_byte_bounded_groups() {
             8,
             "warm assembly must consume completed units, not recalculate them"
         );
-        let maximum_units = scratch as usize / 64;
         assert_eq!(
             submissions.load(Ordering::Relaxed),
-            8usize.div_ceil(maximum_units),
-            "copies must share submissions without exceeding the allowance for full unit payloads"
+            1,
+            "all ready copies share one submission"
         );
         let actual =
             super::super::super::super::execute::read(&device, &queue, second.as_buffer().unwrap());
@@ -172,7 +168,7 @@ fn cached_units_assemble_partial_nonlocal_regions_in_byte_bounded_groups() {
 #[test]
 fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_retention() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    for scratch in [160, 192] {
+    {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
         let gate = crate::gpu::submission::SubmissionGate::default();
@@ -200,10 +196,6 @@ fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_rete
                 queue: &queue,
                 gate: &gate,
                 scope: &scope,
-                budget: Budget {
-                    tile: [8, 4],
-                    scratch_bytes: scratch,
-                },
                 working: &working,
                 cancelled: &|| false,
                 progress: &|| {},
@@ -223,28 +215,20 @@ fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_rete
             weak.push(Arc::downgrade(&image));
             copies.copy(&production, image, output, output).unwrap();
         }
-        let capacity = scratch as usize / 64;
-        assert_eq!(copies.counts.submissions, (8 - 1) / capacity);
+        assert_eq!(copies.counts.submissions, 0);
         assert!(
-            weak[..6].iter().all(|value| value.upgrade().is_none()),
-            "completed groups release their physical inputs"
-        );
-        assert!(
-            weak[6..].iter().all(|value| value.upgrade().is_some()),
-            "pending copies own inputs even with no cache or external owner"
+            weak.iter().all(|value| value.upgrade().is_some()),
+            "unsubmitted copies own all physical inputs without cache or external owners"
         );
         assert_eq!(context.retained_bytes(), 0);
         copies.flush(&production).unwrap();
         assert!(weak.iter().all(|value| value.upgrade().is_none()));
-        let mut previous = 0;
-        for &pixels in visible.lock().unwrap().iter() {
-            assert!(
-                (pixels - previous) * 16 <= scratch as usize,
-                "a submitted group exceeded the payload allowance: {previous}->{pixels} pixels under {scratch} bytes"
-            );
-            previous = pixels;
-        }
-        assert_eq!(previous, 32, "every input unit must reach the GPU output");
+        assert_eq!(copies.counts.submissions, 1);
+        assert_eq!(
+            *visible.lock().unwrap(),
+            vec![32],
+            "the complete ready group reaches its output"
+        );
         let actual = super::super::super::super::execute::read(
             &device,
             &queue,
@@ -277,10 +261,6 @@ fn cancellation_drops_unsubmitted_copies_and_finishes_committed_host_or_gpu_tran
                     queue: &queue,
                     gate: &gate,
                     scope: &scope,
-                    budget: Budget {
-                        tile: [2, 2],
-                        scratch_bytes: 128,
-                    },
                     working: &working,
                     cancelled: &cancelled,
                     progress: &|| {},
@@ -354,10 +334,6 @@ fn an_assembly_failure_does_not_cancel_an_independently_joined_unit() {
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget: Budget {
-                tile: [2, 2],
-                scratch_bytes: 128,
-            },
             working: &working,
             cancelled: &cancelled,
             progress: &|| {},
@@ -365,7 +341,7 @@ fn an_assembly_failure_does_not_cancel_an_independently_joined_unit() {
         let calls = Arc::new(AtomicUsize::new(0));
         let root = Value::from_operation(domain(), [], Tiles(calls.clone()));
         let region = [0, 0, 2, 2].into();
-        let unit = root.plan_unit(region, worker.budget).unwrap();
+        let unit = root.plan_unit(region, Tiling { tile: [2, 2] }).unwrap();
         let mut joined = None::<std::pin::Pin<Box<ImageFuture<ImageLayout>>>>;
         let result = worker.unit_image_before(&root, unit, &mut WorkCounts::default(), || {
             let mut consumer = Box::pin(scope.obtain(

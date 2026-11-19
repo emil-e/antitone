@@ -420,7 +420,7 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
             working.acquired(Completion {
                 owner: departed.clone(),
                 demand: Completion::fixture_demand(working, spec.clone()),
-                result: Err("departed failure".into()),
+                result: Err(Error::Gpu("departed failure".into())),
             });
             assert!(e.document.visit.working_view.error.is_none());
         });
@@ -442,7 +442,7 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
             working.acquired(Completion {
                 owner: departed,
                 demand: Completion::fixture_demand(working, spec),
-                result: Err("late departed failure".into()),
+                result: Err(Error::Gpu("late departed failure".into())),
             });
             assert!(e.document.visit.working_view.error.is_none());
             assert!(Arc::ptr_eq(
@@ -614,10 +614,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                     bounds: layout.finite().unwrap(),
                     grid: layout.grid,
                 },
-                crate::gpu::evaluation::Budget {
-                    tile: [32, 24],
-                    scratch_bytes: 1 << 20,
-                },
+                crate::gpu::evaluation::Tiling { tile: [32, 24] },
             )
             .unwrap();
         let held = pollster::block_on(

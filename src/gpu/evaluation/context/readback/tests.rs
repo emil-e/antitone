@@ -55,7 +55,7 @@ fn transform(pixel: vec4f, position: vec2f) -> vec4f {
     )
 }
 
-fn request(context: &Context, image: Value, scratch_bytes: u64) -> Evaluation {
+fn request(context: &Context, image: Value) -> Evaluation {
     context
         .request(
             image.clone(),
@@ -63,10 +63,7 @@ fn request(context: &Context, image: Value, scratch_bytes: u64) -> Evaluation {
                 bounds: [12, 18, 5, 3].into(),
                 grid: image.domain.grid,
             },
-            Budget {
-                tile: [2, 2],
-                scratch_bytes,
-            },
+            Tiling { tile: [2, 2] },
         )
         .unwrap()
 }
@@ -78,7 +75,7 @@ fn host_delivery_preserves_grid_coordinates_metadata_and_signed_hdr_values_acros
     let reads = Arc::new(AtomicUsize::new(0));
     let image = image(reads.clone());
     let grid = image.domain.grid;
-    let evaluation = request(context, image, 4096);
+    let evaluation = request(context, image);
     let mut locations = std::collections::BTreeSet::new();
 
     let stats = context
@@ -129,7 +126,7 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
     let context = renderer.evaluation();
     let reads = Arc::new(AtomicUsize::new(0));
     let image = image(reads.clone());
-    let evaluation = request(context, image.clone(), 4096);
+    let evaluation = request(context, image.clone());
     let gate = crate::gpu::submission::SubmissionGate::default();
     let cancelled = AtomicBool::new(true);
 
@@ -146,15 +143,15 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
             .is_none()
     );
     assert_eq!(reads.load(Ordering::Relaxed), 0);
-    let invalid = request(context, image, 0);
     assert!(
         context
-            .read(
-                &queue,
-                &gate,
-                &invalid,
-                || false,
-                |_, _| panic!("inadmissible delivery")
+            .request(
+                image.clone(),
+                Region {
+                    bounds: [0, 0, 1, 1].into(),
+                    grid: image.domain.grid,
+                },
+                Tiling { tile: [2, 2] }
             )
             .is_err()
     );
@@ -229,10 +226,6 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
         gate: &gate,
         scope: &scope,
         working: &working,
-        budget: Budget {
-            tile: [1, 1],
-            scratch_bytes: 64,
-        },
         cancelled: &|| false,
         progress: &|| {},
     };
@@ -251,7 +244,6 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
                 region: domain.finite().unwrap(),
                 resource,
             },
-            64,
         )
         .unwrap()
     };

@@ -30,10 +30,7 @@ fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{
             let plan = Plan::with_policy(
                 root.clone(),
                 root.domain.finite().unwrap(),
-                Budget {
-                    tile: [41, 35],
-                    scratch_bytes: 8 << 20,
-                },
+                Tiling { tile: [41, 35] },
                 policy,
             )
             .unwrap();

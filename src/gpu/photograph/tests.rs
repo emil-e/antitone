@@ -53,10 +53,7 @@ fn evaluate(
     let plan = Plan::with_policy(
         root,
         region.try_into().unwrap(),
-        Budget {
-            tile: [17, 13],
-            scratch_bytes: 8 << 20,
-        },
+        Tiling { tile: [17, 13] },
         policy,
     )
     .unwrap();
@@ -74,7 +71,7 @@ fn evaluate(
 }
 
 #[test]
-fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
+fn repaired_spatial_composition_matches_host_and_image_delivery() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let area: SourceRegion = [0, 0, 128, 128].into();
@@ -136,7 +133,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         .unwrap();
         reconstruct(photograph.processed, domain).unwrap()
     };
-    let read = |root: Value, scratch_bytes, must_stream| {
+    let read = |root: Value, image_delivery: bool| {
         let request = context
             .request(
                 root,
@@ -144,24 +141,29 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
                     bounds: domain.finite().unwrap(),
                     grid: domain.grid,
                 },
-                Budget {
-                    tile: [1, 1],
-                    scratch_bytes,
-                },
+                Tiling { tile: [1, 1] },
             )
             .unwrap();
-        assert_eq!(
-            request
-                .plans()
-                .next()
-                .unwrap()
-                .unwrap()
-                .tiles
-                .iter()
-                .flat_map(|t| &t.fragment.work)
-                .any(|work| matches!(work, Work::Produce { .. })),
-            must_stream
-        );
+        if image_delivery {
+            let image = pollster::block_on(
+                context
+                    .materialize(
+                        &queue,
+                        &Default::default(),
+                        &context.materializations(),
+                        request,
+                        ImageFormat::Rgba32Float,
+                        ImageBacking::Buffer,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            return crate::gpu::evaluation::read_buffer(
+                &device,
+                &queue,
+                image.as_buffer().unwrap(),
+            )[0];
+        }
         let mut pixels = Vec::new();
         context
             .read(
@@ -179,8 +181,8 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         assert_eq!(pixels.len(), 1);
         pixels[0]
     };
-    let resident = read(compose(&stages), 2 << 20, false);
-    let unfiltered = read(compose(&Default::default()), 2 << 20, false);
+    let resident = read(compose(&stages), false);
+    let unfiltered = read(compose(&Default::default()), false);
     assert!(
         resident[..3]
             .iter()
@@ -188,7 +190,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
             .any(|(a, b)| (*a - b).abs() > 2e-5),
         "control: filtering across the repair edge must affect the sampled strip"
     );
-    let streamed = read(compose(&stages), 64 << 10, true);
+    let streamed = read(compose(&stages), true);
     for (a, b) in streamed.iter().zip(resident) {
         assert!(
             (*a - b).abs() < 2e-5,
@@ -325,10 +327,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
                 bounds: region.try_into().unwrap(),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
-            Budget {
-                tile: [4, 3],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 3] },
         )
         .unwrap();
     let mut count = 0;

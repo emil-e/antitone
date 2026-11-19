@@ -377,10 +377,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                             bounds: domain.finite().unwrap(),
                             grid: domain.grid,
                         },
-                        crate::gpu::evaluation::Budget {
-                            tile: [1, 1],
-                            scratch_bytes: 32 << 20,
-                        },
+                        crate::gpu::evaluation::Tiling { tile: [1, 1] },
                     )
                     .unwrap();
                 assert!(

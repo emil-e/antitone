@@ -148,7 +148,7 @@ pub const PROCESSING_MODEL_VERSION: u32 = 8;
 pub enum Error {
     InvalidParameter(&'static str),
     /// A valid calculation description needs a smaller execution unit or more resources.
-    WorkingAllowance(&'static str),
+    EvaluationLimit(&'static str),
     InvalidCalibration {
         channel: usize,
         reason: &'static str,
@@ -160,6 +160,7 @@ pub enum Error {
     NumericalOverflow,
     Raw(String),
     Gpu(String),
+    GpuOutOfMemory(String),
     Rendering(String),
     Export(String),
     DestinationExists,
@@ -171,7 +172,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidParameter(reason) => write!(f, "Invalid parameter: {reason}"),
-            Self::WorkingAllowance(reason) => write!(f, "Working allowance: {reason}"),
+            Self::EvaluationLimit(reason) => write!(f, "Evaluation limit: {reason}"),
             Self::InvalidCalibration { channel, reason } => {
                 write!(f, "Invalid calibration in channel {channel}: {reason}")
             }
@@ -180,6 +181,7 @@ impl std::fmt::Display for Error {
             Self::NumericalOverflow => write!(f, "Processing exceeded the finite numeric range"),
             Self::Raw(message) => write!(f, "RAW development: {message}"),
             Self::Gpu(message) => write!(f, "GPU processing: {message}"),
+            Self::GpuOutOfMemory(message) => write!(f, "Not enough graphics memory: {message}"),
             Self::Rendering(message) => write!(f, "Output rendering: {message}"),
             Self::Export(message) => write!(f, "Export: {message}"),
             Self::DestinationExists => write!(f, "Export destination already exists"),

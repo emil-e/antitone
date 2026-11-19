@@ -42,7 +42,7 @@ impl Operation for Recombine {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let alpha = self.0.fractions().map(|value| value as f32);

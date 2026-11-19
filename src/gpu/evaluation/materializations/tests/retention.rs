@@ -23,10 +23,7 @@ fn live_requests_can_gain_optional_ownership_from_an_independent_consumer() {
             key.clone(),
             Arc::new(64u64),
             64,
-            RequestPolicy {
-                budget: None,
-                retain: false,
-            },
+            RequestPolicy { retain: false },
             move || async move { receive.await.map_err(|_| Error::Cancelled) },
         ));
         let mut task = std::task::Context::from_waker(futures_util::task::noop_waker_ref());
@@ -84,10 +81,7 @@ fn live_consumers_do_not_remove_an_independently_retained_value() {
         key.clone(),
         Arc::new(64u64),
         64,
-        RequestPolicy {
-            budget: None,
-            retain: false,
-        },
+        RequestPolicy { retain: false },
         || async { panic!("live join must consume the existing value") },
     ))
     .unwrap();

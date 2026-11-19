@@ -27,9 +27,8 @@ fn evaluated(
     policy: Policy,
 ) -> (Vec<[f32; 4]>, usize) {
     let bounds = root.domain.finite().unwrap();
-    let budget = Budget {
+    let budget = Tiling {
         tile: [bounds.width, bounds.height],
-        scratch_bytes: 4 << 20,
     };
     let plan = Plan::with_policy(root.clone(), bounds, budget, policy).unwrap();
     let top_level_computes = plan.tiles[0]

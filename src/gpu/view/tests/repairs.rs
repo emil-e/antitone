@@ -267,9 +267,8 @@ fn filter_authored_repairs(
                 bounds,
                 grid: root.domain().grid,
             },
-            e::Budget {
+            e::Tiling {
                 tile: [bounds.width, bounds.height],
-                scratch_bytes: 4 << 20,
             },
         )
         .unwrap();

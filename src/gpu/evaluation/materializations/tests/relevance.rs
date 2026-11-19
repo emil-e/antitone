@@ -162,10 +162,7 @@ fn reading_a_cached_descendant_refreshes_the_declared_upstream_demand() {
                 bounds: region,
                 grid: domain().grid,
             },
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 1] },
         )
         .unwrap();
     let mut blocks = 0;
@@ -227,10 +224,7 @@ fn evaluating_a_cached_descendant_into_a_sink_refreshes_upstream_relevance() {
                 bounds: region,
                 grid: domain().grid,
             },
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 1] },
         )
         .unwrap();
     let mut delivered = 0;
@@ -293,25 +287,15 @@ fn recorded_demand_and_selected_storage_promote_only_after_submission() {
                     bounds: region,
                     grid: domain().grid,
                 },
-                Budget {
-                    tile: [4, 1],
-                    scratch_bytes: 1 << 20,
-                },
+                Tiling { tile: [4, 1] },
             )
             .unwrap();
         // Even a successful probe does not establish submitted use.
-        Job::new(
-            evaluation.image().clone(),
-            region,
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
-        )
-        .unwrap()
-        .with_materializations(scope.clone())
-        .probe(region)
-        .unwrap();
+        Job::new(evaluation.image().clone(), region, Tiling { tile: [4, 1] })
+            .unwrap()
+            .with_materializations(scope.clone())
+            .probe(region)
+            .unwrap();
         let recorded = context.record(evaluation, scope.clone(), vec![]).unwrap();
         if submit {
             let output = device.create_buffer(&wgpu::BufferDescriptor {

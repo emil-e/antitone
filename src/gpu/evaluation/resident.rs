@@ -23,7 +23,7 @@ impl Operation for Resident {
         _: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         value::Calculation::new(domain, output, Vec::new(), self.0.clone()).map(Some)
     }

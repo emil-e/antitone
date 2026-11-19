@@ -847,7 +847,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             editor.document.visit.working_view.error
                         );
                     }
-                    if editor.document.visit.working_view.error.is_some() {
+                    if let Some((status, _)) = editor.preview_failure_status() {
                         let error = &output
                             .platform_output
                             .accesskit_update
@@ -855,14 +855,22 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             .unwrap()
                             .nodes
                             .iter()
-                            .find(|(_, node)| node.label() == Some("View unavailable"))
-                            .expect("rendering errors remain visible")
+                            .find(|(_, node)| {
+                                node.label() == Some("Error")
+                                    && node.description() == Some(status.reason.as_str())
+                            })
+                            .expect("rendering errors remain accessible in the status bar")
                             .1;
                         let bounds = error.bounds().unwrap();
-                        assert_eq!(bounds.x1 - bounds.x0, 28.);
-                        assert!(bounds.x0 as f32 >= canvas.left());
-                        assert!(bounds.x1 as f32 <= canvas.right());
-                        assert!(error.description().is_some());
+                        assert!(bounds.y0 as f32 >= canvas.bottom());
+                        assert!(bounds.x0 >= 0.);
+                        assert!(bounds.x1 as f32 <= size.x);
+                        assert!(
+                            painted_labels(&output)
+                                .iter()
+                                .any(|(text, _)| text == &status.reason),
+                            "rendering errors remain visibly labelled"
+                        );
                     }
                     let painted = painted_labels(&output);
                     let text = ui_labels(output.clone());
@@ -1114,15 +1122,23 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             }
             feature.0.pump();
             feature.0.read(|editor| {
-                assert!(
-                    editor.interaction_blocked(),
-                    "enter={enter}: {}; pick={:?}, region={:?}",
-                    editor.status,
-                    editor.test_pick(),
-                    editor.test_pick_region()
-                );
-                assert!(editor.measurement_pending());
-                assert_eq!(editor.dmin(), Some(expected * 1.05));
+                // A tiny measurement may finish in the first host poll. Until completion,
+                // input remains reserved and accepted calibration must stay unchanged.
+                if editor.measurement_pending() {
+                    assert!(
+                        editor.interaction_blocked(),
+                        "enter={enter}: {}",
+                        editor.status
+                    );
+                    assert_eq!(editor.dmin(), Some(expected * 1.05));
+                } else {
+                    assert!(
+                        !editor.interaction_blocked(),
+                        "enter={enter}: {}",
+                        editor.status
+                    );
+                    assert!(editor.test_pick().is_none());
+                }
             });
             // Progress requires no additional paint or post-draw launch call.
             feature.0.run_until(Duration::from_secs(5), |editor| {

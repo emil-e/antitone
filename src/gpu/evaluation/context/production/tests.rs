@@ -14,7 +14,7 @@ impl Operation for Candidate {
         _: &[Value],
         domain: Domain,
         region: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<value::Calculation>, Error> {
         self.described.lock().unwrap().push(region);
         if self.invalid {
@@ -39,7 +39,7 @@ impl Operation for Candidate {
 }
 
 #[test]
-fn admission_refines_resource_failures_but_never_semantic_failures_with_similar_messages() {
+fn normal_traversal_rejects_device_and_semantic_failures_without_shape_search() {
     let (device, _, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let region: CellRegion = [0, 0, 8, 4].into();
@@ -48,10 +48,7 @@ fn admission_refines_resource_failures_but_never_semantic_failures_with_similar_
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Neutral,
     };
-    let budget = Budget {
-        tile: [8, 4],
-        scratch_bytes: 64 << 10,
-    };
+    let budget = Tiling { tile: [8, 4] };
     let limits = wgpu::Limits {
         max_buffer_size: 128,
         max_storage_buffer_binding_size: 128,
@@ -100,22 +97,16 @@ fn admission_refines_resource_failures_but_never_semantic_failures_with_similar_
                 "semantic failure was subdivided: {seen:?}"
             );
         } else {
-            let plans = plans.unwrap();
+            assert!(matches!(
+                plans,
+                Err(Error::EvaluationLimit(
+                    "evaluation output exceeds GPU limits"
+                ))
+            ));
             assert!(
-                plans.len() > 1,
-                "the original512-byte output cannot fit a128-byte device binding"
+                seen.iter().all(|r| *r == region),
+                "device rejection does not cause shape search"
             );
-            assert!(seen.iter().any(|r| *r != region));
-            let mut covered = std::collections::HashSet::new();
-            for plan in plans {
-                Executor::admit(&limits, &plan).unwrap();
-                for y in plan.region.y..plan.region.bottom() {
-                    for x in plan.region.x..plan.region.right() {
-                        assert!(covered.insert([x, y]));
-                    }
-                }
-            }
-            assert_eq!(covered.len(), 32);
         }
     }
 }
@@ -137,7 +128,7 @@ fn executor_distinguishes_invalid_dispatch_and_buffer_capability_from_resource_l
         vec![(0, Binding::Write(output.resource))],
         1,
     );
-    let mut plan = Plan::from_work(fragment, output, 64).unwrap();
+    let mut plan = Plan::from_work(fragment, output).unwrap();
     Executor::admit(&device.limits(), &plan).unwrap();
     let no_dispatch = wgpu::Limits {
         max_compute_workgroups_per_dimension: 0,
@@ -145,7 +136,7 @@ fn executor_distinguishes_invalid_dispatch_and_buffer_capability_from_resource_l
     };
     assert!(matches!(
         Executor::admit(&no_dispatch, &plan),
-        Err(Error::WorkingAllowance(
+        Err(Error::EvaluationLimit(
             "evaluation dispatch exceeds GPU limits"
         ))
     ));
@@ -177,7 +168,7 @@ fn executor_distinguishes_invalid_dispatch_and_buffer_capability_from_resource_l
         ],
         1,
     );
-    let plan = Plan::from_work(fragment, output, 64).unwrap();
+    let plan = Plan::from_work(fragment, output).unwrap();
     assert_eq!(
         Executor::admit(&device.limits(), &plan),
         Err(Error::InvalidParameter(

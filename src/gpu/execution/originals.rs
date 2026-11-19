@@ -383,10 +383,7 @@ pub(crate) fn execute(
                             bounds: [origin[0], origin[1], extent[0], extent[1]].try_into()?,
                             grid: root.domain().grid
                         },
-                        evaluation::Budget {
-                            tile: TILE,
-                            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size)
-                        }
+                        evaluation::Tiling { tile: TILE }
                     )?
                     .plans()
                     .next()

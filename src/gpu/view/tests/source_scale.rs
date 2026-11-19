@@ -116,10 +116,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                             bounds: region,
                             grid: domain.grid,
                         },
-                        e::Budget {
-                            tile: [64, 64],
-                            scratch_bytes: 32 << 20,
-                        },
+                        e::Tiling { tile: [64, 64] },
                     )
                     .unwrap()
                     .without_retention();

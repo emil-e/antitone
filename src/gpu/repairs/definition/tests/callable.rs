@@ -55,7 +55,7 @@ impl Operation for Normalize {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
@@ -86,9 +86,8 @@ fn read_frame(
                 bounds: region,
                 grid: image.domain().grid,
             },
-            Budget {
+            Tiling {
                 tile: [region.width, region.height],
-                scratch_bytes: 512 << 10,
             },
         )
         .unwrap();
@@ -133,10 +132,7 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
                     bounds: camera.domain().finite().unwrap(),
                     grid: camera.domain().grid,
                 },
-                Budget {
-                    tile: [512, 128],
-                    scratch_bytes: 512 << 10,
-                },
+                Tiling { tile: [512, 128] },
             )
             .unwrap();
         // A live camera argument is independent of optional generated-image retention.
@@ -261,7 +257,7 @@ impl Operation for WideBase {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let mut code = String::new();
@@ -316,10 +312,7 @@ fn a_wide_base_retains_the_repair_grade_and_window_binding_fallbacks() {
                         bounds: region,
                         grid: root.domain().grid,
                     },
-                    Budget {
-                        tile: [192, 16],
-                        scratch_bytes: 4 << 20,
-                    },
+                    Tiling { tile: [192, 16] },
                 )
                 .unwrap();
             let mut pixels = vec![[0.; 4]; 192 * 16];
@@ -430,7 +423,7 @@ impl Operation for Tint {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Budget,
+        _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let function=Function::new(
@@ -463,10 +456,7 @@ fn replacement_arguments_keep_private_captures_masks_and_original_metadata_separ
         .collect();
     let root = compose_images(base, replacements).unwrap();
     let region: CellRegion = [18, 22, 24, 5].into();
-    let budget = Budget {
-        tile: [24, 5],
-        scratch_bytes: 1 << 20,
-    };
+    let budget = Tiling { tile: [24, 5] };
     let query = context
         .request(
             root.clone(),

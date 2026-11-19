@@ -64,10 +64,7 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
                 bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
-            Budget {
-                tile: [4, 1],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [4, 1] },
         )
         .unwrap();
     let mut actual = Vec::new();

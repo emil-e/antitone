@@ -132,10 +132,7 @@ fn render(
                 bounds: region,
                 grid,
             },
-            Budget {
-                tile,
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile },
         )
         .unwrap();
     let output = device.create_buffer(&wgpu::BufferDescriptor {
@@ -272,14 +269,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
         let requested = Rect::new([bounds.x + 2, bounds.y + 2], [3, 3]);
         assert_eq!(
             image
-                .regions_for(
-                    &original,
-                    requested,
-                    Budget {
-                        tile: [5, 4],
-                        scratch_bytes: 2 << 20
-                    }
-                )
+                .regions_for(&original, requested, Tiling { tile: [5, 4] })
                 .unwrap(),
             vec![requested.expanded([2, 1], Some(bounds)).unwrap()],
             "the composed calculations own the convolution halo"
@@ -401,10 +391,7 @@ fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() 
         let plan = Plan::with_policy(
             image.clone(),
             domain.finite().unwrap(),
-            Budget {
-                tile: [13, 11],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [13, 11] },
             Policy::Composed,
         )
         .unwrap();
@@ -458,10 +445,7 @@ fn choose(p: vec4f, pos: vec2f) -> vec4f {
     let plan = Plan::new(
         oversized,
         domain.finite().unwrap(),
-        Budget {
-            tile: [13, 11],
-            scratch_bytes: 1 << 20,
-        },
+        Tiling { tile: [13, 11] },
     )
     .unwrap();
     let mut limits = device.limits();
@@ -496,15 +480,5 @@ fn identity(p: vec4f, pos: vec2f) -> vec4f {
         )
         .with_uniform(20, &[1f32; 4]),
     );
-    assert!(
-        Plan::new(
-            invalid,
-            domain.finite().unwrap(),
-            Budget {
-                tile: [13, 11],
-                scratch_bytes: 1 << 20
-            }
-        )
-        .is_err()
-    );
+    assert!(Plan::new(invalid, domain.finite().unwrap(), Tiling { tile: [13, 11] }).is_err());
 }

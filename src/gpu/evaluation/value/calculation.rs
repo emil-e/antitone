@@ -38,9 +38,17 @@ impl Calculation {
     pub(in crate::gpu::evaluation) fn compile(
         self,
         output: CellRegion,
-        budget: Budget,
+        budget: Tiling,
     ) -> Result<WorkUnit, Error> {
-        super::compile_unit(&self, output, budget)
+        self.compile_with_limits(output, budget, None)
+    }
+    pub(in crate::gpu::evaluation) fn compile_with_limits(
+        self,
+        output: CellRegion,
+        budget: Tiling,
+        limits: Option<&wgpu::Limits>,
+    ) -> Result<WorkUnit, Error> {
+        super::compile_unit(&self, output, budget, limits)
     }
     pub(crate) fn references(values: &[Value]) -> Vec<Self> {
         values.iter().cloned().map(Self::input).collect()
@@ -112,7 +120,7 @@ impl Calculation {
                 continue;
             }
             if seen.len() > MAX_UNIT_VALUES {
-                return Err(Error::WorkingAllowance(
+                return Err(Error::EvaluationLimit(
                     "calculation exceeds the unit graph capacity",
                 ));
             }
@@ -222,7 +230,7 @@ impl Calculation {
     pub(crate) fn read(&self, region: CellRegion) -> Result<Self, Error> {
         self.request(region)
     }
-    pub(crate) fn plan_unit(&self, output: CellRegion, budget: Budget) -> Result<WorkUnit, Error> {
+    pub(crate) fn plan_unit(&self, output: CellRegion, budget: Tiling) -> Result<WorkUnit, Error> {
         if self.value().is_some() {
             return Err(Error::InvalidParameter(
                 "logical inputs require expression compilation",

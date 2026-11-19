@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn a_single_oversize_host_or_preexisting_gpu_value_keeps_one_unit_transfer_behavior() {
+fn host_and_preexisting_gpu_values_commit_as_one_ready_group() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
@@ -15,10 +15,6 @@ fn a_single_oversize_host_or_preexisting_gpu_value_keeps_one_unit_transfer_behav
             queue: &queue,
             gate: &gate,
             scope: &scope,
-            budget: Budget {
-                tile: [4, 2],
-                scratch_bytes: 32,
-            },
             working: &working,
             cancelled: &|| false,
             progress: &|| {},
@@ -27,6 +23,7 @@ fn a_single_oversize_host_or_preexisting_gpu_value_keeps_one_unit_transfer_behav
         pixels: destination.as_buffer().unwrap(),
     };
     let mut copies = Copies::default();
+    let mut inputs = Vec::new();
     for (index, output) in [[0, 0, 2, 2].into(), [2, 0, 2, 2].into()]
         .into_iter()
         .enumerate()
@@ -40,12 +37,14 @@ fn a_single_oversize_host_or_preexisting_gpu_value_keeps_one_unit_transfer_behav
         let weak = Arc::downgrade(&image);
         copies.copy(&production, image, output, output).unwrap();
         assert!(
-            weak.upgrade().is_none(),
-            "one value exceeding the grouping allowance transfers immediately rather than accumulating"
+            weak.upgrade().is_some(),
+            "the unsubmitted group owns each input"
         );
-        assert_eq!(copies.bytes, 0);
+        inputs.push(weak);
     }
-    assert_eq!(copies.counts.submissions, 2);
+    copies.flush(&production).unwrap();
+    assert!(inputs.iter().all(|input| input.upgrade().is_none()));
+    assert_eq!(copies.counts.submissions, 1);
     let actual = super::super::super::super::super::execute::read(
         &device,
         &queue,
@@ -67,16 +66,12 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     let working = RunWorkingSet::default();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let cancelled = || std::time::Instant::now() >= deadline;
-    let budget = Budget {
-        tile: [4, 2],
-        scratch_bytes: 128,
-    };
+    let budget = Tiling { tile: [4, 2] };
     let worker = Worker {
         context: &context,
         queue: &queue,
         gate: &gate,
         scope: &scope,
-        budget,
         working: &working,
         cancelled: &cancelled,
         progress: &|| {},
@@ -100,7 +95,6 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     let (mut waiting, producer) = scope.claim_unit(
         root.identity().unwrap().clone(),
         Arc::new(layout(right, ImageBacking::Host)),
-        budget,
     );
     let mut task = std::task::Context::from_waker(futures_util::task::noop_waker_ref());
     assert!(

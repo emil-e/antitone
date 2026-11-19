@@ -64,10 +64,7 @@ fn evaluation(context: &Context, image: Value, region: CellRegion) -> Evaluation
                 bounds: region,
                 grid: image.domain.grid,
             },
-            Budget {
-                tile: [2, 2],
-                scratch_bytes: 1 << 20,
-            },
+            Tiling { tile: [2, 2] },
         )
         .unwrap()
 }

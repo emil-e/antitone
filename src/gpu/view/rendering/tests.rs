@@ -1,4 +1,6 @@
 use super::*;
+
+mod failures;
 use crate::gpu::evaluation as e;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -96,16 +98,21 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
     assert!(reused.same_source_as(&first));
     let edited = make(renderer, 5.);
     assert!(edited.same_source_definition_as(&first));
-    assert!(edited.same_source_as(&first));
-    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    assert!(
+        !edited.same_source_as(&first),
+        "completed frames do not pin source inputs at zero retention"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 3);
 }
 
 #[test]
 fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
+    renderer.evaluation().set_retention_limit(1 << 20);
     let scope = renderer.evaluation().materializations();
-    scope.set_retention_enabled(false);
+    scope.set_retention_enabled(true);
+    scope.set_test_pressure(crate::sys::MemoryPressure::Normal);
     let count = Arc::new(AtomicUsize::new(0));
     let input = e::source(Arc::new(Coordinates(count.clone())));
     let frame = FrameRaster::full(
@@ -168,7 +175,8 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         1,
         "a different endpoint uses the live input without another source read"
     );
-    assert_eq!(renderer.evaluation().retained_bytes(), 0);
+    assert!(renderer.evaluation().retained_bytes() > 0);
+    assert!(renderer.evaluation().retained_bytes() <= 1 << 20);
     assert!(
         scope
             .find_ready::<e::ImageLayout>(&identity, |_| true)

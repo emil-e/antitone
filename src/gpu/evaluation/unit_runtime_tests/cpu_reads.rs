@@ -31,7 +31,7 @@ impl Operation for Mean {
         inputs: &[crate::gpu::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _: Budget,
+        _: Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
         Ok(Some(value::Calculation::new(
             domain,
@@ -69,12 +69,8 @@ impl CpuKernel for Mean {
 #[test]
 fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    for (tile, scratch_bytes, maximum_submissions) in [
-        ([1, 1], 1 << 20, 4),
-        ([2, 2], 1 << 20, 4),
-        ([32, 32], 1 << 20, 4),
-        ([1, 1], 8 << 10, 16),
-    ] {
+    for tile in [[1, 1], [2, 2], [32, 32]] {
+        let maximum_submissions = 4;
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let reads = Arc::new(AtomicUsize::new(0));
         let source = source(Arc::new(InputPlate(reads.clone())));
@@ -103,10 +99,7 @@ fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
                     bounds: region,
                     grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 },
-                Budget {
-                    tile,
-                    scratch_bytes,
-                },
+                Tiling { tile },
             )
             .unwrap();
         let mut actual = Vec::new();
@@ -130,15 +123,8 @@ fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
         );
         assert!(
             counts.submissions <= maximum_submissions,
-            "input admission must not inherit consumer-sized fragments: tile={tile:?}, scratch={scratch_bytes}, {counts:?}"
+            "input batching must not inherit consumer-sized fragments: tile={tile:?}, {counts:?}"
         );
         assert!(reads.load(Ordering::Relaxed) <= maximum_submissions);
-        if scratch_bytes == 8 << 10 {
-            assert!(
-                counts.submissions > 1,
-                "the complete GPU input exceeds this allowance and must still be subdivided"
-            );
-            assert!(reads.load(Ordering::Relaxed) > 1);
-        }
     }
 }

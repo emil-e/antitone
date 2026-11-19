@@ -17,9 +17,8 @@ pub(super) fn materialize(
                 bounds,
                 grid: image.domain().grid,
             },
-            Budget {
+            Tiling {
                 tile: [bounds.width, bounds.height],
-                scratch_bytes: 1 << 20,
             },
         )
         .unwrap();

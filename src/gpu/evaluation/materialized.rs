@@ -3,6 +3,9 @@ use super::CellRegion as Rect;
 use super::materializations::ImageStorage;
 use super::*;
 
+mod copies;
+pub(super) use copies::CopyCover;
+
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
