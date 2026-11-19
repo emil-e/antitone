@@ -62,10 +62,13 @@ try {
     $failed = $false
     try { Get-LlvmOpenMPRuntime -Prefix (Split-Path -Parent $llvm) | Out-Null } catch { $failed = $true }
     if (-not $failed) { throw 'Missing pinned LLVM runtime was accepted.' }
-    Assert-LlvmOpenMPImports -Lines @('dependencies:', '  libomp.dll', '  msvcp140.dll')
-    foreach ($imports in @(@('vcomp140.dll'), @('libomp.dll', 'vcomp140.dll'), @('libomp.dll', 'libomp140.x86_64.dll'))) {
+    Assert-LlvmOpenMPImports -Lines @('', 'dependencies:', '', '  libomp.dll', '  msvcp140.dll', '')
+    foreach ($imports in @(@('', ''), @('', 'KERNEL32.dll', ''), @('vcomp140.dll'), @('', 'libomp.dll', '', 'vcomp140.dll'), @('libomp.dll', 'libomp140.x86_64.dll'))) {
         $failed = $false
-        try { Assert-LlvmOpenMPImports -Lines $imports } catch { $failed = $true }
+        try { Assert-LlvmOpenMPImports -Lines $imports } catch {
+            if ($_.Exception.Message -notlike 'Expected only pinned libomp.dll for OpenMP;*') { throw }
+            $failed = $true
+        }
         if (-not $failed) { throw "Missing or mixed OpenMP runtimes were accepted: $imports" }
     }
     Write-Host 'Windows runtime selection: all tests passed'

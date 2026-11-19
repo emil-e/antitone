@@ -8,7 +8,7 @@ function Get-LlvmOpenMPRuntime {
 }
 
 function Assert-LlvmOpenMPImports {
-    param([Parameter(Mandatory = $true)][string[]]$Lines)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Lines)
     $imports = @($Lines | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.dll$' })
     $other = @($imports | Where-Object { $_ -match '^(vcomp|libiomp|libgomp|libomp\d)' })
     if ($imports -notcontains 'libomp.dll' -or $other.Count -ne 0) {
