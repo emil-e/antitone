@@ -105,7 +105,7 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             })
             .unwrap();
         app.update(|scope| {
-            assert!(scope.visit.masks.gesture().is_none());
+            assert!(scope.visit.masks.active().is_none());
             scope.set_hosted_tool(
                 super::super::tool::Placement::Photo,
                 Box::new(OwnedInteraction { _task: task }),
@@ -114,10 +114,9 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
         app.pump();
         app.update(|scope| {
             assert!(scope.crop_edit().is_none());
-            assert!(scope.visit.masks.gesture().is_none());
+            assert!(scope.visit.masks.active().is_none());
             assert!(scope.flat_edit().is_none());
             scope.set_crop_edit(None);
-            scope.visit.masks.cancel();
             scope.set_flat_edit(None);
             scope.set_analysis_operation(None);
             scope.clear_dust();

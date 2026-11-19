@@ -36,7 +36,7 @@ pub(in crate::editor) struct ToolButton<'a> {
     name: &'a str,
     help: &'a str,
     enabled: bool,
-    active: bool,
+    active: Option<bool>,
     changed: bool,
 }
 
@@ -47,14 +47,14 @@ impl<'a> ToolButton<'a> {
             name,
             help,
             enabled: true,
-            active: false,
+            active: None,
             changed: false,
         }
     }
 
     pub(in crate::editor) fn tool(icon: Icon, name: &'a str, help: &'a str, active: bool) -> Self {
         Self {
-            active,
+            active: Some(active),
             ..Self::command(icon, name, help)
         }
     }
@@ -71,15 +71,30 @@ impl<'a> ToolButton<'a> {
 
     pub(in crate::editor) fn show(self, ui: &mut Ui) -> Response {
         // Shelves inherit the inspector row height so the row they were given actually fits.
-        let response = icons::button_at(
-            ui,
-            self.icon,
-            self.enabled,
-            self.name,
-            self.help,
-            ui.spacing().interact_size.y,
-        );
-        if self.active {
+        let response = ui
+            .scope(|ui| {
+                if self.active == Some(true) {
+                    let color = ui.visuals().selection.stroke.color;
+                    let widgets = &mut ui.visuals_mut().widgets;
+                    for state in [
+                        &mut widgets.inactive,
+                        &mut widgets.hovered,
+                        &mut widgets.active,
+                    ] {
+                        state.fg_stroke.color = color;
+                    }
+                }
+                icons::button_at(
+                    ui,
+                    self.icon,
+                    self.enabled,
+                    self.name,
+                    self.help,
+                    ui.spacing().interact_size.y,
+                )
+            })
+            .inner;
+        if self.active == Some(true) {
             ui.painter().rect_stroke(
                 response.rect.shrink(1.),
                 4.,
@@ -93,9 +108,16 @@ impl<'a> ToolButton<'a> {
                 ui.visuals().selection.stroke.color,
             );
         }
-        if self.active || self.changed {
+        if self.active.is_some() || self.changed {
             ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_selected(self.active);
+                if let Some(active) = self.active {
+                    node.set_selected(active);
+                    node.set_toggled(if active {
+                        egui::accesskit::Toggled::True
+                    } else {
+                        egui::accesskit::Toggled::False
+                    });
+                }
                 if self.changed {
                     node.set_description("Modified");
                 }

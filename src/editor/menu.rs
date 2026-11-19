@@ -135,7 +135,7 @@ impl Editor {
                 state.enabled.insert(Export);
             }
         }
-        if self.selected_area().is_some() && !self.interaction_blocked() && !self.mask_dragging() {
+        if self.selected_area().is_some() && !self.interaction_blocked() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
         }
         if self.fullscreen_available() {

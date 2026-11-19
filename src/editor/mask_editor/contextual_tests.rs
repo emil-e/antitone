@@ -16,18 +16,14 @@ fn start(editor: &mut Editor) -> AdjustmentLayerId {
         .layers[0]
         .id;
     editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
-    editor.document.visit.working_view.compare = true;
     editor.begin_linear_mask(Some(id));
-    let edit = editor.document.visit.masks.gesture_mut().unwrap();
-    edit.mask = Some(AdjustmentLayerCoverage::Linear {
+    editor.test_mask_preview(AdjustmentLayerCoverage::Linear {
         start: SourcePoint([100., 70.]),
         end: SourcePoint([149., 99.]),
     });
     assert!(editor.mask_preview_source().is_some());
-    assert!(editor.document.visit.working_view.compare);
-    assert!(!editor.comparing_original());
-    assert!(!editor.tool_interacting());
-    assert!(editor.current_tool().is_none());
+    assert!(editor.tool_interacting());
+    assert!(editor.current_tool().unwrap().is::<MaskTool>());
     id
 }
 
@@ -71,7 +67,7 @@ fn gradient_refinement_does_not_require_an_executable_image() {
             );
             let before = editor.document.state.project.clone();
             let id = start(&mut editor);
-            let mask = editor.document.visit.masks.gesture().unwrap().mask.unwrap();
+            let mask = editor.mask_preview_geometry().unwrap();
             editor.finish_mask(true);
             let mut expected = before.clone();
             expected
@@ -117,10 +113,8 @@ fn visit_retirement_and_layer_selection_discard_only_the_unfinished_refinement()
             } else {
                 editor.select_adjustment_layer(adjustment_layers::Target::None);
             }
-            assert!(!editor.document.visit.masks.editing());
+            assert!(!editor.masking());
             assert!(editor.mask_preview_source().is_none());
-            assert!(editor.document.visit.working_view.compare);
-            assert!(editor.comparing_original());
             editor.finish_mask(true);
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.history_label(history::Direction::Undo), history);
@@ -176,15 +170,14 @@ fn refinement_changes_only_geometry_and_preserves_later_accepted_controls() {
             .find(|layer| layer.id == id)
             .unwrap()
             .adjustment
-            .mask = editor.document.visit.masks.gesture().unwrap().mask.unwrap();
+            .mask = editor.mask_preview_geometry().unwrap();
         assert!(editor.mask_preview_source().is_some());
         editor.finish_mask(true);
-        assert!(!editor.document.visit.masks.editing());
+        assert!(editor.masking());
+        assert!(!editor.mask_dragging());
         assert_eq!(editor.document.state.project, expected);
         editor.restore_history(history::Direction::Undo, &UiContext::render_only());
         assert_eq!(editor.document.state.project, graded);
-        assert!(editor.document.visit.working_view.compare);
-        assert!(editor.comparing_original());
     });
 }
 
@@ -198,7 +191,7 @@ fn document_admission_retires_the_gesture_before_preparation_is_polled() {
             app.enter(|editor, _| editor.new_project());
             app.read(|editor| {
                 assert!(
-                    !editor.document.visit.masks.editing(),
+                    !editor.masking(),
                     "replacement retires the unfinished refinement"
                 );
                 assert_ne!(editor.document.state.project, before);
@@ -265,7 +258,7 @@ fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
             app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
             app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
             app.read(|editor| {
-                assert!(editor.document.visit.masks.editing());
+                assert!(editor.masking());
                 assert_eq!(editor.document.state.project, before);
             });
             app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
@@ -274,7 +267,7 @@ fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
             app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
             app.update(|editor| editor.finish_mask(true));
             app.read(|editor| {
-                assert!(!editor.document.visit.masks.editing());
+                assert!(!editor.masking());
                 assert!(editor.document.project.sources.is_empty());
                 assert_eq!(editor.history_label(history::Direction::Undo), None);
             });
@@ -288,13 +281,13 @@ fn snapshots_and_roll_commands_remain_available_during_private_refinement() {
         let (mut editor, _, _) = processing::tests::fixture().await;
         assert!(
             editor.document_command_available(),
-            "idle contextual handles do not block file actions"
+            "idle mask editing does not block file actions"
         );
         start(&mut editor);
         let before = editor.document.state.project.clone();
         crate::application::test_support::with_application(editor, |app| {
             app.read(|editor| {
-                assert!(!editor.tool_interacting());
+                assert!(editor.tool_interacting());
                 assert!(editor.document_command_available());
                 for action in [
                     crate::platform::menu::Action::New,
@@ -310,7 +303,7 @@ fn snapshots_and_roll_commands_remain_available_during_private_refinement() {
             app.read(|editor| {
                 assert!(!editor.files.pending());
                 assert!(editor.document.export.form.is_some());
-                assert!(editor.document.visit.masks.editing());
+                assert!(editor.masking());
                 assert_eq!(editor.document.state.project, before);
             });
             app.update(|editor| {

@@ -417,50 +417,6 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
                     )
                 });
             }
-            harness
-                .get_by_label("Original-resolution reference")
-                .click();
-            harness.step();
-            paint_until(&mut harness, |editor| {
-                assert!(
-                    !editor.document.visit.canvas.original.failed(),
-                    "{}",
-                    editor.status
-                );
-                positive_ready(editor) && editor.document.visit.working_view.reference_ready()
-            });
-            harness.read(|editor| assert!(editor.document.visit.working_view.compare));
-            harness.read(|editor| {
-                assert!(matches!(
-                    editor
-                        .document
-                        .visit
-                        .canvas
-                        .original
-                        .settled()
-                        .as_ref()
-                        .unwrap()
-                        .1
-                        .look_result(),
-                    Some(Ok(()))
-                ))
-            });
-            if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
-                let output = PathBuf::from(output);
-                std::fs::create_dir_all(&output).unwrap();
-                harness
-                    .render()
-                    .unwrap()
-                    .save(output.join(format!(
-                        "film-{}-reference-offscreen.png",
-                        selection.paper.id()
-                    )))
-                    .unwrap();
-            }
-            harness
-                .get_by_label("Original-resolution reference")
-                .click();
-            harness.step();
             paint_until(&mut harness, positive_ready);
         }
         let accepted = harness.read(|editor| {

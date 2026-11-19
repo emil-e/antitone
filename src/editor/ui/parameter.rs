@@ -1,7 +1,7 @@
 use super::{
     ControlResponse, INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH,
     PARAMETER_SLIDER_HEIGHT, PARAMETER_UNIT_WIDTH, icons,
-    interaction::{control_active, control_started, record_control_interaction},
+    interaction::{control_active, control_started},
     numeric_cancelled,
 };
 use egui::{Response, Ui};
@@ -336,8 +336,6 @@ fn parameter_row(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64) -> Parame
             *value = default;
             response = ControlResponse::action(ui.id().with("reset"), true);
         }
-        record_control_interaction(ui, &slider);
-        record_control_interaction(ui, &numeric);
         ui.add_space(PARAMETER_GAP);
         ParameterResponse {
             slider,

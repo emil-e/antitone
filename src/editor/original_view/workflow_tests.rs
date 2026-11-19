@@ -1,6 +1,5 @@
 use super::*;
 use crate::application::test_support::with_application;
-use crate::editor::OriginalPurpose;
 use crate::editor::OutputTarget;
 use crate::editor::ViewRequest;
 use crate::editor::source_loading;
@@ -60,7 +59,7 @@ fn demand(
 ) -> std::sync::Weak<crate::scan::DevelopedSource> {
     let (wanted, resource) = demand_input(ev);
 
-    e.observe_original(Some(OriginalPurpose::Tool), Some(wanted));
+    e.observe_original(Some(wanted));
     e.active_canvas_mut().original.last_edit = Instant::now() - Duration::from_secs(1);
     e.request_original(&egui::Context::default(), cx);
     resource
@@ -74,7 +73,7 @@ fn reference_demand(
     let (wanted, resource) = demand_input(ev);
     let mut state = e.document.flat_edit_mut().unwrap();
     let original = state.view.test_original_mut();
-    original.observe(OriginalPurpose::Tool, wanted);
+    original.observe(wanted);
     original.last_edit = Instant::now() - Duration::from_secs(1);
     original.request_with(
         e.source_services.clone().unwrap(),
@@ -289,16 +288,13 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
                 frame: None,
             };
             view.area.width = u32::MAX;
-            e.observe_original(
-                Some(OriginalPurpose::Tool),
-                Some(Demand::fixture(
-                    input,
-                    OutputTarget::Srgb,
-                    Some(view),
-                    composition,
-                    source,
-                )),
-            );
+            e.observe_original(Some(Demand::fixture(
+                input,
+                OutputTarget::Srgb,
+                Some(view),
+                composition,
+                source,
+            )));
             e.document.visit.canvas.original.last_edit = Instant::now() - Duration::from_secs(1);
             e.request_original(&egui::Context::default(), access);
         });

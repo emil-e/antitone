@@ -255,7 +255,7 @@ fn ordinary_pan_hover_preserves_fit_small_zoom_and_disabled_cursors() {
         .viewport
         .zoom_at(fit, 2., 0.1, point);
     let (small, _, cursor) = h.frame(vec![egui::Event::PointerMoved(point)]);
-    assert!(!can_pan(small));
+    assert!(!h.editor.document.visit.canvas.viewport.can_pan(small));
     assert_eq!(cursor, egui::CursorIcon::ZoomOut);
     h.native();
     assert_eq!(

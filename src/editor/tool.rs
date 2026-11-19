@@ -162,7 +162,6 @@ impl DocumentScope {
     }
     pub(super) fn set_hosted_tool(&mut self, placement: Placement, tool: Box<dyn Tool>) {
         self.clear_hosted_tools();
-        self.visit.masks.cancel();
         *self.hosted_slot_mut(placement) = Slot::Installed(tool);
     }
 }

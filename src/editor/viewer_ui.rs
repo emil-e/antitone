@@ -119,7 +119,6 @@ impl Editor {
             .then(|| self.current_tool().map(|tool| tool.presentation()))
             .flatten();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
-        let masking = !fullscreen && self.masking();
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title));
@@ -137,9 +136,7 @@ impl Editor {
             self.document.source = true;
         }
 
-        let navigating = self.canvas_frame.layout.is_some()
-            && !self.interaction_blocked()
-            && !self.mask_dragging();
+        let navigating = self.canvas_frame.layout.is_some() && !self.interaction_blocked();
 
         let tool_group = tool.map(|(icon, title)| ToolGroup {
             identity: ToolIdentity { icon, title },
@@ -189,14 +186,6 @@ impl Editor {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.comparing_original() && self.active_canvas().original.failed() {
-                        " · Reference unavailable"
-                    } else if self.comparing_original()
-                        && self.document.visit.working_view.reference_ready()
-                    {
-                        " · Original reference"
-                    } else if self.comparing_original() {
-                        " · Preparing reference"
                     } else if self.document.visit.working_view.displayed.is_none() {
                         " · Acquiring view"
                     } else {
@@ -238,8 +227,8 @@ impl Editor {
                 let navigation_width = 50.
                     + navigation_icons as f32 * ui::CONTROL_HEIGHT
                     + (navigation_icons + 3) as f32 * VIEWER_ITEM_GAP;
-                let show_zoom_steps = tool.is_none() && !masking
-                    || ui.available_width() >= trailing_width + navigation_width;
+                let show_zoom_steps =
+                    tool.is_none() || ui.available_width() >= trailing_width + navigation_width;
                 if ui::icons::button(
                     ui,
                     Icon::Fit,
@@ -348,13 +337,7 @@ impl Editor {
                         if fullscreen {
                             ui.small("F or Escape: return to the workspace");
                         }
-                        if let Some(help) = self
-                            .mask_help()
-                            .filter(|_| !fullscreen && self.tab == 1 && hosted.is_none())
-                        {
-                            ui.separator();
-                            ui.small(help);
-                        } else if let Some(tool) = &hosted {
+                        if let Some(tool) = &hosted {
                             ui.separator();
                             ui.small(tool.help);
                             ui.small(if tool.primary.is_some() {
@@ -403,8 +386,7 @@ impl Editor {
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
         let inspecting = navigating
             && self.input().ready()
-            && (!self.has_hosted_tool() || self.fullscreen.is_some())
-            && !self.masking();
+            && (!self.has_hosted_tool() || self.fullscreen.is_some());
         let correction_ready =
             !self.document.correction.pending() && self.document.correction.error().is_none();
         let can_toggle = correction_ready || !self.document.source;
@@ -421,17 +403,6 @@ impl Editor {
                 },
             );
         });
-        if !self.canvas_inspection() && self.document.visit.working_view.enabled() {
-            ui.add_enabled_ui(inspecting, |ui| {
-                ui::icons::toggle(
-                    ui,
-                    ui::icons::Icon::Inspection,
-                    &mut self.document.visit.working_view.compare,
-                    "Original-resolution reference",
-                    "Compare with original-resolution processing; export is unchanged.",
-                );
-            });
-        }
         if self.canvas_inspection() {
             self.source_controls(ui, navigating);
         }

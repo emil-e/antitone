@@ -102,41 +102,6 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         }
         drop(captured);
 
-        h.get_by_label("Original-resolution reference").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            assert!(
-                !editor.document.visit.canvas.original.failed(),
-                "{}",
-                editor.status
-            );
-            editor.document.visit.working_view.reference_ready()
-        });
-        h.render().unwrap();
-        let point = h.read(|editor| {
-            editor
-                .document
-                .visit
-                .canvas
-                .last_layout
-                .unwrap()
-                .0
-                .image
-                .center()
-        });
-        {
-            let pixels = capture.borrow();
-            let actual = pixels.pixels
-                [point.y.floor() as usize * pixels.size[0] as usize + point.x.floor() as usize];
-            for c in 0..3 {
-                assert!(
-                    (f64::from(actual[c]) - expected[c]).abs() < 0.004,
-                    "original reference {actual:?} vs {expected:?}"
-                );
-            }
-        }
-        h.get_by_label("Original-resolution reference").click();
-        h.step();
         h.enter(|editor, cx| editor.begin_test_picker(PickerCase::Wb, cx));
         h.step();
         wait_for(&mut h, |editor| {

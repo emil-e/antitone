@@ -28,7 +28,6 @@ pub(super) struct AdjustmentLayerEditor {
 
     pub(super) show_coverage: bool,
     panel_collapsed: bool,
-    pub(super) adjusting_values: bool,
     pub(super) reveal_controls: bool,
     reveal: bool,
     rename_focus: bool,
@@ -53,6 +52,7 @@ impl AdjustmentLayerEditor {
 pub(super) enum Action {
     Select(Target),
     Overlay(bool),
+    Edit(AdjustmentLayerId),
     Enable(AdjustmentLayerId, bool),
     Reorder(OrderDrag, usize),
     RenameStart(AdjustmentLayerId),
@@ -157,7 +157,9 @@ impl Editor {
     }
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
-        if target != self.adjustment_layer_target() {
+        if target != self.adjustment_layer_target()
+            && self.mask_target().map(Target::Layer) != Some(target)
+        {
             self.finish_mask(false);
         }
         if self
@@ -199,11 +201,7 @@ impl Editor {
     }
 
     pub(super) fn finish_adjustment_layer_interaction(&mut self) {
-        if self.creating_mask() {
-            self.end_tool();
-        } else {
-            self.finish_mask(false);
-        }
+        self.finish_mask(false);
         self.document.visit.adjustment_layers.rename = None;
         self.document.visit.adjustment_layers.owns_delete = false;
         self.document.visit.adjustment_layers.order_drag = None;
@@ -212,7 +210,7 @@ impl Editor {
     }
 
     fn adjustment_layer_actions_available(&self) -> bool {
-        !self.interaction_blocked() && !self.tool_interacting() && !self.dialogs.is_open()
+        !self.interaction_blocked() && !self.dialogs.is_open()
     }
 
     pub(super) fn edit_adjustment_layers(
@@ -377,6 +375,31 @@ impl Editor {
                     self.select_adjustment_layer(Target::Layer(created.unwrap()));
                 })
             }
+            Action::Edit(id) => {
+                if self.mask_target() == Some(id) {
+                    self.finish_mask(false);
+                    self.status = "Mask editing finished".into();
+                    return;
+                }
+                let mask = self
+                    .document
+                    .project
+                    .source(source)
+                    .ok()
+                    .and_then(|source| source.adjustment_layers.as_ref())
+                    .and_then(|layers| layers.layers.iter().find(|layer| layer.id == id))
+                    .map(|layer| layer.adjustment.mask);
+                match mask {
+                    Some(crate::adjustment_layers::AdjustmentLayerCoverage::Linear { .. }) => {
+                        self.begin_linear_mask(Some(id))
+                    }
+                    Some(crate::adjustment_layers::AdjustmentLayerCoverage::Radial { .. }) => {
+                        self.begin_radial_mask(Some(id))
+                    }
+                    _ => self.status = "This layer has no editable mask".into(),
+                }
+                Ok(())
+            }
             Action::Select(target) => {
                 self.select_adjustment_layer(target);
                 Ok(())
@@ -448,7 +471,6 @@ impl Editor {
 
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.tool_interacting()
             && self.document.visit.adjustment_layers.owns_delete
             && matches!(self.adjustment_layer_target(), Target::Layer(_))
     }
@@ -459,12 +481,6 @@ impl Editor {
         {
             self.apply_adjustment_layer_action(Action::Delete(id), cx);
         }
-    }
-
-    pub(super) fn adjustment_layer_overlays_visible(&self) -> bool {
-        self.document.visit.masks.gesture().is_some()
-            || (!self.document.visit.adjustment_layers.panel_collapsed
-                && !self.document.visit.adjustment_layers.adjusting_values)
     }
 
     pub(super) fn photo_control(
@@ -839,13 +855,27 @@ impl Editor {
                                     }
                                 } else {
                                     let mut enabled = record.adjustment.enabled;
-                                    let (row, toggle) = ui::draggable_icon_row(
+                                    let edit_name = format!("Edit {}", record.name);
+                                    let editing = self.mask_target() == Some(record.id);
+                                    let edit = (record.adjustment.mask != (crate::adjustment_layers::AdjustmentLayerCoverage::Global {})).then(|| {
+                                        ui::ToolButton::tool(
+                                            ui::icons::Icon::Edit,
+                                            &edit_name,
+                                            if editing { "Finish editing mask" } else { "Edit mask" },
+                                            editing,
+                                        ).enabled(editing || self.mask_tool_available())
+                                    });
+                                    let (row, toggle, edit) = ui::draggable_icon_row(
                                         ui,
                                         mask_icon(record.adjustment.mask),
                                         &record.name,
                                         target == Target::Layer(record.id),
                                         Some(&mut enabled),
+                                        edit,
                                     );
+                                    if edit.is_some_and(|response| response.clicked()) {
+                                        action = Some(Action::Edit(record.id));
+                                    }
 
                                     let key = OrderKey {
                                         loaded: self.id,
@@ -964,17 +994,6 @@ impl Editor {
                     memory.surrender_focus(id);
                 }
             });
-        }
-        if let Some(error) = self
-            .document
-            .visit
-            .masks
-            .gesture()
-            .and_then(MaskEdit::error)
-        {
-            ui.weak(format!(
-                "Mask not accepted: {error}. Draw again or Escape to cancel."
-            ));
         }
         let editable = editable
             && selected

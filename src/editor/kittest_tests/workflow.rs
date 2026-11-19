@@ -200,11 +200,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                     .displayed
                     .as_ref()
                     .is_some_and(|view| {
-                        view.processing() == expected.clone()
-                            && view.target == e.document.target()
-                            && (!e.document.visit.working_view.compare
-                                || e.document.source
-                                || e.document.visit.working_view.reference_ready())
+                        view.processing() == expected.clone() && view.target == e.document.target()
                     })
         } else {
             e.active_canvas()
@@ -727,7 +723,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
 }
 
 #[test]
-fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_reference_switching() {
+fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switching() {
     calibrated_workflow(|mut harness, _, _directory| {
         harness.update(|editor| editor.scopes.visible = true);
         wait_settled(&mut harness);
@@ -892,55 +888,11 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                 "normal grading does not prepare hidden original work"
             )
         });
-        let project = harness.read(|editor| editor.document.state.project.clone());
-        harness
-            .get_by_label("Original-resolution reference")
-            .click();
-        harness.step();
-        wait_settled(&mut harness);
-        harness.render().unwrap();
-        let reference = harness.read(|editor| {
-            editor
-                .document
-                .visit
-                .working_view
-                .displayed
-                .clone()
-                .unwrap()
-        });
-        harness.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &reference.image,
-                &editor
-                    .document
-                    .visit
-                    .canvas
-                    .original
-                    .settled()
-                    .as_ref()
-                    .unwrap()
-                    .1
-            ))
-        });
-        assert!(reference.spec == srgb.spec);
-        harness
-            .get_by_label("Original-resolution reference")
-            .click();
-        harness.step();
-        harness.render().unwrap();
-        harness.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &srgb,
-                editor
-                    .document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .unwrap()
-            ))
-        });
-        harness.read(|editor| assert_eq!(editor.document.state.project, project));
+        assert!(
+            harness
+                .query_by_label("Original-resolution reference")
+                .is_none()
+        );
         let scopes::ScopeInput { view, .. } =
             harness.read(|editor| editor.scope_request().unwrap());
         harness.read(|editor| {
@@ -986,7 +938,6 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         harness.step();
         harness.render().unwrap();
         harness.read(|editor| assert!(editor.document.visit.canvas.original.settled().is_none()));
-        harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
         harness.read(|editor| {
             assert!(
                 editor

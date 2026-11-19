@@ -24,16 +24,6 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_rendere
         renderer.evaluation.cache_policy().generated_bytes,
         limits.gpu_bytes
     );
-    assert!(thumbnails.reserve_view(512 << 20));
-    assert_eq!(
-        renderer.evaluation.cache_policy().generated_bytes,
-        256 << 20
-    );
-    assert!(thumbnails.reserve_view(0));
-    assert_eq!(
-        renderer.evaluation.cache_policy().generated_bytes,
-        limits.gpu_bytes
-    );
     let changed = cache_limits::CacheLimits {
         gpu_bytes: 512 << 20,
         ..limits
@@ -117,7 +107,10 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
         );
 
         let live = produce().await;
-        assert!(thumbnails.reserve_view(7 << 20));
+        thumbnails.set_limits(cache_limits::CacheLimits {
+            gpu_bytes: 1 << 20,
+            ..limits
+        });
         assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 1 << 20);
         assert!(
             store
@@ -129,7 +122,7 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
             store
                 .find_ready(&key, |size: &u64| *size == bytes)
                 .is_none(),
-            "presentation retention and calculation retention share the configured allowance"
+            "reducing optional space evicts values once their consumer releases them"
         );
 
         let live = produce().await;
@@ -152,7 +145,6 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
                 .is_none()
         );
 
-        thumbnails.reserve_view(0);
         thumbnails.set_limits(limits);
         drop(produce().await);
         assert!(

@@ -20,13 +20,10 @@ a photo-only view of the current image: the workspace chrome disappears so you c
 the photograph. **F or Escape returns.** This covers the current display without opening
 a macOS fullscreen Space.
 
-## Comparing and inspecting
+## Inspecting the source
 
 - **View source** flips between your graded positive and the developed source.
   Negative's positive view requires Dmin/Dmax calibration.
-- **Original-resolution reference** compares the working preview against full-resolution
-  processing — export is unchanged either way, so this is purely a preview-sharpness
-  check.
 - **Source inspection** adjusts viewing brightness and, for negatives, **Viewing WB**:
   Daylight by default, or As shot. Canvas and source-preview thumbnails share these
   settings; graded thumbnails stay positive. Inspection settings are not saved and do

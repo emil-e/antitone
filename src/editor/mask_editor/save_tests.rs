@@ -105,11 +105,7 @@ fn save_as_preserves_private_mask_intent_and_release_keeps_rebased_paths_and_lat
             } else {
                 unreachable!()
             };
-            if creating {
-                editor.mask_creation().unwrap().borrow_mut().mask = Some(mask);
-            } else {
-                editor.document.visit.masks.gesture_mut().unwrap().mask = Some(mask);
-            }
+            editor.test_mask_preview(mask);
             let accepted = editor.document.state.project.clone();
             let locator = editor.document.source_path(source).unwrap();
             let file = editor.document.file_key(&locator);
@@ -167,7 +163,7 @@ fn save_as_preserves_private_mask_intent_and_release_keeps_rebased_paths_and_lat
                         editor
                             .with_current_tool(|tool, editor| {
                                 (tool as &mut dyn std::any::Any)
-                                    .downcast_mut::<CreationTool>()
+                                    .downcast_mut::<MaskTool>()
                                     .unwrap()
                                     .finish(editor);
                             })
@@ -176,7 +172,8 @@ fn save_as_preserves_private_mask_intent_and_release_keeps_rebased_paths_and_lat
                         assert!(editor.mask_preview_source().is_some());
                         editor.finish_mask(true);
                     }
-                    assert!(!editor.masking(), "{}", editor.status);
+                    assert!(editor.masking(), "{}", editor.status);
+                    assert!(!editor.mask_dragging());
                     assert!(editor.document.dirty());
                     let current = editor.document.project.source(source).unwrap();
                     assert_eq!(current.path, saved.source(source).unwrap().path);
@@ -207,7 +204,7 @@ fn creation_allocates_against_current_layers_after_history_without_reinstalling_
             .unwrap();
         editor.restore_history(history::Direction::Undo, &UiContext::render_only());
         editor.begin_linear_mask(None);
-        editor.mask_creation().unwrap().borrow_mut().mask = Some(geometry(&editor, false));
+        editor.test_mask_preview(geometry(&editor, false));
         editor.restore_history(history::Direction::Redo, &UiContext::render_only());
         let before = editor
             .document
@@ -220,7 +217,7 @@ fn creation_allocates_against_current_layers_after_history_without_reinstalling_
         editor
             .with_current_tool(|tool, editor| {
                 (tool as &mut dyn std::any::Any)
-                    .downcast_mut::<CreationTool>()
+                    .downcast_mut::<MaskTool>()
                     .unwrap()
                     .finish(editor);
             })

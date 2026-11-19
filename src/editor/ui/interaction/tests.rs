@@ -35,7 +35,7 @@ fn discrete_widget_responses_preserve_availability_without_retaining_an_edit() {
 }
 
 #[test]
-fn value_activity_is_frame_local_and_ends_when_controls_are_hidden_or_disabled() {
+fn control_activity_ends_when_the_widget_is_hidden_or_disabled() {
     let context = egui::Context::default();
     let mut value = 0.;
     let mut render = |visible: bool, enabled: bool, events| {
@@ -57,7 +57,9 @@ fn value_activity_is_frame_local_and_ends_when_controls_are_hidden_or_disabled()
                             .inner,
                     );
                 }
-                active = values_are_being_adjusted(ui.ctx());
+                active = slider
+                    .as_ref()
+                    .is_some_and(|response| control_active(ui, response));
             },
         );
         output.textures_delta.clear();

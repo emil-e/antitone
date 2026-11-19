@@ -1,4 +1,4 @@
-//! Purpose-bound original-sample reconstruction, independent of normal working-view acceptance.
+//! Original-sample tool reconstruction, independent of normal working-view acceptance.
 use super::*;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
@@ -7,12 +7,6 @@ use std::sync::{Mutex, Weak};
 mod tests;
 #[cfg(test)]
 mod workflow_tests;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OriginalPurpose {
-    Reference,
-    Tool,
-}
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Demand {
@@ -147,7 +141,6 @@ impl Request {
 
 pub(super) struct OriginalView {
     pub wanted: Option<Arc<Demand>>,
-    purpose: Option<OriginalPurpose>,
     progress: Arc<Mutex<Progress>>,
     pub task: Option<async_executor::Task<()>>,
     rendered: Option<Arc<crate::gpu::view::RenderedView>>,
@@ -157,7 +150,6 @@ impl Default for OriginalView {
     fn default() -> Self {
         Self {
             wanted: None,
-            purpose: None,
             progress: Arc::new(Mutex::new(Progress::Waiting)),
             task: None,
             rendered: None,
@@ -174,10 +166,6 @@ impl OriginalView {
     pub fn start_fixture(&self, view: ViewRequest) -> Completion {
         *self.progress.lock().unwrap() = Progress::Running(view);
         self.continuation()
-    }
-    #[cfg(test)]
-    pub fn settle_fixture(&self, view: ViewRequest, image: Arc<GpuImage>) {
-        self.start_fixture(view).receive(Ok(Some(image)));
     }
     pub fn settled(&self) -> Option<(ViewRequest, Arc<GpuImage>)> {
         match &*self.progress.lock().unwrap() {
@@ -198,7 +186,6 @@ impl OriginalView {
     pub fn invalidate(&mut self) {
         self.retire_pending();
         self.wanted = None;
-        self.purpose = None;
         self.rendered = None;
     }
     pub fn discard(&mut self) {
@@ -214,22 +201,15 @@ impl OriginalView {
             self.retire_pending();
         }
     }
-    pub fn observe(&mut self, purpose: OriginalPurpose, demand: Demand) {
-        if self.purpose != Some(purpose) || self.wanted.as_deref() != Some(&demand) {
+    pub fn observe(&mut self, demand: Demand) {
+        if self.wanted.as_deref() != Some(&demand) {
             self.invalidate();
-            self.purpose = Some(purpose);
             self.wanted = Some(Arc::new(demand));
             self.last_edit = std::time::Instant::now();
         }
     }
     pub fn leave(&mut self) {
-        if self.purpose == Some(OriginalPurpose::Tool)
-            || (self.purpose.is_some() && self.settled().is_none())
-        {
-            self.invalidate();
-        } else {
-            self.cancel_pending();
-        }
+        self.discard();
     }
     #[cfg(test)]
     pub fn idle(&self) -> bool {
@@ -285,7 +265,6 @@ impl OriginalView {
     /// Present a completed original-sample reconstruction without another image calculation.
     pub(super) fn rendered(
         &mut self,
-        purpose: OriginalPurpose,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
         use crate::frame_raster::FrameRaster;
         use crate::gpu::view::RenderedView;
@@ -293,9 +272,6 @@ impl OriginalView {
         let Some((view, image)) = owner.settled() else {
             return Ok(None);
         };
-        if owner.purpose != Some(purpose) {
-            return Ok(None);
-        }
         let Some(wanted) = owner.wanted.clone() else {
             return Ok(None);
         };
@@ -333,16 +309,12 @@ impl OriginalView {
 impl Editor {
     pub(super) fn original_rendered(
         &mut self,
-        purpose: OriginalPurpose,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
-        self.active_canvas_mut().original.rendered(purpose)
+        self.active_canvas_mut().original.rendered()
     }
 
     pub(super) fn invalidate_original(&mut self) {
         self.document.visit.canvas.original.invalidate();
-    }
-    pub(super) fn discard_original(&mut self) {
-        self.document.visit.canvas.original.discard();
     }
     pub(super) fn cancel_original_pending(&mut self) {
         self.document.visit.canvas.original.cancel_pending();
@@ -351,16 +323,10 @@ impl Editor {
         self.active_canvas_mut().original.leave();
     }
 
-    pub(super) fn observe_original(
-        &mut self,
-        purpose: Option<OriginalPurpose>,
-        demand: Option<Demand>,
-    ) {
-        match (purpose, demand) {
-            (Some(purpose), Some(demand)) => {
-                self.active_canvas_mut().original.observe(purpose, demand)
-            }
-            _ => self.leave_original(),
+    pub(super) fn observe_original(&mut self, demand: Option<Demand>) {
+        match demand {
+            Some(demand) => self.active_canvas_mut().original.observe(demand),
+            None => self.leave_original(),
         }
     }
 

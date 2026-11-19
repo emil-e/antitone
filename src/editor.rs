@@ -70,7 +70,6 @@ mod white_balance;
 mod working_view;
 use working_view::WorkingView;
 mod original_view;
-use original_view::OriginalPurpose;
 mod selected_preview;
 use selected_preview::{SelectionPaint, SelectionTiming};
 mod scopes;
@@ -88,8 +87,6 @@ use flat::FlatEdit;
 mod auto_crop;
 mod crop_editor;
 use crop_editor::CropEdit;
-mod mask_editor;
-use mask_editor::MaskEdit;
 #[cfg(test)]
 mod cache_preferences_tests;
 mod calibration;
@@ -100,6 +97,7 @@ mod frame;
 mod gamma_pivot;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
+mod mask_editor;
 mod measurement;
 mod memory;
 mod navigation;
@@ -1048,7 +1046,7 @@ impl Editor {
             self.photo_tool_shelf(ui, cx);
         }
 
-        let editable = !self.interaction_blocked() && !self.tool_interacting();
+        let editable = !self.interaction_blocked();
         let can_pick = self.tool_start_available() && self.selected_area().is_some();
         let mut start_pick: Option<editing::Interaction> = None;
 
@@ -1390,7 +1388,7 @@ impl Editor {
                     }
                 } else {
                     if grade.input.capabilities().grain {
-                        let allowed = !self.interaction_blocked() && !self.tool_interacting();
+                        let allowed = !self.interaction_blocked();
                         ui.add_enabled_ui(allowed, |ui| {
                             ui::section(
                                 ui,
@@ -1414,7 +1412,7 @@ impl Editor {
                         });
                     }
                     self.look_controls(ui, cx);
-                    ui.add_enabled_ui(!self.tool_interacting(), |ui| {
+                    ui.add_enabled_ui(!self.interaction_blocked(), |ui| {
                         let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
                         let (_, action) = ui::section(
                             ui,

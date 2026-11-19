@@ -365,7 +365,6 @@ pub(super) struct Thumbnails {
     // CPU/disk completion history; an admissible GPU miss still needs rendering.
     attempted_sources: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
-    view_reservation: usize,
     pub(super) limits: cache_limits::CacheLimits,
     memory_watch: Option<memory::PressureWatch>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
@@ -419,7 +418,6 @@ impl Default for Thumbnails {
             visible_keys: Vec::new(),
             attempted_sources: Vec::new(),
             budgets,
-            view_reservation: 0,
             limits,
             memory_watch: None,
             repaint: Arc::default(),
@@ -594,15 +592,6 @@ impl Thumbnails {
         cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
     }
 
-    // Optional reference retention/building shares the existing image-cache allowance.
-    // Selected working pixels and active source leases are outside this optional allowance.
-    pub(super) fn reserve_view(&mut self, bytes: usize) -> bool {
-        let admitted = bytes <= self.budgets.images;
-        self.view_reservation = if admitted { bytes } else { 0 };
-        self.sync_image_budget();
-        admitted
-    }
-
     pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
         self.limits = limits;
         self.update_memory();
@@ -633,7 +622,7 @@ impl Thumbnails {
     }
 
     fn sync_image_budget(&mut self) {
-        let available = self.budgets.images.saturating_sub(self.view_reservation);
+        let available = self.budgets.images;
         self.embedded.set_budget(available.min(16 << 20));
         self.cache
             .set_budget(available.saturating_sub(self.embedded.byte_len()));

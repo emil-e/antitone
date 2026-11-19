@@ -42,7 +42,7 @@ fn original_request_is_readonly_and_its_owner_rejects_departed_completion() {
     let mut retired = None;
     for i in 0..40 {
         let (signature, input) = request(i as f64 / 10.);
-        owner.observe(OriginalPurpose::Tool, signature);
+        owner.observe(signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         let captured = owner.request().unwrap();
         assert!(
@@ -112,9 +112,9 @@ fn an_uninitialized_viewer_does_not_paint_through_an_alternate_proxy_renderer() 
 }
 
 #[test]
-fn leaving_unbuilt_reference_releases_its_continuation_without_idle_owner_churn() {
+fn leaving_a_tool_releases_its_continuation_without_idle_owner_churn() {
     let mut owner = OriginalView::default();
-    owner.observe(OriginalPurpose::Reference, request(0.).0);
+    owner.observe(request(0.).0);
     owner.leave();
     assert!(owner.wanted.is_none());
     let continuation = owner.continuation();
@@ -130,7 +130,7 @@ fn leaving_unbuilt_reference_releases_its_continuation_without_idle_owner_churn(
 fn original_failure_latches_once_and_rejects_unrequested_completions() {
     let mut owner = OriginalView::default();
     let (signature, _) = request(0.);
-    owner.observe(OriginalPurpose::Tool, signature);
+    owner.observe(signature);
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     let captured = owner.request().unwrap();
     assert!(

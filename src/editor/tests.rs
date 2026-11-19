@@ -394,16 +394,18 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
         };
         let input = AuthoredPhotograph::from(ProcessingParameters::source());
         let source = editor.source_context().unwrap();
-        editor.document.visit.canvas.original.observe(
-            OriginalPurpose::Tool,
-            original_view::Demand::fixture(
+        editor
+            .document
+            .visit
+            .canvas
+            .original
+            .observe(original_view::Demand::fixture(
                 input.clone(),
                 OutputTarget::Srgb,
                 Some(view),
                 Composition::new(view.area, Default::default(), Default::default()).unwrap(),
                 source,
-            ),
-        );
+            ));
         editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         let submissions = host::App::submission_gate(&editor).clone();

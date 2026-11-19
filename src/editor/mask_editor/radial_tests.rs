@@ -53,7 +53,8 @@ fn radial_creation_keeps_the_pressed_center_and_expands_a_circle_through_every_o
             let layout = layout(turns, flipped);
             let start = egui::pos2(layout.image.left() - 35., layout.image.top() + 40.);
             let end = layout.image.right_bottom() + egui::vec2(10., 20.);
-            let draft = RadialDrag::begin(None, layout, start, DEFAULT_RADIAL_FEATHER).update(end);
+            let draft =
+                RadialDrag::begin(None, layout, start, DEFAULT_RADIAL_FEATHER).update(layout, end);
             draft.validate().unwrap();
             let AdjustmentLayerCoverage::Radial {
                 center,
@@ -110,7 +111,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
             let drag = RadialDrag::begin(Some(original), layout, start, feather);
             assert_eq!(drag.handle, target);
             assert_eq!(
-                drag.update(start),
+                drag.update(layout, start),
                 original,
                 "pressing a handle must preserve precise saved values"
             );
@@ -129,7 +130,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                     radii: resized,
                     angle: rotated,
                     feather: softness,
-                } = drag.update(end)
+                } = drag.update(layout, end)
                 else {
                     unreachable!()
                 };
@@ -164,7 +165,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
             radii: resized,
             angle: rotated,
             feather: softness,
-        } = RadialDrag::begin(Some(original), layout, start, feather).update(end)
+        } = RadialDrag::begin(Some(original), layout, start, feather).update(layout, end)
         else {
             unreachable!()
         };
@@ -188,7 +189,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                 radii: resized,
                 angle: rotated,
                 feather,
-            } = RadialDrag::begin(Some(original), layout, start, 0.8).update(end)
+            } = RadialDrag::begin(Some(original), layout, start, 0.8).update(layout, end)
             else {
                 unreachable!()
             };
@@ -247,14 +248,14 @@ fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_moveme
 fn zero_size_drafts_are_invalid_but_positive_small_ovals_and_hard_edges_keep_existing_semantics() {
     let layout = layout(0, false);
     let start = layout.image.center();
-    let zero = RadialDrag::begin(None, layout, start, 0.8).update(start);
+    let zero = RadialDrag::begin(None, layout, start, 0.8).update(layout, start);
     assert!(zero.validate().is_err());
     assert_eq!(
         radial_handle_at(Some(zero), layout, start),
         RadialHandle::New
     );
     let horizontal =
-        RadialDrag::begin(None, layout, start, 0.8).update(start + egui::vec2(20., 0.));
+        RadialDrag::begin(None, layout, start, 0.8).update(layout, start + egui::vec2(20., 0.));
     horizontal.validate().unwrap();
     let tiny = AdjustmentLayerCoverage::Radial {
         center: SourcePoint([120.5, 80.5]),

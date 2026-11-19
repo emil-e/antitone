@@ -377,9 +377,12 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         output: [32, 24],
         frame: None,
     };
-    editor.document.visit.canvas.original.observe(
-        OriginalPurpose::Reference,
-        super::super::original_view::Demand::fixture(
+    editor
+        .document
+        .visit
+        .canvas
+        .original
+        .observe(super::super::original_view::Demand::fixture(
             input.clone(),
             target,
             Some(view),
@@ -389,8 +392,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
                 reference: None,
                 correction: None,
             },
-        ),
-    );
+        ));
     let original_revision = editor.document.visit.canvas.original.continuation();
     editor.document.visit.canvas.original.start_fixture(view);
     let request = capture_request(&editor);
@@ -531,117 +533,16 @@ fn failure_and_cancel_preserve_all_processing_state() {
 }
 
 #[test]
-fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
-    for (settled, outstanding) in [(false, true), (true, false)] {
-        for cancel in [false, true] {
-            let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
-            editor.document.project.input = super::super::tests::fixture().document.project.input;
-            editor.document.source = false;
-            editor.document.visit.working_view.compare = true;
-
-            crate::application::test_support::with_application(editor, |app| {
-                let ctx = egui::Context::default();
-                app.enter(|editor, cx| {
-                    for _ in 0..4 {
-                        let mut output = ctx.run_ui(
-                            egui::RawInput {
-                                screen_rect: Some(egui::Rect::from_min_size(
-                                    egui::Pos2::ZERO,
-                                    egui::vec2(1100., 800.),
-                                )),
-                                ..Default::default()
-                            },
-                            |ui| editor.draw_ui(ui, cx),
-                        );
-                        output.textures_delta.clear();
-                    }
-                });
-                app.run_until(Duration::from_secs(15), |editor| {
-                    editor.document.visit.working_view.support_ready()
-                });
-                let (reply, before, image, view) = app.enter(|editor, cx| {
-                    let frame = |editor: &mut Editor| {
-                        let mut output = ctx.run_ui(
-                            egui::RawInput {
-                                screen_rect: Some(egui::Rect::from_min_size(
-                                    egui::Pos2::ZERO,
-                                    egui::vec2(1100., 800.),
-                                )),
-                                ..Default::default()
-                            },
-                            |ui| editor.draw_ui(ui, cx),
-                        );
-                        output.textures_delta.clear();
-                    };
-                    frame(editor);
-                    editor.document.visit.canvas.original.last_edit =
-                        std::time::Instant::now() - Duration::from_secs(1);
-                    frame(editor);
-                    // Use a policy-only completion after retiring real reconstruction.
-                    editor.cancel_original_pending();
-                    let revision = editor.document.visit.canvas.original.continuation();
-                    let signature = editor.document.visit.canvas.original.wanted.clone();
-                    let view = signature.as_ref().unwrap().view.unwrap();
-                    editor.document.visit.canvas.original.start_fixture(view);
-                    let image = editor
-                        .document
-                        .visit
-                        .canvas
-                        .ready
-                        .as_ref()
-                        .unwrap()
-                        .proxy
-                        .image(OutputTarget::Srgb)
-                        .unwrap();
-                    assert!(editor.document.visit.canvas.original.refining());
-                    if settled {
-                        revision.receive(Ok(Some(image.clone())));
-                    }
-                    let before = editor.document.state.project.clone();
-                    let reply = analysis::testing::fitting(editor);
-                    editor.begin_analysis(cx);
-                    assert!(
-                        editor.document.visit.canvas.original.wanted == signature,
-                        "rejected analysis preserves the actual original request"
-                    );
-                    assert_eq!(
-                        editor.document.visit.canvas.original.settled().is_some(),
-                        settled
-                    );
-                    if outstanding {
-                        // The retired owner cannot accept a late completion.
-                        assert!(revision.receive(Ok(Some(image.clone()))).is_none());
-                    } else {
-                        assert_eq!(
-                            editor.document.visit.canvas.original.continuation(),
-                            revision
-                        );
-                    }
-                    assert_eq!(
-                        editor.document.visit.canvas.original.settled().is_some(),
-                        settled
-                    );
-                    if cancel {
-                        editor.cancel_analysis();
-                    }
-                    (reply, before, image, view)
-                });
-                app.pump();
-                reply
-                    .result
-                    .send(if cancel {
-                        Ok(None)
-                    } else {
-                        Err("sampling failed".into())
-                    })
-                    .ok()
-                    .unwrap();
-                app.run_until(Duration::from_secs(15), |editor| {
-                    editor.document.analysis_operation().is_none()
-                });
-                app.enter(|editor, cx| {
-                    assert_eq!(editor.document.state.project, before);
-                    let mut output = ctx.run_ui(
+fn failed_or_cancelled_analysis_preserves_grading_without_requesting_original_view_work() {
+    for cancel in [false, true] {
+        let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
+        editor.document.project.input = super::super::tests::fixture().document.project.input;
+        editor.document.source = false;
+        crate::application::test_support::with_application(editor, |app| {
+            let context = egui::Context::default();
+            app.enter(|editor, cx| {
+                for _ in 0..4 {
+                    let mut output = context.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
                                 egui::Pos2::ZERO,
@@ -652,20 +553,41 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         |ui| editor.draw_ui(ui, cx),
                     );
                     output.textures_delta.clear();
-                    if settled {
-                        let (current_view, retained) =
-                            editor.document.visit.canvas.original.settled().unwrap();
-                        assert_eq!(current_view, view);
-                        assert!(Arc::ptr_eq(&retained, &image));
-                        assert!(!editor.document.visit.canvas.original.refining());
-                        assert!(editor.document.visit.canvas.original.task.is_none());
-                    } else {
-                        assert!(editor.document.visit.canvas.original.refining());
-                        assert!(editor.document.visit.canvas.original.task.is_some());
-                    }
-                });
+                }
             });
-        }
+            app.run_until(Duration::from_secs(15), |editor| {
+                editor.document.visit.working_view.support_ready()
+            });
+            let (reply, before) = app.enter(|editor, cx| {
+                let before = editor.document.state.project.clone();
+                assert!(editor.document.visit.canvas.original.wanted.is_none());
+                let reply = analysis::testing::fitting(editor);
+                editor.begin_analysis(cx);
+                if cancel {
+                    editor.cancel_analysis();
+                }
+                (reply, before)
+            });
+            app.pump();
+            reply
+                .result
+                .send(if cancel {
+                    Ok(None)
+                } else {
+                    Err("sampling failed".into())
+                })
+                .ok()
+                .unwrap();
+            app.run_until(Duration::from_secs(15), |editor| {
+                editor.document.analysis_operation().is_none()
+            });
+            app.read(|editor| {
+                assert_eq!(editor.document.state.project, before);
+                assert!(editor.document.visit.canvas.original.wanted.is_none());
+                assert!(!editor.document.visit.canvas.original.refining());
+                assert!(editor.document.visit.canvas.original.task.is_none());
+            });
+        });
     }
 }
 
@@ -982,36 +904,16 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
 }
 
 #[test]
-fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade() {
+fn escape_cancels_preparation_without_changing_grade_or_requesting_original_work() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.photo_settings_mut().contrast = 1.2;
             editor.document.source = false;
-            editor.document.visit.working_view.compare = true;
             let ctx = egui::Context::default();
             for _ in 0..4 {
                 super::super::tests::app_frame(editor, &ctx, vec![]);
             }
-            let signature = editor.document.visit.canvas.original.wanted.clone();
-            let revision = editor.document.visit.canvas.original.continuation();
-            let view = signature.as_ref().unwrap().view.unwrap();
-            let image = editor
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .unwrap()
-                .proxy
-                .image(OutputTarget::Srgb)
-                .unwrap();
-            editor
-                .document
-                .visit
-                .canvas
-                .original
-                .settle_fixture(view, image.clone());
             editor.request_analysis(cx);
             let before = editor.document.state.project.clone();
             let mut output = ctx.run_ui(
@@ -1033,26 +935,8 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(!editor.analysis_preparing());
 
             assert_eq!(editor.document.state.project, before);
-            assert!(
-                editor.document.visit.canvas.original.wanted == signature,
-                "rejected analysis preserves the actual original request"
-            );
-            assert_eq!(
-                editor.document.visit.canvas.original.continuation(),
-                revision
-            );
-            assert!(Arc::ptr_eq(
-                &editor
-                    .document
-                    .visit
-                    .canvas
-                    .original
-                    .settled()
-                    .as_ref()
-                    .unwrap()
-                    .1,
-                &image
-            ));
+            assert!(editor.document.visit.canvas.original.wanted.is_none());
+            assert!(!editor.document.visit.canvas.original.refining());
         });
         app.pump();
         app.read(|editor| assert!(editor.activities.view().is_none()));

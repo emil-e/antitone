@@ -15,12 +15,6 @@ pub(in crate::editor) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool
     cancelled || cancelling
 }
 
-/// Reports input activity in this paint for contextual presentation.
-pub(in crate::editor) fn values_are_being_adjusted(context: &egui::Context) -> bool {
-    context.data(|data| data.get_temp::<u64>(egui::Id::new("value-adjustment-frame")))
-        == Some(context.cumulative_frame_nr())
-}
-
 pub(super) fn control_active(ui: &Ui, response: &Response) -> bool {
     let keyboard = response.has_focus()
         && (ui.ctx().text_edit_focused()
@@ -45,14 +39,6 @@ pub(super) fn control_started(ui: &Ui, response: &Response) -> bool {
     response.gained_focus()
         || (response.is_pointer_button_down_on()
             && ui.input(|input| input.pointer.primary_pressed()))
-}
-
-pub(super) fn record_control_interaction(ui: &Ui, response: &Response) {
-    if control_active(ui, response) {
-        let frame = ui.ctx().cumulative_frame_nr();
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(egui::Id::new("value-adjustment-frame"), frame));
-    }
 }
 
 /// Interaction reported by a value widget; feature code validates and publishes its value.

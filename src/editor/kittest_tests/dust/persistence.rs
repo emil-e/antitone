@@ -357,7 +357,7 @@ fn assert_navigation_preview(h: &Harness<'_, Editor>) {
 }
 
 #[test]
-fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_reference_scopes() {
+fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_scopes() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         let nodes = (0..8)
             .map(|i| {
@@ -504,54 +504,6 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         let scopes::ScopeInput { view: scope, .. } =
             h.read(|editor| editor.scope_request().unwrap());
         assert!(Arc::ptr_eq(&scope, &view));
-        h.get_by_label("Original-resolution reference").click();
-        h.step();
-        // The reference must match the complete processing intent, including admitted repairs.
-        wait_for(&mut h, |e| {
-            assert!(!e.document.visit.canvas.original.failed(), "{}", e.status);
-            !e.document.visit.working_view.updating
-                && e.document.visit.working_view.reference_ready()
-                && e.document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .is_some_and(|view| {
-                        Some(&view.processing())
-                            == e.document.visit.working_view.processing().as_ref()
-                            && view.target == e.document.target()
-                    })
-        });
-        h.render().unwrap();
-        h.read(|editor| {
-            let reference = editor
-                .document
-                .visit
-                .working_view
-                .displayed
-                .as_ref()
-                .unwrap();
-            assert_eq!(reference.processing().look_id(), Some(look.id()));
-            assert!(Arc::ptr_eq(
-                &reference.image,
-                &editor
-                    .document
-                    .visit
-                    .canvas
-                    .original
-                    .settled()
-                    .as_ref()
-                    .unwrap()
-                    .1
-            ));
-            let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
-            assert!(Arc::ptr_eq(&scope, reference));
-            assert_eq!(editor.document.state.project, expected);
-        });
-        h.get_by_label("Original-resolution reference").click();
-        h.step();
-        ready(&mut h, 2);
-
         let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
         let scan = Scan::open(&raw_path, expected.acquisition_wb()).unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
@@ -582,7 +534,6 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 }
             }
         }
-        // Failed Open preserves the current view, not an older one from before reference toggling.
         let view = h.read(|editor| {
             editor
                 .document

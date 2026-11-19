@@ -26,29 +26,24 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             editor.document.crop_edit_mut().unwrap().draft.size = [100, 100];
             editor.begin_dust_cleanup();
             assert!(editor.current_tool().unwrap().is::<dust::DustTool>());
-            assert!(editor.document.visit.masks.gesture().is_none());
+            assert!(editor.mask_preview_geometry().is_none());
             editor.begin_linear_mask(None);
             assert!(editor.creating_mask());
-            assert!(
-                editor
-                    .current_tool()
-                    .unwrap()
-                    .is::<mask_editor::CreationTool>()
-            );
-            assert!(editor.document.visit.masks.gesture().is_none());
+            assert!(editor.current_tool().unwrap().is::<mask_editor::MaskTool>());
+            assert!(editor.mask_preview_geometry().is_none());
             editor.begin_test_picker(PickerCase::Dmin, cx);
         });
         app.pump();
         app.read(|editor| {
             assert!(editor.test_picker_active());
-            assert!(editor.document.visit.masks.gesture().is_none());
+            assert!(editor.mask_preview_geometry().is_none());
         });
         app.pump();
         app.read(|editor| assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display())));
         app.enter(|editor, cx| {
             editor.request_analysis(cx);
             assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
-            assert!(editor.document.visit.masks.gesture().is_none());
+            assert!(editor.mask_preview_geometry().is_none());
             let reference = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/raw/bare-light.dng");
             editor.begin_flat_edit(reference, None, cx);

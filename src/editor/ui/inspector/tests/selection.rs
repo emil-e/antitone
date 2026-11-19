@@ -2,6 +2,8 @@ use super::super::{draggable_icon_row, icons::Icon};
 use super::*;
 use egui::FullOutput;
 
+mod actions;
+
 fn draw(
     ctx: &Context,
     width: f32,
@@ -12,13 +14,15 @@ fn draw(
 ) -> ((Response, Response, Response), FullOutput) {
     frame(ctx, width, available, events, |ui| {
         ui.vertical(|ui| {
-            let global = draggable_icon_row(ui, Icon::LinearGradient, "First", !selected, None).0;
-            let (local, toggle) = draggable_icon_row(
+            let global =
+                draggable_icon_row(ui, Icon::LinearGradient, "First", !selected, None, None).0;
+            let (local, toggle, _) = draggable_icon_row(
                 ui,
                 Icon::RadialGradient,
                 "A long radial adjustment name",
                 selected,
                 Some(&mut *checked),
+                None,
             );
             (global, local, toggle.unwrap())
         })
@@ -32,11 +36,13 @@ fn selectable_icon_rows_fill_width_expose_selection_and_keep_toggle_separate() {
         let ctx = Context::default();
         let mut enabled = true;
         let ((global, local, toggle), output) = draw(&ctx, width, true, &mut enabled, true, vec![]);
-        assert_eq!(global.rect.height(), super::super::CONTROL_HEIGHT);
+        assert_eq!(global.rect.height(), super::super::INSPECTOR_ROW_HEIGHT);
         assert_eq!(local.rect.height(), global.rect.height());
         assert!(global.rect.left() >= 0. && global.rect.right() <= width);
         assert!(
-            (local.rect.width() + super::super::CONTROL_HEIGHT - global.rect.width()).abs() < 0.01
+            (local.rect.width() + 2. * super::super::INSPECTOR_ROW_HEIGHT - global.rect.width())
+                .abs()
+                < 0.01
         );
         assert!(local.rect.right() <= toggle.rect.left() + 0.01);
         let nodes = &output
@@ -65,7 +71,7 @@ fn selectable_icon_rows_fill_width_expose_selection_and_keep_toggle_separate() {
             );
             assert!(
                 !local.clicked(),
-                "the enable checkbox must not select its row"
+                "the enable button must not select its row"
             );
         }
         assert!(!enabled);
@@ -100,18 +106,19 @@ fn draggable_rows_capture_movement_without_toggling_and_keep_keyboard_and_disabl
                     "Local",
                     true,
                     Some(&mut checked),
+                    None,
                 )
             })
         };
-        let ((row, _), _) = draw(vec![]);
+        let ((row, _, _), _) = draw(vec![]);
         let start = row.rect.center();
         draw(pointer(start, true));
-        let ((moved, toggle), _) = draw(vec![Event::PointerMoved(start + egui::vec2(25., 0.))]);
+        let ((moved, toggle, _), _) = draw(vec![Event::PointerMoved(start + egui::vec2(25., 0.))]);
         assert_eq!(moved.drag_started(), available);
         assert!(!moved.clicked() && !toggle.unwrap().changed());
         draw(pointer(start + egui::vec2(25., 0.), false));
         ctx.memory_mut(|memory| memory.request_focus(row.id));
-        let ((row, _), _) = draw(key(egui::Key::Space));
+        let ((row, _, _), _) = draw(key(egui::Key::Space));
         assert_eq!(row.clicked(), available);
         assert!(checked);
     }

@@ -238,7 +238,7 @@ impl Editor {
     }
 
     fn lut_controls_allowed(&self) -> bool {
-        self.look_request_allowed() && !self.tool_interacting()
+        self.look_request_allowed()
     }
 
     pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {

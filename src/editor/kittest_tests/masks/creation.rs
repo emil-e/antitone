@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn creation_has_shared_drawer_and_viewer_identity_with_cancel_and_no_apply_step() {
+fn creation_has_a_compact_hint_and_viewer_identity_with_cancel_and_no_apply_step() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         for (size, width, name) in [
             (egui::vec2(1100., 800.), 315., "normal"),
@@ -23,19 +23,24 @@ fn creation_has_shared_drawer_and_viewer_identity_with_cancel_and_no_apply_step(
                 };
                 h.read(|editor| {
                     assert!(editor.creating_mask());
-                    assert!(editor.document.visit.masks.gesture().is_none());
-                    assert!(
-                        editor
-                            .current_tool()
-                            .unwrap()
-                            .is::<mask_editor::CreationTool>()
-                    );
+                    assert!(editor.mask_preview_geometry().is_none());
+                    assert!(editor.current_tool().unwrap().is::<mask_editor::MaskTool>());
                 });
                 let canvas = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.canvas);
-                let drawer = h.get_by_label(title).rect();
+                let hint = h
+                    .get_by_label(if radial {
+                        "Drag to draw a radial gradient."
+                    } else {
+                        "Drag to draw a linear gradient."
+                    })
+                    .rect();
                 assert!(
-                    drawer.center().x < canvas.left() || drawer.center().x > canvas.right(),
-                    "creation drawer is visible beside the canvas"
+                    hint.center().x < canvas.left() || hint.center().x > canvas.right(),
+                    "a compact creation hint stays visible beside the canvas"
+                );
+                assert!(
+                    h.query_by_label(title).is_none(),
+                    "no duplicate inspector tool heading"
                 );
                 let viewer = h.get_by_label(&format!("Active tool: {title}")).rect();
                 assert!(
@@ -72,7 +77,7 @@ fn creation_has_shared_drawer_and_viewer_identity_with_cancel_and_no_apply_step(
 }
 
 #[test]
-fn creation_blocks_captured_roll_inputs_but_cancel_restores_live_grading() {
+fn creation_allows_roll_grading_and_cancel_retains_it() {
     fn controls(h: &mut Harness<'_, Editor>, disabled: bool) {
         for label in ["Gamma", "White balance wheel", "Exposure"] {
             let control = if label == "White balance wheel" {
@@ -104,14 +109,19 @@ fn creation_blocks_captured_roll_inputs_but_cancel_restores_live_grading() {
             arm(&mut h, radial);
             let before = h.read(|editor| editor.document.state.project.clone());
             stage(&mut h, "Roll");
-            controls(&mut h, true);
+            controls(&mut h, false);
             h.read(|editor| {
                 assert!(editor.creating_mask());
                 assert_eq!(editor.document.state.project, before);
             });
+            workflow::enter_numeric(&mut h, "Exposure", exposure);
+            let graded = h.read(|editor| {
+                assert!(editor.creating_mask());
+                editor.document.project.clone()
+            });
             click(&mut h, "Cancel");
             controls(&mut h, false);
-            workflow::enter_numeric(&mut h, "Exposure", exposure);
+            h.read(|editor| assert_eq!(editor.document.project, graded));
             h.read(|editor| {
                 assert_eq!(
                     editor.document.project.roll.exposure,
@@ -123,7 +133,7 @@ fn creation_blocks_captured_roll_inputs_but_cancel_restores_live_grading() {
 }
 
 #[test]
-fn creation_allows_navigation_when_armed_and_freezes_it_during_a_captured_drawing() {
+fn creation_captures_primary_drawing_without_disabling_independent_navigation() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         for radial in [false, true] {
             arm(&mut h, radial);
@@ -160,22 +170,99 @@ fn creation_allows_navigation_when_armed_and_freezes_it_during_a_captured_drawin
             let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let start = layout.canvas.center() - egui::vec2(30., 25.);
             let end = start + egui::vec2(50., 40.);
+            let anchor = layout
+                .composition
+                .frame_to_source(layout.frame_point(start));
             let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
             hold_drag(&mut h, start, end);
-            h.read(|editor| assert!(editor.mask_dragging()));
+            h.read(|editor| {
+                assert!(editor.mask_dragging());
+                assert_eq!(
+                    editor.document.visit.canvas.viewport, viewport,
+                    "drawing does not also pan"
+                );
+            });
             h.key_press(egui::Key::Z);
             h.step();
             h.event(egui::Event::Zoom(1.25));
             h.step();
             h.read(|editor| {
-                assert_eq!(editor.document.visit.canvas.viewport, viewport);
-                assert_eq!(
+                assert_ne!(editor.document.visit.canvas.viewport, viewport);
+                assert_ne!(
                     editor.active_canvas().last_layout.unwrap().0.image,
                     layout.image
                 );
             });
             pointer(&mut h, end, false);
-            h.read(|editor| assert!(!editor.masking()));
+            h.read(|editor| {
+                assert!(editor.masking() && !editor.creating_mask() && !editor.mask_dragging());
+                let layout = editor.active_canvas().last_layout.unwrap().0;
+                match accepted_mask(editor) {
+                    AdjustmentLayerCoverage::Linear { start, end: fixed } => {
+                        assert_eq!(fixed, anchor);
+                        assert_eq!(
+                            start,
+                            layout.composition.frame_to_source(layout.frame_point(end)),
+                            "release uses the navigated view, not the press-time mapping"
+                        );
+                    }
+                    AdjustmentLayerCoverage::Radial { center, radii, .. } => {
+                        assert_eq!(center, anchor);
+                        let center = layout.composition.source_to_frame(center);
+                        let pointer = layout.frame_point(end);
+                        let radius = (pointer.0[0] - center.0[0]).hypot(pointer.0[1] - center.0[1]);
+                        assert!((radii[0] - radius).abs() < 1e-9);
+                        assert_eq!(radii[0], radii[1]);
+                    }
+                    AdjustmentLayerCoverage::Global {} => unreachable!(),
+                }
+            });
+            let (before, layout, grab) = h.read(|editor| {
+                let before = accepted_mask(editor);
+                let layout = editor.active_canvas().last_layout.unwrap().0;
+                let point = match before {
+                    AdjustmentLayerCoverage::Linear { end, .. } => end,
+                    AdjustmentLayerCoverage::Radial { center, .. } => center,
+                    AdjustmentLayerCoverage::Global {} => unreachable!(),
+                };
+                (
+                    before,
+                    layout,
+                    layout.screen_frame_point(layout.composition.source_to_frame(point)),
+                )
+            });
+            pointer(&mut h, grab, true);
+            h.key_press(egui::Key::Z);
+            h.step();
+            h.event(egui::Event::Zoom(1.8));
+            h.step();
+            let end = layout.canvas.center() + egui::vec2(45., 30.);
+            pointer(&mut h, end, false);
+            h.read(|editor| {
+                assert!(!editor.mask_dragging());
+                let current = editor.active_canvas().last_layout.unwrap().0;
+                let press = layout.composition.frame_to_source(layout.frame_point(grab));
+                let release = current
+                    .composition
+                    .frame_to_source(current.frame_point(end));
+                let delta = glam::DVec2::from_array(release.0) - glam::DVec2::from_array(press.0);
+                let mut expected = before;
+                match &mut expected {
+                    AdjustmentLayerCoverage::Linear { end, .. }
+                    | AdjustmentLayerCoverage::Radial { center: end, .. } => {
+                        *end = crate::geometry::SourcePoint(
+                            (glam::DVec2::from_array(end.0) + delta).to_array(),
+                        );
+                    }
+                    AdjustmentLayerCoverage::Global {} => unreachable!(),
+                }
+                assert_ne!(expected, before);
+                assert_eq!(
+                    accepted_mask(editor),
+                    expected,
+                    "refinement uses the current view mapping too"
+                );
+            });
             click(&mut h, "Fit");
             h.read(|editor| assert!(editor.document.visit.canvas.viewport.zoom.is_none()));
         }
@@ -209,7 +296,7 @@ fn creation_release_is_one_undoable_layer_and_replacement_does_not_publish_a_hel
             pointer(&mut h, image.center() + egui::vec2(30., 25.), false);
             h.try_run_realtime().unwrap();
             let accepted = h.read(|editor| {
-                assert!(!editor.masking());
+                assert!(editor.masking() && !editor.creating_mask() && !editor.mask_dragging());
                 if !radial {
                     let mask = accepted_mask(editor);
                     let layout = editor.active_canvas().last_layout.unwrap().0;
