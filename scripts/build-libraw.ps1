@@ -59,7 +59,7 @@ try {
             "clang-cl /nologo /std:c++17 /EHsc /MD /O1 /clang:-fopenmp $target",
             "/DWIN32 /DLIBRAW_NODLL /I. `"$testSource`" object\rawspeed_adapter.obj",
             "lib\libraw_static.lib rawspeed.lib pugixml.lib libomp.lib",
-            "/Foobject\$check.obj /Felib\$check.exe"
+            "/Foobject\ /Felib\$check.exe"
         ) -join ' '
         Invoke-NativeWindowsCommand $tools "$environment && $test && lib\$check.exe `"$root/tests/fixtures/raw/patches.dng`""
     }
