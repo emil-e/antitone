@@ -114,16 +114,18 @@ fn proxy_then_rendering(repaired: bool) {
                 .document
                 .visit
                 .working_view
-                .acquisition_failed("Fixture rendering failure".into())
+                .acquisition_failed(Error::Gpu("Fixture rendering failure".into()))
         });
         h.run_steps(2);
-        let error = h.get_by_label("View unavailable");
-        assert!(
-            error
-                .accesskit_node()
-                .description()
-                .is_some_and(|reason| reason.contains("Fixture rendering failure"))
-        );
+        let error =
+            h.get_by_label("Preview not updated — showing previous image: calculation failed");
+        h.read(|editor| {
+            assert!(error.rect().top() >= editor.canvas_frame.layout.unwrap().0.canvas.bottom());
+            assert_eq!(
+                editor.document.visit.working_view.error,
+                Some(Error::Gpu("Fixture rendering failure".into()))
+            );
+        });
         save_capture(
             &h.render().unwrap(),
             if repaired {

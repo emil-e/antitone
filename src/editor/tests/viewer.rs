@@ -847,7 +847,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             editor.document.visit.working_view.error
                         );
                     }
-                    if editor.document.visit.working_view.error.is_some() {
+                    if let Some((status, _)) = editor.preview_failure_status() {
                         let error = &output
                             .platform_output
                             .accesskit_update
@@ -855,14 +855,22 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                             .unwrap()
                             .nodes
                             .iter()
-                            .find(|(_, node)| node.label() == Some("View unavailable"))
-                            .expect("rendering errors remain visible")
+                            .find(|(_, node)| {
+                                node.label() == Some("Error")
+                                    && node.description() == Some(status.reason.as_str())
+                            })
+                            .expect("rendering errors remain accessible in the status bar")
                             .1;
                         let bounds = error.bounds().unwrap();
-                        assert_eq!(bounds.x1 - bounds.x0, 28.);
-                        assert!(bounds.x0 as f32 >= canvas.left());
-                        assert!(bounds.x1 as f32 <= canvas.right());
-                        assert!(error.description().is_some());
+                        assert!(bounds.y0 as f32 >= canvas.bottom());
+                        assert!(bounds.x0 >= 0.);
+                        assert!(bounds.x1 as f32 <= size.x);
+                        assert!(
+                            painted_labels(&output)
+                                .iter()
+                                .any(|(text, _)| text == &status.reason),
+                            "rendering errors remain visibly labelled"
+                        );
                     }
                     let painted = painted_labels(&output);
                     let text = ui_labels(output.clone());
