@@ -32,6 +32,8 @@ mod composition;
 #[cfg(all(test, feature = "editor"))]
 mod neutral_readout;
 pub(crate) mod operations;
+#[cfg(all(test, feature = "editor"))]
+mod output_tests;
 #[cfg(any(test, feature = "editor"))]
 pub(crate) mod sampling;
 #[cfg(all(test, feature = "editor"))]
@@ -39,7 +41,9 @@ pub(crate) mod test_effects;
 #[cfg(feature = "project")]
 pub(crate) use composition::RecipeGraph;
 #[cfg(feature = "render")]
-pub(crate) use composition::compose_output;
+pub use composition::display_output;
+#[cfg(feature = "render")]
+pub(crate) use composition::prewarm_output;
 #[cfg(all(test, feature = "editor"))]
 mod provenance_tests;
 #[cfg(feature = "editor")]

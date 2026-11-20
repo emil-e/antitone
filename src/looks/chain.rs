@@ -14,17 +14,21 @@ impl LutChain {
     }
 
     pub fn id(&self) -> Option<LookId> {
-        match (&self.lut, &self.film_and_paper) {
-            (None, None) => None,
-            (Some(asset), None) | (None, Some(asset)) => Some(asset.id()),
-            (Some(first), Some(second)) => {
-                let mut hash = blake3::Hasher::new();
-                hash.update(b"ordered-lut-chain-v1");
-                hash.update(&first.id().bytes());
-                hash.update(&second.id().bytes());
-                Some(LookId(*hash.finalize().as_bytes()))
-            }
+        Self::ordered_id(self.assets().map(|asset| asset.id()))
+    }
+
+    pub(crate) fn ordered_id(ids: impl IntoIterator<Item = LookId>) -> Option<LookId> {
+        let mut ids = ids.into_iter();
+        let first = ids.next()?;
+        let Some(second) = ids.next() else {
+            return Some(first);
+        };
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"ordered-lut-chain-v1");
+        for id in [first, second].into_iter().chain(ids) {
+            hash.update(&id.bytes());
         }
+        Some(LookId(*hash.finalize().as_bytes()))
     }
 
     pub fn retained_bytes(&self) -> usize {

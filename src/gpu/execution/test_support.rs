@@ -11,10 +11,27 @@ use crate::{
         photograph::PhotographGraph,
     },
     processing::{InputSettings, RollSettings},
-    rendering::OutputReference,
+    rendering::OutputTarget,
     scan::Scan,
 };
 use std::sync::Arc;
+
+/// Processing reference, independent of file codec, transfer encoding and sample storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputReference {
+    SceneReferred,
+    DisplayReferred(OutputTarget),
+}
+
+#[cfg(feature = "editor")]
+impl OutputReference {
+    pub fn display_target(self) -> Option<OutputTarget> {
+        match self {
+            Self::SceneReferred => None,
+            Self::DisplayReferred(target) => Some(target),
+        }
+    }
+}
 
 pub(crate) struct OriginalControls<'a> {
     pub scan: &'a Scan,
@@ -50,8 +67,15 @@ impl OriginalControls<'_> {
             self.repairs.to_vec(),
             &self.stages,
         )?;
-        let definition = evaluation::Reference::capture(device, renderer, self.output, &self.luts)?
-            .compose(photograph.processed, renderer)?;
+        let definition = match self.output {
+            OutputReference::SceneReferred => photograph.processed,
+            OutputReference::DisplayReferred(target) => crate::gpu::photograph::display_output(
+                photograph.processed,
+                &self.luts,
+                &renderer.looks,
+                renderer.drt.get(target),
+            )?,
+        };
         Ok(Request {
             definition,
             composition: self.composition,

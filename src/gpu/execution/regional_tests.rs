@@ -350,13 +350,13 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         for output in [[147, 113], [1, 1], [515, 131]] {
             let frame = FrameRaster { output, ..frame };
             if output == [1, 1] {
-                let original = crate::gpu::evaluation::original_chain(
+                let original = crate::gpu::photograph::authoring::original_chain(
                     &device,
                     &renderer,
                     &scan,
                     None,
                     &input,
-                    crate::rendering::OutputReference::DisplayReferred(target),
+                    target,
                     &input.definition(),
                 )
                 .unwrap();

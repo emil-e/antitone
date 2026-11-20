@@ -222,7 +222,7 @@ pub(crate) fn execute(
     }
     let look_check = if check_look {
         let mut encoder = device.create_command_encoder(&Default::default());
-        let check = renderer.check_look_image(device, &mut encoder, output);
+        let check = renderer.looks.check_image(device, &mut encoder, output);
         if renderer
             .evaluation
             .submit_with(queue, gate, encoder, &cancelled, || check.begin(|| {}))?

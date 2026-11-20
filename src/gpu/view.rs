@@ -96,7 +96,7 @@ impl RenderedView {
     pub fn photographic_bytes(&self) -> u64 {
         self.group
             .as_ref()
-            .map_or(0, |binding| binding.reference_bytes())
+            .map_or(0, |binding| binding.retained_bytes())
             + self.product.as_ref().map_or(0, |image| {
                 image.byte_len() + crate::gpu::grading::Grading::captured_bytes(&image.definition)
             })
@@ -189,11 +189,7 @@ impl RenderedView {
             input,
             previous.and_then(|view| view.product.as_ref()),
         )?;
-        let endpoint = capture.output(
-            &product.renderer,
-            product.definition.clone(),
-            crate::rendering::OutputReference::DisplayReferred(target),
-        )?;
+        let endpoint = capture.display(&product.renderer, product.definition.clone(), target)?;
         Self::from_value(device, product, capture, target, endpoint)
     }
 
@@ -226,8 +222,6 @@ impl RenderedView {
             device,
             product.supplied()?,
             endpoint,
-            target,
-            capture.luts(),
             &image.linear,
         )?;
         Ok(Arc::new(Self {

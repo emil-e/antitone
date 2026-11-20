@@ -1,22 +1,10 @@
-use crate::{Error, rendering::OutputTarget};
-#[cfg(test)]
-use std::borrow::Cow;
+#[cfg(feature = "ui")]
+use crate::gpu::{FULLSCREEN_VERTEX, fullscreen_pipeline};
+use crate::{
+    Error,
+    gpu::{drt, lut3d},
+};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
-
-use crate::gpu::aces;
-
-pub(crate) const VERTEX: &str = r#"
-struct Vertex {
-    @builtin(position) position: vec4f,
-    @location(0) uv: vec2f
-}
-
-@vertex
-fn main(@builtin(vertex_index) i: u32) -> Vertex {
-    let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
-    return Vertex(vec4f(p, 0., 1.), vec2f(p.x * .5 + .5, .5 - p.y * .5));
-}"#;
 
 #[cfg(feature = "ui")]
 const DISPLAY: &str = r#"
@@ -132,7 +120,7 @@ impl RendererCache {
 
 pub(crate) struct RenderBinding {
     source: crate::gpu::evaluation::SuppliedImage,
-    reference: crate::gpu::evaluation::Reference,
+    looks: Vec<Arc<lut3d::Lut>>,
     recorded: crate::gpu::evaluation::Recorded,
     destination: wgpu::Texture,
     validation: Option<Arc<crate::gpu::lut3d::Validation>>,
@@ -140,21 +128,16 @@ pub(crate) struct RenderBinding {
 
 impl RenderBinding {
     pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
-        self.reference.look_id()
+        crate::looks::LutChain::ordered_id(self.looks.iter().map(|lut| lut.id()))
     }
 
-    pub(crate) fn reference_bytes(&self) -> u64 {
-        self.reference
-            .look_resources()
-            .iter()
-            .map(|lut| lut.byte_len())
-            .sum::<u64>()
-            + self.recorded.byte_len()
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        self.looks.iter().map(|lut| lut.byte_len()).sum::<u64>() + self.recorded.byte_len()
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
-        self.reference.look_resources()
+    pub(crate) fn look_resources(&self) -> Vec<Arc<lut3d::Lut>> {
+        self.looks.clone()
     }
 
     pub fn encode(
@@ -171,17 +154,6 @@ impl RenderBinding {
     }
 }
 
-pub(crate) struct TargetResources {
-    pub math: Arc<str>,
-    #[cfg(test)]
-    pub pipeline: wgpu::RenderPipeline,
-    #[cfg(test)]
-    pub layout: wgpu::BindGroupLayout,
-    pub tables: [wgpu::TextureView; 2],
-    pub sampler: wgpu::Sampler,
-    pub hues: wgpu::Buffer,
-}
-
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
@@ -190,19 +162,24 @@ pub struct GpuRenderer {
     _pressure: crate::sys::MemoryPressureWatch,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
-    targets: [TargetResources; 2],
+    pub(crate) drt: drt::Targets,
+    pub(crate) looks: lut3d::Looks,
     #[cfg(feature = "render")]
     pub(crate) evaluation: crate::gpu::evaluation::Context,
-    look_validation: Arc<crate::gpu::lut3d::Validation>,
-    #[cfg(test)]
-    look_uploads: std::sync::atomic::AtomicU64,
-    look_cache: std::sync::Mutex<crate::gpu::lut3d::Cache>,
 }
 
 impl GpuRenderer {
     /// Shared device-scoped evaluation and its optional calculated-image retention allowance.
     pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
         &self.evaluation
+    }
+
+    pub fn looks(&self) -> &lut3d::Looks {
+        &self.looks
+    }
+
+    pub fn drt(&self, target: crate::rendering::OutputTarget) -> &drt::Target {
+        self.drt.get(target)
     }
 
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
@@ -231,30 +208,27 @@ impl GpuRenderer {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
         #[cfg(feature = "raw")]
         let pressure = evaluation.materializations().watch_pressure();
-        let look_validation = Arc::new(crate::gpu::lut3d::Validation::new(device).await?);
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let targets = [
-            target_resources(device, queue, OutputTarget::Srgb)?,
-            target_resources(device, queue, OutputTarget::DisplayP3)?,
-        ];
+        let looks = lut3d::Looks::new(device).await?;
+        let drt = drt::Targets::new(device, queue).await?;
         #[cfg(feature = "ui")]
-        let display = display_pipeline(device);
-        if let Some(error) = scope.pop().await {
-            return Err(Error::Gpu(error.to_string()));
-        }
+        let display = {
+            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let pipeline = display_pipeline(device);
+            if let Some(error) = scope.pop().await {
+                return Err(Error::Gpu(error.to_string()));
+            }
+            pipeline
+        };
         let renderer = Arc::new(Self {
             submissions,
             #[cfg(feature = "raw")]
             _pressure: pressure,
             #[cfg(feature = "ui")]
             display,
-            targets,
+            drt,
+            looks,
             #[cfg(feature = "render")]
             evaluation,
-            look_validation,
-            #[cfg(test)]
-            look_uploads: std::sync::atomic::AtomicU64::new(0),
-            look_cache: Default::default(),
         });
         renderer
             .evaluation
@@ -265,7 +239,7 @@ impl GpuRenderer {
                     meaning: crate::gpu::evaluation::Meaning::Display,
                 },
             ))?;
-        crate::gpu::evaluation::Reference::prewarm(&renderer.evaluation, &renderer)?;
+        crate::gpu::photograph::prewarm_output(&renderer.evaluation, &renderer.drt)?;
         #[cfg(feature = "editor")]
         crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &renderer)?;
         #[cfg(feature = "ui")]
@@ -273,58 +247,27 @@ impl GpuRenderer {
         Ok(renderer)
     }
 
-    #[cfg(test)]
-    pub(crate) fn look_uploads(&self) -> u64 {
-        self.look_uploads.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn live_look_resources(&self) -> usize {
-        self.look_cache.lock().unwrap().live()
-    }
-
-    /// A job can retain this lease independently of its size-dependent render bindings.
-    pub(crate) fn look_resource(
-        &self,
-        device: &wgpu::Device,
-        lut: &crate::looks::Lut3D,
-    ) -> Result<Arc<crate::gpu::lut3d::Lut>, Error> {
-        let (value, _uploaded) = self.look_cache.lock().unwrap().get(device, lut)?;
-        #[cfg(test)]
-        if _uploaded {
-            self.look_uploads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        Ok(value)
-    }
-
     pub(crate) fn render_binding(
         &self,
         device: &wgpu::Device,
         source: crate::gpu::evaluation::SuppliedImage,
         image: crate::gpu::evaluation::Value,
-        target: OutputTarget,
-        luts: &crate::looks::LutChain,
         destination: &wgpu::Texture,
     ) -> Result<RenderBinding, Error> {
-        use crate::gpu::evaluation::{ImageFormat, Reference, Region, Tiling};
+        use crate::gpu::evaluation::{ImageFormat, Region, Tiling};
         self.evaluation.require_device(device)?;
         let domain = source.definition().domain();
         let region = source.layout().region;
         if source.layout().format != ImageFormat::Rgba32Float {
             return Err(Error::InvalidParameter("invalid rendered source storage"));
         }
-        let reference = Reference::capture(
-            device,
-            self,
-            crate::rendering::OutputReference::DisplayReferred(target),
-            luts,
-        )?;
         if image.domain().meaning != crate::gpu::evaluation::Meaning::Display {
             return Err(Error::InvalidParameter(
                 "target rendering requires a display endpoint",
             ));
         }
+        let looks = lut3d::applied_luts(&image);
+        let validation = (!looks.is_empty()).then(|| self.looks.validation());
         let evaluation = self.evaluation.request(
             image,
             Region {
@@ -341,38 +284,13 @@ impl GpuRenderer {
             vec![source.clone()],
             destination,
         )?;
-        let validation = reference.look_id().map(|_| self.look_validation.clone());
         Ok(RenderBinding {
             source,
-            reference,
+            looks,
             recorded,
             destination: destination.clone(),
             validation,
         })
-    }
-
-    pub(crate) fn check_look_image(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-    ) -> Arc<crate::gpu::lut3d::Check> {
-        self.look_validation.check_rendered(device, encoder, image)
-    }
-
-    pub(crate) fn check_look_projection(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-        mapping: crate::geometry::TextureMapping,
-    ) -> Result<Arc<crate::gpu::lut3d::Check>, Error> {
-        self.look_validation
-            .check_projected(device, encoder, image, mapping)
-    }
-
-    pub(crate) fn target(&self, target: OutputTarget) -> &TargetResources {
-        &self.targets[target as usize]
     }
 }
 
@@ -380,242 +298,17 @@ impl GpuRenderer {
 pub(crate) fn display_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("image fullscreen triangle"),
-        source: wgpu::ShaderSource::Wgsl(VERTEX.into()),
+        source: wgpu::ShaderSource::Wgsl(FULLSCREEN_VERTEX.into()),
     });
     let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("target-to-extended-sRGB presentation"),
         source: wgpu::ShaderSource::Wgsl(DISPLAY.into()),
     });
-    create_pipeline(
+    fullscreen_pipeline(
         device,
         &vertex,
         &fragment,
         None,
         wgpu::TextureFormat::Rgba16Float,
     )
-}
-
-fn target_assets(target: OutputTarget) -> (&'static str, [&'static [u8]; 2]) {
-    match target {
-        OutputTarget::Srgb => (
-            include_str!("../assets/ocio/srgb-ap1.glsl"),
-            [
-                include_bytes!("../assets/ocio/srgb-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../assets/ocio/srgb-ap1-lut-1.f32").as_slice(),
-            ],
-        ),
-        OutputTarget::DisplayP3 => (
-            include_str!("../assets/ocio/display-p3-ap1.glsl"),
-            [
-                include_bytes!("../assets/ocio/display-p3-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../assets/ocio/display-p3-ap1-lut-1.f32").as_slice(),
-            ],
-        ),
-    }
-}
-
-#[cfg(feature = "render")]
-pub(crate) fn target_function_glsl(target: OutputTarget) -> Result<String, Error> {
-    aces::adapt(target_assets(target).0).map(|(code, _)| code)
-}
-
-#[cfg(test)]
-fn reference_target_pipeline(
-    device: &wgpu::Device,
-    vertex: &wgpu::ShaderModule,
-    generated: &str,
-) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let code = format!(
-        r#"#version 450
-layout(set=0,binding=3) uniform sampler aces_sampler;
-{generated}
-layout(set=0,binding=0,std430) readonly buffer Inputs {{ vec4 pixels[]; }};
-layout(set=0,binding=4,std140) uniform Dimensions {{ uvec4 size; }};
-layout(location=0) in vec2 uv;
-layout(location=0) out vec4 result;
-
-void main() {{
-    uvec2 xy = min(uvec2(max(uv, vec2(0.0)) * vec2(size.xy)), size.xy - uvec2(1));
-    vec4 pixel = pixels[xy.x + xy.y * size.x];
-    if (pixel.a < 0.0) {{
-        result = pixel;
-        return;
-    }}
-    if (size.z != 0u && (uint(pixel.a) & 8u) == 0u) {{
-        result = vec4(0.0);
-        return;
-    }}
-    result = antitone_render(vec4(pixel.rgb, 1.0));
-}}"#
-    );
-    let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("pinned OCIO GLSL, resource-layout adaptation only"),
-        source: wgpu::ShaderSource::Glsl {
-            shader: Cow::Owned(code),
-            stage: wgpu::naga::ShaderStage::Fragment,
-            defines: Default::default(),
-        },
-    });
-    let buffer_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        count: None,
-        ty: wgpu::BindingType::Buffer {
-            ty,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-    };
-    let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        count: None,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-    };
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("ACES resources"),
-        entries: &[
-            buffer_entry(0, wgpu::BufferBindingType::Storage { read_only: true }),
-            texture_entry(1),
-            texture_entry(2),
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                count: None,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-            },
-            buffer_entry(4, wgpu::BufferBindingType::Uniform),
-            buffer_entry(5, wgpu::BufferBindingType::Storage { read_only: true }),
-        ],
-    });
-    let pipeline = create_pipeline(
-        device,
-        vertex,
-        &fragment,
-        Some(&layout),
-        wgpu::TextureFormat::Rgba32Float,
-    );
-
-    (pipeline, layout)
-}
-
-fn target_resources(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    target: OutputTarget,
-) -> Result<TargetResources, Error> {
-    let (code, tables) = target_assets(target);
-    let (generated, hue_values) = aces::adapt(code)?;
-    #[cfg(test)]
-    let (pipeline, layout) = {
-        let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("reference target triangle"),
-            source: wgpu::ShaderSource::Wgsl(VERTEX.into()),
-        });
-        reference_target_pipeline(device, &vertex, &generated)
-    };
-    #[cfg(not(test))]
-    drop(generated);
-    let hues = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("immutable pinned OCIO cusp hue values"),
-        contents: bytemuck::cast_slice(&hue_values),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let sampler = device.create_sampler(&Default::default());
-    let mut views = Vec::new();
-    for (index, bytes) in tables.into_iter().enumerate() {
-        let channels = if index == 0 { 1 } else { 3 };
-        if bytes.len() != 363 * channels * 4 {
-            return Err(Error::Gpu("unexpected pinned OCIO LUT size".into()));
-        }
-        let rgba: Vec<u8> = bytes
-            .chunks_exact(channels * 4)
-            .flat_map(|pixel| {
-                let mut p = [0; 16];
-                p[..channels * 4].copy_from_slice(pixel);
-                p[12..].copy_from_slice(&1f32.to_le_bytes());
-                p
-            })
-            .collect();
-        let lut = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("OCIO f32 table"),
-            size: wgpu::Extent3d {
-                width: 363,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            lut.as_image_copy(),
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(363 * 16),
-                rows_per_image: Some(1),
-            },
-            lut.size(),
-        );
-        views.push(lut.create_view(&Default::default()));
-    }
-    Ok(TargetResources {
-        math: crate::gpu::evaluation::display_code(target)?,
-        #[cfg(test)]
-        pipeline,
-        #[cfg(test)]
-        layout,
-        tables: views.try_into().unwrap(),
-        sampler,
-        hues,
-    })
-}
-
-fn create_pipeline(
-    device: &wgpu::Device,
-    vertex: &wgpu::ShaderModule,
-    fragment: &wgpu::ShaderModule,
-    layout: Option<&wgpu::BindGroupLayout>,
-    format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let layout = layout.map(|layout| {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(layout)],
-            immediate_size: 0,
-        })
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("image render pipeline"),
-        layout: layout.as_ref(),
-        vertex: wgpu::VertexState {
-            module: vertex,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: fragment,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: Default::default(),
-        depth_stencil: None,
-        multisample: Default::default(),
-        multiview_mask: None,
-        cache: None,
-    })
 }

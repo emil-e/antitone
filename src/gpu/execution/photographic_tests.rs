@@ -8,10 +8,10 @@ use crate::{
     },
     frame_raster::FrameRaster,
     geometry::{Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourcePoint},
+    gpu::execution::test_support::OutputReference,
     gpu::{flat::GpuFlatField, submission::SubmissionGate},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
-    rendering::OutputReference,
     scan::Scan,
     working_precision,
 };

@@ -50,15 +50,9 @@ impl PhotographGraph {
                 crate::rendering::OutputTarget::Srgb,
                 crate::rendering::OutputTarget::DisplayP3,
             ] {
-                let reference = Reference::capture(
-                    device,
-                    renderer,
-                    crate::rendering::OutputReference::DisplayReferred(target),
-                    &Default::default(),
-                )?;
                 renderer
                     .evaluation()
-                    .prewarm_image(reference.compose(image.clone(), renderer)?)?;
+                    .prewarm_image(renderer.drt.get(target).apply(image.clone())?)?;
             }
         }
         Ok(())
@@ -92,12 +86,7 @@ impl PhotographGraph {
                 crate::rendering::OutputTarget::Srgb,
                 crate::rendering::OutputTarget::DisplayP3,
             ] {
-                context.prewarm_image(compose_output(
-                    renderer,
-                    image.clone(),
-                    crate::rendering::OutputReference::DisplayReferred(target),
-                    &Default::default(),
-                )?)?;
+                context.prewarm_image(renderer.drt.get(target).apply(image.clone())?)?;
             }
         }
         Ok(())

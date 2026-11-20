@@ -5,7 +5,7 @@ use crate::{
         submission::SubmissionGate,
     },
     looks::LutChain,
-    rendering::{OutputReference, OutputTarget},
+    rendering::OutputTarget,
 };
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ impl Source for Ramp {
 
 #[test]
 fn all_materials_keep_neutral_exposure_order_through_both_delivered_targets() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let gate = SubmissionGate::default();
     let pixels = Arc::new(
         (0..WIDTH)
@@ -57,14 +57,12 @@ fn all_materials_keep_neutral_exposure_order_through_both_delivered_targets() {
                 film_and_paper: Some(asset),
             };
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let image = evaluation::Reference::capture(
-                    &device,
-                    &renderer,
-                    OutputReference::DisplayReferred(target),
+                let image = crate::gpu::photograph::display_output(
+                    source.clone(),
                     &chain,
+                    &renderer.looks,
+                    renderer.drt.get(target),
                 )
-                .unwrap()
-                .compose(source.clone(), &renderer)
                 .unwrap();
                 let request = renderer
                     .evaluation()

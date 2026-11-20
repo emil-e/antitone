@@ -108,7 +108,7 @@ pub(super) fn chain(
         node = gaussian(node, sigma).unwrap();
     }
     if let Some(target) = target {
-        node = display(node, renderer, target).unwrap();
+        node = renderer.drt.get(target).apply(node).unwrap();
     }
     if !physical {
         node = reconstruct(node.clone(), reduced(node.domain, [41, 35])).unwrap();

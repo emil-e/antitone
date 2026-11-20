@@ -12,7 +12,7 @@ use std::{
 };
 
 fn render(
-    device: &wgpu::Device,
+    _device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &GpuRenderer,
     image: Value,
@@ -20,15 +20,11 @@ fn render(
     size: [u32; 2],
     path: &Path,
 ) {
-    let display = Reference::capture(
-        device,
-        renderer,
-        crate::rendering::OutputReference::DisplayReferred(crate::rendering::OutputTarget::Srgb),
-        &Default::default(),
-    )
-    .unwrap()
-    .compose(image, renderer)
-    .unwrap();
+    let display = renderer
+        .drt
+        .get(crate::rendering::OutputTarget::Srgb)
+        .apply(image)
+        .unwrap();
     let domain = Domain {
         bounds: Some(CellRegion::new([0, 0], size)),
         grid: Grid::axis_aligned(

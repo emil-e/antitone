@@ -117,7 +117,7 @@ impl Executable {
         } else {
             wgpu::ShaderStages::FRAGMENT
         };
-        let resources = renderer.target(target);
+        let resources = renderer.drt.get(target);
         let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
@@ -211,7 +211,7 @@ impl Executable {
         } else {
             let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Wgsl(crate::renderer::VERTEX.into()),
+                source: wgpu::ShaderSource::Wgsl(crate::gpu::FULLSCREEN_VERTEX.into()),
             });
             ExecutionPipeline::Fragment(device.create_render_pipeline(
                 &wgpu::RenderPipelineDescriptor {

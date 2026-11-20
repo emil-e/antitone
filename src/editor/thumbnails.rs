@@ -2011,7 +2011,7 @@ impl Worker {
                 source.spec.frame().composition.area(),
             );
             let mut encoder = self.device.create_command_encoder(&Default::default());
-            let check = source.renderer.check_look_projection(
+            let check = source.renderer.looks.check_projection(
                 &self.device,
                 &mut encoder,
                 &view.image.linear,

@@ -1,8 +1,12 @@
-use super::*;
+use crate::{
+    Error,
+    gpu::{evaluation::*, lut3d, photograph::display_output},
+};
 use crate::{
     looks::{LookAsset, LookOrigin, Lut3D},
-    rendering::{OutputReference, OutputTarget},
+    rendering::OutputTarget,
 };
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn render_reference(
@@ -13,19 +17,18 @@ fn render_reference(
     luts: &crate::looks::LutChain,
     destination: &wgpu::Texture,
 ) -> Result<crate::renderer::RenderBinding, Error> {
-    let reference = Reference::capture(
-        device,
-        renderer,
-        OutputReference::DisplayReferred(target),
+    let endpoint = display_output(
+        source.definition().clone(),
         luts,
+        &renderer.looks,
+        renderer.drt.get(target),
     )?;
-    let endpoint = reference.compose(source.definition().clone(), renderer)?;
-    renderer.render_binding(device, source, endpoint, target, luts, destination)
+    renderer.render_binding(device, source, endpoint, destination)
 }
 
 #[cfg(all(feature = "project", feature = "ocio-reference"))]
 #[test]
-fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
+fn frontier_baked_luts_compose_both_targets() {
     use crate::looks::{
         LutChain,
         frontier::{Selection, Variant},
@@ -61,19 +64,6 @@ fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
             lut: None,
             film_and_paper: Some(asset.clone()),
         };
-        let uploaded = renderer.look_uploads();
-        let scene =
-            Reference::capture(&device, &renderer, OutputReference::SceneReferred, &chain).unwrap();
-        assert!(scene.look_resources().is_empty());
-        assert_eq!(renderer.look_uploads(), uploaded);
-        let source = supplied(&input, [pixels.len() as u32, 1, 0, 0]);
-        assert!(
-            source.definition().same_capture(
-                &scene
-                    .compose(source.definition().clone(), &renderer)
-                    .unwrap()
-            )
-        );
         for (target, key) in [
             (OutputTarget::Srgb, "Srgb"),
             (OutputTarget::DisplayP3, "DisplayP3"),
@@ -140,8 +130,8 @@ fn frontier_baked_luts_compose_both_targets_and_scene_bypasses() {
                 actual.len()
             );
         }
-        let a = renderer.look_resource(&device, asset.lut()).unwrap();
-        let b = renderer.look_resource(&device, asset.lut()).unwrap();
+        let a = renderer.looks.resource(asset.lut()).unwrap();
+        let b = renderer.looks.resource(asset.lut()).unwrap();
         assert!(Arc::ptr_eq(&a, &b));
     }
 }
@@ -281,7 +271,7 @@ fn legacy(
     output: &wgpu::Texture,
 ) {
     let looked = look.map(|asset| {
-        let lut = renderer.look_resource(device, asset.lut()).unwrap();
+        let lut = renderer.looks.resource(asset.lut()).unwrap();
         let kernel = pollster::block_on(crate::gpu::lut3d::Kernel::new(device)).unwrap();
         let pixels = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -307,7 +297,7 @@ fn legacy(
         contents: bytemuck::cast_slice(&dimensions),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let resources = renderer.target(target);
+    let resources = renderer.drt.get(target);
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &resources.layout,
@@ -458,16 +448,13 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                     },
                     meaning: Meaning::Graded,
                 };
-                let reference = Reference::capture(
-                    &device,
-                    &renderer,
-                    OutputReference::DisplayReferred(target),
+                let image = display_output(
+                    borrowed_input(domain),
                     &(selected).cloned().into(),
+                    &renderer.looks,
+                    renderer.drt.get(target),
                 )
                 .unwrap();
-                let image = reference
-                    .compose(borrowed_input(domain), &renderer)
-                    .unwrap();
                 let plan = Job::new(image, domain.finite().unwrap(), Tiling { tile: [3, 2] })
                     .unwrap()
                     .texture_plan(&output)
@@ -503,7 +490,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
             .any(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 1e-3)),
         "fixture must expose wrong target"
     );
-    assert_eq!(execute::read(&device, &queue, &source), pixels);
+    assert_eq!(read_buffer(&device, &queue, &source), pixels);
     assert_eq!(
         renderer.evaluation.programs.len(),
         programs,
@@ -612,25 +599,28 @@ fn compare_sample_flags(look: Arc<LookAsset>) {
         for policy in [Policy::Materialized, Policy::Composed] {
             for selected in [None, Some(&look)] {
                 let argument = supplied(&source, [5, 1, 8, 0]);
-                let domain = argument.definition.domain();
-                let image = Reference::capture(
-                    &device,
-                    &renderer,
-                    OutputReference::DisplayReferred(target),
+                let domain = argument.definition().domain();
+                let image = display_output(
+                    argument.definition().clone(),
                     &(selected).cloned().into(),
+                    &renderer.looks,
+                    renderer.drt.get(target),
                 )
-                .unwrap()
-                .compose(argument.definition.clone(), &renderer)
                 .unwrap();
-                let job = Job::new(image, domain.finite().unwrap(), Tiling { tile: [5, 1] })
+                let context = renderer.evaluation();
+                let request = context
+                    .request(
+                        image,
+                        Region {
+                            bounds: domain.finite().unwrap(),
+                            grid: domain.grid,
+                        },
+                        Tiling { tile: [5, 1] },
+                    )
                     .unwrap()
-                    .with_policy(policy)
-                    .with_supplied(vec![argument].into());
-                let plan = job.plans().next().unwrap().unwrap();
-                let recorded = renderer
-                    .evaluation
-                    .executor()
-                    .prepare(&device, plan)
+                    .with_policy(policy);
+                let recorded = context
+                    .record(request, context.materializations(), vec![argument])
                     .unwrap();
                 let output = buffer(&device, &[[0.; 4]; 5]);
                 let mut encoder = device.create_command_encoder(&Default::default());
@@ -638,7 +628,7 @@ fn compare_sample_flags(look: Arc<LookAsset>) {
                     .encode_result(&device, &mut encoder, &output)
                     .unwrap();
                 queue.submit([encoder.finish()]);
-                let actual = execute::read(&device, &queue, &output);
+                let actual = read_buffer(&device, &queue, &output);
                 assert_eq!(
                     actual.iter().map(|p| p[3]).collect::<Vec<_>>(),
                     [9., 8., 0., -1., -1.]
@@ -740,13 +730,8 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         let argument =
             SuppliedImage::from_buffer(input.clone(), domain.finite().unwrap(), pixels.into())
                 .unwrap();
-        let reference = Reference::capture(
-            &device,
-            &renderer,
-            OutputReference::DisplayReferred(OutputTarget::Srgb),
-            &chain(&look),
-        )
-        .unwrap();
+        let selected = chain(&look);
+        let display = renderer.drt.get(OutputTarget::Srgb);
         let renamed = Arc::new(
             LookAsset::new(
                 "Different label".into(),
@@ -755,57 +740,55 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             )
             .unwrap(),
         );
-        let independent = Reference::capture(
-            &device,
-            &other,
-            OutputReference::DisplayReferred(OutputTarget::Srgb),
-            &chain(&renamed),
-        )
-        .unwrap();
-        let looked = reference.looked(input.clone());
-        assert_eq!(reference.look_id(), chain(&look).id());
-        assert_eq!(reference.look_resources().len(), if paired { 2 } else { 1 });
+        let looked = renderer.looks.apply(input.clone(), &selected).unwrap();
+        let independent = other.looks.apply(input.clone(), &chain(&renamed)).unwrap();
+        let resources = lut3d::applied_luts(&looked);
+        assert_eq!(
+            crate::looks::LutChain::ordered_id(resources.iter().map(|lut| lut.id())),
+            selected.id()
+        );
+        assert_eq!(resources.len(), if paired { 2 } else { 1 });
         if paired {
-            let reversed = Reference::capture(
-                &device,
-                &renderer,
-                OutputReference::DisplayReferred(OutputTarget::Srgb),
-                &crate::looks::LutChain {
-                    lut: Some(different.clone()),
-                    film_and_paper: Some(look.clone()),
-                },
-            )
-            .unwrap();
+            let reversed = renderer
+                .looks
+                .apply(
+                    input.clone(),
+                    &crate::looks::LutChain {
+                        lut: Some(different.clone()),
+                        film_and_paper: Some(look.clone()),
+                    },
+                )
+                .unwrap();
             assert!(
-                !looked.same_definition(&reversed.looked(input.clone())),
+                !looked.same_definition(&reversed),
                 "ordered LUT operands must not alias a reversed calculation"
             );
         }
 
-        let changed = Reference::capture(
-            &device,
-            &renderer,
-            OutputReference::DisplayReferred(OutputTarget::Srgb),
-            &chain(&different),
-        )
-        .unwrap();
-        assert!(!looked.same_definition(&changed.looked(input.clone())));
+        let changed = renderer
+            .looks
+            .apply(input.clone(), &chain(&different))
+            .unwrap();
+        assert!(!looked.same_definition(&changed));
         assert!(looked.identity().is_some());
         assert!(
-            looked.same_definition(&independent.looked(input.clone())),
+            looked.same_definition(&independent),
             "allocations and labels are not mathematical content"
         );
-        let displayed = reference.compose(input.clone(), &renderer).unwrap();
+        let displayed = display.apply(looked.clone()).unwrap();
         assert!(displayed.identity().is_some());
-        assert!(displayed.same_definition(&independent.compose(input.clone(), &other).unwrap()));
-        let p3 = Reference::capture(
-            &device,
-            &renderer,
-            OutputReference::DisplayReferred(OutputTarget::DisplayP3),
-            &chain(&look),
-        )
-        .unwrap();
-        assert!(!displayed.same_definition(&p3.compose(input.clone(), &renderer).unwrap()));
+        let other_display = other
+            .drt
+            .get(OutputTarget::Srgb)
+            .apply(independent)
+            .unwrap();
+        assert!(displayed.same_definition(&other_display));
+        let p3 = renderer
+            .drt
+            .get(OutputTarget::DisplayP3)
+            .apply(looked.clone())
+            .unwrap();
+        assert!(!displayed.same_definition(&p3));
         let evaluation = context
             .request(
                 looked,
@@ -830,20 +813,31 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         )
         .unwrap();
         let output = texture(&device, [1, 1], wgpu::TextureFormat::Rgba32Float);
-        let readout = reference.compose(input.clone(), &renderer).unwrap();
+        let readout = display_output(input.clone(), &selected, &renderer.looks, display).unwrap();
         assert!(
             readout.same_definition(&displayed),
             "a physical attachment is separate from the reusable displayed calculation"
         );
-        let plan = Job::new(readout, domain.finite().unwrap(), budget)
-            .unwrap()
-            .with_materializations(scope.clone())
-            .with_supplied(vec![argument.clone()].into())
-            .texture_plan(&output)
+        let request = context
+            .request(
+                readout,
+                Region {
+                    bounds: domain.finite().unwrap(),
+                    grid: domain.grid,
+                },
+                budget,
+            )
             .unwrap();
-        assert!(plan.tiles.iter().flat_map(|tile| &tile.fragment.resources).any(|resource| {
-            matches!(resource, Storage::ResidentBuffer(image) | Storage::Image { pixels:Some(image), .. } if image.as_buffer() == cached.as_buffer())
-        }), "control: readout must actually consume the stored look value");
+        let recorded = context
+            .record_to_texture(request, scope.clone(), vec![argument.clone()], &output)
+            .unwrap();
+        assert!(
+            recorded
+                .reusable_inputs()
+                .iter()
+                .any(|image| Arc::ptr_eq(image, &cached.image)),
+            "control: readout must actually consume the stored look value"
+        );
         let binding = render_reference(
             &renderer,
             &device,
@@ -878,16 +872,11 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
-    let reference = Reference::capture(
-        &device,
-        &renderer,
-        OutputReference::DisplayReferred(OutputTarget::Srgb),
-        &Default::default(),
-    )
-    .unwrap();
     let budget = Tiling { tile: [3, 2] };
-    let image = reference
-        .compose(borrowed_input(domain), &renderer)
+    let image = renderer
+        .drt
+        .get(OutputTarget::Srgb)
+        .apply(borrowed_input(domain))
         .unwrap();
     let wrong_size = texture(&device, [2, 2], wgpu::TextureFormat::Rgba32Float);
     assert!(
@@ -945,16 +934,6 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
             .texture_plan(&output)
             .is_err()
     );
-    let scene = Reference::capture(
-        &device,
-        &renderer,
-        OutputReference::SceneReferred,
-        &(Some(&asset())).cloned().into(),
-    )
-    .unwrap();
-    assert!(scene.look_resources().is_empty());
-    let input = borrowed_input(domain);
-    assert!(input.same_capture(&scene.compose(input.clone(), &renderer).unwrap()));
 }
 
 #[cfg(feature = "ocio-reference")]
@@ -1063,8 +1042,8 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
             }
         }
         if first && second {
-            let a = renderer.look_resource(&device, swap.lut()).unwrap();
-            let b = renderer.look_resource(&device, swap.lut()).unwrap();
+            let a = renderer.looks.resource(swap.lut()).unwrap();
+            let b = renderer.looks.resource(swap.lut()).unwrap();
             assert!(Arc::ptr_eq(&a, &b));
             assert_ne!(chain.id(), Some(swap.id()));
             let reverse = LutChain {

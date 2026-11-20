@@ -63,6 +63,20 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                     ..Default::default()
                 });
             }
+            // A contrasting look must neither affect scene EXR pixels nor allocate a GPU LUT.
+            if matches!(format, Format::Exr(_)) {
+                use crate::looks::{LookAsset, LookOrigin, Lut3D};
+
+                let lut = Lut3D::new(2, [0.; 3], [1.; 3], vec![[0.; 3]; 8]).unwrap();
+                project.output.lut = Some(Arc::new(
+                    LookAsset::new(
+                        "EXR bypass control".into(),
+                        LookOrigin::Imported,
+                        Arc::new(lut),
+                    )
+                    .unwrap(),
+                ));
+            }
             let before = project.clone();
             let recipe = project.image_recipe(id).unwrap();
             let output = directory.path().join(match format {
@@ -127,6 +141,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                     }
                 }
                 Format::Exr(_) => {
+                    assert_eq!(renderer.looks.uploads(), 0);
                     let image = exr::prelude::read_first_flat_layer_from_file(&output).unwrap();
                     assert_eq!(image.layer_data.channel_data.list.len(), 3);
                     for channel in &image.layer_data.channel_data.list {
