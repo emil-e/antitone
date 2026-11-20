@@ -26,6 +26,8 @@ pub use image_source::{ImageIdentity, ImageSource};
 #[derive(Debug, Default)]
 pub struct AnalysisSamples {
     pub pixels: Vec<DVec3>,
+    #[cfg(feature = "editor")]
+    pub(crate) positions: Vec<[u32; 2]>,
     pub attempted: usize,
     pub rejected_floor: usize,
 }

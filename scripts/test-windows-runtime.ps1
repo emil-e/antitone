@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-runtime.ps1')
 
 $root = Join-Path (Split-Path -Parent $PSScriptRoot) ('.cache/runtime tests ' + [guid]::NewGuid().ToString('N'))
-$names = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+$names = @('msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 function Add-Layout([string]$Directory, [string]$Version, [int]$Brand) {
     $paths = foreach ($name in $names) {
@@ -18,7 +18,7 @@ function Add-Layout([string]$Directory, [string]$Version, [int]$Brand) {
 
 function Assert-Selection([string]$Directory, [string[]]$Expected) {
     $actual = @(Get-VcRuntimeFiles -RedistRoot $Directory)
-    if ($actual.Count -ne 3 -or (Compare-Object $Expected $actual)) {
+    if ($actual.Count -ne $Expected.Count -or (Compare-Object $Expected $actual)) {
         throw "Wrong runtime selection: $actual; expected $Expected"
     }
 }
@@ -45,7 +45,7 @@ try {
     Assert-Selection $current $expected
 
     # Fail rather than silently ship an older or incomplete runtime.
-    Remove-Item -LiteralPath $expected[0]
+    Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $expected[0]) 'msvcp140_1.dll')
     Assert-Failure $current
     Remove-Item -Recurse -Force -LiteralPath (Split-Path -Parent $expected[0])
     Remove-Item -Recurse -Force -LiteralPath (Join-Path $current '14.51.36231/x64/Microsoft.VC143.CRT')

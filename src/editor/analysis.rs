@@ -15,6 +15,8 @@ use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 
 #[cfg(all(test, feature = "ocio-reference"))]
 mod diagnostics;
+mod semantic;
+pub(super) use semantic::check_runtime;
 #[cfg(test)]
 mod tests;
 
@@ -103,6 +105,14 @@ fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Err
     for frame in frames {
         for samples in [&mut frame.film, &mut frame.picture] {
             let count = samples.pixels.len();
+            if !samples.positions.is_empty() {
+                let mut i = 0;
+                samples.positions.retain(|_| {
+                    let keep = samples.pixels[i].min_element() > floor;
+                    i += 1;
+                    keep
+                });
+            }
             samples.pixels.retain(|p| p.min_element() > floor);
             samples.rejected_floor += count - samples.pixels.len();
         }

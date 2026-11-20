@@ -35,7 +35,7 @@ The editor presents through Vulkan, so the display driver must provide it; the b
 
 ## Build and run
 
-Run native setup once from the repository root: `./scripts/setup-native.sh` on macOS or `powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1` on Windows. The macOS setup includes OpenColorIO for opt-in reference checks; Windows setup prepares the production editor dependencies.
+Run native setup once from the repository root: `./scripts/setup-native.sh` on macOS or `powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1` on Windows. Both setup scripts install the pinned CPU ONNX Runtime used by Analyze. The macOS setup also includes OpenColorIO for opt-in reference checks.
 
 Then, on either platform:
 
@@ -70,7 +70,7 @@ After native setup, build and package with:
 powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 ```
 
-The outputs are `.cache/dist/Antitone-windows-x64.zip` and `.cache/dist/SHA256SUMS`. The ZIP includes the app-local Visual C++ CRT and pinned LLVM OpenMP runtime; packaging smoke-tests both staging and a freshly extracted copy. Use `-SkipBuild` to package an existing release binary.
+The outputs are `.cache/dist/Antitone-windows-x64.zip` and `.cache/dist/SHA256SUMS`. The ZIP includes the app-local Visual C++ CRT, LLVM OpenMP and ONNX Runtime; packaging smoke-tests both staging and a freshly extracted copy. Use `-SkipBuild` to package an existing release binary.
 
 ### End-to-end local delivery on macOS
 

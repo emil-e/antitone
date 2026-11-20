@@ -63,7 +63,7 @@ jobs:
           path: |
             .cache/native-deps
             .cache/deps
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'native/onnxruntime/**', 'scripts/setup-native.sh', 'scripts/setup-onnxruntime.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
           restore-keys: |
             native-${{ runner.os }}-${{ runner.arch }}-
       - name: Restore Cargo downloads
@@ -100,7 +100,7 @@ jobs:
           path: |
             .cache/native-deps
             .cache/deps
-          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'native/onnxruntime/**', 'scripts/setup-native.sh', 'scripts/setup-onnxruntime.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
           restore-keys: |
             native-${{ runner.os }}-${{ runner.arch }}-
       - name: Restore Cargo downloads

@@ -75,6 +75,11 @@ use selected_preview::{SelectionPaint, SelectionTiming};
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
+
+#[doc(hidden)]
+pub fn check_semantic_wb_runtime() -> Result<std::path::PathBuf, crate::Error> {
+    analysis::check_runtime()
+}
 #[cfg(test)]
 use analysis::AnalyzeTool;
 mod correction;

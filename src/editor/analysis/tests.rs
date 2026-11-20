@@ -602,6 +602,7 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
         pixels: vec![DVec3::splat(0.1)],
         attempted: 8192,
         rejected_floor: 8191,
+        positions: Vec::new(),
     };
     let error = require_picture(&samples).unwrap_err();
     editor.accept_analysis(

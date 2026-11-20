@@ -86,6 +86,58 @@ fn a_strong_vote_is_not_clamped_until_after_pooling() {
     assert_eq!(wb.warmth, -1.);
 }
 
+#[cfg(feature = "editor")]
+#[test]
+fn semantic_refit_only_grades_the_roll_and_meters_abstaining_photos() {
+    let first = vec![cast(-0.4, 0.2, 0.18); 300];
+    let second = vec![cast(0.2, -0.2, 0.18); 300];
+    let withheld = vec![cast(0.9, 0.7, 0.18); 300];
+    let frames = [&first, &second, &withheld].map(|picture| FrameSamples { film: &[], picture });
+    let input = InputSettings::negative(Calibration {
+        dmin: DVec3::splat(0.5),
+        dmax: DVec3::splat(0.03),
+    });
+    let mut proposal = Proposal {
+        input,
+        roll: RollSettings::default(),
+        photos: vec![AdjustmentLayerSettings::default(); 3],
+        frames: vec![
+            FrameStatistics {
+                film_samples: 0,
+                picture_samples: 300,
+                balance_eligible: 300,
+                balance_samples: 300,
+                exposure_samples: 0,
+                grayness: None
+            };
+            3
+        ],
+    };
+    assert!(
+        semantic_refit(
+            &mut proposal,
+            &frames,
+            DMat3::IDENTITY,
+            &mut AuthoredPositives,
+            &mut || false,
+            |frame, indices, _| {
+                assert_eq!(indices.len(), 300);
+                Ok(Some(vec![frame != 2; indices.len()]))
+            }
+        )
+        .unwrap()
+    );
+    assert!((proposal.roll.wb.warmth - 0.1).abs() < 1e-12);
+    assert!(
+        proposal
+            .photos
+            .iter()
+            .all(|p| p.wb == Balance::default() && p.exposure == 0.)
+    );
+    assert_eq!(proposal.frames[2].balance_samples, 0);
+    assert_eq!(proposal.frames[2].exposure_samples, 300);
+}
+
 #[test]
 fn no_usable_picture_chroma_is_a_failure_but_cancellation_is_not() {
     let invalid = [DVec3::ZERO];

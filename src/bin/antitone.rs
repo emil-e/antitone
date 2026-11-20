@@ -21,10 +21,20 @@ struct Arguments {
     /// Print the supported Lightroom transport version without opening a window
     #[arg(long, conflicts_with_all = ["file", "lightroom"])]
     lightroom_protocol_version: bool,
+
+    #[arg(long, hide = true, conflicts_with_all = ["file", "lightroom", "lightroom_protocol_version"])]
+    check_semantic_wb_runtime: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = Arguments::parse();
+    if arguments.check_semantic_wb_runtime {
+        println!(
+            "{}",
+            antitone::editor::check_semantic_wb_runtime()?.display()
+        );
+        return Ok(());
+    }
     if arguments.lightroom_protocol_version {
         println!(
             "{}",

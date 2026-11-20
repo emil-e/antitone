@@ -18,5 +18,6 @@ if ! xcrun --find clang >/dev/null 2>&1 || ! xcrun --show-sdk-path >/dev/null 2>
     exit 1
 fi
 
+sh ./scripts/setup-onnxruntime.sh
 ./scripts/build-libraw.sh
 ./scripts/build-ocio.sh

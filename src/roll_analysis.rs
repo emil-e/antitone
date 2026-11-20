@@ -20,6 +20,8 @@ mod model;
 mod anchor_spans;
 #[cfg(any(feature = "editor", test))]
 mod median_wb;
+#[cfg(feature = "editor")]
+pub(crate) use median_wb::semantic_refit;
 
 #[cfg(feature = "editor")]
 pub(crate) use anchor_spans::estimate_anchor_spans;
