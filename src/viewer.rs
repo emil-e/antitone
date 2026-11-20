@@ -254,7 +254,7 @@ impl GpuImage {
                         .lock()
                         .unwrap()
                         .as_ref()
-                        .map_or(0, |binding| binding.reference_bytes()),
+                        .map_or(0, |binding| binding.retained_bytes()),
             )
         })
     }
@@ -451,7 +451,7 @@ impl GpuImage {
             projections.push(current);
         } else {
             let mut encoder = device.create_command_encoder(&Default::default());
-            let check = processing.renderer.check_look_projection(
+            let check = processing.renderer.looks.check_projection(
                 device,
                 &mut encoder,
                 &self.linear,

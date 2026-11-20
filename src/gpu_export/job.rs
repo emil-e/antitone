@@ -36,11 +36,13 @@ pub(crate) fn write(
         job.field,
         &recipe,
     )?;
-    let output = match job.format {
-        Format::Tiff(target) => crate::rendering::OutputReference::DisplayReferred(target),
-        Format::Exr(_) => crate::rendering::OutputReference::SceneReferred,
-    };
-    let definition = pipeline.output(renderer, output)?;
+    let limits = device.limits();
+    let definition = match job.format {
+        Format::Tiff(target) => {
+            pipeline.display(&limits, &renderer.looks, renderer.drt.get(target))
+        }
+        Format::Exr(_) => pipeline.processed(&limits),
+    }?;
     super::area::write_calculation(
         renderer,
         device,

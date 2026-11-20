@@ -77,7 +77,7 @@ fn case(
     )
     .unwrap();
     node = gaussian(node, sigma).unwrap();
-    node = display(node, renderer, OutputTarget::Srgb).unwrap();
+    node = renderer.drt.get(OutputTarget::Srgb).apply(node).unwrap();
     node = reconstruct(node.clone(), super::tests::reduced(node.domain, size)).unwrap();
     Case {
         scan,

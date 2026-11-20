@@ -88,17 +88,8 @@ mod inspection;
 #[cfg(feature = "editor")]
 pub(crate) use inspection::inspect;
 
-#[cfg(feature = "render")]
-mod reference;
-
 #[cfg(all(test, feature = "editor"))]
 mod reconstruction_tests;
-
-#[cfg(feature = "render")]
-pub use reference::Reference;
-
-#[cfg(all(test, feature = "editor"))]
-mod reference_tests;
 
 mod resident;
 
@@ -128,15 +119,13 @@ pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use grain::grain;
 pub(crate) use operators::{gaussian, window};
+#[cfg(all(test, feature = "editor"))]
+use operators::{grade, interpret};
 pub use value::Value;
 mod reconstruction;
-#[cfg(feature = "render")]
-use operators::*;
 pub use operators::{pointwise, source};
 #[cfg(all(feature = "raw", feature = "render"))]
 pub use original::camera_source;
-#[cfg(all(test, feature = "raw", feature = "render"))]
-pub(crate) use original::original_chain;
 pub(crate) use plan::{Job, Plan, Policy, Tile};
 #[cfg(test)]
 pub(crate) use reconstruction::{
@@ -146,7 +135,5 @@ pub(crate) use reconstruction::{
 pub(crate) use reconstruction::{
     accumulate_supplied, reconstruct, reconstruct_cells, reconstruct_complete, reconstruct_tiled,
 };
-#[cfg(feature = "render")]
-pub(crate) use sampling::display_code;
 pub(crate) use sampling::{Access, SampleInput, Sampled};
 use std::sync::Arc;

@@ -50,13 +50,13 @@ pub(crate) fn refine_cancellable(
         return Ok(None);
     }
     scan.validate_area(view.area)?;
-    let root = crate::gpu::evaluation::original_chain(
+    let root = crate::gpu::photograph::authoring::original_chain(
         device,
         renderer,
         scan,
         field,
         &input,
-        crate::rendering::OutputReference::DisplayReferred(target),
+        target,
         &input.definition(),
     )?;
     refine_definition(

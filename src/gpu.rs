@@ -7,6 +7,8 @@ pub(crate) mod allocation;
 pub(crate) mod analysis;
 #[cfg(feature = "raw")]
 pub mod demosaic;
+#[cfg(feature = "render")]
+pub mod drt;
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
@@ -60,6 +62,61 @@ pub fn instance() -> wgpu::Instance {
         backends: crate::sys::backends(),
         backend_options: crate::sys::backend_options(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
+    })
+}
+
+#[cfg(feature = "render")]
+pub(crate) const FULLSCREEN_VERTEX: &str = r#"
+struct Vertex {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f
+}
+
+@vertex
+fn main(@builtin(vertex_index) i: u32) -> Vertex {
+    let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
+    return Vertex(vec4f(p, 0., 1.), vec2f(p.x * .5 + .5, .5 - p.y * .5));
+}"#;
+
+#[cfg(all(feature = "render", any(feature = "ui", test)))]
+pub(crate) fn fullscreen_pipeline(
+    device: &wgpu::Device,
+    vertex: &wgpu::ShaderModule,
+    fragment: &wgpu::ShaderModule,
+    layout: Option<&wgpu::BindGroupLayout>,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let layout = layout.map(|layout| {
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(layout)],
+            immediate_size: 0,
+        })
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("image render pipeline"),
+        layout: layout.as_ref(),
+        vertex: wgpu::VertexState {
+            module: vertex,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: fragment,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
     })
 }
 

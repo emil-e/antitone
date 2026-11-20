@@ -4,12 +4,12 @@ use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
+use crate::gpu::execution::test_support::OutputReference;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
 use crate::processing::RollSettings;
-use crate::rendering::OutputReference;
 use crate::rendering::OutputTarget;
 use glam::DVec3;
 

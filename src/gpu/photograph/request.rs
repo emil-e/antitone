@@ -9,7 +9,7 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
-use crate::rendering::{OutputReference, OutputTarget};
+use crate::rendering::OutputTarget;
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,
@@ -86,39 +86,27 @@ pub(crate) struct ViewGraph {
 }
 
 impl PhotographRequest {
+    pub(crate) fn display(
+        &self,
+        renderer: &crate::renderer::GpuRenderer,
+        image: Value,
+        target: OutputTarget,
+    ) -> Result<Value, Error> {
+        display_output(
+            image,
+            self.luts(),
+            &renderer.looks,
+            renderer.drt.get(target),
+        )
+    }
+
     pub fn original(
         &self,
         device: &wgpu::Device,
         renderer: &crate::renderer::GpuRenderer,
         scan: &crate::scan::Scan,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        target: crate::rendering::OutputTarget,
-    ) -> Result<Value, Error> {
-        self.original_output(
-            device,
-            renderer,
-            scan,
-            field,
-            crate::rendering::OutputReference::DisplayReferred(target),
-        )
-    }
-
-    pub(crate) fn output(
-        &self,
-        renderer: &crate::renderer::GpuRenderer,
-        image: Value,
-        reference: crate::rendering::OutputReference,
-    ) -> Result<Value, Error> {
-        compose_output(renderer, image, reference, self.luts())
-    }
-
-    pub(crate) fn original_output(
-        &self,
-        device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
-        scan: &crate::scan::Scan,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        reference: crate::rendering::OutputReference,
+        target: OutputTarget,
     ) -> Result<Value, Error> {
         if scan.flat_field() != field.as_ref().map(|field| field.field()) {
             return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
@@ -148,18 +136,18 @@ impl PhotographRequest {
             )?,
             #[cfg(test)]
             Self::Fixture(input) => {
-                return crate::gpu::evaluation::original_chain(
+                return super::authoring::original_chain(
                     device,
                     renderer,
                     scan,
                     field,
                     input,
-                    reference,
+                    target,
                     &input.definition(),
                 );
             }
         };
-        self.output(renderer, photograph, reference)
+        self.display(renderer, photograph, target)
     }
 
     pub fn validate(&self, limits: &wgpu::Limits) -> Result<(), Error> {
@@ -589,10 +577,10 @@ impl PhotographRequest {
         field: Option<Arc<GpuFlatField>>,
         target: OutputTarget,
     ) -> Result<Value, Error> {
-        self.output(
+        self.display(
             renderer,
             self.resident_processed(renderer, source, layout, field)?,
-            OutputReference::DisplayReferred(target),
+            target,
         )
     }
 
@@ -610,11 +598,7 @@ impl PhotographRequest {
             field,
             spec,
         )?;
-        let image = self.output(
-            renderer,
-            graph.processed,
-            OutputReference::DisplayReferred(target),
-        )?;
+        let image = self.display(renderer, graph.processed, target)?;
         Ok((image, graph.request))
     }
 
@@ -632,11 +616,7 @@ impl PhotographRequest {
             field,
             spec,
         )?;
-        let image = self.output(
-            renderer,
-            graph.processed,
-            OutputReference::DisplayReferred(target),
-        )?;
+        let image = self.display(renderer, graph.processed, target)?;
         Ok((image, graph.request))
     }
 
@@ -675,9 +655,6 @@ impl PhotographRequest {
             }
         };
         let spec = self.planned_request(&limits, spec, plan)?;
-        Ok((
-            self.output(renderer, image, OutputReference::DisplayReferred(target))?,
-            spec,
-        ))
+        Ok((self.display(renderer, image, target)?, spec))
     }
 }

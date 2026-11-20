@@ -9,8 +9,142 @@ use std::sync::{
 };
 use wgpu::util::DeviceExt;
 
+#[cfg(feature = "render")]
+use super::evaluation::{CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value, value};
+
+#[cfg(feature = "render")]
 mod cache;
-pub(crate) use cache::Cache;
+
+#[cfg(feature = "render")]
+pub struct Looks {
+    device: wgpu::Device,
+    cache: Mutex<cache::Cache>,
+    validation: Arc<Validation>,
+    #[cfg(test)]
+    uploads: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(feature = "render")]
+impl Looks {
+    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+        Ok(Self {
+            device: device.clone(),
+            cache: Mutex::default(),
+            validation: Arc::new(Validation::new(device).await?),
+            #[cfg(test)]
+            uploads: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    pub fn apply(&self, image: Value, chain: &crate::looks::LutChain) -> Result<Value, Error> {
+        chain.assets().try_fold(image, |image, asset| {
+            let look = self.resource(asset.lut())?;
+            Ok(Value::from_operation(
+                image.domain(),
+                Some(image),
+                LookOperation { look },
+            ))
+        })
+    }
+
+    pub(crate) fn validation(&self) -> Arc<Validation> {
+        self.validation.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn uploads(&self) -> u64 {
+        self.uploads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_resources(&self) -> usize {
+        self.cache.lock().unwrap().live()
+    }
+
+    pub(crate) fn resource(&self, lut: &crate::looks::Lut3D) -> Result<Arc<Lut>, Error> {
+        let (value, _uploaded) = self.cache.lock().unwrap().get(&self.device, lut)?;
+        #[cfg(test)]
+        if _uploaded {
+            self.uploads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn check_image(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+    ) -> Arc<Check> {
+        self.validation.check_rendered(device, encoder, image)
+    }
+
+    pub(crate) fn check_projection(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+        mapping: crate::geometry::TextureMapping,
+    ) -> Result<Arc<Check>, Error> {
+        self.validation
+            .check_projected(device, encoder, image, mapping)
+    }
+}
+
+#[cfg(feature = "render")]
+pub(crate) fn applied_luts(image: &Value) -> Vec<Arc<Lut>> {
+    // Output composition places looks on the unary path before the display endpoint.
+    let mut luts = Vec::new();
+    let mut node = Some(image);
+    while let Some(image) = node {
+        if let Some(operation) =
+            (image.operation().as_ref() as &dyn std::any::Any).downcast_ref::<LookOperation>()
+        {
+            luts.push(operation.look.clone());
+        }
+        node = image.unary_input();
+    }
+    luts.reverse();
+    luts
+}
+
+#[cfg(feature = "render")]
+struct LookOperation {
+    look: Arc<Lut>,
+}
+
+#[cfg(feature = "render")]
+impl Operation for LookOperation {
+    fn key(&self) -> Option<RetainedKey> {
+        {
+            #[derive(Debug, PartialEq, Hash)]
+            struct Content(crate::looks::LookId);
+            Some(RetainedKey::new(Content(self.look.id())))
+        }
+    }
+
+    fn reads(&self, r: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(vec![Read::new(0, r)])
+    }
+
+    fn calculation(
+        self: Arc<Self>,
+        inputs: &[value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _budget: Tiling,
+    ) -> Result<Option<value::Calculation>, Error> {
+        let inputs = value::Calculation::references(inputs);
+        value::Calculation::new(
+            domain,
+            output,
+            vec![inputs[0].request(output)?],
+            self.look.calculation(domain.grid.coverage != 0),
+        )
+        .map(Some)
+    }
+}
 
 #[cfg(test)]
 mod test_dispatch;
@@ -44,7 +178,7 @@ fn calculation(
     .with_bindings(bindings)
 }
 
-pub(crate) fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operation {
+fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operation {
     let parameters = Parameters {
         minimum: [0.; 4],
         maximum: [1.; 4],
@@ -60,18 +194,14 @@ pub(crate) fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::val
     )
 }
 
-pub(crate) fn prewarm(context: &crate::gpu::evaluation::Context) -> Result<(), Error> {
-    use crate::gpu::evaluation::*;
-    let domain = Domain {
-        bounds: Some(CellRegion::new([0, 0], [1, 1])),
-        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
-    };
-    context.prewarm_image(value::pointwise(
-        borrowed_input(domain),
-        Meaning::Graded,
-        prewarm_calculation(false),
-    )?)
+#[cfg(feature = "render")]
+pub(crate) fn prewarm_value(input: Value) -> Result<Value, Error> {
+    let domain = input.domain();
+    value::pointwise(
+        input,
+        domain.meaning,
+        prewarm_calculation(domain.grid.coverage != 0),
+    )
 }
 
 #[cfg(test)]

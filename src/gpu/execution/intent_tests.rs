@@ -1,5 +1,5 @@
 use super::*;
-use crate::rendering::OutputReference;
+use crate::gpu::execution::test_support::OutputReference;
 use std::sync::Arc;
 
 use crate::gpu::execution::test_support::OriginalControls as Request;
@@ -449,7 +449,7 @@ fn completion_checks_publication_rights_and_retires_resources_after_cancelled_me
         |render, complete| {
             render([0; 2], size)?;
             assert_eq!(
-                renderer.live_look_resources(),
+                renderer.looks.live_resources(),
                 1,
                 "execution retains its captured look through completion"
             );
@@ -469,7 +469,7 @@ fn completion_checks_publication_rights_and_retires_resources_after_cancelled_me
     assert!(matches!(result, Err(Error::Cancelled)));
     assert!(!accepted);
     assert_eq!(
-        renderer.live_look_resources(),
+        renderer.looks.live_resources(),
         0,
         "cancelled execution releases its GPU look lease"
     );

@@ -137,13 +137,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             let (prefix, plan) = capture
                 .filtered(&device.limits(), &source.spec, source.definition.clone())
                 .unwrap();
-            let endpoint = capture
-                .output(
-                    &renderer,
-                    prefix,
-                    crate::rendering::OutputReference::DisplayReferred(target),
-                )
-                .unwrap();
+            let endpoint = capture.display(&renderer, prefix, target).unwrap();
             let evaluation =
                 ViewImage::evaluation(renderer.evaluation(), endpoint.clone()).unwrap();
             let work = renderer

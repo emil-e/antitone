@@ -138,7 +138,7 @@ fn record(
 fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
     use crate::{
         looks::{LutChain, spektrafilm},
-        rendering::{CpuRenderer, OutputReference, OutputTarget},
+        rendering::{CpuRenderer, OutputTarget},
     };
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let pixels = [
@@ -206,14 +206,13 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
                 })
                 .collect();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let reference = Reference::capture(
-                    &device,
-                    &renderer,
-                    OutputReference::DisplayReferred(target),
+                let displayed = crate::gpu::photograph::display_output(
+                    graded.clone(),
                     &chain,
+                    &renderer.looks,
+                    renderer.drt.get(target),
                 )
                 .unwrap();
-                let displayed = reference.compose(graded.clone(), &renderer).unwrap();
                 let (actual, _) = record(&device, &queue, &renderer, displayed, region, &input);
                 let expected = CpuRenderer::new(target).unwrap().render(&treated).unwrap();
                 for (actual, expected) in actual.iter().zip(expected) {

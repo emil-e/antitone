@@ -97,7 +97,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
     };
     let plain = capture(None);
     assert_eq!(plain.look_payload_bytes, 0);
-    assert_eq!(renderer.look_uploads(), 0);
+    assert_eq!(renderer.looks.uploads(), 0);
     let cold = capture(Some(look.clone()));
     assert!(
         cold.planned_source_layout_changes > 1,
@@ -105,25 +105,25 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
     );
     assert!(cold.look_payload_bytes > 0);
     assert_eq!(
-        renderer.look_uploads(),
+        renderer.looks.uploads(),
         1,
         "one actual LUT allocation for the whole cold job"
     );
     assert_eq!(
-        renderer.live_look_resources(),
+        renderer.looks.live_resources(),
         0,
         "successful job must not leave an optional renderer-owned strong reference"
     );
-    let retained = renderer.look_resource(&device, look.lut()).unwrap();
-    let warm = renderer.look_uploads();
+    let retained = renderer.looks.resource(look.lut()).unwrap();
+    let warm = renderer.looks.uploads();
     capture(Some(look.clone()));
     assert_eq!(
-        renderer.look_uploads(),
+        renderer.looks.uploads(),
         warm,
         "reuse another live consumer's immutable resource"
     );
     drop(retained);
-    assert_eq!(renderer.live_look_resources(), 0);
+    assert_eq!(renderer.looks.live_resources(), 0);
     std::fs::write(&path, b"preserve existing destination").unwrap();
     for after in [0, 2] {
         let mut checks = 0;
@@ -153,7 +153,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
             "temporary output is retired on stop"
         );
         assert_eq!(
-            renderer.live_look_resources(),
+            renderer.looks.live_resources(),
             0,
             "job-only look ownership must unwind on stop"
         );

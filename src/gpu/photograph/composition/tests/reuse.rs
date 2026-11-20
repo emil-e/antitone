@@ -40,7 +40,6 @@ pub(super) fn materialize(
 #[test]
 fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
-    use crate::rendering::OutputReference;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let plain_recipe = Arc::new(project.image_recipe(id).unwrap());
@@ -68,15 +67,12 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     let upstream = materialize(&renderer, &queue, &scope, looked.processed.clone(), bounds);
     assert!(Arc::ptr_eq(&first.image, &upstream.image));
 
-    let display = OutputReference::DisplayReferred(crate::rendering::OutputTarget::Srgb);
-    let plain_output =
-        evaluation::Reference::capture(&device, &renderer, display, &plain_recipe.luts)
-            .unwrap()
-            .compose(plain.processed, &renderer)
-            .unwrap();
-    let looked_output = evaluation::Reference::capture(&device, &renderer, display, request.luts())
-        .unwrap()
-        .compose(looked.processed.clone(), &renderer)
+    let target = crate::rendering::OutputTarget::Srgb;
+    let plain_output = PhotographRequest::Recipe(plain_recipe.clone())
+        .display(&renderer, plain.processed, target)
+        .unwrap();
+    let looked_output = request
+        .display(&renderer, looked.processed.clone(), target)
         .unwrap();
     assert!(!plain_output.same_definition(&looked_output));
     assert_ne!(
@@ -86,9 +82,10 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
 
     let before_looks = PhotographRequest::BeforeLooks(looked_recipe.clone());
     assert!(PhotographRequest::BeforeLooks(plain_recipe) != before_looks);
-    let bypassed = evaluation::Reference::capture(&device, &renderer, display, before_looks.luts())
-        .unwrap()
-        .looked(looked.processed);
+    let bypassed = renderer
+        .looks
+        .apply(looked.processed, before_looks.luts())
+        .unwrap();
     let bypassed = materialize(&renderer, &queue, &scope, bypassed, bounds);
     assert!(Arc::ptr_eq(&first.image, &bypassed.image));
 

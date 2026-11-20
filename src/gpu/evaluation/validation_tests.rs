@@ -26,7 +26,11 @@ fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{
                     bindings: vec![],
                 },
             );
-            let root = display(input, &renderer, crate::rendering::OutputTarget::Srgb).unwrap();
+            let root = renderer
+                .drt
+                .get(crate::rendering::OutputTarget::Srgb)
+                .apply(input)
+                .unwrap();
             let plan = Plan::with_policy(
                 root.clone(),
                 root.domain.finite().unwrap(),

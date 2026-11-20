@@ -140,7 +140,8 @@ impl Composite {
             .as_ref()
             .unwrap()
             .renderer
-            .check_look_image(device, encoder, &image.linear)
+            .looks
+            .check_image(device, encoder, &image.linear)
     }
 
     pub(super) fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &GpuImage) {

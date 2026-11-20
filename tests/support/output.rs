@@ -8,15 +8,14 @@ use antitone::{
     export::Overwrite,
     geometry::Composition,
     gpu::{
-        evaluation::{self, Reference, Value},
+        evaluation::{self, Value},
         flat::GpuFlatField,
         grading::Grading,
-        photograph::PhotographGraph,
+        photograph::{PhotographGraph, display_output},
         submission::SubmissionGate,
     },
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
-    rendering::OutputReference,
     scan::{ImageSource, Scan},
 };
 use std::{path::Path, sync::Arc};
@@ -58,12 +57,15 @@ impl Request<'_> {
             Some(compose) => compose(photograph)?,
             None => photograph,
         };
-        let reference = match self.format {
-            Format::Tiff(target) => OutputReference::DisplayReferred(target),
-            Format::Exr(_) => OutputReference::SceneReferred,
+        let definition = match self.format {
+            Format::Tiff(target) => display_output(
+                photograph,
+                &self.luts,
+                renderer.looks(),
+                renderer.drt(target),
+            )?,
+            Format::Exr(_) => photograph,
         };
-        let definition: Value = Reference::capture(device, renderer, reference, &self.luts)?
-            .compose(photograph, renderer)?;
         Ok(antitone::gpu_export::Request {
             definition,
             composition: self.composition,

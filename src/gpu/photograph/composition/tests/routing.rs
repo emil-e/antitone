@@ -2,7 +2,7 @@ use super::*;
 use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::{ProcessingSource, SourceGeometry};
 use crate::gpu::view::request::SourceRequest;
-use crate::rendering::{OutputReference, OutputTarget};
+use crate::rendering::OutputTarget;
 
 #[derive(Debug, PartialEq)]
 struct Suffix;
@@ -155,7 +155,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .resident_processed(&renderer, &camera, proxy.dimensions(), None)
         .unwrap();
     let target = OutputTarget::Srgb;
-    let display = OutputReference::DisplayReferred(target);
+    let display = Some(target);
     let authored = crate::gpu::photograph::authoring::with_suffix(
         |image| Suffix.compose(image),
         || {
@@ -165,15 +165,15 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                 (
                     "scene export",
                     native.clone(),
-                    graph
-                        .output(&renderer, OutputReference::SceneReferred)
-                        .unwrap(),
-                    OutputReference::SceneReferred,
+                    graph.processed(&limits).unwrap(),
+                    None,
                 ),
                 (
                     "display export",
                     native,
-                    graph.output(&renderer, display).unwrap(),
+                    graph
+                        .display(&limits, &renderer.looks, renderer.drt.get(target))
+                        .unwrap(),
                     display,
                 ),
                 (
@@ -244,14 +244,14 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                 ]
             })
             .collect();
-        let expected = compose_output(
-            &renderer,
-            evaluation::source(Arc::new(Pixels(baseline.domain(), changed))),
-            reference,
-            &Default::default(),
-        )
-        .unwrap();
-        let plain = compose_output(&renderer, baseline, reference, &Default::default()).unwrap();
+        let expected = evaluation::source(Arc::new(Pixels(baseline.domain(), changed)));
+        let (expected, plain) = match reference {
+            Some(target) => {
+                let drt = renderer.drt.get(target);
+                (drt.apply(expected).unwrap(), drt.apply(baseline).unwrap())
+            }
+            None => (expected, baseline),
+        };
         let expected = pixels(&renderer, &queue, expected);
         let plain = pixels(&renderer, &queue, plain);
         let actual = pixels(&renderer, &queue, actual);

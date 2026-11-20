@@ -614,7 +614,8 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
         let renderer = services.renderers.get(device, &services.queue).unwrap();
         let small = Document::open(&path).unwrap();
         renderer
-            .look_resource(device, slot.asset(&small.project).unwrap().lut())
+            .looks
+            .resource(slot.asset(&small.project).unwrap().lut())
             .unwrap();
         slot.set(&mut candidate, Some(make(5)));
         candidate
@@ -623,7 +624,8 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
         let opened = Document::open(&path).unwrap();
         assert!(
             renderer
-                .look_resource(device, slot.asset(&opened.project).unwrap().lut())
+                .looks
+                .resource(slot.asset(&opened.project).unwrap().lut())
                 .is_err()
         );
         with_application(e, |app| {
@@ -635,10 +637,8 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
                 assert!(!e.document.dirty());
                 assert!(
                     renderer
-                        .look_resource(
-                            &e.source_services.as_ref().unwrap().device,
-                            slot.asset(&e.document.project).unwrap().lut(),
-                        )
+                        .looks
+                        .resource(slot.asset(&e.document.project).unwrap().lut())
                         .err()
                         .unwrap()
                         .to_string()

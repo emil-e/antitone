@@ -25,6 +25,7 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
+use crate::gpu::execution::test_support::OutputReference;
 use crate::gpu::photograph::assembly::Assembly;
 use crate::gpu::photograph::test_effects::NeighbourEffect;
 #[cfg(feature = "ocio-reference")]
@@ -32,7 +33,6 @@ use crate::gpu::source::SourceGeometry;
 use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
-use crate::rendering::OutputReference;
 use crate::rendering::OutputTarget;
 use glam::{DMat3, DVec3};
 use wgpu::util::DeviceExt;

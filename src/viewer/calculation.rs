@@ -37,11 +37,11 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        crate::gpu::photograph::compose_output(
-            &processing.renderer,
+        crate::gpu::photograph::display_output(
             prefix,
-            crate::rendering::OutputReference::DisplayReferred(processing.target),
             luts,
+            &processing.renderer.looks,
+            processing.renderer.drt.get(processing.target),
         )
     }
 
@@ -155,11 +155,11 @@ impl GpuImage {
         } else {
             self.inspection(input.parameters(), input.field.clone())?
         };
-        crate::gpu::photograph::compose_output(
-            &processing.renderer,
+        crate::gpu::photograph::display_output(
             image,
-            crate::rendering::OutputReference::DisplayReferred(processing.target),
             input.luts(),
+            &processing.renderer.looks,
+            processing.renderer.drt.get(processing.target),
         )
     }
 
@@ -210,16 +210,10 @@ impl GpuImage {
         let same_pixels = previous
             .as_ref()
             .is_some_and(|old| old.same_definition(root));
-        let same_look = processing
-            .aces_group
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|binding| binding.look_id() == luts.id());
-        if same_pixels && same_look {
+        if same_pixels {
             return Ok(false);
         }
-        self.record_calculation(device, encoder, root.clone(), luts)?;
+        self.record_calculation(device, encoder, root.clone())?;
         *previous = Some(root.clone());
         Ok(true)
     }
@@ -234,7 +228,7 @@ impl GpuImage {
         self.require_calculation(root, luts)?;
         let processing = self.processing.as_ref().expect("admitted working image");
         let mut previous = processing.last_calculation.lock().unwrap();
-        self.record_calculation(device, encoder, root.clone(), luts)?;
+        self.record_calculation(device, encoder, root.clone())?;
         *previous = None;
         Ok(())
     }
@@ -244,7 +238,6 @@ impl GpuImage {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         root: Value,
-        luts: &LutChain,
     ) -> Result<(), Error> {
         let processing = self.processing.as_ref().expect("admitted working image");
         let raster = root.domain().grid.raster(root.domain().finite()?);
@@ -263,8 +256,6 @@ impl GpuImage {
                 processing.working.clone().into(),
             )?,
             root,
-            processing.target,
-            luts,
             &self.linear,
         )?;
         let check = prepared_binding.encode(device, encoder)?;

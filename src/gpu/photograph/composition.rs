@@ -192,17 +192,13 @@ impl<'a> RecipeGraph<'a> {
     }
 
     #[cfg(feature = "render")]
-    pub(crate) fn output(
+    pub(crate) fn display(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
-        reference: crate::rendering::OutputReference,
+        limits: &wgpu::Limits,
+        looks: &crate::gpu::lut3d::Looks,
+        drt: &crate::gpu::drt::Target,
     ) -> Result<Value, Error> {
-        compose_output(
-            renderer,
-            self.processed(&renderer.evaluation().device().limits())?,
-            reference,
-            &self.recipe.luts,
-        )
+        display_output(self.processed(limits)?, &self.recipe.luts, looks, drt)
     }
 
     #[cfg(feature = "editor")]
@@ -790,17 +786,33 @@ impl PhotographGraph {
 }
 
 #[cfg(feature = "render")]
-pub(crate) fn compose_output(
-    renderer: &crate::renderer::GpuRenderer,
+pub fn display_output(
     image: Value,
-    reference: crate::rendering::OutputReference,
     luts: &crate::looks::LutChain,
+    looks: &crate::gpu::lut3d::Looks,
+    drt: &crate::gpu::drt::Target,
 ) -> Result<Value, Error> {
-    crate::gpu::evaluation::Reference::capture(
-        renderer.evaluation().device(),
-        renderer,
-        reference,
-        luts,
-    )?
-    .compose(image, renderer)
+    drt.apply(looks.apply(image, luts)?)
+}
+
+#[cfg(feature = "render")]
+pub(crate) fn prewarm_output(
+    context: &Context,
+    drt: &crate::gpu::drt::Targets,
+) -> Result<(), Error> {
+    use crate::rendering::OutputTarget;
+
+    let input = borrowed_input(Domain {
+        bounds: Some(CellRegion::new([0, 0], [1, 1])),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Graded,
+    });
+    let looked = crate::gpu::lut3d::prewarm_value(input.clone())?;
+    context.prewarm_image(looked.clone())?;
+    for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        let display = drt.get(target);
+        context.prewarm_texture(display.apply(input.clone())?)?;
+        context.prewarm_texture(display.apply(looked.clone())?)?;
+    }
+    Ok(())
 }

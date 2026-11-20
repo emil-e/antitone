@@ -1,12 +1,6 @@
 //! Original-camera operators. Existing photographic, repair, grain and look shaders own the math.
 
 use super::*;
-#[cfg(test)]
-use crate::gpu::flat::GpuFlatField;
-#[cfg(test)]
-use crate::gpu::photograph::PhotographGraph;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
 
 struct Native {
     scan: crate::scan::Scan,
@@ -93,34 +87,4 @@ pub fn camera_source(scan: &crate::scan::Scan) -> Result<Value, Error> {
         bounds,
         format,
     })))
-}
-
-#[cfg(test)]
-pub(crate) fn original_chain(
-    device: &wgpu::Device,
-    renderer: &crate::renderer::GpuRenderer,
-    scan: &crate::scan::Scan,
-    field: Option<Arc<GpuFlatField>>,
-    input: &AuthoredPhotograph,
-    reference: crate::rendering::OutputReference,
-    stages: &crate::gpu::photograph::assembly::Assembly,
-) -> Result<Value, Error> {
-    if scan.flat_field() != field.as_ref().map(|f| f.field()) {
-        return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
-    }
-    let matrix = if let Some(program) = input.source_transform() {
-        if !program.matches_native(scan)? {
-            return Err(Error::Gpu(
-                "original input differs from captured camera source".into(),
-            ));
-        }
-        program.matrix
-    } else {
-        scan.camera_to_ap1
-    };
-    let node = camera_source(scan)?;
-    let photograph =
-        PhotographGraph::authored(&device.limits(), node, field, input, matrix, stages)?;
-    Reference::capture(device, renderer, reference, input.luts())?
-        .compose(photograph.processed, renderer)
 }

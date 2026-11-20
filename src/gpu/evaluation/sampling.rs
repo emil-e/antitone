@@ -88,7 +88,7 @@ fn sample_buffer(p: vec2i) -> vec4f {
 }}
 "#,
             sample.code,
-            crate::renderer::VERTEX,
+            crate::gpu::FULLSCREEN_VERTEX,
             sample.symbol
         );
         let mut bindings = sample.bindings;
@@ -142,23 +142,4 @@ fn sample_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups
         fragment.compute(code, "sample_main", bindings, output.cells());
         Ok(())
     }
-}
-
-#[cfg(feature = "render")]
-pub fn display_code(target: crate::rendering::OutputTarget) -> Result<Arc<str>, Error> {
-    use std::sync::OnceLock;
-
-    static SRGB: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
-
-    static P3: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
-    let cache = match target {
-        crate::rendering::OutputTarget::Srgb => &SRGB,
-        crate::rendering::OutputTarget::DisplayP3 => &P3,
-    };
-    cache
-        .get_or_init(|| {
-            let code = crate::renderer::target_function_glsl(target)?;
-            crate::gpu::aces::library(&code)
-        })
-        .clone()
 }
