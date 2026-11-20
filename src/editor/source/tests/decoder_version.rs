@@ -212,7 +212,8 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             assert_eq!(opened.project, saved.project);
             assert_eq!(opened.exposure_metadata, saved.exposure_metadata);
             let opened: DocumentScope = opened.into();
-            let correction = Correction::prepare(&device, &opened, None).unwrap();
+            let correction =
+                Correction::prepare(&device, opened.project.active_flat_field(), None).unwrap();
             assert_eq!(correction.is_some(), !digital);
             let loader = source_loading::SourceLoader::new();
             // Acquisition uses the current pixel producer without rewriting saved provenance.

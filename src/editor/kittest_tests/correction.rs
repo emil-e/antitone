@@ -26,12 +26,12 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
             document.import(&[other]).unwrap();
             let id = document.project.order[0];
             let reference = document.project.source(id).unwrap();
-            // Structurally valid saved gains exceed the runtime corrected-camera domain.
+            // Saved map coordinates can exceed the GPU's coordinate domain.
             let map = Arc::new(
                 crate::flat_field::FlatField::from_nodes(
-                    reference.development.active_area,
+                    [1 << 24, 0, 1, 1],
                     [2, 2],
-                    vec![DVec3::splat(1e37); 4],
+                    vec![DVec3::ONE; 4],
                 )
                 .unwrap(),
             );
@@ -72,7 +72,7 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
                 .accesskit_node()
                 .description()
                 .unwrap()
-                .contains("corrected camera values exceed the f32 range")
+                .contains("source geometry exceeds the GPU coordinate domain")
         );
         assert!(
             !harness
@@ -163,6 +163,89 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
             );
         });
         assert!(harness.query_by_label("Correction error").is_none());
+    });
+}
+
+#[test]
+fn reopened_photographic_overflow_keeps_the_map_and_recovers_when_correction_is_disabled() {
+    super::tools::calibrated_harness(|mut harness| {
+        let directory = tempfile::tempdir().unwrap();
+        let saved = harness.read(|editor| {
+            let mut document = editor.document.capture();
+            let source = document.project.source(document.project.order[0]).unwrap();
+            let map = Arc::new(
+                crate::flat_field::FlatField::from_nodes(
+                    source.development.active_area,
+                    [2, 2],
+                    vec![DVec3::splat(1e37); 4],
+                )
+                .unwrap(),
+            );
+            let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
+            document.project.set_flat_field(Some(settings)).unwrap();
+            document
+                .save(
+                    &directory.path().join("overflowing-photo.antitone"),
+                    crate::project::Save::New,
+                )
+                .unwrap()
+        });
+        harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
+        wait_for(&mut harness, |editor| {
+            !editor.files.opening()
+                && !editor.document.correction.pending()
+                && !editor.document.visit.source.pending()
+                && editor.document.visit.working_view.error.is_some()
+        });
+        harness.read(|editor| {
+            assert_eq!(editor.document.project, saved.project);
+            assert!(!editor.document.dirty());
+            assert!(editor.document.correction.prepared().is_some());
+            assert!(editor.document.correction.error().is_none());
+            assert!(editor.document.visit.canvas.ready.is_some());
+            assert!(!editor.dialogs.is_open());
+            assert!(
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .to_string()
+                    .contains("corrected camera values exceed the f32 range")
+            );
+        });
+        harness.render().unwrap();
+        stage(&mut harness, "Roll");
+        if harness.query_by_label("Enabled").is_none() {
+            harness.get_by_label("Flat-field correction").click();
+            harness.step();
+        }
+        harness.get_by_label("Enabled").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Enabled").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            !editor.editing()
+                && !editor.interaction_blocked()
+                && editor.document.project.active_flat_field().is_none()
+                && editor.document.visit.working_view.error.is_none()
+                && editor.document.visit.working_view.displayed.is_some()
+        });
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.project.flat_field().unwrap().map,
+                saved.project.flat_field().unwrap().map
+            );
+            assert!(!editor.document.project.flat_field().unwrap().enabled);
+            assert!(editor.document.dirty());
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+        harness.render().unwrap();
     });
 }
 

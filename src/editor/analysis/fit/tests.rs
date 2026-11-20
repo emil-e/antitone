@@ -121,7 +121,12 @@ fn approved(request: &mut Request) {
 }
 
 fn input(services: &Resources, request: &Request) -> Option<Arc<Correction>> {
-    Correction::prepare(&services.device, &request.document, None).unwrap()
+    Correction::prepare(
+        &services.device,
+        request.document.project.active_flat_field(),
+        None,
+    )
+    .unwrap()
 }
 
 #[test]

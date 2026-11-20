@@ -176,15 +176,18 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
         let before = app.read(|editor| editor.document.project.clone());
         app.enter(|editor, cx| {
             let mut rejected = editor.document.capture();
-            let area = rejected.project.sources[0].development.active_area;
             let map = std::sync::Arc::new(
-                crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1e37); 4])
-                    .unwrap(),
+                crate::flat_field::FlatField::from_nodes(
+                    [1 << 24, 0, 1, 1],
+                    [2, 2],
+                    vec![DVec3::ONE; 4],
+                )
+                .unwrap(),
             );
             rejected
                 .project
                 .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                    "overflowing-reference.dng",
+                    "unsupported-map-coordinates.dng",
                     map,
                 )))
                 .unwrap();

@@ -34,7 +34,7 @@ impl Editor {
             return;
         }
         let resources = Resources::prepare(
-            self.document.capture(),
+            self.document.project.active_flat_field().cloned(),
             self.document.visit.working_view.device().cloned(),
         );
         self.document.correction = resources.clone();
@@ -490,7 +490,11 @@ impl Change {
             if cancelled.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            let correction = Correction::prepare(&device, &document, previous.as_ref())?;
+            let correction = Correction::prepare(
+                &device,
+                document.project.active_flat_field(),
+                previous.as_ref(),
+            )?;
             Ok((document, correction))
         })
         .await

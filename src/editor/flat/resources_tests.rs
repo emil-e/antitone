@@ -38,7 +38,7 @@ fn hold_preparation(
     editor: &mut Editor,
 ) -> (Resources, oneshot::Receiver<()>, oneshot::Sender<()>) {
     let preparation = Resources::prepare(
-        editor.document.capture(),
+        editor.document.project.active_flat_field().cloned(),
         editor.document.visit.working_view.device().cloned(),
     );
     let (started, observed) = oneshot::channel();

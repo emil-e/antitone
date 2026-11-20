@@ -509,9 +509,10 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                         ),
                     )))
                     .unwrap();
-                editor.document.correction = Correction::prepare(&device, &editor.document, None)
-                    .unwrap()
-                    .into();
+                editor.document.correction =
+                    Correction::prepare(&device, editor.document.project.active_flat_field(), None)
+                        .unwrap()
+                        .into();
                 let before = editor.document.state.project.clone();
                 editor.load(path, cx);
                 assert_eq!(editor.document.state.project, before);
