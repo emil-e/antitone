@@ -23,7 +23,7 @@ pub(crate) enum OutputReference {
     DisplayReferred(OutputTarget),
 }
 
-#[cfg(feature = "editor")]
+#[cfg(all(target_os = "macos", feature = "ocio-reference"))]
 impl OutputReference {
     pub fn display_target(self) -> Option<OutputTarget> {
         match self {
