@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 mod admission;
 mod contracts;
 mod coordinates;
@@ -11,6 +12,35 @@ mod refinement;
 mod reuse;
 mod tables;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn operation_arguments_match_across_constructors_with_numeric_signed_zero() {
+    const CONTRACT: &str = "signed zero operation arguments";
+    let shader = "fn pixel(p:vec2i,position:vec2f,input:vec4f)->vec4f { return input; }";
+    let plain = Operation::new(
+        CONTRACT,
+        NumericKey(0f32),
+        shader,
+        "pixel",
+        Access::Pointwise,
+    );
+    let linked =
+        Operation::pointwise_function(CONTRACT, NumericKey(-0f32), Function::new(shader, "pixel"));
+    assert_eq!(plain.key, linked.key);
+    let got = parameters::<NumericKey<f32>>(linked.key.as_ref().unwrap()).unwrap();
+    assert!(
+        got.0.is_sign_negative(),
+        "typed arguments keep the original value"
+    );
+    let different = Operation::new(
+        CONTRACT,
+        NumericKey(1f32),
+        shader,
+        "pixel",
+        Access::Pointwise,
+    );
+    assert_ne!(plain.key, different.key);
+}
 
 #[derive(Clone)]
 struct Plate {
@@ -71,7 +101,7 @@ fn affine(input: Value, gain: f64, offset: f64) -> Value {
         Meaning::Graded,
         Operation::new(
             "affine position v1",
-            (gain, offset),
+            NumericKey([gain, offset]),
             AFFINE,
             "pixel",
             Access::Pointwise,

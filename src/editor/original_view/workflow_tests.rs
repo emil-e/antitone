@@ -96,7 +96,7 @@ fn held_correction(
         .document
         .register(crate::project::Source {
             id: SourceId(0),
-            path: demand.source.source.file.path.clone(),
+            path: demand.source.source.path().to_path_buf(),
             development: crate::project::SourceDevelopment::from_metadata(
                 &demand.source.source.metadata(),
                 demand.source.source.white_balance(),

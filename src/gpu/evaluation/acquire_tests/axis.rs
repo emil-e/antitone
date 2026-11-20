@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 
 struct Pixels {
     domain: Domain,
@@ -9,7 +10,7 @@ impl Source for Pixels {
         self.domain
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.values.clone()))
+        Some(RetainedKey::new(NumericKey(self.values.clone())))
     }
     fn read(&self, r: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         Ok((r.y..r.bottom())

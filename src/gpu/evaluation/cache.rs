@@ -1,8 +1,9 @@
 //! Value-keyed generated resources. Only submitted initializers make a value reusable.
 
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     fmt,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -16,17 +17,27 @@ impl<T: Any + fmt::Debug + Send + Sync> Value for T {}
 #[derive(Clone)]
 pub struct RetainedKey {
     value: Arc<dyn Value>,
+    fingerprint: u64,
     equals: fn(&dyn Value, &dyn Value) -> bool,
 }
 
 impl RetainedKey {
-    pub fn new<T: Any + fmt::Debug + Send + Sync + PartialEq>(value: T) -> Self {
+    /// Compute the candidate fingerprint once. The key type's hash must agree with its equality.
+    pub fn new<T: Any + fmt::Debug + Send + Sync + PartialEq + Hash>(value: T) -> Self {
+        let mut hasher = DefaultHasher::new();
+        TypeId::of::<T>().hash(&mut hasher);
+        value.hash(&mut hasher);
         Self {
             value: Arc::new(value),
+            fingerprint: hasher.finish(),
             equals: |a, b| {
                 (a as &dyn Any).downcast_ref::<T>() == (b as &dyn Any).downcast_ref::<T>()
             },
         }
+    }
+
+    pub(super) fn fingerprint(&self) -> u64 {
+        self.fingerprint
     }
 
     pub fn get<T: Any>(&self) -> Option<&T> {
@@ -43,7 +54,14 @@ impl fmt::Debug for RetainedKey {
 impl PartialEq for RetainedKey {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.value, &other.value)
-            || (self.equals)(self.value.as_ref(), other.value.as_ref())
+            || (self.fingerprint == other.fingerprint
+                && (self.equals)(self.value.as_ref(), other.value.as_ref()))
+    }
+}
+
+impl Hash for RetainedKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.fingerprint.hash(state);
     }
 }
 

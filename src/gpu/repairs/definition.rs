@@ -133,7 +133,7 @@ struct Heal {
     repair: Repair,
     active: SourceRegion,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Hash)]
 struct HealingIdentity {
     contract: &'static str,
     support: SupportMask,

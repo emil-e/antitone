@@ -16,6 +16,7 @@ use super::*;
 use wgpu::util::DeviceExt;
 
 mod allocation;
+mod lookup;
 mod phase_inputs;
 mod recorded_values;
 mod relevance;
@@ -69,7 +70,7 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
             Ok(Self::values(region))
         }
     }
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Hash)]
     struct Twice;
     impl Operation for Twice {
         fn key(&self) -> Option<RetainedKey> {

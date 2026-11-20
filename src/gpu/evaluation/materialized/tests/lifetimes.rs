@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::{Mutex, atomic::AtomicBool};
 
 struct Pixels {
@@ -22,7 +23,7 @@ impl Source for Pixels {
         self.domain
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.values.clone()))
+        Some(RetainedKey::new(NumericKey(self.values.clone())))
     }
     fn storage_format(&self) -> ImageFormat {
         if self.native {

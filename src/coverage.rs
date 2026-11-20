@@ -5,7 +5,7 @@ use crate::{
 };
 
 /// Actual source-plane footprint. Bounds restrict iteration; they are not the sampled shape.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
 pub struct Coverage {
     corners: [SourcePoint; 4],
 }

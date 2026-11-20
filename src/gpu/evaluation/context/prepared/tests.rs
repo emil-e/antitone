@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod recording;
@@ -246,7 +247,7 @@ fn multiple_missing_operands_execute_without_completed_source_pins() {
 fn shifted(source: Value, delta: f32) -> Value {
     let operation = value::Operation::new(
         "prepared shift",
-        delta,
+        NumericKey(delta),
         "struct Parameters { delta:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f { return vec4f(a.rgb+v.delta.xyz,a.w); }",
         "pixel",
         value::Access::Pointwise,

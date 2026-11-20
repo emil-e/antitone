@@ -28,7 +28,7 @@ pub(crate) fn grain(
     Ok(application)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
 struct GrainOperation {
     model: crate::grain::GrainParameters,
     seed: u64,
@@ -38,6 +38,13 @@ struct Field {
     grain_size: f64,
     seed: u64,
 }
+impl std::hash::Hash for Field {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_f64(self.grain_size, state);
+        self.seed.hash(state);
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct FieldParameters {
@@ -77,7 +84,7 @@ impl Operation for Field {
             Vec::new(),
             value::Operation::new(
                 "source-anchored grain field v1",
-                (self.grain_size, self.seed),
+                *self,
                 code,
                 "pixel",
                 value::Access::Neighborhood,

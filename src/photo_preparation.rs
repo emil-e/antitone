@@ -89,7 +89,7 @@ pub(crate) fn native_with_preview(
     let mut sampled = None;
     let value = reference.get_or_init(|| {
         resolve(
-            preview.unwrap_or_else(|| embedded_preview::read(&source.file.path, &development)),
+            preview.unwrap_or_else(|| embedded_preview::read(source.path(), &development)),
             || {
                 let proxy = store.cloned().map_or_else(
                     || CameraPixels::from_scan(&Scan::from_source(source.clone())).map(Arc::new),

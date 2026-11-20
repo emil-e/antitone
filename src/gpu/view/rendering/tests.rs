@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 
 mod failures;
 use crate::gpu::evaluation as e;
@@ -31,7 +32,7 @@ fn endpoint(input: e::Value, delta: f32) -> e::Value {
         input,
         e::Meaning::Graded,
         e::value::Operation::new(
-            "selected view stage", delta,
+            "selected view stage", NumericKey(delta),
             "struct Parameters { delta:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f { return vec4f(a.rgb+v.delta.xyz,a.w); }",
             "pixel", e::value::Access::Pointwise,
         ).with_uniform("Parameters", &[delta, 0., 0., 0.]),

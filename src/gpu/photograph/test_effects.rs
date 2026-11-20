@@ -1,5 +1,6 @@
 //! An independently supplied finite-neighbourhood component used by composition tests.
 
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::evaluation::{self, Domain, Operation, value};
 use crate::{Error, gpu::evaluation::CellRegion as Rect, processing_support::Support};
 
@@ -52,7 +53,7 @@ impl Operation for Neighbour {
         Some(evaluation::RetainedKey::new((
             "independent neighbour v1",
             self.margin,
-            self.gain,
+            NumericKey(self.gain),
         )))
     }
 
@@ -79,7 +80,7 @@ impl Operation for Neighbour {
             vec![inputs[0].request(read)?],
             value::Operation::new(
                 "independent neighbour fixture",
-                (self.margin, self.gain),
+                (self.margin, NumericKey(self.gain)),
                 r#"
 struct Parameters { bounds:vec4i, values:vec4f }
 fn pixel(p:vec2i,at:vec2f,parameters:Parameters)->vec4f{

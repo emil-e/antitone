@@ -679,7 +679,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         },
         meaning: Meaning::Graded,
     };
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Hash)]
     struct Nonfinite;
     impl Operation for Nonfinite {
         fn key(&self) -> Option<RetainedKey> {

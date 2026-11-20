@@ -113,7 +113,7 @@ struct LookOperation {
 impl Operation for LookOperation {
     fn key(&self) -> Option<RetainedKey> {
         {
-            #[derive(Debug, PartialEq)]
+            #[derive(Debug, PartialEq, Hash)]
             struct Content(crate::looks::LookId);
             Some(RetainedKey::new(Content(self.look.id())))
         }

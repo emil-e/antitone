@@ -734,7 +734,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         ..Default::default()
     };
     let source = crate::source::source_metadata(
-        &scan.source().file.path,
+        scan.source().path(),
         &scan.source().metadata(),
         scan.source().white_balance(),
     )

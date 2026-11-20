@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod prefetch;
@@ -454,7 +455,7 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
     let projected = reconstruct_tiled(input, domain).unwrap();
     let scale = |factor: f32| {
         value::pointwise(projected.clone(), Meaning::Graded, value::Operation::new(
-        "projected plane gain", factor,
+        "projected plane gain", NumericKey(factor),
         "struct Parameters { factor:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f {return vec4f(a.rgb*v.factor.x,a.w);}",
         "pixel", value::Access::Pointwise,
     ).with_uniform("Parameters", &[factor, 0., 0., 0.])).unwrap()

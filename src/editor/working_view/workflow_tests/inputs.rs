@@ -10,7 +10,7 @@ fn held_correction(
         .document
         .register(crate::project::Source {
             id: SourceId(0),
-            path: input.source.file.path.clone(),
+            path: input.source.path().to_path_buf(),
             development: crate::project::SourceDevelopment::from_metadata(
                 &input.source.metadata(),
                 input.source.white_balance(),

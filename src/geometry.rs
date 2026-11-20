@@ -2,7 +2,7 @@
 use crate::{Error, coverage::Coverage, crop::Crop};
 
 /// A half-open integer region in original developed-source coordinates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SourceRegion {
     pub x: u32,
     pub y: u32,
@@ -73,6 +73,14 @@ impl From<[u32; 4]> for SourceRegion {
 #[cfg_attr(feature = "project", serde(transparent))]
 pub struct SourcePoint(pub [f64; 2]);
 
+impl std::hash::Hash for SourcePoint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in self.0 {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 /// A continuous position in the oriented full active area, before crop/straightening.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrientedPoint(pub [f64; 2]);
@@ -86,7 +94,7 @@ pub struct FramePoint(pub [f64; 2]);
 pub struct RasterPoint(pub [f64; 2]);
 
 /// Exact nearest-centre sampling of an original source region onto a raster.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SourceRaster {
     region: SourceRegion,
     size: [u32; 2],

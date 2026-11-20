@@ -43,6 +43,14 @@ pub struct GrainParameters {
     pub colour: f64,
 }
 
+impl std::hash::Hash for GrainParameters {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in [self.grain_size, self.amplitude, self.colour] {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 impl GrainParameters {
     pub fn support(self, _pitch: [f64; 2]) -> crate::processing_support::Support {
         crate::processing_support::Support::NONE

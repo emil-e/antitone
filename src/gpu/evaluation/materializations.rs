@@ -7,13 +7,14 @@ use futures_util::{
 };
 use std::{
     any::Any,
-    collections::VecDeque,
     future::Future,
     pin::Pin,
     sync::{Mutex, Weak},
     task::{Context as TaskContext, Poll},
 };
 
+mod entries;
+use entries::Entries;
 mod relevance;
 pub(super) use relevance::Relevance;
 #[cfg(all(test, feature = "editor"))]
@@ -387,7 +388,7 @@ struct State {
     retention_enabled: std::sync::atomic::AtomicBool,
     #[cfg(all(test, feature = "raw"))]
     pressure_override: Mutex<Option<crate::sys::MemoryPressure>>,
-    entries: Mutex<VecDeque<Entry>>,
+    entries: Mutex<Entries>,
 }
 #[derive(Clone, Copy)]
 pub(super) struct RequestPolicy {
@@ -435,7 +436,7 @@ impl EntryState {
     }
 }
 
-fn sweep(entries: &mut VecDeque<Entry>) {
+fn sweep(entries: &mut Entries) {
     entries.retain(|entry| match &entry.value {
         EntryState::Producing { result, .. } | EntryState::Recording { result } => {
             result.upgrade().is_some()
@@ -456,7 +457,7 @@ impl Materializations {
             retention_enabled: true.into(),
             #[cfg(all(test, feature = "raw"))]
             pressure_override: Mutex::new(None),
-            entries: Mutex::new(VecDeque::new()),
+            entries: Mutex::new(Entries::default()),
         }))
     }
     pub(crate) fn belongs_to(&self, context: &Context) -> bool {
@@ -477,10 +478,9 @@ impl Materializations {
             .entries
             .lock()
             .unwrap()
-            .iter()
-            .filter(|entry| {
-                entry.key == *key && entry.descriptor.downcast_ref::<D>().is_some_and(&matches)
-            })
+            .matching(key)
+            .map(|(_, entry)| entry)
+            .filter(|entry| entry.descriptor.downcast_ref::<D>().is_some_and(&matches))
             .filter_map(|entry| match &entry.value {
                 EntryState::Producing { result: value, .. } => value
                     .upgrade()
@@ -563,21 +563,20 @@ impl Materializations {
 
     fn find_entry<D: Any + Send + Sync>(
         &self,
-        entries: &mut VecDeque<Entry>,
+        entries: &mut Entries,
         key: &RetainedKey,
         can_supply: impl Fn(&D) -> bool,
         policy: RequestPolicy,
     ) -> Option<ImageFuture<D>> {
         sweep(entries);
-        let index = entries.iter().rposition(|entry| {
-            entry.key == *key
-                && !matches!(entry.value, EntryState::Recording { .. })
+        let (id, _) = entries.matching(key).rev().find(|(_, entry)| {
+            !matches!(entry.value, EntryState::Recording { .. })
                 && entry
                     .descriptor
                     .downcast_ref::<D>()
                     .is_some_and(&can_supply)
         })?;
-        let mut entry = entries.remove(index).unwrap();
+        let mut entry = entries.remove(id).unwrap();
         let image = ImageFuture {
             identity: entry.key.clone(),
             descriptor: entry.descriptor.clone().downcast().ok()?,
@@ -618,24 +617,22 @@ impl Materializations {
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
         entries
-            .iter()
+            .matching(key)
             .rev()
-            .filter_map(|entry| {
-                if entry.key != *key {
-                    return None;
-                }
+            .filter_map(|(_, entry)| {
+                let image = entry.value.image()?;
                 Some(Image {
                     identity: entry.key.clone(),
                     descriptor: entry.descriptor.clone().downcast::<D>().ok()?,
-                    inputs: entry.value.image()?.reusable_inputs(),
-                    image: entry.value.image()?,
+                    inputs: image.reusable_inputs(),
+                    image,
                 })
             })
             .collect()
     }
 
     // Copy readers need physical output owners, not leases on their producers' inputs.
-    // Count inspected entries, including misses, against the caller's shared work bound.
+    // Charge every inspected candidate, including collisions, to the caller's shared work bound.
     pub(super) fn ready_bounded<D: Any + Send + Sync>(
         &self,
         key: &RetainedKey,
@@ -643,7 +640,7 @@ impl Materializations {
     ) -> Vec<(Arc<D>, Arc<ImageValue>)> {
         let entries = self.0.entries.lock().unwrap();
         let mut images = Vec::new();
-        for entry in entries.iter().rev() {
+        for (_, entry) in entries.candidates(key).rev() {
             let Some(next) = remaining.checked_sub(1) else {
                 break;
             };
@@ -683,7 +680,7 @@ impl Materializations {
         sweep(&mut entries);
     }
 
-    fn reserve(&self, entries: &mut VecDeque<Entry>, bytes: u64) -> Option<Arc<cache::Lease>> {
+    fn reserve(&self, entries: &mut Entries, bytes: u64) -> Option<Arc<cache::Lease>> {
         if !self
             .0
             .retention_enabled
@@ -705,7 +702,7 @@ impl Materializations {
     }
     fn completed(
         &self,
-        entries: &mut VecDeque<Entry>,
+        entries: &mut Entries,
         mut entry: Entry,
         image: &Arc<ImageValue>,
         bytes: u64,
@@ -727,9 +724,8 @@ impl Materializations {
     pub(in crate::gpu::evaluation) fn publish(&self, image: &Image<ImageLayout>, retain: bool) {
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
-        let existing = entries.iter().position(|entry| {
-            entry.key == image.identity
-                && entry.descriptor.downcast_ref::<ImageLayout>() == Some(image.descriptor.as_ref())
+        let existing = entries.matching(&image.identity).find(|(_, entry)| {
+            entry.descriptor.downcast_ref::<ImageLayout>() == Some(image.descriptor.as_ref())
                 && match &entry.value {
                     EntryState::Producing { .. } => true,
                     EntryState::Recording { .. } => false,
@@ -739,7 +735,8 @@ impl Materializations {
                 }
         });
         let mut entry = existing
-            .map(|index| entries.remove(index).unwrap())
+            .map(|(id, _)| id)
+            .map(|id| entries.remove(id).unwrap())
             .unwrap_or_else(|| Entry {
                 token: Arc::new(()),
                 key: image.identity.clone(),
@@ -829,15 +826,18 @@ impl Materializations {
         // A queued root/batch cannot be awaited by a worker it may depend on. Fulfil its
         // calculation here; when its continuation runs, it can reuse the completed value.
         let mut reserved_retention = None;
-        entries.retain(|entry| {
-            let queued = entry.key == key
-                && entry.descriptor.downcast_ref::<ImageLayout>() == Some(layout.as_ref())
-                && matches!(entry.value, EntryState::Producing { inline: false, .. });
-            if queued {
-                reserved_retention = Some(reserved_retention.unwrap_or(false) || entry.retain);
-            }
-            !queued
-        });
+        let queued: Vec<_> = entries
+            .matching(&key)
+            .filter(|(_, entry)| {
+                entry.descriptor.downcast_ref::<ImageLayout>() == Some(layout.as_ref())
+                    && matches!(entry.value, EntryState::Producing { inline: false, .. })
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in queued {
+            let entry = entries.remove(id).unwrap();
+            reserved_retention = Some(reserved_retention.unwrap_or(false) || entry.retain);
+        }
         let policy = RequestPolicy {
             retain: reserved_retention.unwrap_or(true),
         };
@@ -856,7 +856,7 @@ impl Materializations {
                 .await
                 .unwrap_or_else(|_| Err(Arc::new(Error::Cancelled)))
         });
-        let entry = entries.back_mut().unwrap();
+        let entry = entries.last_mut().unwrap();
         let EntryState::Producing { inline, .. } = &mut entry.value else {
             unreachable!()
         };
@@ -873,7 +873,7 @@ impl Materializations {
 
     fn create<D: Any + Send + Sync>(
         &self,
-        entries: &mut VecDeque<Entry>,
+        entries: &mut Entries,
         key: RetainedKey,
         descriptor: Arc<D>,
         bytes: u64,
@@ -895,11 +895,9 @@ impl Materializations {
             if let Some(scope) = scope.upgrade() {
                 let scope = Self(scope);
                 let mut entries = scope.0.entries.lock().unwrap();
-                if let Some(index) = entries
-                    .iter()
-                    .position(|entry| Arc::ptr_eq(&entry.token, &producing))
-                {
-                    let entry = entries.remove(index).unwrap();
+                let id = entries.id_for(&producing);
+                if let Some(id) = id {
+                    let entry = entries.remove(id).unwrap();
                     if let Ok(image) = &result {
                         scope.completed(&mut entries, entry, &image.image, bytes);
                     }
@@ -1026,11 +1024,11 @@ impl Materializations {
         let bytes = layout.bytes();
         let mut entries = self.0.entries.lock().unwrap();
         sweep(&mut entries);
-        let existing = entries.iter().position(|entry| {
-            entry.key == *key && entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)
+        let existing = entries.matching(key).find_map(|(id, entry)| {
+            (entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)).then_some(id)
         });
-        if let Some(index) = existing {
-            let mut entry = entries.remove(index).unwrap();
+        if let Some(id) = existing {
+            let entry = entries.get_mut(id).unwrap();
             let resource = entry
                 .initializer
                 .as_ref()
@@ -1046,14 +1044,13 @@ impl Materializations {
             if let Some(resource) = &resource {
                 entry.initializer = Some(Arc::downgrade(resource));
             }
-            entries.insert(index, entry);
             if resource.is_some() {
                 return Ok(resource);
             }
         }
-        let pending = entries.iter().any(|entry| {
-            entry.key == *key && entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor)
-        });
+        let pending = entries
+            .matching(key)
+            .any(|(_, entry)| entry.descriptor.downcast_ref::<ImageLayout>() == Some(&descriptor));
         // The matching image request owns its final allocation and retention choice.
         // Its internal initializer is not an additional cache result.
         let retain = retain && !pending;
@@ -1136,11 +1133,9 @@ impl Publication {
         if let Some(scope) = self.scope.upgrade() {
             let scope = Materializations(scope);
             let mut entries = scope.0.entries.lock().unwrap();
-            if let Some(index) = entries
-                .iter()
-                .position(|entry| Arc::ptr_eq(&entry.token, &self.token))
-            {
-                let entry = entries.remove(index).unwrap();
+            let id = entries.id_for(&self.token);
+            if let Some(id) = id {
+                let entry = entries.remove(id).unwrap();
                 scope.completed(
                     &mut entries,
                     entry,

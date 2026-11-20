@@ -51,7 +51,7 @@ fn publish(scope: &Materializations, value: &Value, region: CellRegion) -> Image
 }
 fn retained(scope: &Materializations, value: &Value, region: CellRegion) -> bool {
     let key = value.output(region).unwrap().identity().unwrap().clone();
-    scope.0.entries.lock().unwrap().iter().any(|entry| {
+    scope.0.entries.lock().unwrap().ordered().any(|(_, entry)| {
         entry.key == key
             && entry
                 .descriptor

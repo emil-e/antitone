@@ -154,6 +154,13 @@ pub struct RollSettings {
     pub exposure: f64,
 }
 
+impl std::hash::Hash for RollSettings {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.wb.hash(state);
+        crate::float_hash::f64(self.exposure, state);
+    }
+}
+
 /// A negative scan's interpretation inputs: measured anchors and the response curve.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NegativeInput {

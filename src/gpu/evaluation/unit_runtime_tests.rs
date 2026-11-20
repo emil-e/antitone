@@ -391,6 +391,12 @@ fn cpu_cancellation_does_not_publish_a_partial_downstream_result() {
 
 #[derive(Debug, PartialEq)]
 struct Offset(f64);
+
+impl std::hash::Hash for Offset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        crate::float_hash::f64(self.0, state);
+    }
+}
 impl Operation for Offset {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(Offset(self.0)))

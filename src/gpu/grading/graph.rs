@@ -56,7 +56,7 @@ struct Grade {
     function: Function,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 enum GradeDefinition {
     Roll(crate::processing::RollSettings, u32),
     Layers {

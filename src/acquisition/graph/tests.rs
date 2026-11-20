@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::{
     geometry::{Composition, FramePoint},
     gpu::evaluation::{
@@ -26,6 +27,15 @@ impl Declared {
         ))
     }
 }
+impl std::hash::Hash for Declared {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.before.hash(state);
+        self.after.hash(state);
+        self.natural.hash(state);
+        self.preferred.map(NumericKey).hash(state);
+    }
+}
+
 struct DeclaredOperation {
     definition: Declared,
     domain: Domain,

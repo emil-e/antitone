@@ -1,5 +1,6 @@
 //! Immutable mathematical values and captured calculation bodies.
 use super::*;
+use std::hash::Hash;
 mod definition;
 pub(super) use definition::Definition;
 
@@ -113,10 +114,10 @@ impl Shape {
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct Arguments {
+#[derive(Debug, PartialEq, Hash)]
+struct Arguments<T> {
     contract: &'static str,
-    parameters: RetainedKey,
+    parameters: T,
 }
 
 impl Operation {
@@ -129,7 +130,7 @@ impl Operation {
     /// `entry` returns vec4f from cell/world position, current input pixels, and optional
     /// parameters. Neighborhood bodies instead access declared images through input_i(p).
     /// The contract identifies the mathematics, independently of generated shader code.
-    pub fn new<T: std::fmt::Debug + PartialEq + Send + Sync + 'static>(
+    pub fn new<T: std::fmt::Debug + PartialEq + Hash + Send + Sync + 'static>(
         contract: &'static str,
         parameters: T,
         code: impl Into<Arc<str>>,
@@ -139,7 +140,7 @@ impl Operation {
         Self {
             key: Some(RetainedKey::new(Arguments {
                 contract,
-                parameters: RetainedKey::new(parameters),
+                parameters,
             })),
             body: Arc::new(Body::Gpu(GpuBody {
                 code: code.into(),
@@ -164,7 +165,9 @@ impl Operation {
         self
     }
 
-    pub(crate) fn pointwise_function<T: std::fmt::Debug + PartialEq + Send + Sync + 'static>(
+    pub(crate) fn pointwise_function<
+        T: std::fmt::Debug + PartialEq + Hash + Send + Sync + 'static,
+    >(
         contract: &'static str,
         parameters: T,
         function: Function,
@@ -172,7 +175,7 @@ impl Operation {
         Self::shader_function(
             Some(RetainedKey::new(Arguments {
                 contract,
-                parameters: RetainedKey::new(parameters),
+                parameters,
             })),
             function,
         )
@@ -217,7 +220,7 @@ impl Operation {
     }
 
     /// A whole CPU calculation receives its declared image values, not an evaluator.
-    pub fn cpu<T: std::fmt::Debug + PartialEq + Send + Sync + 'static>(
+    pub fn cpu<T: std::fmt::Debug + PartialEq + Hash + Send + Sync + 'static>(
         contract: &'static str,
         parameters: T,
         kernel: Arc<dyn CpuKernel>,
@@ -225,7 +228,7 @@ impl Operation {
         Self {
             key: Some(RetainedKey::new(Arguments {
                 contract,
-                parameters: RetainedKey::new(parameters),
+                parameters,
             })),
             body: Arc::new(Body::Cpu(kernel)),
         }
@@ -399,7 +402,8 @@ pub(super) fn is_copy(node: &Calculation) -> bool {
 }
 
 pub(super) fn parameters<T: std::any::Any>(key: &RetainedKey) -> Option<&T> {
-    key.get::<Arguments>()?.parameters.get::<T>()
+    key.get::<Arguments<T>>()
+        .map(|arguments| &arguments.parameters)
 }
 
 pub(super) fn pixel_materialization(calculation: &Calculation) -> bool {
@@ -495,7 +499,7 @@ impl Value {
             Operation {
                 key: Some(RetainedKey::new(Arguments {
                     contract: "concatenated pixel regions v1",
-                    parameters: RetainedKey::new(regions),
+                    parameters: regions,
                 })),
                 body: Arc::new(Body::Concatenate),
             },

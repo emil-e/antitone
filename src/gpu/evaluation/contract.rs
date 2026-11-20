@@ -2,8 +2,9 @@
 
 use super::CellRegion as Rect;
 use super::*;
+use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Meaning {
     /// Normalized camera light, before interpretation and the camera-to-working matrix.
     Camera,
@@ -29,6 +30,20 @@ pub struct Grid {
     /// Declared source units per grid cell, independent of rounded affine vectors.
     pub pitch: [f64; 2],
     pub coverage: u32,
+}
+
+impl Hash for Grid {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.coverage.hash(state);
+        for coordinate in self
+            .origin
+            .into_iter()
+            .chain(self.axes.into_iter().flatten())
+            .chain(self.pitch)
+        {
+            hash_f64(coordinate, state);
+        }
+    }
 }
 
 impl Grid {
@@ -98,7 +113,7 @@ impl Grid {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
 pub struct Domain {
     /// Finite source-cell boundaries; reconstructed planes have no new viewport edge.
     pub bounds: Option<Rect>,
@@ -364,7 +379,7 @@ impl Drop for Content {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Hash)]
 struct ImageIdentity {
     domain: Domain,
     upstream: Vec<RetainedKey>,

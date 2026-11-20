@@ -8,8 +8,11 @@ use crate::gpu::{
     parameters::ProcessingParameters,
     source::SourceGeometry,
 };
-use crate::processing::RollSettings;
-use std::sync::Arc;
+use crate::processing::{InputSettings, RollSettings};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Interpretation {
@@ -25,6 +28,46 @@ impl PartialEq for Interpretation {
             (Self::Packed(a), Self::Packed(b)) => bytemuck::bytes_of(a) == bytemuck::bytes_of(b),
             (Self::Unavailable, Self::Unavailable) => true,
             _ => false,
+        }
+    }
+}
+
+impl Hash for Interpretation {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Program(program) => {
+                std::mem::discriminant(&program.input).hash(state);
+                if let InputSettings::Negative {
+                    dmin,
+                    dmax,
+                    response,
+                    gamma,
+                    balance,
+                } = program.input
+                {
+                    for anchor in [dmin, dmax] {
+                        anchor.is_some().hash(state);
+                        for channel in anchor.into_iter().flat_map(|value| value.to_array()) {
+                            hash_f64(channel, state);
+                        }
+                    }
+                    for control in [
+                        response.toe,
+                        response.shoulder,
+                        gamma,
+                        balance.warmth,
+                        balance.tint,
+                    ] {
+                        hash_f64(control, state);
+                    }
+                }
+                for coefficient in program.matrix.to_cols_array() {
+                    hash_f64(coefficient, state);
+                }
+            }
+            Self::Packed(parameters) => bytemuck::bytes_of(parameters).hash(state),
+            Self::Unavailable => {}
         }
     }
 }
@@ -147,6 +190,18 @@ pub(super) struct CameraIdentity {
     geometry: Option<SourceGeometry>,
 }
 
+impl Hash for CameraIdentity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Map dimensions locate candidates without reading the gain table.
+        self.field
+            .as_ref()
+            .map(|field| (field.area(), field.size()))
+            .hash(state);
+        self.original_mapping.hash(state);
+        self.geometry.hash(state);
+    }
+}
+
 impl Camera {
     fn identity(&self) -> CameraIdentity {
         let (original_mapping, geometry) = match self.captured.mapping {
@@ -248,7 +303,7 @@ impl Native {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Hash)]
 pub(super) struct NativeIdentity(pub Interpretation);
 
 impl Operation for Native {
@@ -317,6 +372,15 @@ impl Working {
 #[derive(Debug, PartialEq)]
 struct WorkingIdentity(Interpretation, glam::DMat3);
 
+impl Hash for WorkingIdentity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        for coefficient in self.1.to_cols_array() {
+            hash_f64(coefficient, state);
+        }
+    }
+}
+
 impl Operation for Working {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(WorkingIdentity(
@@ -377,6 +441,13 @@ struct ResidentIdentity(std::sync::Weak<()>, bool);
 impl PartialEq for ResidentIdentity {
     fn eq(&self, other: &Self) -> bool {
         self.0.ptr_eq(&other.0) && self.1 == other.1
+    }
+}
+
+impl Hash for ResidentIdentity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.as_ptr().hash(state);
+        self.1.hash(state);
     }
 }
 

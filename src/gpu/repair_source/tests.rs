@@ -12,7 +12,7 @@ fn prepared_field(device: &wgpu::Device, scan: &Scan) -> Option<Arc<GpuFlatField
 
 fn recipe(scan: &Scan, input: InputSettings) -> crate::image_recipe::ImageRecipe {
     let source = crate::source::source_metadata(
-        &scan.source().file.path,
+        scan.source().path(),
         &scan.source().metadata(),
         scan.source().white_balance(),
     )
