@@ -277,7 +277,6 @@ impl Editor {
             })
             .unwrap_or(0);
         self.invalidate_original();
-        self.document.source = !self.document.project.input.ready();
         if !same_visit && let Some(input) = next {
             self.start_source_acquisition(input.path().to_owned(), cx);
         }

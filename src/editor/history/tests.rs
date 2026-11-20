@@ -258,6 +258,67 @@ fn accept_history(editor: Editor, direction: Direction) -> Editor {
 }
 
 #[test]
+fn same_visit_replay_leaves_the_current_source_toggle_alone() {
+    for source in [true, false] {
+        let mut editor = controller();
+        let before = editor.history_snapshot();
+        let visit = editor.document.visit.view;
+        let pixels = editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed
+            .clone();
+        editor.document.project.roll.exposure = 0.75;
+        editor.record_edit(before.clone(), "Roll exposure", None);
+        let after = editor.document.project.clone();
+
+        editor.document.source = source;
+        editor = accept_history(editor, Direction::Undo);
+        assert_eq!(editor.document.project, before);
+        assert_eq!(
+            editor.document.source, source,
+            "Undo leaves the current toggle alone"
+        );
+        assert_eq!(editor.document.visit.view, visit);
+        assert!(Arc::ptr_eq(
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed,
+            &pixels,
+        ));
+
+        editor.document.source = !source;
+        editor = accept_history(editor, Direction::Redo);
+        assert_eq!(editor.document.project, after);
+        assert_eq!(
+            editor.document.source, !source,
+            "Redo does not restore an earlier toggle"
+        );
+        assert_eq!(editor.document.visit.view, visit);
+        assert!(Arc::ptr_eq(
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed,
+            &pixels,
+        ));
+    }
+}
+
+#[test]
 fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_without_rewinding_navigation()
  {
     let mut editor = controller();

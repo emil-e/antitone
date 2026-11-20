@@ -2,6 +2,67 @@ use super::workflow::enter_numeric;
 use super::*;
 
 #[test]
+fn history_preserves_the_current_viewer_button_choice_at_both_layouts() {
+    for narrow in [false, true] {
+        setup(|mut h| {
+            if narrow {
+                set_layout(&mut h, egui::vec2(800., 600.), 270.);
+            }
+            let before = h.read(|editor| editor.document.project.clone());
+            enter_numeric(&mut h, "Exposure", "1.25");
+            let after = h.read(|editor| {
+                assert_eq!(editor.photo_settings().exposure, 1.25);
+                editor.document.project.clone()
+            });
+            assert_ne!(before, after);
+
+            for (redo, source) in [(false, true), (true, false), (false, false), (true, true)] {
+                if h.read(|editor| editor.document.source) != source {
+                    h.get_by_label("View source").click();
+                    h.step();
+                }
+                h.read(|editor| assert_eq!(editor.document.source, source));
+                shortcut(&mut h, redo);
+                h.read(|editor| {
+                    assert_eq!(
+                        &editor.document.project,
+                        if redo { &after } else { &before }
+                    );
+                    assert_eq!(
+                        editor.document.source, source,
+                        "history must not choose the viewer mode"
+                    );
+                });
+                wait_for(&mut h, |editor| {
+                    editor.document.visit.working_view.support_ready()
+                        && editor
+                            .document
+                            .visit
+                            .working_view
+                            .displayed
+                            .as_ref()
+                            .is_some_and(|view| view.capture.is_inspection() == source)
+                });
+                h.render().unwrap();
+                h.read(|editor| {
+                    assert_eq!(
+                        editor
+                            .canvas_frame
+                            .displayed
+                            .as_ref()
+                            .unwrap()
+                            .view
+                            .capture
+                            .is_inspection(),
+                        source,
+                    )
+                });
+            }
+        });
+    }
+}
+
+#[test]
 fn numeric_text_is_private_and_tool_start_preserves_other_accepted_values() {
     for complete in [false, true] {
         setup(|mut h| {
