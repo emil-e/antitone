@@ -14,7 +14,7 @@ struct Native {
     format: ImageFormat,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Hash)]
 struct NativeIdentity(crate::scan::CameraIdentity);
 impl std::fmt::Debug for NativeIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -209,10 +209,7 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             width: 16,
             height: 16,
         });
-        let source = editor
-            .document
-            .find_source(&scan.source().file.path)
-            .unwrap();
+        let source = editor.document.find_source(scan.source().path()).unwrap();
         let recipe = editor
             .positive_recipe_for_source(
                 editor.input(),

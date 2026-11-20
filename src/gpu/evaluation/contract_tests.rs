@@ -1,5 +1,6 @@
 use super::tests::{fixture, make_plan, make_plan_with_policy};
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::photograph::test_support::{matrix, settings};
 use crate::{gpu::evaluation::CellRegion as Rect, gpu::grading::Grading};
 
@@ -47,7 +48,7 @@ fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
             value::pointwise(
                 graded.clone(),
                 Meaning::Graded,
-                value::Operation::pointwise_function("gain witness", gain, function),
+                value::Operation::pointwise_function("gain witness", NumericKey(gain), function),
             )
             .unwrap(),
             [27, 23],

@@ -31,8 +31,11 @@ mod working;
 pub use unit::*;
 pub use working::RunWorkingSet;
 
+pub(crate) use crate::float_hash::f64 as hash_f64;
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
+#[cfg(test)]
+pub(crate) mod numeric_fixture;
 pub use context::{CachePolicy, Context, Evaluation, Production, Region, Worker};
 #[cfg(feature = "editor")]
 pub(crate) use context::{Preparation, RecordedImage};

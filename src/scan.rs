@@ -52,7 +52,7 @@ pub struct AnalysisSamples {
 #[derive(Clone)]
 pub struct DevelopedSource {
     raw: Arc<FrozenRaw>,
-    pub(crate) file: crate::source::FileKey,
+    file: crate::source::FileKey,
     camera_to_ap1: DMat3,
     camera_model: String,
     area: Rect,
@@ -96,6 +96,11 @@ impl DevelopedSource {
             .checked_add(self.camera_model.capacity() as u64)?;
         let bytes = bytes.checked_add(self.file.path.capacity() as u64)?;
         Some(bytes)
+    }
+
+    #[cfg(any(feature = "project", all(test, feature = "gpu")))]
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.file.path
     }
 
     pub fn metadata(&self) -> Metadata {

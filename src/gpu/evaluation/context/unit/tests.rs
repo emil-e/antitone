@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 mod join;
 use std::sync::{
     Mutex,
@@ -71,7 +72,7 @@ fn self_production_uses_declared_outputs_not_logical_or_lowered_node_pointers() 
             Meaning::Neutral,
             value::Operation::new(
                 "self-production coordinates",
-                gain,
+                NumericKey(gain),
                 "struct Parameters { gain:vec4f }\nfn pixel(p:vec2i, position:vec2f, input:vec4f, parameters:Parameters)->vec4f { return vec4f(input.rgb*parameters.gain.x,input.w); }",
                 "pixel",
                 value::Access::Pointwise,
@@ -169,7 +170,7 @@ impl Operation for Candidate {
         }
         self.events.lock().unwrap().push(Event::Accepted(region));
         let input = value::Calculation::input(inputs[0].request(region)?);
-        let operation=value::Operation::new("retry scaled coordinates",self.gain,
+        let operation=value::Operation::new("retry scaled coordinates",NumericKey(self.gain),
             "struct Parameters { gain:vec4f }\nfn pixel(p:vec2i, position:vec2f, value:vec4f, parameters:Parameters)->vec4f { return vec4f(value.rgb*parameters.gain.x,value.w); }",
             "pixel",value::Access::Pointwise).with_uniform("Parameters",&[self.gain,0.,0.,0.]);
         value::Calculation::new(domain, region, vec![input], operation).map(Some)

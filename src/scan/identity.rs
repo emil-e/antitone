@@ -34,6 +34,27 @@ impl PartialEq for CameraIdentity {
     }
 }
 
+impl std::hash::Hash for CameraIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // A native allocation carries one immutable file key, including revision availability.
+        // Reloads can compare equal only when both carry the same versioned key.
+        match self.capture.revision {
+            Some(_) => self.capture.hash(state),
+            None => self.native.as_ptr().hash(state),
+        }
+        self.area.hash(state);
+        self.lens_correction.hash(state);
+        self.dng_interpretation.hash(state);
+        for value in self
+            .white_balance
+            .into_iter()
+            .chain([self.scale, self.floor])
+        {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 impl CameraIdentity {
     pub(super) fn heap_bytes(&self) -> u64 {
         self.capture.path.capacity() as u64
@@ -64,6 +85,13 @@ impl DevelopedSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fingerprint(identity: &CameraIdentity) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut state = DefaultHasher::new();
+        identity.hash(&mut state);
+        state.finish()
+    }
+
     #[test]
     fn camera_identity_is_shared_with_proxies_and_reloads_without_retaining_native_pixels() {
         let file = crate::raw::fixture::bayer_dng();
@@ -73,7 +101,9 @@ mod tests {
         let proxy = CameraProxy::from_scan(&scan).unwrap();
         assert!(proxy.identity() == Some(&identity));
         let reloaded = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        assert!(identity == reloaded.source().identity());
+        let reloaded_identity = reloaded.source().identity();
+        assert!(identity == reloaded_identity);
+        assert_eq!(fingerprint(&identity), fingerprint(&reloaded_identity));
         let other = crate::raw::fixture::bayer_dng();
         let other = Scan::open(other.path(), Some([1.; 4])).unwrap();
         assert!(

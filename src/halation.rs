@@ -14,6 +14,14 @@ pub struct HalationParameters {
     pub strength: f64,
 }
 
+impl std::hash::Hash for HalationParameters {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in [self.sigma, self.strength] {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 impl HalationParameters {
     pub fn validate(self) -> Result<(), Error> {
         if !self.sigma.is_finite()

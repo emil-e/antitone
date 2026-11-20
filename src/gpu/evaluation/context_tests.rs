@@ -18,7 +18,7 @@ impl Source for Pixels {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Hash)]
 struct FieldKey {
     seed: u32,
 }

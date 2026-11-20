@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod copies;
@@ -72,7 +73,7 @@ impl Source for Float {
         domain(Meaning::Neutral)
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.0.clone()))
+        Some(RetainedKey::new(NumericKey(self.0.clone())))
     }
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         let mut values = Vec::new();
@@ -764,6 +765,12 @@ fn stored_domain_and_representation_are_validated_before_source_acquisition() {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Gain(f32);
+
+impl std::hash::Hash for Gain {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        crate::float_hash::f32(self.0, state);
+    }
+}
 
 impl Operation for Gain {
     fn key(&self) -> Option<RetainedKey> {

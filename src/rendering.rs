@@ -28,7 +28,7 @@ unsafe extern "C" {
     fn antitone_ocio_destroy(handle: *mut c_void);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum OutputTarget {
     Srgb = 0,

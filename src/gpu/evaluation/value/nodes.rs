@@ -82,8 +82,17 @@ struct Gaussian {
     support: [u32; 2],
 }
 #[derive(Debug, PartialEq)]
+struct Sigma(f64);
+
+impl std::hash::Hash for Sigma {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_f64(self.0, state);
+    }
+}
+
+#[derive(Debug, PartialEq, Hash)]
 struct Pass {
-    sigma: f64,
+    sigma: Sigma,
     axis: usize,
 }
 #[repr(C)]
@@ -125,7 +134,7 @@ impl Gaussian {
         Operation::new(
             "Gaussian image response v1",
             Pass {
-                sigma: self.sigma,
+                sigma: Sigma(self.sigma),
                 axis,
             },
             include_str!("gaussian.wgsl"),
@@ -137,7 +146,7 @@ impl Gaussian {
 }
 impl Group for Gaussian {
     fn key(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(("Gaussian group v1", self.sigma)))
+        Some(RetainedKey::new(("Gaussian group v1", Sigma(self.sigma))))
     }
     fn reads(&self, output: CellRegion) -> Result<Vec<Read>, Error> {
         Ok(vec![Read::new(0, self.regions(output)?.1)])

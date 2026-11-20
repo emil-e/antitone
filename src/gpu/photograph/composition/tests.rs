@@ -9,7 +9,7 @@ mod reuse;
 #[cfg(feature = "editor")]
 mod routing;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 struct CameraCodes;
 impl evaluation::Source for CameraCodes {
     fn identity(&self) -> Option<evaluation::RetainedKey> {

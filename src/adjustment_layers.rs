@@ -29,6 +29,22 @@ pub struct AdjustmentLayerSettings {
     pub vibrance: f64,
 }
 
+impl std::hash::Hash for AdjustmentLayerSettings {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.wb.hash(state);
+        for value in [
+            self.exposure,
+            self.contrast,
+            self.pivot,
+            self.contrast_colour_mix,
+            self.saturation,
+            self.vibrance,
+        ] {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 fn identity_amount() -> f64 {
     1.
 }
@@ -88,6 +104,30 @@ pub enum AdjustmentLayerCoverage {
         /// Fraction of normalized radius occupied by the transition, in 0..1.
         feather: f64,
     },
+}
+
+impl std::hash::Hash for AdjustmentLayerCoverage {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match *self {
+            Self::Global {} => {}
+            Self::Linear { start, end } => {
+                start.hash(state);
+                end.hash(state);
+            }
+            Self::Radial {
+                center,
+                radii,
+                angle,
+                feather,
+            } => {
+                center.hash(state);
+                for value in radii.into_iter().chain([angle, feather]) {
+                    crate::float_hash::f64(value, state);
+                }
+            }
+        }
+    }
 }
 
 impl AdjustmentLayerCoverage {
@@ -229,6 +269,16 @@ pub struct AdjustmentLayer {
     pub strength: f64,
 }
 
+impl std::hash::Hash for AdjustmentLayer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.mask.hash(state);
+        self.photo.hash(state);
+        self.enabled.hash(state);
+        self.invert.hash(state);
+        crate::float_hash::f64(self.strength, state);
+    }
+}
+
 impl AdjustmentLayer {
     pub fn global(photo: AdjustmentLayerSettings) -> Self {
         Self {
@@ -274,7 +324,7 @@ impl AdjustmentLayer {
 }
 
 /// Owned processing values, independent of adjustment names/IDs and later document edits.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct AdjustmentLayerSnapshot {
     layers: AdjustmentLayerStack,
 }
@@ -355,7 +405,7 @@ impl AdjustmentLayerPipeline {
 }
 
 /// An immutable validated scalar stack; persistence and GPU preflight are separate.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct AdjustmentLayerStack {
     layers: Vec<AdjustmentLayer>,
 }

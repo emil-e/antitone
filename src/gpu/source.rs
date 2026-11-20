@@ -9,7 +9,7 @@ use wgpu::util::DeviceExt;
 pub(crate) mod identity;
 
 /// Validated source mapping: a nearest-centre raster or two concatenated original rectangles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SourceGeometry {
     raster: SourceRaster,
     second: Option<SourceRaster>,

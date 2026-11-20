@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{path::Path, time::SystemTime};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "project", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct FileRevision {
@@ -34,7 +34,7 @@ impl FileRevision {
 
 /// Disposable freshness, not photograph identity or permission to accept a grade.
 #[cfg(feature = "raw")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "project", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub(crate) struct FileKey {

@@ -8,6 +8,15 @@ struct Inspection {
     coverage: [u32; 4],
 }
 
+impl std::hash::Hash for Inspection {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in self.columns.into_iter().flatten() {
+            crate::float_hash::f32(value, state);
+        }
+        self.coverage.hash(state);
+    }
+}
+
 pub(crate) fn inspect(
     input: Value,
     parameters: crate::gpu::parameters::ProcessingParameters,

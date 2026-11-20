@@ -30,6 +30,15 @@ pub struct SupportMask {
     runs: Arc<[[u32; 2]]>,
 }
 
+impl std::hash::Hash for SupportMask {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Runs can be large. Exact equality still checks their contents.
+        self.origin.hash(state);
+        self.size.hash(state);
+        self.runs.len().hash(state);
+    }
+}
+
 impl SupportMask {
     pub fn new(origin: [u32; 2], size: [u32; 2], bits: Vec<bool>) -> Result<Self, Error> {
         let count = Self::checked_count(origin, size)?;

@@ -58,6 +58,14 @@ pub struct Balance {
     pub tint: f64,
 }
 
+impl std::hash::Hash for Balance {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in [self.warmth, self.tint] {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 impl Balance {
     pub fn validate(self) -> Result<Self, Error> {
         let coordinates = DVec2::new(self.warmth, self.tint);

@@ -22,6 +22,18 @@ pub(crate) struct Mapping {
     pub axes: [[f64; 2]; 2],
 }
 
+impl std::hash::Hash for Mapping {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in self
+            .start
+            .into_iter()
+            .chain(self.axes.into_iter().flatten())
+        {
+            crate::float_hash::f64(value, state);
+        }
+    }
+}
+
 impl Mapping {
     fn point(self, point: [f64; 2]) -> [f64; 2] {
         std::array::from_fn(|i| {
@@ -244,7 +256,7 @@ fn mapped(
     ))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
 struct Support {
     output: Rect,
     coverage: crate::coverage::Coverage,

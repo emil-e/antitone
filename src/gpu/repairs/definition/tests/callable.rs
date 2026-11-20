@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 mod assembly;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -413,7 +414,7 @@ impl Source for Replacement {
 struct Tint([f32; 4]);
 impl Operation for Tint {
     fn key(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(("fixture tint", self.0)))
+        Some(RetainedKey::new(("fixture tint", NumericKey(self.0))))
     }
     fn reads(&self, output: CellRegion) -> Result<Vec<Read>, Error> {
         Ok(vec![Read::new(0, output)])

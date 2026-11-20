@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::Mutex;
 
 mod admission;
@@ -19,7 +20,7 @@ impl Source for Pixels {
         self.domain
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.values.clone()))
+        Some(RetainedKey::new(NumericKey(self.values.clone())))
     }
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.lock().unwrap().push(region);
@@ -46,7 +47,7 @@ fn fixture(size: [u32; 2], values: Vec<[f32; 4]>) -> (Value, Arc<Mutex<Vec<Rect>
         reads,
     )
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Hash)]
 struct Square;
 impl Operation for Square {
     fn key(&self) -> Option<RetainedKey> {

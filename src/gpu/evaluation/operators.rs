@@ -235,7 +235,7 @@ fn pixel(cell:vec2i,position:vec2f,value:vec4f,coverage:vec4u)->vec4f {{
 impl Operation for Display {
     fn key(&self) -> Option<RetainedKey> {
         {
-            #[derive(Debug, PartialEq)]
+            #[derive(Debug, PartialEq, Hash)]
             struct Content(OutputTarget);
             Some(RetainedKey::new(Content(self.target)))
         }

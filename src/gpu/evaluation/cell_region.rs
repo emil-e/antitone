@@ -3,7 +3,7 @@
 use crate::{Error, geometry::SourceRegion};
 
 /// A half-open region on a sampling grid, which can extend before its origin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CellRegion {
     pub x: i32,
     pub y: i32,

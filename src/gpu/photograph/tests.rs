@@ -2,6 +2,7 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerStack;
 use crate::geometry::SourcePoint;
 use crate::geometry::SourceRegion;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::photograph::PhotographGraph;
 use crate::gpu::test_inputs::AuthoredPhotograph;
@@ -19,7 +20,10 @@ struct Codes {
 
 impl Source for Codes {
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new((self.area, self.pixels.clone())))
+        Some(RetainedKey::new((
+            self.area,
+            NumericKey(self.pixels.clone()),
+        )))
     }
 
     fn domain(&self) -> Domain {

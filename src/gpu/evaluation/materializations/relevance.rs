@@ -55,8 +55,7 @@ impl Materializations {
     pub(in crate::gpu::evaluation) fn refresh(&self, relevance: &Relevance) {
         let mut entries = self.0.entries.lock().unwrap();
         let mut relevant = Vec::new();
-        for _ in 0..entries.len() {
-            let entry = entries.pop_front().unwrap();
+        for (id, entry) in entries.ordered() {
             let matches = entry
                 .descriptor
                 .downcast_ref::<ImageLayout>()
@@ -71,12 +70,10 @@ impl Materializations {
                     })
                 });
             if matches {
-                relevant.push(entry);
-            } else {
-                entries.push_back(entry);
+                relevant.push(id);
             }
         }
-        entries.extend(relevant);
+        entries.promote(relevant);
     }
 
     pub(in crate::gpu::evaluation) fn used(&self, image: &Arc<ImageValue>) {
@@ -108,18 +105,19 @@ impl Materializations {
         }
         let mut entries = self.0.entries.lock().unwrap();
         let mut used = Vec::new();
-        for _ in 0..entries.len() {
-            let entry = entries.pop_front().unwrap();
+        for (id, entry) in entries.ordered() {
             let matches = match &entry.value {
                 EntryState::Complete(value) => images.contains(&value.as_ptr()),
                 _ => false,
             };
             if matches {
-                used.push(entry);
-            } else {
-                entries.push_back(entry);
+                used.push(id);
             }
         }
+        let used: Vec<_> = used
+            .into_iter()
+            .map(|id| entries.remove(id).unwrap())
+            .collect();
         for entry in used {
             if submitted
                 && entry.retain

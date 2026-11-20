@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 
 #[test]
 fn immutable_table_and_uniform_arguments_stay_private_in_fused_and_stored_pixel_bodies() {
@@ -12,7 +13,7 @@ fn immutable_table_and_uniform_arguments_stay_private_in_fused_and_stored_pixel_
             Meaning::Graded,
             Operation::new(
                 "table affine witness v1",
-                (gain, bias, offset),
+                (gain, bias, NumericKey(offset)),
                 body,
                 "pixel",
                 Access::Pointwise,
@@ -62,7 +63,7 @@ fn captured_library_resources_link_privately_and_unused_exports_do_not_reach_exe
             Meaning::Graded,
             Operation::new(
                 "captured affine library witness",
-                (gain, bias),
+                NumericKey([gain, bias]),
                 code,
                 "pixel",
                 Access::Pointwise,
@@ -135,7 +136,7 @@ fn cached_shader_libraries_do_not_capture_arguments_or_requested_coverage() {
                     Meaning::Graded,
                     Operation::new(
                         "program cache bound arguments witness",
-                        (gain, bias),
+                        NumericKey([gain, bias]),
                         code,
                         "pixel",
                         Access::Pointwise,

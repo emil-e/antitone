@@ -34,6 +34,7 @@ mod export_timing;
 pub mod exposure_metadata;
 pub mod exposure_reference;
 pub mod flat_field;
+mod float_hash;
 pub mod frame_raster;
 pub mod geometry;
 #[cfg(feature = "gpu")]

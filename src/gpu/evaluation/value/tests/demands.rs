@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::Mutex;
 
 #[derive(Clone)]
@@ -45,7 +46,7 @@ fn captured_pixel_math_can_extend_its_initial_demand_without_authoring_another_v
         vec![input],
         Operation::new(
             "extended affine demand",
-            (2f64, -1f64),
+            NumericKey([2f64, -1f64]),
             AFFINE,
             "pixel",
             Access::Pointwise,

@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// Symmetric input margins, in pixels of the declared raster or source grid.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Support(pub [u32; 2]);
 
 impl Support {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 
 #[test]
 fn partial_external_arguments_need_only_storage_and_preserve_all_sample_bits() {
@@ -91,7 +92,7 @@ fn argument(pixels: Vec<[f32; 4]>) -> Value {
         vec![],
         Operation::cpu(
             "literal argument witness",
-            pixels.clone(),
+            NumericKey(pixels.clone()),
             Arc::new(Literal(pixels)),
         ),
     )
@@ -171,7 +172,7 @@ fn cropped_image_values_flatten_requested_rows_without_changing_identity_or_meta
         vec![],
         Operation::cpu(
             "strided image witness",
-            pixels.clone(),
+            NumericKey(pixels.clone()),
             Arc::new(Literal(pixels)),
         ),
     )

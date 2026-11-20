@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone)]
@@ -12,7 +13,7 @@ impl Source for Pixels {
         self.domain
     }
     fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.values.clone()))
+        Some(RetainedKey::new(NumericKey(self.values.clone())))
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.fetch_add(1, Ordering::SeqCst);
