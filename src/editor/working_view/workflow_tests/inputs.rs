@@ -1,4 +1,160 @@
 use super::*;
+use crate::editor::correction::Resources;
+use futures_channel::oneshot;
+
+fn held_correction(
+    editor: &mut Editor,
+    input: &mut source::Context,
+) -> (Resources, oneshot::Receiver<()>, oneshot::Sender<()>) {
+    editor
+        .document
+        .register(crate::project::Source {
+            id: SourceId(0),
+            path: input.source.path().to_path_buf(),
+            development: crate::project::SourceDevelopment::from_metadata(
+                &input.source.metadata(),
+                input.source.white_balance(),
+            )
+            .unwrap(),
+            development_mode: crate::project::DevelopmentMode::Unity,
+            repairs: Default::default(),
+            adjustment_layers: None,
+            orientation: Default::default(),
+            crop: None,
+        })
+        .unwrap();
+    let area = input.source.area();
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![glam::DVec3::new(1.4, 0.7, 1.2); 4],
+        )
+        .unwrap(),
+    );
+    editor
+        .document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            "reference.dng",
+            map,
+        )))
+        .unwrap();
+    let (started, observed) = oneshot::channel();
+    let (release, resume) = oneshot::channel();
+    let resources = editor.correction().after(async move {
+        started.send(()).unwrap();
+        resume
+            .await
+            .expect("release captured correction preparation");
+    });
+    editor.document.correction = resources.clone().into();
+    input.correction = resources.clone();
+    (resources, observed, release)
+}
+
+#[test]
+fn working_request_awaits_its_captured_correction_without_an_inspector_observer() {
+    let (mut editor, mut input, spec, scheduler) = fixture();
+    let (resources, started, release) = held_correction(&mut editor, &mut input);
+    let services = editor.source_services.clone().unwrap();
+    let submissions = editor.submissions.clone();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| request_working(editor, spec.clone(), input.clone(), cx));
+        let waiting = app
+            .access()
+            .spawn(move |_| async move { started.await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| waiting.is_finished());
+        app.read(|editor| {
+            let working = &editor.document.visit.working_view;
+            assert!(resources.pending());
+            assert!(!working.support_ready() && working.frame.is_none());
+            assert!(working.error.is_none());
+            assert!(working.wanted.as_ref().unwrap().rendering.get().is_none());
+        });
+        app.update(|editor| editor.document.project.set_flat_field(None).unwrap());
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        let correction = pollster::block_on(resources.acquire()).unwrap().unwrap();
+        let frame = app.read(|editor| {
+            let working = &editor.document.visit.working_view;
+            assert!(working.error.is_none());
+            let frame = working.frame.as_ref().unwrap();
+            assert!(Arc::ptr_eq(
+                &frame.request.pixels.correction.gpu().unwrap().unwrap(),
+                &correction.gpu,
+            ));
+            let camera = frame
+                .source
+                .definition
+                .ancestors()
+                .find_map(|node| {
+                    (node.operation().as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<crate::gpu::photograph::operations::Camera>()
+                })
+                .expect("completed graph must contain corrected camera light");
+            assert!(Arc::ptr_eq(
+                camera.captured.field.as_ref().unwrap(),
+                &correction.gpu
+            ));
+            frame.clone()
+        });
+        complete_frame(&frame, &services, &submissions);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn replacing_a_working_request_does_not_wait_for_the_retired_corrections_preparation() {
+    let (mut editor, mut input, spec, scheduler) = fixture();
+    let (resources, started, release) = held_correction(&mut editor, &mut input);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| request_working(editor, spec.clone(), input.clone(), cx));
+        let waiting = app
+            .access()
+            .spawn(move |_| async move { started.await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| waiting.is_finished());
+        input.correction = Resources::default();
+        app.enter(|editor, cx| {
+            editor.document.project.set_flat_field(None).unwrap();
+            request_working(editor, spec.clone(), input.clone(), cx);
+        });
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        let completed = app.read(|editor| {
+            let working = &editor.document.visit.working_view;
+            assert!(
+                resources.pending(),
+                "replacement must finish before the old map is released"
+            );
+            assert!(working.error.is_none());
+            let frame = working.frame.as_ref().unwrap();
+            assert!(crate::gpu::photograph::PhotographGraph::has_correction(
+                &frame.source.definition,
+                None
+            ));
+            frame.clone()
+        });
+        release.send(()).unwrap();
+        let retired = app
+            .access()
+            .spawn(move |_| async move { resources.acquire().await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| retired.is_finished());
+        app.pump();
+        app.read(|editor| {
+            let working = &editor.document.visit.working_view;
+            assert!(working.error.is_none());
+            assert!(Arc::ptr_eq(working.frame.as_ref().unwrap(), &completed));
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
 
 #[test]
 fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_frames() {

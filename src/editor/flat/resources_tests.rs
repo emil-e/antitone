@@ -43,16 +43,11 @@ fn hold_preparation(
     );
     let (started, observed) = oneshot::channel();
     let (release, resume) = oneshot::channel();
-    let resources = Resources::Preparing(
-        async move {
-            let _ = started.send(());
-            resume.await.expect("release correction preparation");
-            preparation.acquire().await
-        }
-        .boxed()
-        .shared(),
-    );
-    editor.document.correction = resources.clone();
+    let resources = preparation.after(async move {
+        let _ = started.send(());
+        resume.await.expect("release correction preparation");
+    });
+    editor.document.correction = resources.clone().into();
     (resources, observed, release)
 }
 
@@ -85,7 +80,7 @@ fn export_and_source_acquisition_await_the_captured_correction_without_live_ui()
         let context = source.await.unwrap();
         let correction = resources.acquire().await.unwrap().unwrap();
         assert!(Arc::ptr_eq(
-            context.correction.as_ref().unwrap(),
+            context.correction.prepared().unwrap(),
             &correction
         ));
         assert_eq!(context.scan().unwrap().flat_field(), Some(&settings.map));
@@ -128,7 +123,7 @@ fn cancelling_export_while_it_awaits_correction_preserves_another_consumers_depe
         let context = source.await.unwrap();
         let correction = resources.acquire().await.unwrap().unwrap();
         assert!(Arc::ptr_eq(
-            context.correction.as_ref().unwrap(),
+            context.correction.prepared().unwrap(),
             &correction
         ));
     });
@@ -136,9 +131,66 @@ fn cancelling_export_while_it_awaits_correction_preserves_another_consumers_depe
 }
 
 #[test]
+fn undo_restores_values_while_an_independent_reader_keeps_departed_preparation() {
+    use crate::application::test_support::with_application;
+    use crate::editor::history::Direction;
+    use std::time::Duration;
+
+    let mut editor = fixture();
+    let before = editor.document.project.clone();
+    let (resources, _started, release) = hold_preparation(&mut editor);
+    let mut source = Box::pin(editor.capture_source_context().unwrap());
+    assert!(pollster::block_on(poll_once(&mut source)).is_none());
+    let mut changed = editor.document.capture();
+    let settings = changed.project.flat_field_mut().unwrap();
+    settings.map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            settings.map.area(),
+            [2, 2],
+            vec![DVec3::splat(1.2); 4],
+        )
+        .unwrap(),
+    );
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.start_correction(changed, cx));
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.interaction_blocked()
+        });
+        app.read(|editor| {
+            assert_ne!(editor.document.project, before);
+            assert!(editor.correction().prepared().is_some());
+        });
+        assert!(resources.pending());
+        assert!(pollster::block_on(poll_once(&mut source)).is_none());
+        app.enter(|editor, cx| editor.restore_history(Direction::Undo, cx));
+        app.read(|editor| {
+            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.history_label(Direction::Redo), Some("Correction"));
+            assert!(!editor.interaction_blocked());
+        });
+        assert!(
+            resources.pending(),
+            "history does not need the departed reader's map"
+        );
+        release.send(()).unwrap();
+        let context = pollster::block_on(source).unwrap();
+        let prepared = pollster::block_on(resources.acquire()).unwrap().unwrap();
+        assert!(Arc::ptr_eq(
+            context.correction.prepared().unwrap(),
+            &prepared
+        ));
+        assert_eq!(
+            context.scan().unwrap().flat_field(),
+            before.active_flat_field().map(|settings| &settings.map)
+        );
+        app.read(|editor| assert_eq!(editor.document.project, before));
+    });
+}
+
+#[test]
 fn import_does_not_await_or_cancel_the_live_correction_observer() {
     use crate::application::test_support::with_application;
-    use std::{cell::Cell, rc::Rc, time::Duration};
+    use std::time::Duration;
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let added = directory.path().join("added.dng");
@@ -148,23 +200,10 @@ fn import_does_not_await_or_cancel_the_live_correction_observer() {
     )
     .unwrap();
     let (resources, _started, release) = hold_preparation(&mut editor);
-    let completed = Rc::new(Cell::new(false));
     with_application(editor, |app| {
-        let observed = completed.clone();
         app.enter(|editor, cx| {
-            // A live presentation waiter on the real, gated correction dependency.
-            // Its marker isolates continuation lifetime from rendering behaviour.
-            editor.document.correction_restore = cx.spawn(move |cx| async move {
-                let correction = resources.acquire().await.unwrap().unwrap();
-                cx.update(|editor| {
-                    assert_eq!(
-                        editor.document.project.active_flat_field().unwrap().map,
-                        correction.settings.map
-                    );
-                    editor.document.correction_restore = None;
-                    observed.set(true);
-                });
-            });
+            let _ = editor.correction();
+            editor.document.correction.observe(cx);
             editor.add_raws(vec![added], cx);
         });
         app.run_until(Duration::from_secs(15), |editor| {
@@ -172,12 +211,19 @@ fn import_does_not_await_or_cancel_the_live_correction_observer() {
         });
         app.read(|editor| {
             assert_eq!(editor.document.project.sources.len(), 3);
-            assert!(editor.document.correction.pending());
-            assert!(editor.document.correction_restore.is_some());
-            assert!(!completed.get());
+            assert!(editor.correction().pending());
+            assert!(resources.pending());
         });
         release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |_| completed.get());
-        app.read(|editor| assert!(editor.document.correction.prepared().is_some()));
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.correction().pending()
+        });
+        let prepared = pollster::block_on(resources.acquire()).unwrap().unwrap();
+        app.read(|editor| {
+            assert!(Arc::ptr_eq(
+                editor.correction().prepared().unwrap(),
+                &prepared,
+            ))
+        });
     });
 }

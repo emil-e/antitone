@@ -117,6 +117,7 @@ impl Evidence {
     pub(super) fn capture(
         services: &super::super::source::Services,
         scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
@@ -133,11 +134,6 @@ impl Evidence {
             .iter()
             .map(|point| source.pixel_samples(point[0], point[1]))
             .collect::<Result<Vec<_>, _>>()?;
-        let field = scan
-            .flat_field()
-            .cloned()
-            .map(|field| GpuFlatField::new(&services.device, field).map(Arc::new))
-            .transpose()?;
         let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
             evaluation::source(Arc::new(Pixels {
                 pixels: codes,

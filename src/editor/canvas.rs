@@ -657,15 +657,14 @@ impl Editor {
             }
         };
         let capture = capture.clone();
+        let correction = self.correction();
+        if correction.pending() {
+            return None;
+        }
         if let Some((source, requested_frame, rendered)) = &self.active_canvas().preview_rendered
             && source.same_source(proxy)
             && rendered.capture == capture
-            && rendered.has_correction(
-                self.document
-                    .correction
-                    .prepared()
-                    .map(|correction| &correction.gpu),
-            )
+            && rendered.has_correction(correction.prepared().map(|correction| &correction.gpu))
             && *requested_frame == frame
             && rendered.target == self.document.target()
         {
@@ -687,8 +686,7 @@ impl Editor {
             .preview(
                 kernels,
                 &capture,
-                self.document
-                    .correction
+                correction
                     .prepared()
                     .map(|correction| correction.gpu.clone()),
                 spec,
@@ -802,7 +800,7 @@ impl SourceView {
         Some(source::Context {
             source: ready.developed.clone(),
             reference: ready.reference.clone(),
-            correction: None,
+            correction: Default::default(),
         })
     }
     #[cfg(test)]

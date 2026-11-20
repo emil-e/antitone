@@ -38,7 +38,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         });
         harness.read(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             )
@@ -233,7 +233,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     && editor.document.visit.current_source.is_none()
             )
         });
-        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
+        harness.read(|editor| assert!(editor.correction().prepared().is_some()));
         wait_for(&mut harness, |e| {
             let charges = e.document.cache.charges();
             charges.retained == 0 && charges.leased_only == 0
@@ -246,9 +246,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });
         open_project(&mut harness, project_path);
-        wait_for(&mut harness, |e| !e.document.correction.pending());
+        wait_for(&mut harness, |e| !e.correction().pending());
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
-        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
+        harness.read(|editor| assert!(editor.correction().prepared().is_some()));
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_none()

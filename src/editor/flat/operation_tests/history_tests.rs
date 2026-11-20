@@ -69,7 +69,7 @@ fn history_keeps_the_prepared_reference_and_apply_uses_the_restored_document() {
         wait(app);
         app.read(|e| {
             assert!(e.document.flat_edit().is_none());
-            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
+            assert!(e.correction().prepared().is_some(), "{}", e.status);
             assert_eq!(e.document.project.output, before.output);
             assert_eq!(
                 e.history_label(history::Direction::Undo),

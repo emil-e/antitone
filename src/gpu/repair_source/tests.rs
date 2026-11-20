@@ -4,6 +4,12 @@ use crate::gpu::submission::SubmissionGate;
 use crate::processing::InputSettings;
 use glam::{DMat3, DVec3};
 
+fn prepared_field(device: &wgpu::Device, scan: &Scan) -> Option<Arc<GpuFlatField>> {
+    scan.flat_field()
+        .cloned()
+        .map(|map| Arc::new(GpuFlatField::new(device, map).unwrap()))
+}
+
 fn recipe(scan: &Scan, input: InputSettings) -> crate::image_recipe::ImageRecipe {
     let source = crate::source::source_metadata(
         scan.source().path(),
@@ -78,8 +84,14 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         uncorrected_scan.set_flat_field(None);
         let uncorrected = crate::scan::ImageSource::new(&uncorrected_scan, input).unwrap();
         let recipe = recipe(&scan, input);
-        let mut source =
-            Source::from_recipe(&device, &renderer, (&queue, &gate), &scan, &recipe).unwrap();
+        let mut source = Source::from_recipe(
+            prepared_field(&device, &scan),
+            &renderer,
+            (&queue, &gate),
+            &scan,
+            &recipe,
+        )
+        .unwrap();
         source.budget.tile = [3, 2];
         let pixels = source
             .read(region, Some(&needed), &|| false)
@@ -229,7 +241,7 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
     });
     let gate = SubmissionGate::default();
     let mut source = Source::from_recipe(
-        &device,
+        prepared_field(&device, &scan),
         &renderer,
         (&queue, &gate),
         &scan,
@@ -276,8 +288,14 @@ fn repair_inputs_accept_developed_zero_and_native_white() {
     assert_eq!(camera.y, 1.);
     let gate = SubmissionGate::default();
     let recipe = recipe(&scan, InputSettings::Digital);
-    let mut source =
-        Source::from_recipe(&device, &renderer, (&queue, &gate), &scan, &recipe).unwrap();
+    let mut source = Source::from_recipe(
+        prepared_field(&device, &scan),
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+    )
+    .unwrap();
     let pixels = source.read(region, None, &|| false).unwrap().unwrap();
     assert_eq!(pixels.len(), 64);
     assert!(pixels.iter().flatten().all(|value| value.is_finite()));
@@ -333,8 +351,14 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
             .unwrap()
             .unwrap()
     };
-    let mut search =
-        Source::from_recipe(&device, &renderer, (&queue, &gate), &scan, &recipe).unwrap();
+    let mut search = Source::from_recipe(
+        prepared_field(&device, &scan),
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+    )
+    .unwrap();
     assert_eq!(
         search.image().domain().meaning,
         evaluation::Meaning::Neutral
@@ -367,11 +391,17 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
         SupportMask::new([scan.area.x, scan.area.y], [3, 3], vec![true; 9]).unwrap();
     recipe.repairs[0].offset = [30, 0];
     let edge = SourceRegion::from([scan.area.x, scan.area.y, 3, 3]);
-    let values = Source::from_recipe(&device, &renderer, (&queue, &gate), &scan, &recipe)
-        .unwrap()
-        .read(edge, None, &|| false)
-        .unwrap()
-        .unwrap();
+    let values = Source::from_recipe(
+        prepared_field(&device, &scan),
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+    )
+    .unwrap()
+    .read(edge, None, &|| false)
+    .unwrap()
+    .unwrap();
     assert_eq!(values.len(), 9);
     assert!(values.iter().flatten().all(|value| value.is_finite()));
     let repaired = crate::gpu::photograph::RecipeGraph::originals(

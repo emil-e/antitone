@@ -55,7 +55,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
         let input = source::Context {
             reference: None,
             source: scan.source().clone(),
-            correction: None,
+            correction: Default::default(),
         };
         let original = camera_source(&scan).unwrap();
         let new_key = original.identity().unwrap().clone();

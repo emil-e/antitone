@@ -23,7 +23,7 @@ fn inside_film(footprint: Rect, planes: &[crate::spatial_metadata::Plane], inset
 }
 
 pub(super) struct Resources {
-    pub correction: Option<Arc<Correction>>,
+    pub correction: super::super::correction::Resources,
     pub sources: Arc<dyn SourceProvider>,
     pub sampling_inputs: SamplingInputs,
     pub initialization: Arc<crate::source::Initialization>,
@@ -58,11 +58,24 @@ impl Fit {
             mut sampling_inputs,
             initialization,
         } = resources;
+        let correction = futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Ok(None)
+            },
+            async { correction.acquire().await.map(Some).map_err(Error::Gpu) },
+        )
+        .await?;
+        let Some(correction) = correction else {
+            return Ok(None);
+        };
         let project = &request.document.project;
         if project.order.is_empty() || !project.order.contains(&request.selected) {
             return Err(Error::UnusableSample("no selected roll photo"));
         }
-        if project.active_flat_field() != correction.as_ref().map(|c| &c.settings) {
+        if project.active_flat_field().map(|settings| &settings.map)
+            != correction.as_ref().map(|correction| correction.gpu.field())
+        {
             return Err(Error::UnusableSample(
                 "analysis correction snapshot changed",
             ));

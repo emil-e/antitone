@@ -14,6 +14,52 @@ fn fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
+#[test]
+fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_and_document_departure()
+ {
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let gains = DVec3::new(1.1, 0.9, 1.05);
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![gains; 4],
+        )
+        .unwrap(),
+    );
+    editor
+        .document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            "measurement-reference.dng",
+            map.clone(),
+        )))
+        .unwrap();
+    let captured = editor.correction();
+    let input = capture_input(&editor).unwrap();
+    editor.document.project.set_flat_field(None).unwrap();
+    let services = editor.source_services.clone().unwrap();
+    drop(editor);
+
+    let (mut scan, field) = pollster::block_on(input).unwrap();
+    let shared = pollster::block_on(captured.acquire()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(field.as_ref().unwrap(), &shared.gpu));
+    assert!(Arc::ptr_eq(scan.flat_field().unwrap(), &map));
+    let coverage = Coverage::rectangle(Rect {
+        x: area.x + 8,
+        y: area.y + 8,
+        width: 32,
+        height: 32,
+    });
+    let expected = scan.reference_coverage(coverage).unwrap();
+    let samples = query::Samples::new(&services, &mut scan, field, coverage, &|| false).unwrap();
+    let actual = samples
+        .mean(samples.camera_light().unwrap(), &|| false)
+        .unwrap();
+    assert!((actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6);
+}
+
 // Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
 // change the source beneath the captured measurement.
 #[cfg(target_os = "macos")]

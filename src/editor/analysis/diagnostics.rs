@@ -170,7 +170,7 @@ fn diagnose_sample_rolls() {
                         Duration::from_secs(300),
                         |e, cx| e.apply_flat_edit(cx),
                     );
-                    prepared = editor.document.correction.prepared().is_some();
+                    prepared = editor.correction().prepared().is_some();
                 } else {
                     prepared = false;
                 }

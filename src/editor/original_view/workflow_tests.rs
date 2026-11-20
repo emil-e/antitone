@@ -34,7 +34,7 @@ fn demand_input(ev: f64) -> (Demand, std::sync::Weak<crate::scan::DevelopedSourc
     let source = source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
-        correction: None,
+        correction: Default::default(),
     };
     let resource = Arc::downgrade(&source.source);
     let view = ViewRequest {
@@ -82,6 +82,201 @@ fn reference_demand(
         cx,
     );
     resource
+}
+
+fn held_correction(
+    editor: &mut Editor,
+    demand: &mut Demand,
+) -> (
+    crate::editor::correction::Resources,
+    futures_channel::oneshot::Receiver<()>,
+    futures_channel::oneshot::Sender<()>,
+) {
+    editor
+        .document
+        .register(crate::project::Source {
+            id: SourceId(0),
+            path: demand.source.source.path().to_path_buf(),
+            development: crate::project::SourceDevelopment::from_metadata(
+                &demand.source.source.metadata(),
+                demand.source.source.white_balance(),
+            )
+            .unwrap(),
+            development_mode: crate::project::DevelopmentMode::Unity,
+            repairs: Default::default(),
+            adjustment_layers: None,
+            orientation: Default::default(),
+            crop: None,
+        })
+        .unwrap();
+    let area = demand.source.source.area();
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![glam::DVec3::new(1.4, 0.7, 1.2); 4],
+        )
+        .unwrap(),
+    );
+    editor
+        .document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            "reference.dng",
+            map,
+        )))
+        .unwrap();
+    let (started, observed) = futures_channel::oneshot::channel();
+    let (release, resume) = futures_channel::oneshot::channel();
+    let resources = editor.correction().after(async move {
+        started.send(()).unwrap();
+        resume
+            .await
+            .expect("release captured correction preparation");
+    });
+    editor.document.correction = resources.clone().into();
+    demand.source.correction = resources.clone();
+    (resources, observed, release)
+}
+
+#[test]
+fn original_request_awaits_its_captured_correction_without_an_inspector_observer() {
+    let (mut editor, scheduler) = editor();
+    let (mut wanted, _) = demand_input(0.);
+    let (resources, started, release) = held_correction(&mut editor, &mut wanted);
+    let services = editor.source_services.clone().unwrap();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.observe_original(Some(wanted.clone()));
+            editor.document.visit.canvas.original.last_edit =
+                Instant::now() - Duration::from_secs(1);
+            editor.request_original(&egui::Context::default(), cx);
+        });
+        let waiting = app
+            .access()
+            .spawn(move |_| async move { started.await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| waiting.is_finished());
+        app.read(|editor| {
+            let original = &editor.document.visit.canvas.original;
+            assert!(resources.pending());
+            assert!(original.refining() && original.settled().is_none());
+            assert!(!original.failed());
+        });
+        app.update(|editor| editor.document.project.set_flat_field(None).unwrap());
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.canvas.original.settled().is_some()
+        });
+        let correction = pollster::block_on(resources.acquire()).unwrap().unwrap();
+        let corrected = app.read(|editor| {
+            let original = &editor.document.visit.canvas.original;
+            assert!(!original.failed() && !original.refining());
+            assert!(Arc::ptr_eq(
+                &original
+                    .wanted
+                    .as_ref()
+                    .unwrap()
+                    .source
+                    .correction
+                    .gpu()
+                    .unwrap()
+                    .unwrap(),
+                &correction.gpu,
+            ));
+            original.settled().unwrap().1
+        });
+        let corrected =
+            crate::viewer::readback::image_pixels(&services.device, &services.queue, &corrected);
+        wanted.source.correction = Default::default();
+        app.enter(|editor, cx| {
+            editor.observe_original(Some(wanted.clone()));
+            editor.document.visit.canvas.original.last_edit =
+                Instant::now() - Duration::from_secs(1);
+            editor.request_original(&egui::Context::default(), cx);
+        });
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.canvas.original.settled().is_some()
+        });
+        let uncorrected =
+            app.read(|editor| editor.document.visit.canvas.original.settled().unwrap().1);
+        let uncorrected =
+            crate::viewer::readback::image_pixels(&services.device, &services.queue, &uncorrected);
+        assert!(
+            corrected
+                .iter()
+                .chain(&uncorrected)
+                .flatten()
+                .all(|value| value.is_finite())
+        );
+        assert!(
+            corrected
+                .iter()
+                .zip(&uncorrected)
+                .any(|(corrected, uncorrected)| corrected[..3] != uncorrected[..3]),
+            "the completed request must actually apply its captured RGB gains"
+        );
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn replacing_an_original_request_does_not_wait_for_the_retired_corrections_preparation() {
+    let (mut editor, scheduler) = editor();
+    let (mut wanted, _) = demand_input(0.);
+    let (resources, started, release) = held_correction(&mut editor, &mut wanted);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.observe_original(Some(wanted));
+            editor.document.visit.canvas.original.last_edit =
+                Instant::now() - Duration::from_secs(1);
+            editor.request_original(&egui::Context::default(), cx);
+        });
+        let waiting = app
+            .access()
+            .spawn(move |_| async move { started.await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| waiting.is_finished());
+        app.enter(|editor, cx| {
+            editor.document.project.set_flat_field(None).unwrap();
+            demand(editor, 0.2, cx);
+        });
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.visit.canvas.original.settled().is_some()
+        });
+        let completed = app.read(|editor| {
+            let original = &editor.document.visit.canvas.original;
+            assert!(
+                resources.pending(),
+                "replacement must finish before the old map is released"
+            );
+            assert!(!original.failed() && !original.refining());
+            assert!(
+                original
+                    .wanted
+                    .as_ref()
+                    .unwrap()
+                    .source
+                    .correction
+                    .map()
+                    .is_none()
+            );
+            original.settled().unwrap().1
+        });
+        release.send(()).unwrap();
+        let retired = app
+            .access()
+            .spawn(move |_| async move { resources.acquire().await.unwrap() })
+            .unwrap();
+        app.run_until(Duration::from_secs(15), |_| retired.is_finished());
+        app.pump();
+        app.read(|editor| {
+            let original = &editor.document.visit.canvas.original;
+            assert!(!original.failed());
+            assert!(Arc::ptr_eq(&original.settled().unwrap().1, &completed));
+        });
+    });
+    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
@@ -274,7 +469,7 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
             let source = source::Context {
                 reference: None,
                 source: crate::editor::tests::developed_fixture(),
-                correction: None,
+                correction: Default::default(),
             };
             let area = source.source.area();
             let composition =

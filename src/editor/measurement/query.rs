@@ -33,6 +33,7 @@ impl<'a> Samples<'a> {
     pub(in crate::editor) fn new(
         services: &'a crate::editor::source::Services,
         scan: &'a mut Scan,
+        field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
@@ -44,11 +45,6 @@ impl<'a> Samples<'a> {
 
         let renderer = services.renderers.get(&services.device, &services.queue)?;
         let source = evaluation::camera_source(scan)?;
-        let field = scan
-            .flat_field()
-            .cloned()
-            .map(|field| GpuFlatField::new(&services.device, field).map(Arc::new))
-            .transpose()?;
 
         Ok(Self {
             services,

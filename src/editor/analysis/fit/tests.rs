@@ -5,6 +5,7 @@ use crate::{
 };
 
 mod boundaries;
+mod correction;
 mod film_edges;
 mod interpretation;
 
@@ -25,7 +26,7 @@ impl Resources {
             self.renderers.get(&self.device, &self.queue)?,
             request,
             super::Resources {
-                correction: input,
+                correction: input.into(),
                 sources: self.sources.clone(),
                 sampling_inputs: self.sampling_inputs.clone(),
                 initialization: self.initialization.clone(),
@@ -75,7 +76,7 @@ async fn run(
             .get(&resources.device, &resources.queue)?,
         request,
         super::Resources {
-            correction: input,
+            correction: input.into(),
             sources: resources.sources,
             sampling_inputs: resources.sampling_inputs,
             initialization: resources.initialization,

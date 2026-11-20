@@ -2,6 +2,8 @@ use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 
+mod correction;
+
 fn controlled() -> (Thumbnails, mpsc::Receiver<Submission>) {
     let (commands, requests) = mpsc::channel();
     (
@@ -68,7 +70,7 @@ pub(super) fn service_job(
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
         key,
-        correction,
+        correction: correction.into(),
         render,
         priority: if render {
             source_loading::Priority::Visible

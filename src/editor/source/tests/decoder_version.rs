@@ -56,7 +56,7 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     let developed = Request {
         source: opened.source_input(id, &Default::default()).unwrap(),
         sources: None,
-        correction: None,
+        correction: Default::default(),
     }
     .load(&loader, &|| false)
     .unwrap();
@@ -220,7 +220,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             let developed = Request {
                 source: opened.source_input(id).unwrap(),
                 sources: Some(loader.provider(Some(opened.cache.clone()))),
-                correction: correction.clone(),
+                correction: correction.clone().into(),
             }
             .load(&loader, &|| false)
             .unwrap();

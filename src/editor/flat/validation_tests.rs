@@ -88,8 +88,8 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
         .unwrap()
         .unwrap();
     assert_eq!(
-        prepared.settings,
-        *document.project.active_flat_field().unwrap()
+        prepared.gpu.field(),
+        &document.project.active_flat_field().unwrap().map
     );
     assert!(Arc::ptr_eq(
         &prepared,
@@ -149,7 +149,7 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
                     enabled
                 );
                 assert_eq!(
-                    editor.document.correction.prepared().is_some(),
+                    editor.correction().prepared().is_some(),
                     enabled == Some(true)
                 );
                 assert_eq!(
@@ -193,7 +193,7 @@ fn map_upload_failure_preserves_the_previous_correction_and_history() {
         app.read(|editor| {
             assert_eq!(editor.document.project, before);
             assert!(Arc::ptr_eq(
-                editor.document.correction.prepared().unwrap(),
+                editor.correction().prepared().unwrap(),
                 &prepared
             ));
             for direction in [
@@ -251,7 +251,7 @@ fn preparing_and_reusing_a_map_ignore_unrelated_source_compatibility() {
             Correction::prepare(device, document.project.active_flat_field(), previous)
                 .expect("map preparation does not validate unrelated photographs")
                 .unwrap();
-        assert_eq!(correction.settings, prepared.settings);
+        assert_eq!(correction.gpu.field(), prepared.gpu.field());
         if let Some(previous) = previous {
             assert!(Arc::ptr_eq(&correction, previous));
         }
@@ -339,8 +339,8 @@ fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_
         app.read(|editor| {
             assert_eq!(editor.document.project, expected);
             assert_eq!(
-                editor.document.correction.prepared().unwrap().settings,
-                *expected.active_flat_field().unwrap()
+                editor.correction().prepared().unwrap().gpu.field(),
+                &expected.active_flat_field().unwrap().map
             );
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
             assert_eq!(

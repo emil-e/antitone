@@ -5,12 +5,16 @@ use super::{
     picking::{self, Display, View},
     ui,
 };
-use crate::{Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, scan::Scan};
+use crate::{
+    Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, gpu::flat::GpuFlatField,
+    scan::Scan,
+};
 #[cfg(test)]
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
     processing::InputSettings,
 };
+use std::sync::Arc;
 
 mod query;
 
@@ -108,11 +112,12 @@ impl LayerInput {
     pub fn measure(
         self,
         image: &mut Scan,
+        field: Option<Arc<GpuFlatField>>,
         region: Coverage,
         services: &super::source::Services,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Balance, Error> {
-        query::layer(services, image, region, self, cancelled)
+        query::layer(services, image, field, region, self, cancelled)
     }
 }
 
@@ -137,10 +142,10 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, ROLL.label, async move {
-        let mut image = image.await?;
+        let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            query::roll(services, &mut image, region, input, &|| {
+            query::roll(services, &mut image, field, region, input, &|| {
                 cancelled.is_cancelled()
             })
         })
@@ -186,10 +191,12 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, LAYER.label, async move {
-        let mut image = image.await?;
+        let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+            input.measure(&mut image, field, region, services, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })
