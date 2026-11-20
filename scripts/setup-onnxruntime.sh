@@ -6,14 +6,15 @@ cd "$(dirname "$0")/.."
 cache=.cache/native-deps
 pins=native/onnxruntime/pins.txt
 version=$(awk -F= '$1 == "version" {print $2}' "$pins")
-hash=$(awk -F= '$1 == "macos_arm64_sha256" {print $2}' "$pins")
-release="onnxruntime-osx-arm64-$version"
-archive="$cache/$release.tgz"
+hash=$(awk -F= '$1 == "nuget_sha256" {print $2}' "$pins")
+package="microsoft.ml.onnxruntime"
+name="$package.$version.nupkg"
+archive="$cache/$name"
 prefix="$cache/onnxruntime-$version"
 mkdir -p "$cache"
 
 if [ ! -f "$archive" ]; then
-    curl --fail --location "https://github.com/microsoft/onnxruntime/releases/download/v$version/$release.tgz" -o "$archive.tmp"
+    curl --fail --location "https://api.nuget.org/v3-flatcontainer/$package/$version/$name" -o "$archive.tmp"
     mv "$archive.tmp" "$archive"
 fi
 printf '%s  %s\n' "$hash" "$archive" | shasum -a 256 -c -
@@ -23,8 +24,8 @@ fi
 
 stage=$(mktemp -d "$cache/.onnxruntime-install.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
-tar -xf "$archive" -C "$stage" "./$release/lib/libonnxruntime.$version.dylib" \
-    "./$release/LICENSE" "./$release/ThirdPartyNotices.txt"
+tar -xf "$archive" -C "$stage" runtimes/osx-arm64/native/libonnxruntime.dylib \
+    LICENSE ThirdPartyNotices.txt
 mkdir -p "$prefix"
-mv "$stage/$release/LICENSE" "$stage/$release/ThirdPartyNotices.txt" "$prefix/"
-mv "$stage/$release/lib/libonnxruntime.$version.dylib" "$prefix/libonnxruntime.dylib"
+mv "$stage/LICENSE" "$stage/ThirdPartyNotices.txt" "$prefix/"
+mv "$stage/runtimes/osx-arm64/native/libonnxruntime.dylib" "$prefix/libonnxruntime.dylib"

@@ -39,10 +39,11 @@ function Get-PinnedArchive {
 
 function Install-OnnxRuntime {
     $pins = Get-Content -Raw (Join-Path $root 'native/onnxruntime/pins.txt') | ConvertFrom-StringData
-    $release = "onnxruntime-win-x64-$($pins.version)"
-    $archive = Get-PinnedArchive -Name "$release.zip" `
-        -Url "https://github.com/microsoft/onnxruntime/releases/download/v$($pins.version)/$release.zip" `
-        -Sha256 $pins.windows_x64_sha256
+    $package = 'microsoft.ml.onnxruntime'
+    $name = "$package.$($pins.version).nupkg"
+    $archive = Get-PinnedArchive -Name $name `
+        -Url "https://api.nuget.org/v3-flatcontainer/$package/$($pins.version)/$name" `
+        -Sha256 $pins.nuget_sha256
     $cache = Join-Path $root '.cache/native-deps'
     $prefix = Join-Path $cache "onnxruntime-$($pins.version)"
     if ((Test-Path (Join-Path $prefix 'onnxruntime.dll') -PathType Leaf) -and
@@ -53,11 +54,12 @@ function Install-OnnxRuntime {
     $stage = Join-Path $cache ('.onnxruntime-install-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force $stage | Out-Null
     try {
-        & tar.exe -xf $archive -C $stage "$release/lib/onnxruntime.dll" "$release/LICENSE" "$release/ThirdPartyNotices.txt"
+        $library = 'runtimes/win-x64/native/onnxruntime.dll'
+        & tar.exe -xf $archive -C $stage $library LICENSE ThirdPartyNotices.txt
         if ($LASTEXITCODE -ne 0) { throw "Could not extract $archive" }
         New-Item -ItemType Directory -Force $prefix | Out-Null
-        Copy-Item -LiteralPath (Join-Path $stage "$release/LICENSE"), (Join-Path $stage "$release/ThirdPartyNotices.txt") -Destination $prefix -Force
-        Copy-Item -LiteralPath (Join-Path $stage "$release/lib/onnxruntime.dll") -Destination $prefix -Force
+        Copy-Item -LiteralPath (Join-Path $stage 'LICENSE'), (Join-Path $stage 'ThirdPartyNotices.txt') -Destination $prefix -Force
+        Copy-Item -LiteralPath (Join-Path $stage $library) -Destination $prefix -Force
     } finally {
         Remove-Item -LiteralPath $stage -Recurse -Force
     }
