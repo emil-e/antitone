@@ -195,9 +195,9 @@ fn proposed_document(
 impl Editor {
     fn analysis_support(&self) -> Option<Rect> {
         self.document
-            .correction
-            .prepared()
-            .map(|c| rect(c.settings.map.area()))
+            .project
+            .active_flat_field()
+            .map(|c| rect(c.map.area()))
             .or_else(|| {
                 self.document
                     .visit
@@ -1377,7 +1377,7 @@ impl Drop for Operation {
 
 struct FitInput {
     activity: Activity,
-    correction: Option<Arc<Correction>>,
+    correction: super::correction::Resources,
     sources: Option<Arc<dyn SourceProvider>>,
     sampling_inputs: SamplingInputs,
     initialization: Arc<crate::source::Initialization>,
@@ -1641,7 +1641,7 @@ impl AnalyzeTool {
         editor.status = "Analyzing roll…".into();
         Some(FitInput {
             activity,
-            correction: editor.document.correction.prepared().cloned(),
+            correction: editor.correction(),
             sources: editor.source_provider(),
             sampling_inputs: editor.document.sampling_inputs.clone(),
             initialization: editor.document.initialization.clone(),

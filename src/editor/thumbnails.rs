@@ -312,7 +312,7 @@ struct Job {
     generation: Arc<std::sync::atomic::AtomicU64>,
     key: ImageKey,
     physical: crate::source::Input,
-    correction: Option<Arc<Correction>>,
+    correction: super::correction::Resources,
     render: bool,
     priority: source_loading::Priority,
     previous: Option<Arc<Product>>,
@@ -980,11 +980,7 @@ impl Editor {
             recipe,
             projection,
             target: self.document.target(),
-            field: self
-                .document
-                .correction
-                .prepared()
-                .map(|c| FieldKey(c.settings.map.clone())),
+            field: self.correction().map().cloned().map(FieldKey),
         })
     }
 
@@ -1157,11 +1153,7 @@ impl Editor {
         {
             self.document.thumbnails.release_selected();
         }
-        let field = self
-            .document
-            .correction
-            .prepared()
-            .map(|c| FieldKey(c.settings.map.clone()));
+        let field = self.correction().map().cloned().map(FieldKey);
         self.document
             .thumbnails
             .cache
@@ -1237,7 +1229,7 @@ impl Editor {
                         .as_ref()
                         .and_then(|key| self.document.thumbnails.cache.get(key))
                         .cloned();
-                    let pending = current.is_none() && key.is_some();
+                    let mut pending = current.is_none() && key.is_some();
                     // Keep the previous accepted grade visible until its replacement is ready.
                     // Exact-key failures still take precedence over navigation feedback.
                     let entry = current.or_else(|| {
@@ -1274,6 +1266,13 @@ impl Editor {
                     } else {
                         Ok(None)
                     };
+                    let correction = self.correction();
+                    let awaiting_correction =
+                        parameters.as_ref().is_ok_and(Option::is_some) && correction.pending();
+                    if awaiting_correction {
+                        self.document.correction.observe(cx);
+                        pending = true;
+                    }
                     let mut error = None;
                     match (entry, parameters) {
                         (Some(Ok(image)), Ok(parameters)) => {
@@ -1315,23 +1314,36 @@ impl Editor {
                                 if let Some(failure) = failure {
                                     error = Some(failure.to_string());
                                 }
-                                match processing::image_paint(
-                                    image.image.clone(),
-                                    parameters,
-                                    self.document
-                                        .correction
-                                        .prepared()
-                                        .map(|correction| correction.gpu.clone()),
-                                    mapping,
-                                    ui.ctx(),
-                                ) {
-                                    Ok(paint) => {
-                                        ui.painter().with_clip_rect(draw).add(
-                                            egui_wgpu::Callback::new_paint_callback(draw, paint),
-                                        );
-                                    }
-                                    Err(message) => {
-                                        error = Some(message.to_string());
+                                if !awaiting_correction {
+                                    let field = match parameters.as_ref() {
+                                        Some(request)
+                                            if request.is_inspection()
+                                                && correction.error().is_some() =>
+                                        {
+                                            Ok(None)
+                                        }
+                                        Some(_) => correction.gpu(),
+                                        None => Ok(None),
+                                    };
+                                    match field.and_then(|field| {
+                                        processing::image_paint(
+                                            image.image.clone(),
+                                            parameters,
+                                            field,
+                                            mapping,
+                                            ui.ctx(),
+                                        )
+                                    }) {
+                                        Ok(paint) => {
+                                            ui.painter().with_clip_rect(draw).add(
+                                                egui_wgpu::Callback::new_paint_callback(
+                                                    draw, paint,
+                                                ),
+                                            );
+                                        }
+                                        Err(message) => {
+                                            error = Some(message.to_string());
+                                        }
                                     }
                                 }
                             }
@@ -1625,7 +1637,7 @@ impl Editor {
             ticket,
             key: key.clone(),
             physical,
-            correction: self.document.correction.prepared().cloned(),
+            correction: self.correction(),
             render,
             priority,
             previous,
@@ -1945,9 +1957,7 @@ impl Worker {
                 submissions,
                 source.clone(),
                 capture,
-                job.correction
-                    .as_ref()
-                    .map(|correction| correction.gpu.clone()),
+                job.correction.gpu()?,
                 job.key.target,
                 &|| !self.active(job),
             )?
@@ -1975,9 +1985,7 @@ impl Worker {
                 renderer,
                 kernels,
                 proxy,
-                job.correction
-                    .as_ref()
-                    .map(|correction| correction.gpu.clone()),
+                job.correction.gpu()?,
                 spec,
                 &capture,
                 job.key.target,
@@ -2196,6 +2204,26 @@ impl Worker {
             .await
             .map_err(|_| Stopped)?;
         let positive = work.job.render && matches!(&work.job.key.recipe, Ok(Some(_)));
+        if positive
+            && matches!(
+                &work.input,
+                Ok(Input::Missing | Input::Proxy(_) | Input::Positive)
+            )
+        {
+            let correction = futures_lite::future::or(
+                async {
+                    work.job.cancelled.wait().await;
+                    Ok(None)
+                },
+                async { work.job.correction.clone().acquire().await.map(Some) },
+            )
+            .await;
+            match correction {
+                Ok(Some(correction)) => work.job.correction = correction.into(),
+                Ok(None) => work.input = Ok(Input::Retired),
+                Err(error) => work.input = Err(Error::Gpu(error)),
+            }
+        }
         if positive && matches!(&work.input, Ok(Input::Missing | Input::Proxy(_))) {
             let cached = match &work.input {
                 Ok(Input::Proxy(proxy)) => Some(proxy.clone()),

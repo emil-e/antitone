@@ -112,8 +112,12 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
     );
 
     let gate = SubmissionGate::default();
+    let field = scan
+        .flat_field()
+        .cloned()
+        .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
     let mut local_source = crate::gpu::repair_source::Source::from_recipe(
-        &device,
+        field,
         &renderer,
         (&queue, &gate),
         &scan,

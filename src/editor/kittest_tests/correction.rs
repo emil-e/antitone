@@ -47,13 +47,13 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
         harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         wait_for(&mut harness, |editor| {
             !editor.files.opening()
-                && !editor.document.correction.pending()
+                && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
         });
         harness.update(|editor| {
             assert_eq!(editor.document.state.project, saved.project);
             assert!(!editor.document.dirty());
-            assert!(editor.document.correction.prepared().is_none() && editor.document.source);
+            assert!(editor.correction().prepared().is_none() && editor.document.source);
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
                 "{}",
@@ -193,15 +193,15 @@ fn reopened_photographic_overflow_keeps_the_map_and_recovers_when_correction_is_
         harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         wait_for(&mut harness, |editor| {
             !editor.files.opening()
-                && !editor.document.correction.pending()
+                && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
                 && editor.document.visit.working_view.error.is_some()
         });
         harness.read(|editor| {
             assert_eq!(editor.document.project, saved.project);
             assert!(!editor.document.dirty());
-            assert!(editor.document.correction.prepared().is_some());
-            assert!(editor.document.correction.error().is_none());
+            assert!(editor.correction().prepared().is_some());
+            assert!(editor.correction().error().is_none());
             assert!(editor.document.visit.canvas.ready.is_some());
             assert!(!editor.dialogs.is_open());
             assert!(
@@ -480,7 +480,7 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         harness.get_by_label("Apply").click();
         harness.step();
         harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
-        harness.read(|e| assert!(e.document.correction.prepared().is_some(), "{}", e.status));
+        harness.read(|e| assert!(e.correction().prepared().is_some(), "{}", e.status));
         harness.set_size(egui::vec2(1100., 1100.));
         harness.update(|e| {
             e.preferences
@@ -526,7 +526,7 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
         harness.read(|e| {
             assert!(e.document.state.project.flat_field().is_none());
-            assert!(e.source_context().unwrap().correction.is_none());
+            assert!(e.source_context().unwrap().correction.map().is_none());
             assert_eq!(e.document.visit.current_source, selected);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
@@ -661,7 +661,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             )
@@ -871,9 +871,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             harness.get_by_label("Enabled").click();
             harness.step();
             wait_for(&mut harness, |e| !e.interaction_blocked());
-            harness.read(|editor| {
-                assert_eq!(editor.document.correction.prepared().is_some(), enabled)
-            });
+            harness.read(|editor| assert_eq!(editor.correction().prepared().is_some(), enabled));
             harness.read(|editor| assert!(editor.document.source));
             harness.read(|editor| assert_eq!(editor.source_exposure, 2.));
             harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
@@ -948,7 +946,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
         wait_for(&mut harness, |e| !e.interaction_blocked());
-        harness.read(|editor| assert!(editor.document.correction.prepared().is_none()));
+        harness.read(|editor| assert!(editor.correction().prepared().is_none()));
         let mut cleared = saved.clone();
         cleared.set_flat_field(None).unwrap();
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
@@ -965,7 +963,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| {
             assert_eq!(
-                editor.document.correction.prepared().unwrap().settings.map,
+                editor.correction().prepared().unwrap().gpu.field().clone(),
                 settings.map
             )
         });
@@ -1032,7 +1030,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             );
@@ -1055,7 +1053,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.step();
         wait_opened_photo(&mut harness);
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
-        harness.read(|editor| assert!(editor.document.correction.prepared().is_some()));
+        harness.read(|editor| assert!(editor.correction().prepared().is_some()));
         harness
             .get_by_label("Reset Flat-field correction")
             .scroll_to_me();
@@ -1065,7 +1063,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, cleared);
-            assert!(editor.document.correction.prepared().is_none());
+            assert!(editor.correction().prepared().is_none());
             assert!(editor.active_canvas().ready.is_some());
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
         });

@@ -491,9 +491,7 @@ fn shortcut(h: &mut Harness<'_, Editor>, redo: bool) {
     );
     h.step();
     wait_for(h, |e| {
-        !e.interaction_blocked()
-            && !e.document.visit.source.pending()
-            && !e.document.correction.pending()
+        !e.interaction_blocked() && !e.document.visit.source.pending() && !e.correction().pending()
     });
 }
 

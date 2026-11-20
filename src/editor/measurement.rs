@@ -1,5 +1,5 @@
 use super::*;
-use crate::cancellation::Cancellation;
+use crate::{cancellation::Cancellation, gpu::flat::GpuFlatField};
 use std::future::Future;
 
 pub(super) mod query;
@@ -18,29 +18,24 @@ pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
         .as_ref()
         .ok_or("No developed source for measurement")?;
     let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
-    scan.set_flat_field(
-        editor
-            .document
-            .correction
-            .prepared()
-            .map(|correction| correction.settings.map.clone()),
-    );
+    scan.set_flat_field(editor.correction().map().cloned());
     Ok(scan)
 }
 
+pub(super) type CapturedInput = (Scan, Option<Arc<GpuFlatField>>);
+
 pub(super) fn capture_input(
     editor: &Editor,
-) -> Result<impl Future<Output = Result<Scan, String>> + use<>, String> {
+) -> Result<impl Future<Output = Result<CapturedInput, String>> + use<>, String> {
     let input = editor.capture_source_context()?;
     Ok(async move {
         let context = input.await?;
-        let mut scan = Scan::with_reference(context.source, context.reference);
-        scan.set_flat_field(
-            context
-                .correction
-                .map(|correction| correction.settings.map.clone()),
-        );
-        Ok(scan)
+        let scan = context.scan().map_err(|error| error.to_string())?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
+        Ok((scan, field))
     })
 }
 

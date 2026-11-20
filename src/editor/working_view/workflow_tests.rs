@@ -21,11 +21,7 @@ fn requested_image(
     crate::gpu::view::rendering::photograph(
         &source.renderer,
         &demand.pixels.scan()?,
-        demand
-            .pixels
-            .correction
-            .as_ref()
-            .map(|field| field.gpu.clone()),
+        demand.pixels.correction.gpu()?,
         &demand.capture,
         source.spec.clone(),
         demand.target,
@@ -99,7 +95,7 @@ fn fixture() -> (
     let input = source::Context {
         reference: None,
         source: scan.source().clone(),
-        correction: None,
+        correction: Default::default(),
     };
     let scheduler = source_loading::SourceLoader::new();
     e.source_services = Some(source::Services {
@@ -299,7 +295,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     let input = source::Context {
         reference: None,
         source: scan.source().clone(),
-        correction: None,
+        correction: Default::default(),
     };
     let small = positive_spec(frame, &input, 0.25);
     let latest = positive_spec(frame, &input, 0.75);
@@ -841,7 +837,7 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
     let next = source::Context {
         reference: None,
         source: scan.source().clone(),
-        correction: None,
+        correction: Default::default(),
     };
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();

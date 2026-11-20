@@ -264,7 +264,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
@@ -403,10 +403,10 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         let (negative, scan, expected_pixels) = app.read(|e| {
-            assert!(e.document.correction.prepared().is_some(), "{}", e.status);
+            assert!(e.correction().prepared().is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             let (uncorrected, _) = crate::editor::prepare_source(
@@ -430,8 +430,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             digital_proxy_pixels(
                 e,
                 e.document.visit.canvas.ready.as_ref().unwrap(),
-                e.document
-                    .correction
+                e.correction()
                     .prepared()
                     .map(|correction| correction.gpu.clone()),
             )
@@ -451,13 +450,13 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.pump();
         app.read(|e| {
             assert_eq!(e.document.project.input, InputSettings::Digital);
-            assert!(e.document.correction.prepared().is_none());
+            assert!(e.correction().prepared().is_none());
             assert!(e.document.project.flat_field().is_none());
         });
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         app.read(|e| {
             assert_eq!(
@@ -466,7 +465,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert!(e.document.correction.prepared().is_none() && !e.document.source);
+            assert!(e.correction().prepared().is_none() && !e.document.source);
             assert!(
                 e.source_context()
                     .unwrap()
@@ -483,8 +482,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             let actual = digital_proxy_pixels(
                 e,
                 e.document.visit.canvas.ready.as_ref().unwrap(),
-                e.document
-                    .correction
+                e.correction()
                     .prepared()
                     .map(|correction| correction.gpu.clone()),
             );
@@ -496,21 +494,24 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             }
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
+        let cx = app.access();
         app.run_until(Duration::from_secs(15), |e| {
+            let _ = e.correction();
+            e.document.correction.observe(&cx);
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         app.read(|e| {
             assert_eq!(e.document.project.input, negative, "{}", e.status);
-            assert!(e.document.correction.prepared().is_some() && !e.document.source);
+            assert!(e.correction().prepared().is_some() && !e.document.source);
             assert_eq!(e.document.state.project.scan, scan);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         app.enter(|e, cx| {
             assert_eq!(
@@ -519,19 +520,19 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert!(e.document.correction.prepared().is_none());
+            assert!(e.correction().prepared().is_none());
             e.request_input(e.negative_input(), cx);
         });
         app.run_until(Duration::from_secs(15), |e| {
             !e.interaction_blocked()
                 && !e.document.visit.source.pending()
-                && !e.document.correction.pending()
+                && !e.correction().pending()
         });
         app.read(|e| {
             assert!(
                 e.document.project.input.is_negative()
                     && e.document.source
-                    && e.document.correction.prepared().is_none(),
+                    && e.correction().prepared().is_none(),
                 "{}",
                 e.status
             );

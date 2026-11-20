@@ -379,7 +379,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             source::Context {
                 source: super::super::tests::developed_fixture(),
                 reference: None,
-                correction: None,
+                correction: Default::default(),
             },
         ));
     let original_revision = editor.document.visit.canvas.original.continuation();

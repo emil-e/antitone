@@ -1,8 +1,8 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
 use super::{
-    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, SelectionTiming, UiContext,
-    document, source_loading, thumbnails,
+    ActivityOptions, AdjustmentLayerEditor, Editor, Ready, SelectionTiming, UiContext, document,
+    source_loading, thumbnails,
 };
 use crate::{
     Error,
@@ -20,7 +20,7 @@ mod workflow_tests;
 pub(super) struct Context {
     pub source: Arc<DevelopedSource>,
     pub reference: Option<crate::exposure_reference::ReferenceExposure>,
-    pub correction: Option<Arc<Correction>>,
+    pub correction: super::correction::Resources,
 }
 
 impl Editor {
@@ -43,7 +43,7 @@ impl Editor {
     pub(super) fn capture_source_context(
         &self,
     ) -> Result<impl Future<Output = Result<Context, String>> + use<>, String> {
-        let correction = self.document.correction.clone();
+        let correction = self.correction();
         let ready = self.source_context();
         let request = if ready.is_none() {
             let id = self
@@ -75,7 +75,7 @@ impl Editor {
                 let (services, request) = request.expect("captured selected source");
                 services.acquire(request, cancelled.clone()).await?
             };
-            context.correction = correction.acquire().await?;
+            context.correction = correction.acquire().await?.into();
             Ok(context)
         }))
     }
@@ -93,10 +93,15 @@ impl Editor {
 
     pub(super) fn source_context(&self) -> Option<Context> {
         let ready = self.document.visit.canvas.ready.as_ref()?;
+        let correction = self.correction();
         Some(Context {
             source: ready.developed.clone(),
             reference: ready.reference.clone(),
-            correction: self.document.correction.prepared().cloned(),
+            correction: if correction.error().is_some() {
+                Default::default()
+            } else {
+                correction
+            },
         })
     }
 }
@@ -105,25 +110,14 @@ impl PartialEq for Context {
     fn eq(&self, other: &Self) -> bool {
         self.source.identity() == other.source.identity()
             && self.reference == other.reference
-            && self
-                .correction
-                .as_ref()
-                .map(|correction| &correction.settings.map)
-                == other
-                    .correction
-                    .as_ref()
-                    .map(|correction| &correction.settings.map)
+            && self.correction.map() == other.correction.map()
     }
 }
 
 impl Context {
     pub fn scan(&self) -> Result<Scan, Error> {
         let mut scan = Scan::with_reference(self.source.clone(), self.reference.clone());
-        scan.set_flat_field(
-            self.correction
-                .as_ref()
-                .map(|field| field.settings.map.clone()),
-        );
+        scan.set_flat_field(self.correction.map().cloned());
         Ok(scan)
     }
 }
@@ -131,7 +125,7 @@ impl Context {
 pub(super) struct Request {
     pub source: crate::source::Input,
     pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
-    pub correction: Option<Arc<Correction>>,
+    pub correction: super::correction::Resources,
 }
 
 pub(super) struct Developed {
@@ -444,7 +438,7 @@ impl Editor {
             });
         Request {
             source,
-            correction: self.document.correction.prepared().cloned(),
+            correction: self.correction(),
             sources: self.source_provider(),
         }
     }
@@ -477,7 +471,7 @@ impl Editor {
         self.document.visit.canvas.selection_timing =
             Some(Arc::new(SelectionTiming::new(self.id, started)));
         self.document.source =
-            !self.document.project.input.ready() || self.document.correction.error().is_some();
+            !self.document.project.input.ready() || self.correction().error().is_some();
         self.status = "Developing full-resolution RAW…".into();
 
         self.start_source_acquisition(path, cx);

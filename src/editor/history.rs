@@ -249,8 +249,6 @@ impl Editor {
                     .is_some_and(|current| current.same_request(input)),
                 (None, _) => true,
             };
-        let correction_changed =
-            before.active_flat_field() != self.document.project.active_flat_field();
         if !same_visit {
             self.id = self.request_id();
             self.source_epoch
@@ -280,11 +278,6 @@ impl Editor {
             .unwrap_or(0);
         self.invalidate_original();
         self.document.source = !self.document.project.input.ready();
-        if correction_changed {
-            self.document.correction_restore = None;
-            self.document.correction = Default::default();
-            self.restore_correction(cx);
-        }
         if !same_visit && let Some(input) = next {
             self.start_source_acquisition(input.path().to_owned(), cx);
         }

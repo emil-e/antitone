@@ -1175,7 +1175,7 @@ fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
         !editor.files.pending()
             && !editor.interaction_blocked()
             && !editor.document.visit.source.pending()
-            && !editor.document.correction.pending()
+            && !editor.correction().pending()
     });
 }
 

@@ -1,11 +1,13 @@
 //! Original-grid WB inputs evaluated through the shared photographic components.
 
 use super::*;
+use crate::gpu::flat::GpuFlatField;
 use crate::{
     editor::measurement::query::{FORWARD_RESIDUAL_FLOOR, Samples},
     gpu::grading::Grading,
 };
 use glam::DVec3;
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
@@ -13,6 +15,7 @@ mod tests;
 pub(super) fn roll(
     services: &super::super::source::Services,
     scan: &mut Scan,
+    field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     input: crate::image_recipe::ImageRecipe,
     cancelled: &dyn Fn() -> bool,
@@ -21,7 +24,7 @@ pub(super) fn roll(
         return Err(Error::Cancelled);
     }
     let (mut scan, input) = crate::photo_preparation::native_image(scan, &input)?;
-    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
+    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let roll = samples.pipeline(&input)?.roll()?;
@@ -32,6 +35,7 @@ pub(super) fn roll(
 pub(super) fn layer(
     services: &super::super::source::Services,
     scan: &mut Scan,
+    field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     input: LayerInput,
     cancelled: &dyn Fn() -> bool,
@@ -40,7 +44,7 @@ pub(super) fn layer(
         return Err(Error::Cancelled);
     }
     let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &input.recipe)?;
-    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
+    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let layer = recipe.grade.layers()[input.index];

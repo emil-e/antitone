@@ -82,10 +82,12 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, DMIN.label, async move {
-        let mut image = image.await?;
+        let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+            query::reference(services, &mut image, field, region, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })
@@ -120,10 +122,12 @@ pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, DMAX.label, async move {
-        let mut image = image.await?;
+        let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+            query::reference(services, &mut image, field, region, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })
@@ -165,10 +169,10 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, GAMMA.label, async move {
-        let mut image = image.await?;
+        let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            query::gamma(services, &mut image, region, input, &|| {
+            query::gamma(services, &mut image, field, region, input, &|| {
                 cancelled.is_cancelled()
             })
         })

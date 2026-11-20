@@ -855,12 +855,15 @@ fn correction_resource_failure_does_not_reverse_restoration_or_advance_history_a
             );
             assert!(!editor.interaction_blocked());
         });
+        let cx = app.access();
         app.run_until(Duration::from_secs(10), |editor| {
-            !editor.document.correction.pending() && !editor.document.visit.source.pending()
+            let _ = editor.correction();
+            editor.document.correction.observe(&cx);
+            !editor.correction().pending() && !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before);
-            assert!(editor.document.correction.error().is_some());
+            assert!(editor.correction().error().is_some());
             assert_eq!(
                 (
                     editor.document.history.undo.len(),

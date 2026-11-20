@@ -65,7 +65,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         let input = source::Context {
             reference: None,
             source: scan.source().clone(),
-            correction: None,
+            correction: Default::default(),
         };
         let composition =
             Composition::new(scan.area, Default::default(), Default::default()).unwrap();
@@ -234,7 +234,7 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
     let input = source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
-        correction: None,
+        correction: Default::default(),
     };
     let identity = crate::gpu::source::identity::Identity::camera(input.source.identity());
     let first = spec(0.).with_identity(identity.clone());
@@ -293,7 +293,7 @@ fn the_same_captured_demand_does_not_give_a_departed_owner_continuation_rights()
     let pixels = source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
-        correction: None,
+        correction: Default::default(),
     };
     let captured = spec(0.).with_identity(crate::gpu::source::identity::Identity::camera(
         pixels.source.identity(),
@@ -342,7 +342,7 @@ fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_reques
         source::Context {
             source,
             reference: None,
-            correction: None,
+            correction: Default::default(),
         },
     );
     let mut working = WorkingView::default();
@@ -393,7 +393,7 @@ fn repeated_view_capture_does_not_wake_a_blocked_acquisition_or_repaint_loop() {
     let input = source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
-        correction: None,
+        correction: Default::default(),
     };
     let mut working = WorkingView::default();
     let demand = Demand::fixture(spec(0.), input);

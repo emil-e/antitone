@@ -184,7 +184,7 @@ fn flat_reference_survives_browsing_and_apply_uses_its_captured_reference() {
         harness.read(|editor| {
             assert!(editor.document.flat_edit().is_none());
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             );

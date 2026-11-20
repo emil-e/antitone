@@ -38,6 +38,7 @@ fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVe
     let actual = query::reference(
         editor.source_services.as_ref().unwrap(),
         &mut measurement::capture_scan(editor).unwrap(),
+        None,
         region,
         &|| false,
     )
@@ -134,6 +135,7 @@ fn gamma_picker_survives_history_and_captures_the_restored_stage_at_apply() {
     let expected = query::gamma(
         editor.source_services.as_ref().unwrap(),
         &mut measurement::capture_scan(&editor).unwrap(),
+        None,
         region,
         editor
             .positive_recipe(
@@ -156,6 +158,7 @@ fn gamma_picker_survives_history_and_captures_the_restored_stage_at_apply() {
     let stale = query::gamma(
         editor.source_services.as_ref().unwrap(),
         &mut measurement::capture_scan(&editor).unwrap(),
+        None,
         region,
         editor
             .positive_recipe(

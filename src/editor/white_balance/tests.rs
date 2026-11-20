@@ -55,6 +55,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_unrenderable_adjustm
     let expected = query::roll(
         editor.source_services.as_ref().unwrap(),
         &mut measurement::capture_scan(&editor).unwrap(),
+        None,
         region,
         roll_input(&editor).unwrap(),
         &|| false,
@@ -178,6 +179,7 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
     let actual = captured
         .measure(
             &mut captured_image,
+            None,
             region,
             editor.source_services.as_ref().unwrap(),
             &|| false,
@@ -292,6 +294,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
             .unwrap()
             .measure(
                 &mut measurement::capture_scan(&editor).unwrap(),
+                None,
                 Coverage::rectangle(patch),
                 editor.source_services.as_ref().unwrap(),
                 &|| false,
@@ -401,6 +404,7 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
                 .unwrap()
                 .measure(
                     &mut measurement::capture_scan(editor).unwrap(),
+                    None,
                     region,
                     editor.source_services.as_ref().unwrap(),
                     &|| false,
@@ -497,7 +501,9 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
                 let region = picking::pick(&cx, LAYER).await?;
                 measurement::run(&cx, LAYER.label, async move {
                     measurement::query(&worker, move |cancelled| {
-                        input.measure(&mut image, region, &services, &|| cancelled.is_cancelled())
+                        input.measure(&mut image, None, region, &services, &|| {
+                            cancelled.is_cancelled()
+                        })
                     })
                     .await
                 })
@@ -601,6 +607,7 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
         .unwrap()
         .measure(
             &mut measurement::capture_scan(&editor).unwrap(),
+            None,
             region,
             editor.source_services.as_ref().unwrap(),
             &|| false,
@@ -713,6 +720,7 @@ fn completed_wb_measurement_cannot_publish_after_cancellation_photo_or_document_
             .unwrap()
             .measure(
                 &mut measurement::capture_scan(&editor).unwrap(),
+                None,
                 region,
                 editor.source_services.as_ref().unwrap(),
                 &|| false,
@@ -845,6 +853,7 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     let control = control
         .measure(
             &mut zero_image,
+            None,
             Coverage::rectangle(patch),
             editor.source_services.as_ref().unwrap(),
             &|| false,
@@ -861,6 +870,7 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     let balance = captured
         .measure(
             &mut captured_image,
+            None,
             Coverage::rectangle(patch),
             editor.source_services.as_ref().unwrap(),
             &|| false,

@@ -33,7 +33,7 @@ fn request(name: &str) -> (DocumentScope, Request) {
     let request = Request {
         source: document.source_input(document.project.order[0]).unwrap(),
         sources: None,
-        correction: None,
+        correction: Default::default(),
     };
     (document, request)
 }

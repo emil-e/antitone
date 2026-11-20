@@ -344,15 +344,21 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
     );
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
+        let cx = app.access();
         app.run_until(Duration::from_secs(15), |editor| {
+            if !editor.files.opening() {
+                let _ = editor.correction();
+                editor.document.correction.observe(&cx);
+            }
             !editor.files.opening()
-                && !editor.document.correction.pending()
+                && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
         });
+        app.update(Editor::correction_feedback);
         app.read(|editor| {
             assert_eq!(editor.document.state.project, saved.project);
             assert_eq!(editor.document.project.active_flat_field(), Some(&settings));
-            assert!(editor.document.correction.prepared().is_none());
+            assert!(editor.correction().prepared().is_none());
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
                 "{}",
@@ -364,8 +370,7 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
             );
             assert!(
                 editor
-                    .document
-                    .correction
+                    .correction()
                     .error()
                     .unwrap()
                     .contains("flat-field grid exceeds GPU limits")
@@ -380,7 +385,7 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
                 editor.capture_source_context().unwrap(),
                 editor.capture_export(&draft).unwrap(),
                 editor.output_services.clone().unwrap(),
-                editor.document.correction.error().unwrap().to_owned(),
+                editor.correction().error().unwrap().to_owned(),
             )
         });
         let source_error = pollster::block_on(source)

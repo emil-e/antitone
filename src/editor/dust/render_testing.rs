@@ -14,8 +14,12 @@ pub(super) fn pixels(
         .renderers
         .get(&services.device, &services.queue)
         .unwrap();
+    let field = scan
+        .flat_field()
+        .cloned()
+        .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&services.device, map).unwrap()));
     let base = crate::gpu::repair_source::Source::from_recipe(
-        &services.device,
+        field,
         &renderer,
         (&services.queue, services.renderers.submissions()),
         scan,
@@ -145,8 +149,7 @@ impl Editor {
         let (scan, capture) = crate::photo_preparation::native_image(&scan, &capture).unwrap();
         let graph = crate::gpu::photograph::RecipeGraph::originals(
             crate::gpu::evaluation::camera_source(&scan).unwrap(),
-            self.document
-                .correction
+            self.correction()
                 .prepared()
                 .map(|correction| correction.gpu.clone()),
             &capture,

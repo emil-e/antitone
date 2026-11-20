@@ -92,6 +92,7 @@ impl Request {
         submissions: crate::platform::SubmissionGate,
     ) -> Result<Option<Arc<crate::viewer::GpuImage>>, String> {
         let demand = self.demand;
+        demand.source.correction.clone().acquire().await?;
         crate::background::run(move |stop| {
             if stop.is_cancelled() {
                 return Ok(None);
@@ -103,10 +104,7 @@ impl Request {
                 &services.device,
                 &renderer,
                 &scan,
-                source
-                    .correction
-                    .as_ref()
-                    .map(|correction| correction.gpu.clone()),
+                source.correction.gpu()?,
                 demand.target,
             )?;
             crate::refinement::refine_definition(

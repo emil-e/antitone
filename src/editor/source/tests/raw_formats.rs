@@ -137,7 +137,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 Request {
                     source: document.source_input(id).unwrap(),
                     sources: Some(loader.provider(Some(document.cache.clone()))),
-                    correction: None,
+                    correction: Default::default(),
                 }
                 .load(loader, &|| false)
                 .unwrap()

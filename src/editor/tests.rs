@@ -249,7 +249,6 @@ pub(super) fn complete_document_operation(
                 && !editor.editing()
                 && !editor.files.opening()
                 && !editor.document.visit.source.pending()
-                && !editor.document.correction.pending()
         });
         app.close_execution();
     }
