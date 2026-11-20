@@ -703,7 +703,7 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
     e.document.project.set_flat_field(Some(settings)).unwrap();
     e.document.correction = crate::editor::Correction::prepare(
         &e.source_services.as_ref().unwrap().device,
-        &e.document.capture(),
+        e.document.project.active_flat_field(),
         None,
     )
     .unwrap()

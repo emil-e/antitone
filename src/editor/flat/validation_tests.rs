@@ -23,18 +23,22 @@ fn set_map(document: &mut Document, gain: f64) {
         .unwrap();
 }
 
-#[test]
-fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_constants() {
+fn limited_device() -> (wgpu::Device, wgpu::Queue) {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: wgpu::Limits {
             max_storage_buffer_binding_size: 1024,
             ..Default::default()
         },
         ..Default::default()
     }))
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_constants() {
+    let (device, queue) = limited_device();
     let mut document = document();
     let asset = Arc::new(
         crate::looks::LookAsset::new(
@@ -80,7 +84,7 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
     );
     serde_json::to_value(&document.project).unwrap();
     let before = document.project.clone();
-    let prepared = Correction::prepare(&device, &document, None)
+    let prepared = Correction::prepare(&device, document.project.active_flat_field(), None)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -89,21 +93,33 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
     );
     assert!(Arc::ptr_eq(
         &prepared,
-        &Correction::prepare(&device, &document, Some(&prepared))
-            .unwrap()
-            .unwrap()
+        &Correction::prepare(
+            &device,
+            document.project.active_flat_field(),
+            Some(&prepared)
+        )
+        .unwrap()
+        .unwrap()
     ));
     document.project.flat_field_mut().unwrap().enabled = false;
     assert!(
-        Correction::prepare(&device, &document, Some(&prepared))
-            .unwrap()
-            .is_none()
+        Correction::prepare(
+            &device,
+            document.project.active_flat_field(),
+            Some(&prepared)
+        )
+        .unwrap()
+        .is_none()
     );
     document.project.set_flat_field(None).unwrap();
     assert!(
-        Correction::prepare(&device, &document, Some(&prepared))
-            .unwrap()
-            .is_none()
+        Correction::prepare(
+            &device,
+            document.project.active_flat_field(),
+            Some(&prepared)
+        )
+        .unwrap()
+        .is_none()
     );
     assert_eq!(document.project.sources, before.sources);
     assert_eq!(document.project.output, before.output);
@@ -146,65 +162,29 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
 }
 
 #[test]
-fn reusing_a_map_checks_new_source_compatibility_before_returning_the_resource() {
-    let editor = crate::editor::tests::authored_fixture(&[]);
-    let device = editor.document.visit.working_view.device().unwrap();
-    let mut document = document();
-    let prepared = Correction::prepare(device, &document, None)
-        .unwrap()
-        .unwrap();
-    let mut second = document.project.sources[0].clone();
-    second.id = SourceId(0);
-    second.path = "second.dng".into();
-    let id = document.register(second).unwrap();
-    assert!(Arc::ptr_eq(
-        &prepared,
-        &Correction::prepare(device, &document, Some(&prepared))
-            .unwrap()
-            .unwrap()
-    ));
-    document
-        .project
-        .source_mut(id)
-        .unwrap()
-        .development
-        .camera_to_ap1[0][0] *= 2.;
-    serde_json::to_value(&document.project).unwrap();
-    let before = document.project.clone();
-    assert!(
-        Correction::prepare(device, &document, Some(&prepared)).is_err(),
-        "an unchanged map cannot vouch for a newly incompatible development"
-    );
-    assert_eq!(document.project, before);
-}
-
-#[test]
-fn correction_rejects_overflow_of_an_individually_representable_map_and_matrix_atomically() {
-    let mut editor = crate::editor::tests::authored_fixture(&[]);
-    let device = editor.document.visit.working_view.device().unwrap().clone();
-    let mut document = document();
-    document.project.sources[0].development.camera_to_ap1 =
-        (glam::DMat3::IDENTITY * 1e15).to_cols_array_2d();
-    document.project.reset_scan_basis();
-    set_map(&mut document, 1.);
-    let prepared = Correction::prepare(&device, &document, None)
+fn map_upload_failure_preserves_the_previous_correction_and_history() {
+    let (device, queue) = limited_device();
+    let document = document();
+    let prepared = Correction::prepare(&device, document.project.active_flat_field(), None)
         .unwrap()
         .unwrap();
     let mut candidate = document.clone();
-    set_map(&mut candidate, 1e30);
-    serde_json::to_value(&candidate.project).unwrap();
-    GpuFlatField::new(
-        &device,
-        candidate.project.active_flat_field().unwrap().map.clone(),
-    )
-    .unwrap();
-    editor.document = document.into();
-    editor.document.visit.working_view = super::super::working_view::WorkingView::new(
-        device,
-        editor.source_services.as_ref().unwrap().queue.clone(),
+    let area = candidate.project.sources[0].development.active_area;
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(area, [11, 11], vec![DVec3::ONE; 121]).unwrap(),
     );
+    assert!(map.nodes().len() as u64 * 12 > device.limits().max_storage_buffer_binding_size);
+    candidate
+        .project
+        .set_flat_field(Some(FlatFieldSettings::new("larger.dng", map)))
+        .unwrap();
+    serde_json::to_value(&candidate.project).unwrap();
+    let before = document.project.clone();
+    let mut editor = Editor::new(&device, &queue);
+    editor.document = document.into();
+    editor.document.visit.working_view =
+        super::super::working_view::WorkingView::new(device, queue);
     editor.document.correction = Some(prepared.clone()).into();
-    let before = editor.document.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.start_correction(candidate, cx));
         app.run_until(std::time::Duration::from_secs(15), |editor| {
@@ -216,14 +196,176 @@ fn correction_rejects_overflow_of_an_individually_representable_map_and_matrix_a
                 editor.document.correction.prepared().unwrap(),
                 &prepared
             ));
+            for direction in [
+                super::super::history::Direction::Undo,
+                super::super::history::Direction::Redo,
+            ] {
+                assert!(editor.history_label(direction).is_none());
+            }
+            assert_eq!(
+                editor.dialogs.message().unwrap().title,
+                FailureCase::FlatCorrection.title()
+            );
+        });
+    });
+}
+
+#[test]
+fn preparing_and_reusing_a_map_ignore_unrelated_source_compatibility() {
+    let editor = crate::editor::tests::authored_fixture(&[]);
+    let device = editor.document.visit.working_view.device().unwrap();
+    let mut document = document();
+    let prepared = Correction::prepare(device, document.project.active_flat_field(), None)
+        .unwrap()
+        .unwrap();
+    let mut second = document.project.sources[0].clone();
+    second.id = SourceId(0);
+    second.path = "second.dng".into();
+    let id = document.register(second).unwrap();
+    assert!(Arc::ptr_eq(
+        &prepared,
+        &Correction::prepare(
+            device,
+            document.project.active_flat_field(),
+            Some(&prepared)
+        )
+        .unwrap()
+        .unwrap()
+    ));
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .camera_to_ap1[0][0] *= 2.;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .camera_model = "Another camera".into();
+    serde_json::to_value(&document.project).unwrap();
+    let before = document.project.clone();
+    for previous in [None, Some(&prepared)] {
+        let correction =
+            Correction::prepare(device, document.project.active_flat_field(), previous)
+                .expect("map preparation does not validate unrelated photographs")
+                .unwrap();
+        assert_eq!(correction.settings, prepared.settings);
+        if let Some(previous) = previous {
+            assert!(Arc::ptr_eq(&correction, previous));
+        }
+    }
+    assert_eq!(document.project, before);
+}
+
+#[test]
+fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_execution() {
+    let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng"]);
+    let codes =
+        crate::gpu::evaluation::camera_source(&editor.source_context().unwrap().scan().unwrap())
+            .unwrap();
+    let device = editor.document.visit.working_view.device().unwrap().clone();
+    let mut document = document();
+    document.project.sources[0].development.camera_to_ap1 =
+        (glam::DMat3::IDENTITY * 1e15).to_cols_array_2d();
+    document.project.reset_scan_basis();
+    set_map(&mut document, 1.);
+    let prepared = Correction::prepare(&device, document.project.active_flat_field(), None)
+        .unwrap()
+        .unwrap();
+    let mut candidate = document.clone();
+    set_map(&mut candidate, 1e30);
+    serde_json::to_value(&candidate.project).unwrap();
+    let large_map = Arc::new(
+        GpuFlatField::new(
+            &device,
+            candidate.project.active_flat_field().unwrap().map.clone(),
+        )
+        .unwrap(),
+    );
+    let id = document.project.order[0];
+    let recipe = document.image_recipe(id).unwrap();
+    let small = crate::gpu::photograph::RecipeGraph::originals(
+        codes.clone(),
+        Some(prepared.gpu.clone()),
+        &recipe,
+    )
+    .unwrap();
+    assert!(
+        small.camera().is_ok(),
+        "the large matrix alone is executable"
+    );
+    let mut recipe = candidate.image_recipe(id).unwrap();
+    let overflow = crate::gpu::photograph::RecipeGraph::originals(
+        codes.clone(),
+        Some(large_map.clone()),
+        &recipe,
+    )
+    .unwrap();
+    assert!(
+        matches!(overflow.camera(), Err(Error::Gpu(_))),
+        "photographic execution rejects the overflowing combination"
+    );
+    let mut ordinary = document.clone();
+    ordinary.project.sources[0].development.camera_to_ap1 =
+        glam::DMat3::IDENTITY.to_cols_array_2d();
+    ordinary.project.reset_scan_basis();
+    recipe.neutral.source_development = ordinary
+        .image_recipe(id)
+        .unwrap()
+        .neutral
+        .source_development;
+    assert!(
+        crate::gpu::photograph::RecipeGraph::originals(codes, Some(large_map), &recipe)
+            .unwrap()
+            .camera()
+            .is_ok(),
+        "the large map alone is executable"
+    );
+    let expected = candidate.project.clone();
+    let before = document.project.clone();
+    editor.document = document.into();
+    editor.document.visit.working_view = super::super::working_view::WorkingView::new(
+        device,
+        editor.source_services.as_ref().unwrap().queue.clone(),
+    );
+    editor.document.correction = Some(prepared.clone()).into();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.start_correction(candidate, cx));
+        app.run_until(std::time::Duration::from_secs(15), |editor| {
+            editor.document.flat_correction.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.document.project, expected);
+            assert_eq!(
+                editor.document.correction.prepared().unwrap().settings,
+                *expected.active_flat_field().unwrap()
+            );
+            assert!(!editor.dialogs.is_open(), "{}", editor.status);
+            assert_eq!(
+                editor.history_label(super::super::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+        app.enter(|editor, cx| {
+            editor.restore_history(super::super::history::Direction::Undo, cx);
+            assert_eq!(editor.document.project, before);
             assert!(
                 editor
                     .history_label(super::super::history::Direction::Undo)
                     .is_none()
             );
             assert_eq!(
-                editor.dialogs.message().unwrap().title,
-                FailureCase::FlatCorrection.title()
+                editor.history_label(super::super::history::Direction::Redo),
+                Some("Correction")
+            );
+            editor.restore_history(super::super::history::Direction::Redo, cx);
+            assert_eq!(editor.document.project, expected);
+            assert!(
+                editor
+                    .history_label(super::super::history::Direction::Redo)
+                    .is_none()
             );
         });
     });

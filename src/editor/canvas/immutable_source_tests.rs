@@ -62,9 +62,10 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
                 map,
             )))
             .unwrap();
-        editor.document.correction = Correction::prepare(&device, &editor.document, None)
-            .unwrap()
-            .into();
+        editor.document.correction =
+            Correction::prepare(&device, editor.document.project.active_flat_field(), None)
+                .unwrap()
+                .into();
         editor
             .preview_paint(&proxy, layout, &capture, false, &context)
             .unwrap();

@@ -44,7 +44,16 @@ fn gated() -> (
 
 #[test]
 fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() {
-    let scheduler = source_loading::SourceLoader::new();
+    reviewed_fit_with_browsing(false);
+}
+
+#[test]
+fn reviewed_fit_accepts_while_the_browsed_photo_is_pending_then_preserves_its_publication() {
+    reviewed_fit_with_browsing(true);
+}
+
+fn reviewed_fit_with_browsing(hold_source: bool) {
+    let (scheduler, enabled, starts, release) = gated();
     let mut editor = fixture(scheduler.clone());
     let first = editor.document.visit.current_source.unwrap();
     let other = editor.document.state.project.order[1];
@@ -60,21 +69,45 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
+        enabled.store(hold_source, Ordering::Relaxed);
         app.enter(|e, access| {
             e.select_roll_photo(1, egui::Modifiers::NONE, access);
         });
+        if hold_source {
+            await_native(app, &starts);
+        }
         app.run_until(LIMIT, |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.visit.current_source, Some(other));
             assert_eq!(e.document.state.project, before);
         });
         app.update(|e| e.select_active_photo_only());
+        let view = app.read(|e| e.document.visit.view);
         confirm(app);
-        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
+        if hold_source {
+            app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
+            app.read(|e| {
+                assert_eq!(
+                    e.history_label(Direction::Undo),
+                    Some("Analyze roll"),
+                    "{}",
+                    e.status
+                );
+                assert!(e.document.visit.source.pending());
+                assert!(e.document.visit.canvas.ready.is_none());
+                assert_eq!(e.document.visit.view, view);
+            });
+            assert!(scheduler.waiter_count() > 0);
+            release.send(()).unwrap();
+        }
+        app.run_until(LIMIT, |e| {
+            !e.analysis_fitting() && !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
-            assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             assert_eq!(e.document.visit.current_source, Some(other));
-            assert!(e.document.visit.canvas.ready.is_some());
+            let ready = e.document.visit.canvas.ready.as_ref().expect(&e.status);
+            assert_eq!(ready.record.id, other);
+            assert_eq!(e.document.visit.view, view);
             assert!(e.document.analysis_review().is_none());
             assert_eq!(e.tab, 0);
             assert!(e.scopes.visible);
@@ -84,8 +117,14 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
             );
             assert_eq!(e.document.state.project.analysis_regions.len(), 2);
             assert_ne!(e.document.state.project.dmin(), before.dmin());
-            assert!(e.history_label(Direction::Undo).is_some());
+            assert_eq!(
+                e.history_label(Direction::Undo),
+                Some("Analyze roll"),
+                "{}",
+                e.status
+            );
         });
+        assert_eq!(scheduler.waiter_count(), 0);
         app.enter(|e, access| {
             e.restore_history(Direction::Undo, access);
         });

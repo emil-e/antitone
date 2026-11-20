@@ -1,9 +1,6 @@
 //! Captured flat-field resources shared by photographic consumers.
-use super::{Error, document::Document};
-use crate::{
-    gpu::{flat::GpuFlatField, source::SourceGeometry},
-    project::FlatFieldSettings,
-};
+use super::Error;
+use crate::{gpu::flat::GpuFlatField, project::FlatFieldSettings};
 use futures_util::{
     FutureExt,
     future::{BoxFuture, Shared},
@@ -32,14 +29,19 @@ impl From<Option<Arc<Correction>>> for Resources {
 }
 
 impl Resources {
-    pub(super) fn prepare(document: Document, device: Option<wgpu::Device>) -> Self {
+    pub(super) fn prepare(
+        settings: Option<FlatFieldSettings>,
+        device: Option<wgpu::Device>,
+    ) -> Self {
         Self::Preparing(
             async move {
                 let device = device.ok_or_else(|| "Correction resources unavailable".to_owned())?;
-                crate::background::run(move |_| Correction::prepare(&device, &document, None))
-                    .await
-                    .map_err(|_| "Correction preparation worker panicked".to_owned())?
-                    .map_err(|error| error.to_string())
+                crate::background::run(move |_| {
+                    Correction::prepare(&device, settings.as_ref(), None)
+                })
+                .await
+                .map_err(|_| "Correction preparation worker panicked".to_owned())?
+                .map_err(|error| error.to_string())
             }
             .boxed()
             .shared(),
@@ -81,43 +83,18 @@ pub(super) struct Correction {
 impl Correction {
     pub fn prepare(
         device: &wgpu::Device,
-        document: &Document,
+        settings: Option<&FlatFieldSettings>,
         previous: Option<&Arc<Self>>,
     ) -> Result<Option<Arc<Self>>, Error> {
-        let Some(settings) = document.project.active_flat_field() else {
+        let Some(settings) = settings else {
             return Ok(None);
         };
-        let previous = previous.filter(|previous| previous.settings == *settings);
-        let gpu = match previous {
-            Some(previous) => previous.gpu.clone(),
-            None => Arc::new(GpuFlatField::new(device, settings.map.clone())?),
-        };
-        for source in &document.project.sources {
-            if document.project.order.contains(&source.id) {
-                let development = crate::development_metadata::Development::captured(
-                    source,
-                    &document
-                        .exposure_origin(source.id)
-                        .expect("registered photo locator"),
-                    document.project.input,
-                    &document.development_metadata,
-                );
-                let Ok(development) = development.resolved() else {
-                    continue;
-                };
-                document.require_scan_source(development)?;
-                let matrix = glam::DMat3::from_cols_array_2d(&development.camera_to_ap1);
-                crate::gpu::parameters::CameraMatrix::require_source(matrix, true)?;
-                gpu.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN)?;
-                SourceGeometry::new(source.development.active_area, [1, 1])?;
-            }
-        }
-        if let Some(previous) = previous {
+        if let Some(previous) = previous.filter(|previous| previous.settings == *settings) {
             return Ok(Some(previous.clone()));
         }
         Ok(Some(Arc::new(Self {
             settings: settings.clone(),
-            gpu,
+            gpu: Arc::new(GpuFlatField::new(device, settings.map.clone())?),
         })))
     }
 }
