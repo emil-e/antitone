@@ -144,7 +144,6 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         .source_mut(source)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.refresh_adjustment_layer_selection();
     editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let region = Coverage::rectangle(Rect {
@@ -288,7 +287,6 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
             .source_mut(source)
             .unwrap()
             .adjustment_layers = Some(layers);
-        editor.refresh_adjustment_layer_selection();
         editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(id));
         let balance = LayerInput::capture(&editor)
             .unwrap()
@@ -824,7 +822,6 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         .source_mut(id)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.refresh_adjustment_layer_selection();
     editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
 
     let expected_signature = crate::scan::ImageSource::new(&scan, InputSettings::Digital)

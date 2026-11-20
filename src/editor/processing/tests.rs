@@ -193,19 +193,34 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
         let reordered = positive(&editor);
         assert_ne!(first.clone(), reordered.clone());
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
+        let adjustment_layers::Target::Layer(selected) = editor.adjustment_layer_target() else {
+            panic!("fixture has a selected layer");
+        };
         editor.photo_settings_mut().exposure = 1.;
         let graded = positive(&editor);
-        assert_eq!(
-            graded
-                .grade()
-                .unwrap()
-                .snapshot()
-                .layers()
-                .last()
-                .unwrap()
-                .photo,
-            editor.photo_settings()
-        );
+        for (index, record) in editor
+            .document
+            .project
+            .source(id)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers
+            .iter()
+            .enumerate()
+        {
+            let actual = graded.grade().unwrap().snapshot().layers()[index];
+            if record.id == selected {
+                assert_eq!(actual.photo, editor.photo_settings());
+                assert_eq!(actual.photo.exposure, 1.);
+            } else {
+                assert_eq!(
+                    actual,
+                    reordered.grade().unwrap().snapshot().layers()[index]
+                );
+            }
+        }
         assert_ne!(reordered.clone(), graded.clone());
         editor.document.project.roll.wb = crate::color::Balance {
             warmth: 0.017,

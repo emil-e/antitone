@@ -278,8 +278,6 @@ impl Editor {
                     .position(|candidate| *candidate == id)
             })
             .unwrap_or(0);
-        self.refresh_adjustment_layer_selection();
-        self.remember_imported_look();
         self.invalidate_original();
         self.document.source = !self.document.project.input.ready();
         if correction_changed {
@@ -287,7 +285,6 @@ impl Editor {
             self.document.correction = Default::default();
             self.restore_correction(cx);
         }
-        self.observe_gamma_pivot();
         if !same_visit && let Some(input) = next {
             self.start_source_acquisition(input.path().to_owned(), cx);
         }

@@ -49,7 +49,6 @@ impl Editor {
                 editor.document.correction_restore = None;
                 match result {
                     Ok(_) => {
-                        editor.observe_gamma_pivot();
                         editor.acquire_working(&cx);
                     }
                     Err(_) => {
@@ -517,7 +516,6 @@ impl Change {
                     editor.commit_document(self.edit).expect("current document edit");
                     editor.document.correction_restore = None;
                     editor.document.correction = correction.into();
-                    editor.observe_gamma_pivot();
                     editor.status = "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup.".into();
                     editor.acquire_working(cx);
                 }

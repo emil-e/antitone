@@ -106,6 +106,70 @@ fn gamma_calculation_preserves_independent_control_updates_with_an_unrenderable_
     });
 }
 
+#[test]
+fn the_picked_value_stays_locked_and_usable_after_response_history_and_photo_removal() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Roll");
+        pin(&mut h);
+        selected_patch(&mut h);
+        h.get_by_label("Apply").click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
+        });
+        let role = egui::accesskit::Role::Button;
+        scroll_to_control(&mut h, role, "Toe & shoulder");
+        h.get_by_role_and_label(role, "Toe & shoulder").click();
+        h.step();
+        enter_numeric(&mut h, "Toe", "1.2");
+        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
+        for redo in [false, true] {
+            let modifiers = if redo {
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+            } else {
+                egui::Modifiers::COMMAND
+            };
+            h.key_press_modifiers(modifiers, egui::Key::Z);
+            h.step();
+            wait_for(&mut h, |editor| !editor.interaction_blocked());
+            h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
+        }
+        h.get_by_label("patches.dng").click_secondary();
+        h.step();
+        h.step();
+        h.get_by_label("Remove selected photos…").click();
+        wait_dialog_layout(&mut h);
+        h.get_by_label("Remove photos").click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            editor.document.project.order.is_empty() && !editor.interaction_blocked()
+        });
+        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
+        let before = h.read(|editor| editor.document.project.roll.wb);
+        enter_numeric(&mut h, "Gamma", "0.9");
+        wait_gamma(&mut h);
+        h.read(|editor| {
+            assert!(editor.document.gamma_pivot.locked());
+            assert_eq!(editor.document.project.input.gamma(), 0.9);
+            assert_ne!(editor.document.project.roll.wb, before);
+        });
+        scroll_to_control(&mut h, role, "Gamma colour pivot");
+        assert!(
+            !h.get_by_role_and_label(role, "Gamma colour pivot")
+                .accesskit_node()
+                .is_disabled()
+        );
+        save_capture(&h.render().unwrap(), "gamma-pivot-value-without-photo");
+        let accepted = h.read(|editor| editor.document.project.clone());
+        h.get_by_role_and_label(role, "Gamma colour pivot").click();
+        h.step();
+        h.read(|editor| {
+            assert!(!editor.document.gamma_pivot.locked());
+            assert_eq!(editor.document.project, accepted);
+        });
+    });
+}
+
 fn pin(h: &mut Harness<'_, Editor>) {
     let role = egui::accesskit::Role::Button;
     h.get_by_role_and_label(role, "Gamma colour pivot")

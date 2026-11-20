@@ -1,5 +1,6 @@
 use super::*;
 use crate::project::{AdjustmentLayerId, AdjustmentLayers};
+use std::cell::Cell;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) enum Target {
@@ -22,7 +23,7 @@ pub(super) struct OrderDrag {
 
 #[derive(Default)]
 pub(super) struct AdjustmentLayerEditor {
-    selected: Option<(SourceId, AdjustmentLayerId)>,
+    selected: Cell<Option<(SourceId, AdjustmentLayerId)>>,
     owns_delete: bool,
     rename: Option<(SourceId, AdjustmentLayerId, String)>,
 
@@ -39,7 +40,7 @@ pub(super) struct AdjustmentLayerEditor {
 impl AdjustmentLayerEditor {
     pub(super) fn selection_only(&self) -> Self {
         Self {
-            selected: self.selected,
+            selected: Cell::new(self.selected.get()),
             ..Default::default()
         }
     }
@@ -63,18 +64,6 @@ pub(super) enum Action {
 }
 
 impl Editor {
-    pub(super) fn refresh_adjustment_layer_selection(&mut self) {
-        let selected = match self.adjustment_layer_target() {
-            Target::Layer(id) => self
-                .document
-                .visit
-                .current_source
-                .map(|source| (source, id)),
-            Target::None => None,
-        };
-        self.document.visit.adjustment_layers.selected = selected;
-    }
-
     #[cfg(test)]
     pub(super) fn selected_adjustment_layer_settings(&self) -> Option<AdjustmentLayerSettings> {
         let Target::Layer(id) = self.adjustment_layer_target() else {
@@ -130,30 +119,21 @@ impl Editor {
     }
 
     pub(super) fn adjustment_layer_target(&self) -> Target {
-        self.document
-            .visit
-            .adjustment_layers
-            .selected
-            .filter(|(source, id)| {
-                Some(*source) == self.document.visit.current_source
-                    && self
-                        .document
-                        .project
-                        .source(*source)
-                        .ok()
-                        .and_then(|source| source.adjustment_layers.as_ref())
+        let source = self.document.visit.current_source;
+        let layers = source
+            .and_then(|id| self.document.state.project.source(id).ok())
+            .and_then(|source| source.adjustment_layers.as_ref());
+        let selection = &self.document.visit.adjustment_layers.selected;
+        let selected = selection
+            .get()
+            .filter(|(selected_source, id)| {
+                Some(*selected_source) == source
+                    && layers
                         .is_some_and(|layers| layers.layers.iter().any(|record| record.id == *id))
             })
-            .map(|(_, id)| Target::Layer(id))
-            .unwrap_or_else(|| {
-                self.document
-                    .visit
-                    .current_source
-                    .and_then(|id| self.document.state.project.source(id).ok())
-                    .and_then(|source| source.adjustment_layers.as_ref())
-                    .and_then(|layers| layers.layers.last())
-                    .map_or(Target::None, |record| Target::Layer(record.id))
-            })
+            .or_else(|| Some((source?, layers?.layers.last()?.id)));
+        selection.set(selected);
+        selected.map_or(Target::None, |(_, id)| Target::Layer(id))
     }
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
@@ -173,7 +153,7 @@ impl Editor {
         }
 
         self.document.visit.adjustment_layers.owns_delete = true;
-        self.document.visit.adjustment_layers.selected = match target {
+        let selected = match target {
             Target::None => None,
             Target::Layer(id) => self
                 .document
@@ -192,6 +172,7 @@ impl Editor {
                 })
                 .map(|source| (source, id)),
         };
+        self.document.visit.adjustment_layers.selected.set(selected);
         self.document.visit.adjustment_layers.rename = None;
     }
 
@@ -233,7 +214,6 @@ impl Editor {
             .ok_or(Error::InvalidParameter("no selected source"))?;
         let source = self.document.state.project.source(id)?;
         let before = source.grade_snapshot()?;
-        let target = self.adjustment_layer_target();
         let mut candidate = source.clone();
         self.overlay_adjustment_layer_settings(&mut candidate, self.photo_settings());
         edit(
@@ -249,11 +229,6 @@ impl Editor {
                 .adjustment_layers = candidate.adjustment_layers;
         });
         self.commit_project(draft)?;
-        self.document.visit.adjustment_layers.selected = match target {
-            Target::Layer(layer) => Some((id, layer)),
-            Target::None => None,
-        };
-        self.refresh_adjustment_layer_selection();
         if before != after {
             self.invalidate_original();
         }
@@ -1088,11 +1063,8 @@ impl Editor {
                 }
                 match editor.edit_adjustment_layers(|layers| layers.remove(id)) {
                     Ok(()) => {
-                        if editor.adjustment_layer_target() == Target::None {
-                            editor.document.visit.adjustment_layers.selected = None;
-                            if editor.tab == 1 {
-                                editor.reveal_adjustment_layers();
-                            }
+                        if editor.adjustment_layer_target() == Target::None && editor.tab == 1 {
+                            editor.reveal_adjustment_layers();
                         }
                         editor.document.visit.adjustment_layers.rename = None;
                     }

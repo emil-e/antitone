@@ -146,7 +146,6 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
             .source_mut(id)
             .unwrap()
             .adjustment_layers = Some(layers.clone());
-        e.refresh_adjustment_layer_selection();
         e.select_adjustment_layer(adjustment_layers::Target::Layer(local));
         e.begin_linear_mask(Some(local));
         assert!(e.masking());

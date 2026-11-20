@@ -88,6 +88,8 @@ fn captured_choice_accepts_without_paint_and_records_only_accepted_content() {
 
 #[test]
 fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selection() {
+    use crate::editor::history::Direction::{Redo, Undo};
+
     let (e, scheduler) = editor();
     let first = asset(0.2);
     let second = asset(0.7);
@@ -107,7 +109,7 @@ fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selectio
             });
             app.read(|e| assert_eq!(e.document.state.project.output.lut.as_ref(), Some(chosen)));
         }
-        let list = vec![renamed.clone(), second];
+        let list = vec![renamed.clone(), second.clone()];
         app.read(|e| assert_loaded_assets(e, &list));
         app.update(Editor::clear_look);
         app.read(|e| {
@@ -117,9 +119,21 @@ fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selectio
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
-            assert_eq!(e.document.state.project.output.lut, Some(renamed));
+            assert_eq!(e.document.state.project.output.lut, Some(renamed.clone()));
             assert_loaded_assets(e, &list);
         });
+        for (direction, accepted) in [
+            (Undo, second.clone()),
+            (Undo, first),
+            (Redo, second),
+            (Redo, renamed),
+        ] {
+            app.enter(|e, cx| e.restore_history(direction, cx));
+            app.read(|e| {
+                assert_eq!(e.document.state.project.output.lut, Some(accepted));
+                assert_loaded_assets(e, &list);
+            });
+        }
     });
     scheduler.close_and_wait().unwrap();
 }

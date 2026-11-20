@@ -230,8 +230,6 @@ impl Editor {
         self.document.document_preview.same_edit(&edit.preview())
     }
 
-    // Resource-dependent observers run at feature publication, after the caller installs
-    // those resources in the same UI transaction as this metadata/history commit.
     pub(in crate::editor) fn commit_document(&mut self, edit: DocumentEdit) -> Result<(), Error> {
         if !self.owns_document_edit(&edit) {
             return Err(Error::InvalidParameter("edit scope has retired"));
@@ -298,7 +296,6 @@ impl Editor {
         let (label, photo) = edit.description();
         let project = self.document.state.project.updated(edit.into_snapshot());
         let before = std::mem::replace(&mut self.document.state.project, project);
-        self.observe_gamma_pivot();
         self.record_edit_in_group(before, label, photo, group);
         Ok(())
     }

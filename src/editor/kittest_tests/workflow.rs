@@ -641,7 +641,6 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     .source_mut(source_id)
                     .unwrap()
                     .adjustment_layers = Some(layers.clone());
-                editor.refresh_adjustment_layer_selection();
                 serde_json::to_value(&editor.document.project).unwrap();
                 editor
                     .positive_processing(

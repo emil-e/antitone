@@ -225,6 +225,23 @@ fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls
             assert_eq!(layers.layers[0].name, "Global 2");
             assert_eq!(editor.photo_settings().exposure, -0.25);
         });
+        let selected = harness.read(Editor::adjustment_layer_target);
+        for redo in [false, true] {
+            let modifiers = if redo {
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+            } else {
+                egui::Modifiers::COMMAND
+            };
+            harness.key_press_modifiers(modifiers, egui::Key::Z);
+            harness.step();
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
+            harness.read(|editor| {
+                assert_eq!(layers(editor).layers.len(), if redo { 1 } else { 2 });
+                assert_eq!(editor.adjustment_layer_target(), selected);
+                assert_eq!(editor.photo_settings().exposure, -0.25);
+            });
+            harness.get_by_label("Layers: Global 2");
+        }
     });
 }
 

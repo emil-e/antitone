@@ -262,7 +262,6 @@ fn editor() -> Editor {
         "fixture has an ordered source"
     );
     editor.document.source = false;
-    editor.refresh_adjustment_layer_selection();
     editor
 }
 

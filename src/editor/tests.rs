@@ -2139,7 +2139,6 @@ fn export_captures_accepted_settings_while_photographic_construction_rejects_unr
         .source_mut(id)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.refresh_adjustment_layer_selection();
     let rejection = editor
         .positive_processing(
             editor.input(),
@@ -2896,7 +2895,6 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
         let mut editor = fixture();
         with_camera_basis(&mut editor);
         editor.document.visit.current_source = editor.document.state.project.order.first().copied();
-        editor.refresh_adjustment_layer_selection();
         for tab in [0, 1, 2] {
             editor.tab = tab;
             let text = controls_frame(&mut editor, &context, width, vec![]);
@@ -3003,7 +3001,6 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     let mut editor = fixture();
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
-    editor.refresh_adjustment_layer_selection();
     editor.document.project.roll.exposure = 1.23456789;
     editor.photo_settings_mut().exposure = -2.3456789;
     let before = editor.document.state.project.clone();
@@ -3107,7 +3104,6 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     let mut editor = fixture();
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
-    editor.refresh_adjustment_layer_selection();
     editor.set_gamma(1.1);
     editor.set_balance(Balance {
         warmth: 0.3,
@@ -3176,7 +3172,6 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     let mut editor = fixture();
     with_camera_basis(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
-    editor.refresh_adjustment_layer_selection();
     editor.tab = 1;
     for section in ["photo-composition", "photo-white-balance", "photo-exposure"] {
         editor.preferences.sections.insert(section.into(), false);

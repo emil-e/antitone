@@ -24,7 +24,6 @@ impl Editor {
     }
 
     pub(super) fn receive_frame(&mut self) {
-        self.observe_gamma_pivot();
         if self.document.visit.canvas.ready.is_none() {
             self.document.visit.working_view.clear();
         }
