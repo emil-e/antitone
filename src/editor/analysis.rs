@@ -96,7 +96,6 @@ struct FrameMeasurements {
     floor: f64,
     film: crate::scan::AnalysisSamples,
     picture: crate::scan::AnalysisSamples,
-    spatial: crate::gpu::analysis::CameraWindow,
 }
 
 fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Error> {

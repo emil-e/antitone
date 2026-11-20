@@ -43,17 +43,6 @@ impl CameraWindow {
         }))
     }
 
-    pub(crate) fn read(
-        &self,
-        renderer: &GpuRenderer,
-        gpu: (&wgpu::Queue, &SubmissionGate),
-        field: Option<Arc<GpuFlatField>>,
-        mut cancelled: impl FnMut() -> bool,
-    ) -> Result<Option<SpatialSamples>, Error> {
-        let sampler = CameraSampler::captured(renderer, gpu, self.input.clone(), field)?;
-        self.read_with(&sampler, &mut cancelled)
-    }
-
     fn read_with(
         &self,
         sampler: &CameraSampler<'_>,
@@ -88,11 +77,6 @@ impl CameraWindow {
             return Ok(None);
         }
         Ok(Some(SpatialSamples::new(self.view.size(), camera, valid)?))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> [usize; 2] {
-        self.view.size()
     }
 }
 

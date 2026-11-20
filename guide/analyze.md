@@ -1,8 +1,8 @@
 # Analyze
 
 **Analyze** finds a starting grade for the whole roll from the scans themselves: shared
-calibration and colour for the roll, plus an exposure for each photograph. It aims to
-give you a useful place to start — not to finish every image.
+calibration, colour and exposure for the roll. It aims to give you a useful place to
+start — not to finish every image.
 
 It is on the **Roll** tool shelf.
 
@@ -11,10 +11,10 @@ It is on the **Roll** tool shelf.
 Working from the camera's raw measurements (never the preview you see), Analyze:
 
 1. Measures **Dmin** (film base) and **Dmax** from clear and dense areas.
-2. Fits a shared **channel response** so the roll has a consistent tonal colour trend.
+2. Sets the roll's **channel balance** from the density range between Dmin and Dmax
+   in each channel.
 3. Sets the roll's shared **white balance**.
-4. Estimates an **exposure per photograph**, split into a shared Roll EV and a per-photo
-   residual.
+4. Meters one shared **Roll EV**, leaving Photo EV at zero.
 
 That is why your photographs line up with each other immediately afterwards — and why the
 remaining work is refinement, not rescue.
@@ -62,7 +62,7 @@ Knowing the failure modes helps more than any setting:
 - Areas are statistical suggestions, not physical measurements of your holder. Holder
   fuzz, narrow rebates or a damaged frame can bias them — that is what the review is for.
 - A scene dominated by one colour (a red stage, blue shade) can look like a colour cast
-  to the shared fit. Analyze averages trends across the roll; it cannot know what was in
-  front of the camera. Correct individually on Photo if the "correction" hurt the mood.
-- Exposure aims at a reasonable middle (mean near 0.18, highlights near white). A
+  to the shared fit. Analyze cannot know what was in front of the camera. Correct
+  individually on Photo if the result hurt the mood.
+- Exposure uses the median brightness of each photo to find a shared starting point. A
   sky-heavy frame can still need manual exposure.
