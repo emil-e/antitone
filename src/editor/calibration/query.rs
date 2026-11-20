@@ -1,6 +1,7 @@
 //! Calibration requests original-grid camera light or a captured photographic neutral endpoint.
 
 use super::*;
+use crate::gpu::flat::GpuFlatField;
 use crate::{
     Error,
     coverage::Coverage,
@@ -8,15 +9,17 @@ use crate::{
     sampling::GammaNeutral,
     scan::Scan,
 };
+use std::sync::Arc;
 
 pub(super) fn reference(
     services: &super::super::source::Services,
     scan: &mut Scan,
+    field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<DVec3, Error> {
     let floor = f64::from(scan.effective_floor() as f32);
-    let samples = Samples::new(services, scan, coverage, cancelled)?;
+    let samples = Samples::new(services, scan, field, coverage, cancelled)?;
     let mean = samples.mean(samples.camera_light()?, cancelled)?;
     if mean.min_element() <= floor {
         return Err(Error::UnusableSample(
@@ -30,6 +33,7 @@ pub(super) fn reference(
 pub(super) fn gamma(
     services: &super::super::source::Services,
     scan: &mut Scan,
+    field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     recipe: crate::image_recipe::ImageRecipe,
     cancelled: &dyn Fn() -> bool,
@@ -44,7 +48,7 @@ pub(super) fn gamma(
     ))?;
     let fit = GammaNeutral::new(negative, matrix)?;
 
-    let samples = Samples::new(services, &mut scan, coverage, cancelled)?;
+    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let result = fit.fit(

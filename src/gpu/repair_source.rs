@@ -26,19 +26,13 @@ pub(crate) struct Source<'a> {
 
 impl<'a> Source<'a> {
     pub(crate) fn from_recipe(
-        device: &wgpu::Device,
+        field: Option<Arc<GpuFlatField>>,
         renderer: &'a GpuRenderer,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
         scan: &Scan,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
         recipe.neutral.require_scan(scan)?;
-        let field = recipe
-            .neutral
-            .correction
-            .clone()
-            .map(|field| GpuFlatField::new(device, field).map(Arc::new))
-            .transpose()?;
         let graph = crate::gpu::photograph::RecipeGraph::originals(
             evaluation::camera_source(scan)?,
             field,

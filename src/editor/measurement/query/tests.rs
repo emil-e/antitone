@@ -35,7 +35,7 @@ fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_repres
         scan.effective_floor(),
         crate::processing::CAMERA_INPUT_FLOOR
     );
-    let mut samples = Samples::new(services, &mut scan, coverage, &|| false).unwrap();
+    let mut samples = Samples::new(services, &mut scan, None, coverage, &|| false).unwrap();
 
     for value in [0.5, 1., 2.] {
         samples.source = evaluation::source(Arc::new(Codes {
@@ -58,7 +58,7 @@ fn camera_measurements_accept_native_white_through_the_production_query() {
     let services = editor.source_services.as_ref().unwrap();
     let mut scan = super::super::capture_scan(&editor).unwrap();
     let coverage = Coverage::rectangle(scan.area);
-    let samples = Samples::new(services, &mut scan, coverage, &|| false).unwrap();
+    let samples = Samples::new(services, &mut scan, None, coverage, &|| false).unwrap();
     samples.require_precision(&|| false).unwrap();
     assert_eq!(
         samples

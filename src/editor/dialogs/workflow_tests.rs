@@ -231,7 +231,7 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
         });
         app.update(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             );

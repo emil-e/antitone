@@ -188,7 +188,7 @@ impl Services {
         )
         .await
         {
-            Ok(correction) => correction,
+            Ok(correction) => correction.into(),
             Err(_) if cancelled.is_cancelled() => {
                 return ControlFlow::Break(PhotoResult::Cancelled);
             }
@@ -311,7 +311,7 @@ impl Services {
                 (&self.queue, &self.submissions),
                 crate::gpu_export::job::Job {
                     scan: &scan,
-                    field: request.input.correction.as_ref().map(|c| c.gpu.clone()),
+                    field: request.input.correction.gpu()?,
                     recipe: &request.recipe,
                     format: match request.format {
                         OutputFormat::Tiff(target) => crate::gpu_export::Format::Tiff(target),
@@ -630,11 +630,11 @@ impl Editor {
                 None => Input::Acquire(Box::new(source::Request {
                     source: self.document.source_input(id)?,
                     sources: None,
-                    correction: self.document.correction.prepared().cloned(),
+                    correction: self.correction(),
                 })),
             };
             photos.push(Photo {
-                correction: self.document.correction.clone(),
+                correction: self.correction(),
                 input,
                 path,
                 recipe: self.document.image_recipe(id)?,

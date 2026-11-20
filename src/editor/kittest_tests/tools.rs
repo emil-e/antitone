@@ -560,7 +560,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             )

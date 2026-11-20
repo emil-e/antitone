@@ -49,10 +49,7 @@ impl Demand {
                     renderer,
                     kernels,
                     &self.pixels.scan()?,
-                    self.pixels
-                        .correction
-                        .as_ref()
-                        .map(|field| field.gpu.clone()),
+                    self.pixels.correction.gpu()?,
                     crate::gpu::view::rendering::Intent {
                         capture: &self.capture,
                         frame: self.frame,
@@ -518,6 +515,9 @@ impl WorkingView {
                 .unwrap_or(frame);
             (frame.clone(), wanted.clone(), state.sequence)
         };
+        if wanted.pixels.correction.pending() {
+            return;
+        }
         let rendering = wanted.rendering(
             frame.source.renderer.clone(),
             frame.source.kernels().clone(),
@@ -732,7 +732,23 @@ pub(super) async fn acquire_images(
         if cancelled() {
             return None;
         }
+        let changed = mailbox.1.listen();
+        if cancelled() {
+            return None;
+        }
+        let correction = futures_lite::future::or(
+            async { Some(demand.pixels.correction.clone().acquire().await) },
+            async {
+                changed.await;
+                None
+            },
+        )
+        .await;
+        let Some(correction) = correction else {
+            continue;
+        };
         let result = async {
+            correction.map_err(Error::Gpu)?;
             let previous = mailbox
                 .0
                 .lock()

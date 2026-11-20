@@ -282,11 +282,12 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(anchor) = measurement::run(&cx, DISPLAY.label, async move {
-        let image = image.await?;
+        let (image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
             let services = measurement::query_services(services.as_ref())?;
-            let evidence =
-                query::Evidence::capture(services, &image, region, &|| cancelled.is_cancelled())?;
+            let evidence = query::Evidence::capture(services, &image, field, region, &|| {
+                cancelled.is_cancelled()
+            })?;
             let negative = input
                 .negative_input()
                 .ok_or(Error::UnusableSample("gamma pivot requires negative input"))?;

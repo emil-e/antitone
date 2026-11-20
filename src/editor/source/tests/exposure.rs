@@ -32,7 +32,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
     let request = |document: &DocumentScope| Request {
         source: document.source_input(first_id).unwrap(),
         sources: Some(scheduler.provider(Some(document.cache.clone()))),
-        correction: None,
+        correction: Default::default(),
     };
     let developed = request(&document).load(&scheduler, &|| false).unwrap();
     let source = developed.context.source;
@@ -127,7 +127,7 @@ fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_rea
         sources: Some(
             source_loading::SourceLoader::new().provider(Some(editor.document.cache.clone())),
         ),
-        correction: None,
+        correction: Default::default(),
     }
     .load(&source_loading::SourceLoader::new(), &|| false)
     .unwrap();

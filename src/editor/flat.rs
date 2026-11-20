@@ -2,8 +2,6 @@ use super::*;
 use crate::{cancellation::Cancellation, viewport::CanvasLayout};
 #[cfg(test)]
 use crate::{gpu::flat::GpuFlatField, project::FlatFieldSettings};
-#[cfg(test)]
-use futures_util::FutureExt;
 use std::{cell::RefCell, rc::Rc};
 
 struct Change {
@@ -13,6 +11,7 @@ struct Change {
     activity: Activity,
 }
 
+#[cfg(test)]
 use super::correction::Resources;
 
 /// Prepared reference inputs owned by the Flat interaction.
@@ -29,40 +28,6 @@ pub(super) struct FlatPreview {
 }
 
 impl Editor {
-    pub(super) fn restore_correction(&mut self, cx: &UiContext<'_, Self>) {
-        if self.document.project.active_flat_field().is_none() {
-            return;
-        }
-        let resources = Resources::prepare(
-            self.document.project.active_flat_field().cloned(),
-            self.document.visit.working_view.device().cloned(),
-        );
-        self.document.correction = resources.clone();
-        let activity = self
-            .activities
-            .start(ActivityOptions::new("Preparing correction…"));
-        // Only this presentation continuation belongs to the document's live UI.
-        self.document.correction_restore = cx.spawn(move |cx| async move {
-            let result = resources.acquire().await;
-            drop(activity);
-            cx.update(|editor| {
-                editor.document.correction_restore = None;
-                match result {
-                    Ok(_) => {
-                        editor.acquire_working(&cx);
-                    }
-                    Err(_) => {
-                        editor.document.source = true;
-                        editor
-                            .preferences
-                            .sections
-                            .insert("roll-flat-field".into(), true);
-                    }
-                }
-            });
-        });
-    }
-
     fn change_correction(&mut self, enabled: Option<bool>, cx: &UiContext<'_, Self>) {
         let mut candidate = self.document.capture();
         if let Some(enabled) = enabled {
@@ -98,16 +63,16 @@ impl Editor {
         let editing = self
             .current_tool()
             .is_some_and(|tool| tool.is::<FlatTool>());
+        let correction = self.correction();
+        self.document.correction.observe(cx);
         let settings = self.document.state.project.flat_field();
         let configured = settings.is_some();
         let available = self.tool_start_available();
         let summary = match settings {
-            Some(settings) if settings.enabled && self.document.correction.error().is_some() => {
+            Some(settings) if settings.enabled && self.correction().error().is_some() => {
                 "Unavailable"
             }
-            Some(settings) if settings.enabled && self.document.correction.pending() => {
-                "Preparing…"
-            }
+            Some(settings) if settings.enabled && self.correction().pending() => "Preparing…",
             Some(settings) if settings.enabled => "Enabled",
             Some(_) => "Disabled",
             None => "Not configured",
@@ -127,7 +92,7 @@ impl Editor {
                 if editing {
                     return;
                 }
-                if let Some(error) = self.document.correction.error() {
+                if let Some(error) = correction.error() {
                     let status = ui::ContextualStatus::new(ui::StatusLevel::Error, error);
                     ui.horizontal(|ui| {
                         let (_, response) = ui.allocate_exact_size(
@@ -218,7 +183,7 @@ impl FlatTool {
 
     fn preview_input(editor: &Editor, path: PathBuf) -> source::Request {
         let mut request = editor.source_input(path);
-        request.correction = None;
+        request.correction = Default::default();
         request
     }
 
@@ -395,7 +360,7 @@ impl tool::Tool for FlatTool {
                     source: source::Context {
                         source: reference.developed.clone(),
                         reference: reference.reference.clone(),
-                        correction: None,
+                        correction: Default::default(),
                     },
                     record: reference.record.clone(),
                 };
@@ -473,7 +438,7 @@ impl Change {
         Ok(Self {
             edit,
             device,
-            previous: editor.document.correction.prepared().cloned(),
+            previous: editor.correction().prepared().cloned(),
             activity: editor
                 .activities
                 .start(ActivityOptions::new("Applying correction…").modal()),
@@ -518,7 +483,6 @@ impl Change {
                     document.capture_initialization(&editor.document.initialization);
                     self.edit.replace_snapshot(Arc::new(document));
                     editor.commit_document(self.edit).expect("current document edit");
-                    editor.document.correction_restore = None;
                     editor.document.correction = correction.into();
                     editor.status = "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup.".into();
                     editor.acquire_working(cx);
@@ -553,7 +517,7 @@ impl CorrectionInput {
             if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("correction retired"));
             }
-            if self.source.correction.is_some() {
+            if self.source.correction.map().is_some() {
                 return Err(Error::InvalidParameter(
                     "flat-field reference must be uncorrected",
                 ));
@@ -589,7 +553,7 @@ async fn preview(
     request: source::Request,
     cancelled: Cancellation,
 ) -> Result<FlatPreview, String> {
-    if request.correction.is_some() {
+    if request.correction.map().is_some() {
         return Err("Flat-field reference must be uncorrected".into());
     }
     let ready = services.prepare(request, cancelled.clone()).await?;
@@ -600,7 +564,7 @@ async fn preview(
         let scan = source::Context {
             source: ready.developed.clone(),
             reference: ready.reference.clone(),
-            correction: None,
+            correction: Default::default(),
         }
         .scan()?;
         let region = scan.propose_flat_field_area()?;

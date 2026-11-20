@@ -232,7 +232,7 @@ fn prepare_source_scheduled(
     };
     let developed = source::Request {
         source: physical,
-        correction: correction.cloned(),
+        correction: correction.cloned().into(),
         sources: Some(developments.provider(cache.map(|(cache, _)| cache.clone()))),
     }
     .load(developments, cancelled)?;
@@ -347,7 +347,6 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         self.install_project(document);
-        self.restore_correction(cx);
         if let Some(id) = selected.or_else(|| self.document.project.order.first().copied())
             && let Ok(path) = self.document.source_path(id)
         {
@@ -992,8 +991,6 @@ impl Editor {
         self.document
             .state
             .capture_initialization(&self.document.initialization);
-        self.document.correction_restore = None;
-        self.document.correction = Default::default();
         self.cancel_spatial();
         self.document.hosted_tool = Default::default();
         self.id = self.request_id();

@@ -18,8 +18,14 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     .unwrap();
     let recipe = recipe(&scan, InputSettings::Digital);
     let gate = SubmissionGate::default();
-    let mut original =
-        Source::from_recipe(&device, &renderer, (&queue, &gate), &scan, &recipe).unwrap();
+    let mut original = Source::from_recipe(
+        prepared_field(&device, &scan),
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+    )
+    .unwrap();
     let repair = |id, origin| Repair {
         id: RepairId(id),
         enabled: true,

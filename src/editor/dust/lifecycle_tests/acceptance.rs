@@ -623,7 +623,7 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
         .get(&services.device, &services.queue)
         .unwrap();
     let base = crate::gpu::repair_source::Source::from_recipe(
-        &services.device,
+        e.correction().gpu().unwrap(),
         &renderer,
         (&services.queue, services.renderers.submissions()),
         &scan,
@@ -802,6 +802,7 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
                     .source()
                     .unwrap()
                     .correction
+                    .map()
                     .is_none()
             );
         });

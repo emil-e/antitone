@@ -606,7 +606,7 @@ fn correction_changes_do_not_replace_the_picked_value_or_change_its_gamma_respon
         });
         app.read(|editor| {
             assert!(
-                editor.document.correction.prepared().is_some(),
+                editor.correction().prepared().is_some(),
                 "{}",
                 editor.status
             );

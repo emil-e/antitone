@@ -708,7 +708,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
             app.pump();
             std::thread::sleep(Duration::from_millis(1));
         }
-        let accepted_before_source = app.read(|e| e.document.correction.prepared().is_some());
+        let accepted_before_source = app.read(|e| e.correction().prepared().is_some());
         release.send(()).unwrap();
         assert!(
             accepted_before_source,
@@ -738,7 +738,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
         });
         app.read(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
-            assert!(e.source_context().unwrap().correction.is_some());
+            assert!(e.source_context().unwrap().correction.prepared().is_some());
             assert_eq!(e.document.visit.view, view);
             assert_eq!(e.document.visit.current_source, Some(selected));
         });

@@ -7,7 +7,7 @@ fn source_input() -> source::Context {
     source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
-        correction: None,
+        correction: Default::default(),
     }
 }
 

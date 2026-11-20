@@ -22,7 +22,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
             .prepare(
                 source::Request {
                     source: document.source_input(id).unwrap(),
-                    correction: None,
+                    correction: Default::default(),
                     sources: Some(scheduler.provider(Some(document.cache.clone()))),
                 },
                 crate::cancellation::Cancellation::default(),
@@ -33,7 +33,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let input = source::Context {
             reference: None,
             source: ready.developed,
-            correction: None,
+            correction: Default::default(),
         };
         let support = crate::background::run(move |_| input.scan()?.propose_flat_field_area())
             .await

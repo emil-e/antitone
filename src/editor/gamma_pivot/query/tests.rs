@@ -151,8 +151,14 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     ));
 
     let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
-    let captured =
-        Evidence::capture(services, &scan, Coverage::rectangle(scan.area), &|| false).unwrap();
+    let captured = Evidence::capture(
+        services,
+        &scan,
+        None,
+        Coverage::rectangle(scan.area),
+        &|| false,
+    )
+    .unwrap();
     let native = captured.mean(services, negative(1.), &|| false).unwrap();
     let supplied = DVec3::new(16000., 20000., 24000.) / 65535.;
     let expected = (DVec3::splat(0.8) / supplied - DVec3::ONE) / 3.;
@@ -187,8 +193,33 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
 }
 
 #[test]
-fn actual_nonuniform_source_coverage_matches_individually_transformed_originals() {
-    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+fn corrected_nonuniform_source_coverage_matches_individually_transformed_originals() {
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let map = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![
+                DVec3::new(1.1, 0.9, 1.05),
+                DVec3::new(1.2, 1.05, 0.9),
+                DVec3::new(0.9, 1.15, 1.2),
+                DVec3::new(1.05, 1.1, 0.95),
+            ],
+        )
+        .unwrap(),
+    );
+    editor
+        .document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            "pivot-reference.dng",
+            map,
+        )))
+        .unwrap();
+    let captured = pollster::block_on(editor.correction().acquire())
+        .unwrap()
+        .unwrap();
     let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
     let services = editor.source_services.as_ref().unwrap();
     let coverage = Coverage::new(
@@ -201,7 +232,14 @@ fn actual_nonuniform_source_coverage_matches_individually_transformed_originals(
         .map(SourcePoint),
     )
     .unwrap();
-    let evidence = Evidence::capture(services, &scan, coverage, &|| false).unwrap();
+    let evidence = Evidence::capture(
+        services,
+        &scan,
+        Some(captured.gpu.clone()),
+        coverage,
+        &|| false,
+    )
+    .unwrap();
     let actual = evidence.mean(services, negative(1.), &|| false).unwrap();
     let mut sum = DVec3::ZERO;
     let mut camera_sum = DVec3::ZERO;

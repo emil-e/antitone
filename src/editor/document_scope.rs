@@ -108,8 +108,7 @@ pub(super) struct DocumentScope {
     pub export: super::export::State,
     pub importing: Option<async_executor::Task<()>>,
     pub input_change: Option<async_executor::Task<()>>,
-    pub correction: super::correction::Resources,
-    pub correction_restore: Option<async_executor::Task<()>>,
+    pub correction: super::correction::State,
     pub flat_correction: Option<async_executor::Task<()>>,
     pub hosted_tool: super::tool::Slot,
     pub state: Document,
@@ -339,7 +338,6 @@ impl From<Document> for DocumentScope {
             project_preview: Default::default(),
 
             correction: Default::default(),
-            correction_restore: None,
             flat_correction: None,
             hosted_tool: Default::default(),
             selected: 0,
