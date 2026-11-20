@@ -110,7 +110,7 @@ impl Classifier {
         let (shape, logits) = output[0]
             .try_extract_tensor::<f32>()
             .map_err(runtime_error)?;
-        if &shape[..] != [1, CLASSES as i64, OUTPUT as i64, OUTPUT as i64] {
+        if shape[..] != [1, CLASSES as i64, OUTPUT as i64, OUTPUT as i64] {
             return Err(runtime_error("unexpected logit raster"));
         }
         sites
@@ -137,7 +137,8 @@ fn site_class(logits: &[f32], point: [f64; 2]) -> Result<(usize, f32, f32), Erro
     let (fx, fy) = (x.fract() as f32, y.fract() as f32);
     let mut values = [0.; CLASSES];
     let (mut top, mut peak) = (0, f32::NEG_INFINITY);
-    for (i, plane) in logits.chunks_exact(OUTPUT * OUTPUT).enumerate() {
+    let (planes, _) = logits.as_chunks::<{ OUTPUT * OUTPUT }>();
+    for (i, plane) in planes.iter().enumerate() {
         let a = (1. - fx) * plane[y0 * OUTPUT + x0] + fx * plane[y0 * OUTPUT + x1];
         let b = (1. - fx) * plane[y1 * OUTPUT + x0] + fx * plane[y1 * OUTPUT + x1];
         let v = (1. - fy) * a + fy * b;
