@@ -7,9 +7,8 @@ The distinction from [processing](processing.md) matters: processing transforms 
 ```text
 eligible camera samples
   → Dmin and independent-channel Dmax
-  → sparse-picture seed curves and exposure
-  → ordinary GI evidence; one shared channel-curve fit
-  → refreshed GI evidence; coordinate-median shared Roll WB
+  → Dmin-to-Dmax density spans; one shared channel balance
+  → picture log-chroma; coordinate-median shared Roll WB
   → per-photo luminance medians
   → shared Roll EV from their median; Photo EV zero
 ```
@@ -18,7 +17,7 @@ eligible camera samples
 
 Analysis retains one regular raster of uncorrected original camera samples per source, currently capped at a 1024-pixel long edge. It stores RGB f32 camera codes and implicit original coordinates, without interpolation or upscaling. Accepted scan correction is evaluated at those coordinates when measurements are requested — never on a displayed preview or embedded camera JPEG.
 
-Film and picture statistics select bounded two-dimensional strata on this source-wide grid, then mask them against reviewed support. Film samples supply the low-density reference; picture samples supply dense tails, seed curves and exposure statistics. GI uses a cropped, integer-strided view of the same raster, capped at a 512-pixel long edge. Reviewed regions can move or resize without recapturing either population.
+Film and picture statistics select bounded two-dimensional strata on this source-wide grid, then mask them against reviewed support. Film samples supply the low-density reference; picture samples supply dense tails, WB and exposure statistics. Reviewed regions can move or resize without recapturing either population.
 
 Spatial support excludes the holder and unsuitable material; numerical checks establish usable developed values. Statistical anchors and median exposure statistics limit the influence of isolated extremes.
 
@@ -38,47 +37,15 @@ Before numerical estimation, selected original sample sites must satisfy film/ma
 
 These are useful statistical anchors, not guaranteed observations of clean film base and maximum physical density. A damaged dense tail or holder contamination can still bias them.
 
-## 3. Fit a shared colour trend across tones
+## 3. Estimate channel balance from the anchors
 
-A constant WB adjustment cannot fix every shadow-to-highlight colour trend. Channel gamma balance can, because its effect varies with density. The analysis therefore fits curves first and WB afterward.
+Each channel’s span is `ln(Dmin / Dmax)`, using the same camera transmissions that anchor inversion. The balance uses only the relative widths of the three spans; it does not move either anchor or require a shared pixel.
 
-The sparse picture population first supplies seed curves and exposure. At those curves, ordinary Grayness Index (GI) ranks local channel-proportion stability in native positives, without applying photographic WB. The current selector follows the Gaussian-gradient executable reference for [Qian et al.'s GI](https://openaccess.thecvf.com/content_CVPR_2019/html/Qian_On_Finding_Gray_Pixels_CVPR_2019_paper.html): 7×7 smoothing, complete valid neighbourhoods, dark/flat rejection and the lowest 0.1% score quota, including threshold ties. Seed EV supplies its brightness gain and stays fixed through selection and the subsequent WB refresh.
-
-Gamma selection admits only sample centres with positive Bradford cone responses at the seed curves, keeping their band means inside the logarithmic score's domain. Other native-positive neighbours still supply GI's local stability measurement. This limits evidence for that score, not which scene colours can be rendered.
-
-Selected original camera vectors supply one further gamma fit. Each photo's selected population is divided into shadow, middle and highlight bands using its positive luminance ranks with zero gamma balance. These memberships stay fixed during fitting, so a candidate cannot improve its score simply by moving samples into different bands. Every photo must supply complete gamma evidence; fitting does not iterate GI selection and curves.
-
-The [production forward model](../src/gpu/analysis.rs) evaluates shared photographic GPU components for every candidate, not just the initial samples. Captured camera vectors use an index grid after original-site eligibility; they need no image reconstruction. CPU ranking, reduction and search consume these f32 responses, while the public scalar estimator remains an independent f64 reference.
-
-For each candidate:
-
-1. Invert each sample, then average the positives within each band.
-2. Express the band's mean in log-opponent Bradford coordinates.
-3. Compare shadow and highlight colour with the middle band.
-4. Average those differences across photos, then penalize the remaining shared drift.
-
-If `z` denotes those two colour coordinates, the objective is:
-
-```text
-J = |mean_photos(z_shadow − z_middle)|²
-  + |mean_photos(z_highlight − z_middle)|²
-```
-
-### Why photographic WB cancels
-
-Bradford WB multiplies cone responses. Taking logarithms turns those gains into an additive offset shared by all bands, and subtracting two band coordinates removes that offset. Exposure likewise adds a common log gain and does not change the differences. This lets the fit ask “which curves reduce tonal colour drift?” without simultaneously asking “what should the overall colour balance be?”
-
-### Why average before squaring
-
-Imagine one photograph with warm highlights and cool shadows, and another with the opposite scene colours. Penalizing each photo separately would pressure both toward neutral bands. Averaging their differences first lets opposing scene trends cancel; the fit targets a trend shared by the roll instead.
-
-That is still an assumption. A roll dominated by the same materials or coloured lighting can have a genuine common scene trend; the optimizer cannot prove whether it comes from the film response or the scenes. A bounded search compares valid starting balances and refines them within the existing controls; undefined or out-of-range candidates are rejected, not clamped. Search mechanics and stopping criteria live in [the fitter](../src/roll_analysis/gamma.rs).
+Channel gammas are proportional to their spans: a channel that travelled farther gets a larger divisor when inverting. Their geometric mean stays at the selected global gamma. If the spans are unusable or suggest a balance outside the control range, Analyze keeps the incoming balance. Different scenes or capture conditions can still set the two ends of a span; the estimate is not a measured film slope.
 
 ## 4. Set shared photographic WB
 
-With the fitted curves fixed, fresh ordinary GI selection supplies one native-positive mean per photo. Camera-to-AP1 conversion and Bradford neutralization yield a candidate WB. The shared Roll WB is the coordinate-wise median of admitted candidates, averaging the middle pair for even counts. A photo whose GI evidence or WB correction is unusable abstains from this aggregation, not from gamma fitting or the resulting grade. Analyze reports partial WB participation; rejection reasons are logged by source. No admitted candidate means failure rather than a substitute grade.
-
-GI evidence is not a measured neutral target: coloured material and coloured illumination can also have stable channel proportions. Roll aggregation limits some frame-specific extremes, not shared scene bias. Photo WB starts at zero and remains manual; automatically applying individual estimates would too readily remove blue shade, coloured lighting or a scene's dominant material colour.
+After setting gamma, Analyze uses the mean working log-chroma of each usable photograph to suggest a white balance. It takes the coordinate-wise median of those suggestions and limits the result to the control range. This is one Roll WB, not a neutral target for each photo. If no photo has usable colour measurements, Analyze declines to install a grade.
 
 ## 5. Set shared roll exposure
 
@@ -101,7 +68,7 @@ The document-placed [Analyze tool](../src/editor/analysis.rs) owns its unfinishe
 
 Shared preparation captures the camera raster while each original is available, then releases its lease. Document-owned rasters are keyed by source development, independent of reviewed regions, flat-field choices and the optional full-image LRU. Closing the document or removing a source releases them. Payload is at most 12 MiB per source, excluding ownership overhead; reported retained bytes are not process memory.
 
-Before numerical fitting, Analyze acquires every captured photograph's camera raster, reusing matching retained evidence and resolving missing interpretation facts through source acquisition. Its shared camera basis comes from those acquired developments. Fitting owns bounded original-camera rasters rather than full-image leases. Corrected spatial arrays and native-positive GI arrays are evaluated and released one photo at a time for each selection pass; acquisition or fitting failure aborts the complete proposal.
+Before numerical fitting, Analyze acquires every captured photograph's camera raster, reusing matching retained evidence and resolving missing interpretation facts through source acquisition. Its shared camera basis comes from those acquired developments. Fitting owns bounded original-camera rasters rather than full-image leases. The fit reuses the Dmin and Dmax measurements for channel balance, without requesting another picture sample population.
 
 Review needs only geometry and material classification; it does not develop RAWs or run image-based refinement. Within an open document, Auto-crop reuses ready regions without acquiring pixels; Analyze collects missing camera rasters on demand. Reopening starts without regions, and either feature can trigger shared preparation.
 
@@ -115,12 +82,12 @@ Fitting validates the complete proposal—including every photo's resulting nume
 
 ## Where the estimate can fail
 
-Faint/off-image or scene-confounded boundaries can defeat area suggestions; holder fuzz and narrow rebates remain uncertain at bounded evidence resolution. A damaged frame can still dominate independent Dmax tails, and correlated scene colour can bias shared tonal fitting and WB. These are limitations, not permission for silent source exclusion, repair or hidden clamps: area review and numerical rejection are complementary safeguards, not photographic guarantees.
+Faint/off-image or scene-confounded boundaries can defeat area suggestions; holder fuzz and narrow rebates remain uncertain at bounded evidence resolution. A damaged frame can still dominate independent Dmax tails, and correlated scene colour can bias the channel spans and WB. These are limitations, not permission for silent source exclusion, repair or hidden clamps: area review and numerical rejection are complementary safeguards, not photographic guarantees.
 
 ## Working on this area
 
 - [Original camera evidence](../src/scan/analysis/input.rs), [GPU camera sampling](../src/gpu/analysis/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
-- [Point-only seed](../src/roll_analysis.rs), [spatial GI baseline](../src/roll_analysis/gi.rs), [selector](../src/roll_analysis/grayness.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
+- [Anchor span estimator](../src/roll_analysis/anchor_spans.rs) and [roll analysis](../src/roll_analysis.rs): the editor proposal and shared anchor/EV measurements.
 - [Spatial hypotheses](../src/scan_regions.rs), [shared preparation](../src/editor/spatial/preparation.rs) and [document retention](../src/editor/document_scope.rs): reusable source-owned support and original sampling inputs.
 - [Editor Analyze](../src/editor/analysis.rs): tool interaction, review assembly, awaited preparation, cancellation acknowledgement and atomic installation of reviewed areas with grade.
 - [Captured sampling/fitting](../src/editor/analysis/fit.rs): original-site eligibility, GPU measurements and validated numerical proposals.

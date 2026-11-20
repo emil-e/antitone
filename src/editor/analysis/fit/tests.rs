@@ -140,7 +140,6 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    // Sparse retained patches and regular original-site GI evidence have distinct jobs.
     let mut state = services.fit(request.clone(), captured.clone()).unwrap();
     state.geometry().unwrap();
     let mut retained_state = services.fit(request.clone(), captured.clone()).unwrap();
@@ -204,23 +203,6 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         let reused = &retained_state.owned[index];
         assert_eq!(reused.film.pixels, frame.film.pixels);
         assert_eq!(reused.picture.pixels, frame.picture.pixels);
-        let raster = reused
-            .spatial
-            .read(
-                &retained_state.renderer,
-                (&retained_state.queue, &retained_state.renderer.submissions),
-                retained_state.correction.as_ref().map(|c| c.gpu.clone()),
-                || false,
-            )
-            .unwrap()
-            .unwrap();
-        let [width, height] = reused.spatial.size();
-        assert!(
-            width <= crate::roll_analysis::GRAYNESS_LONG_EDGE
-                && height <= crate::roll_analysis::GRAYNESS_LONG_EDGE
-        );
-        assert_eq!(raster.camera_samples().len(), width * height);
-        assert_eq!(raster.eligibility().len(), width * height);
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
             (MIN_PICTURE_SAMPLES..=MAX_SAMPLES_PER_FRAME).contains(&frame.picture.pixels.len())

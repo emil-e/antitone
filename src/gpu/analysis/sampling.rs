@@ -9,8 +9,8 @@ use crate::{
 #[cfg(test)]
 use crate::scan::Scan;
 
+#[cfg(test)]
 mod spatial;
-pub(crate) use spatial::CameraWindow;
 #[cfg(test)]
 mod tests;
 

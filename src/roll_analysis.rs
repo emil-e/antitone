@@ -16,8 +16,13 @@ mod gi;
 mod grayness;
 mod model;
 
+#[cfg(any(feature = "editor", test))]
+mod anchor_spans;
+#[cfg(any(feature = "editor", test))]
+mod median_wb;
+
 #[cfg(feature = "editor")]
-pub(crate) use gi::estimate_spatial_with_provider;
+pub(crate) use anchor_spans::estimate_anchor_spans;
 pub use gi::{SpatialFrameSamples, SpatialSamples, estimate_spatial};
 
 /// Current spatial evidence resolution, independent of output/rendering resolution.
@@ -94,7 +99,7 @@ fn quantile(values: &mut [f64], fraction: f64) -> f64 {
     values[low] * (1. - (at - low as f64)) + values[high] * (at - low as f64)
 }
 
-fn centre_sample(pixels: &[DVec3], count: usize, i: usize) -> DVec3 {
+fn centre_sample<T: Copy>(pixels: &[T], count: usize, i: usize) -> T {
     pixels[(2 * i + 1) * pixels.len() / (2 * count)]
 }
 
@@ -118,32 +123,14 @@ pub fn estimate(
     )
 }
 
-pub(crate) fn estimate_with_model(
+fn calibrate(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
-    camera_to_ap1: DMat3,
-    current: impl Into<InputSettings>,
-    model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
-) -> Result<Option<Proposal>, Error> {
-    if cancelled() {
-        return Ok(None);
-    }
-    validate_camera_matrix(camera_to_ap1)?;
+) -> Result<Option<Calibration>, Error> {
     if !effective_floor.is_finite() || effective_floor <= 0. {
         return Err(Error::InvalidParameter("invalid roll analysis floor"));
     }
-    let InputSettings::Negative {
-        response,
-        gamma,
-        balance,
-        ..
-    } = current.into()
-    else {
-        return Err(Error::InvalidParameter(
-            "roll analysis requires a negative input",
-        ));
-    };
     if frames.is_empty() {
         return Err(Error::UnusableSample("empty analysis roll"));
     }
@@ -177,7 +164,35 @@ pub(crate) fn estimate_with_model(
         quantile(&mut values, 0.005)
     }));
     drop(picture);
-    let calibration = Calibration { dmin, dmax }.validate()?;
+    Ok(Some(Calibration { dmin, dmax }.validate()?))
+}
+
+pub(crate) fn estimate_with_model(
+    frames: &[FrameSamples<'_>],
+    effective_floor: f64,
+    camera_to_ap1: DMat3,
+    current: impl Into<InputSettings>,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Proposal>, Error> {
+    if cancelled() {
+        return Ok(None);
+    }
+    validate_camera_matrix(camera_to_ap1)?;
+    let InputSettings::Negative {
+        response,
+        gamma,
+        balance,
+        ..
+    } = current.into()
+    else {
+        return Err(Error::InvalidParameter(
+            "roll analysis requires a negative input",
+        ));
+    };
+    let Some(calibration) = calibrate(frames, effective_floor, cancelled)? else {
+        return Ok(None);
+    };
     let current = NegativeInput {
         calibration,
         response,

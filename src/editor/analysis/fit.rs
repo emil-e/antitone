@@ -338,32 +338,10 @@ impl Fit {
             return Ok(false);
         };
         require_picture(&picture)?;
-        let area = match frame_areas {
-            Some(areas) => crate::scan_regions::Areas::coverage(
-                areas
-                    .picture
-                    .ok_or(Error::UnusableSample("no GI picture area"))?,
-            )?
-            .clipped_bounds(active)?,
-            None => self.picture.expect("legacy picture geometry"),
-        };
-        let Some(spatial) = sampler.window(
-            area,
-            |f| {
-                frame_areas.is_none_or(|areas| areas.contains_footprint(f, active, true))
-                    && on_film(f)
-                    && inside_film(f, &picture_planes, 0.)
-            },
-            &cancelled,
-        )?
-        else {
-            return Ok(false);
-        };
         self.owned.push(FrameMeasurements {
             floor: sampler.effective_floor(),
             film,
             picture,
-            spatial,
         });
         Ok(true)
     }
@@ -387,21 +365,13 @@ impl Fit {
             self.renderer.evaluation(),
             (&self.queue, &self.renderer.submissions),
         );
-        let Some(proposal) = roll_analysis::estimate_spatial_with_provider(
+        let Some(proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
             floor,
             self.matrix,
             project.input,
             &mut model,
             &mut || cancelled(),
-            |index, stopped| {
-                self.owned[index].spatial.read(
-                    &self.renderer,
-                    (&self.queue, &self.renderer.submissions),
-                    self.correction.as_ref().map(|c| c.gpu.clone()),
-                    stopped,
-                )
-            },
         )?
         else {
             return Ok(None);
