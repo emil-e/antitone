@@ -8,10 +8,12 @@ use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::renderer::GpuRenderer;
 use crate::rendering::OutputTarget;
-use glam::{DMat3, Vec4};
+use glam::DMat3;
 use std::sync::Arc;
 mod calculation;
+mod presentation;
 mod proxy;
+pub use presentation::{Draw, Presentation};
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
 mod film_tests;
@@ -20,18 +22,8 @@ mod look_tests;
 #[cfg(test)]
 pub(crate) mod readback;
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Presentation {
-    columns: [Vec4; 3],
-    size: [u32; 4],
-    uv_x: [f32; 4],
-    uv_y: [f32; 4],
-}
-
 struct ImageProcessing {
     renderer: Arc<GpuRenderer>,
-    target: OutputTarget,
     source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
     aces_group: std::sync::Mutex<Option<crate::renderer::RenderBinding>>,
@@ -40,17 +32,14 @@ struct ImageProcessing {
 }
 
 pub struct GpuImage {
-    device: wgpu::Device,
     device_limits: wgpu::Limits,
     look_check: std::sync::Mutex<Option<Arc<crate::gpu::lut3d::Check>>>,
     look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::lut3d::Check>)>>,
     paint_mapping: std::sync::Mutex<Option<TextureMapping>>,
     processing: Option<ImageProcessing>,
     pub linear: wgpu::Texture,
-    display: wgpu::RenderPipeline,
-    display_group: wgpu::BindGroup,
-    presentation: Presentation,
-    visible_group: std::sync::Mutex<Option<(TextureMapping, wgpu::BindGroup)>>,
+    target: OutputTarget,
+    bindings: std::sync::Mutex<presentation::Bindings>,
 }
 
 impl GpuImage {
@@ -100,7 +89,6 @@ impl GpuImage {
             size[0],
             size[1],
             Some((renderer.clone(), Arc::new(source))),
-            renderer.display.clone(),
             target,
         )
         .await
@@ -125,7 +113,6 @@ impl GpuImage {
             size[0],
             size[1],
             Some((renderer.clone(), Arc::new(source))),
-            renderer.display.clone(),
             target,
         )
         .await
@@ -133,44 +120,18 @@ impl GpuImage {
 
     pub async fn new_rendered(
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
         width: u32,
         height: u32,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        Self::create(
-            device,
-            width,
-            height,
-            None,
-            crate::renderer::display_pipeline(device),
-            target,
-        )
-        .await
+        Self::create(device, width, height, None, target).await
     }
-    pub async fn new_rendered_shared(
-        renderer: &GpuRenderer,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        target: OutputTarget,
-    ) -> Result<Self, Error> {
-        Self::create(
-            device,
-            width,
-            height,
-            None,
-            renderer.display.clone(),
-            target,
-        )
-        .await
-    }
+
     async fn create(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         source: Option<(Arc<GpuRenderer>, Arc<ProcessingSource>)>,
-        display: wgpu::RenderPipeline,
         target: OutputTarget,
     ) -> Result<Self, Error> {
         let count = width
@@ -210,7 +171,6 @@ impl GpuImage {
                 })?;
                 Ok(ImageProcessing {
                     renderer,
-                    target,
                     source,
                     working,
                     aces_group: std::sync::Mutex::new(None),
@@ -219,29 +179,18 @@ impl GpuImage {
                 })
             })
             .transpose()?;
-        let matrix = target.linear_to_srgb();
-        let presentation = Presentation {
-            columns: [matrix.x_axis, matrix.y_axis, matrix.z_axis].map(|v| v.as_vec3().extend(0.)),
-            size: [width, height, 0, 0],
-            uv_x: [0., 0., 1., 0.],
-            uv_y: [0., 1., 0., 0.],
-        };
-        let display_group = make_presentation_group(device, &display, &linear, presentation)?;
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
-            device: device.clone(),
             device_limits: device.limits(),
             look_check: std::sync::Mutex::new(None),
             look_projections: std::sync::Mutex::new(Vec::new()),
             paint_mapping: std::sync::Mutex::new(None),
             processing,
             linear,
-            display,
-            display_group,
-            presentation,
-            visible_group: std::sync::Mutex::new(None),
+            target,
+            bindings: Default::default(),
         })
     }
 
@@ -480,71 +429,20 @@ impl GpuImage {
         Ok(())
     }
 
-    pub fn presentation_group(
+    fn size(&self) -> [u32; 2] {
+        [self.linear.width(), self.linear.height()]
+    }
+
+    fn presentation_draw(
         &self,
-        device: &wgpu::Device,
-        uv: impl Into<TextureMapping>,
-    ) -> Result<wgpu::BindGroup, Error> {
-        let uv = uv.into();
-        let mut cached = self.visible_group.lock().unwrap();
-        if let Some((previous, group)) = &*cached
-            && *previous == uv
-        {
-            return Ok(group.clone());
-        }
-        let group = make_presentation_group(
-            device,
-            &self.display,
-            &self.linear,
-            Presentation {
-                uv_x: [uv.origin[0], uv.origin[1], uv.x_axis[0], uv.x_axis[1]],
-                uv_y: [uv.y_axis[0], uv.y_axis[1], 0., 0.],
-                ..self.presentation
-            },
-        )?;
-        *cached = Some((uv, group.clone()));
-        Ok(group)
+        presentation: &Presentation,
+        mapping: TextureMapping,
+    ) -> Result<Draw, Error> {
+        self.bindings
+            .lock()
+            .unwrap()
+            .prepare(presentation, &self.linear, self.target, mapping)
     }
-
-    pub fn paint_group(&self, pass: &mut wgpu::RenderPass<'static>, group: &wgpu::BindGroup) {
-        pass.set_pipeline(&self.display);
-        pass.set_bind_group(0, group, &[]);
-        pass.draw(0..3, 0..1);
-    }
-
-    pub fn paint(&self, pass: &mut wgpu::RenderPass<'static>) {
-        self.paint_group(pass, &self.display_group);
-    }
-}
-
-fn make_presentation_group(
-    device: &wgpu::Device,
-    display: &wgpu::RenderPipeline,
-    linear: &wgpu::Texture,
-    parameters: Presentation,
-) -> Result<wgpu::BindGroup, Error> {
-    let uniform = device.try_create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("presentation basis, dimensions and mapping"),
-        contents: bytemuck::bytes_of(&parameters),
-        usage: wgpu::BufferUsages::UNIFORM,
-    })?;
-    let view = linear.create_view(&Default::default());
-    crate::gpu::allocation::checked(device, || {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("managed image presentation"),
-            layout: &display.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform.as_entire_binding(),
-                },
-            ],
-        })
-    })
 }
 
 pub struct ImagePaint {
@@ -558,71 +456,58 @@ pub struct ImagePaint {
     calculation: Option<crate::gpu::evaluation::Value>,
     luts: crate::looks::LutChain,
     context: Option<egui::Context>,
-    uv: TextureMapping,
-    group: std::sync::Mutex<Option<wgpu::BindGroup>>,
+    draw: Draw,
 }
 
 impl ImagePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn rendered(
+        presentation: &Presentation,
         view: Arc<crate::gpu::view::RenderedView>,
         uv: TextureMapping,
         submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Result<Self, Error> {
-        let group = (uv != TextureMapping::IDENTITY)
-            .then(|| view.image.presentation_group(&view.image.device, uv))
-            .transpose()?;
-        Ok(Self {
-            image: view.image.clone(),
-            calculation: None,
-            luts: Default::default(),
-            context: Some(context.clone()),
-            uv,
-            group: std::sync::Mutex::new(group),
-            rendered: Some((view, submissions, context)),
-        })
+        let draw = view.image.presentation_draw(presentation, uv)?;
+        Ok(Self::from_rendered(view, draw, submissions, context))
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn retained(
+        presentation: &Presentation,
         view: Arc<crate::gpu::view::RenderedView>,
         submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
+    ) -> Result<Self, Error> {
+        let previous = view.image.bindings.lock().unwrap().retained();
+        let draw = match previous {
+            Some(draw) => draw,
+            None => view
+                .image
+                .presentation_draw(presentation, TextureMapping::IDENTITY)?,
+        };
+        Ok(Self::from_rendered(view, draw, submissions, context))
+    }
+
+    #[cfg(feature = "editor")]
+    fn from_rendered(
+        view: Arc<crate::gpu::view::RenderedView>,
+        draw: Draw,
+        submissions: crate::gpu::submission::SubmissionGate,
+        context: egui::Context,
     ) -> Self {
-        let previous = view.image.visible_group.lock().unwrap().clone();
-        let (uv, group) = previous.map_or((TextureMapping::IDENTITY, None), |(uv, group)| {
-            (uv, Some(group))
-        });
         Self {
             image: view.image.clone(),
             calculation: None,
             luts: Default::default(),
-            context: Some(context.clone()),
-            uv,
-            group: std::sync::Mutex::new(group),
+            context: None,
+            draw,
             rendered: Some((view, submissions, context)),
         }
     }
 
-    pub fn new(
-        image: Arc<GpuImage>,
-        parameters: Option<ProcessingParameters>,
-        uv: impl Into<TextureMapping>,
-    ) -> Self {
-        let calculation = parameters
-            .map(|parameters| {
-                image
-                    .inspection(parameters, None)
-                    .and_then(|prefix| image.output(prefix, &Default::default()))
-            })
-            .transpose()
-            .expect("admitted source-view transform");
-        Self::with_calculation(image, calculation, Default::default(), uv)
-            .expect("admitted source-view storage")
-    }
-
     pub fn with_calculation(
+        presentation: &Presentation,
         image: Arc<GpuImage>,
         calculation: Option<crate::gpu::evaluation::Value>,
         luts: crate::looks::LutChain,
@@ -636,9 +521,7 @@ impl ImagePaint {
             ));
         }
         let uv = uv.into();
-        let group = (uv != TextureMapping::IDENTITY)
-            .then(|| image.presentation_group(&image.device, uv))
-            .transpose()?;
+        let draw = image.presentation_draw(presentation, uv)?;
         Ok(Self {
             #[cfg(feature = "editor")]
             rendered: None,
@@ -646,13 +529,13 @@ impl ImagePaint {
             calculation,
             luts,
             context: None,
-            uv,
-            group: std::sync::Mutex::new(group),
+            draw,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn with_processing(
+        presentation: &Presentation,
         image: Arc<GpuImage>,
         processing: Option<AuthoredPhotograph>,
         uv: impl Into<TextureMapping>,
@@ -665,12 +548,12 @@ impl ImagePaint {
             .as_ref()
             .map(|input| input.luts().clone())
             .unwrap_or_default();
-        Self::with_calculation(image, calculation, luts, uv)
+        Self::with_calculation(presentation, image, calculation, luts, uv)
     }
 
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn texture_mapping(&self) -> TextureMapping {
-        self.uv
+        self.draw.mapping()
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -684,7 +567,7 @@ impl ImagePaint {
     ) -> Option<(Arc<crate::gpu::view::RenderedView>, TextureMapping)> {
         self.rendered
             .as_ref()
-            .map(|(view, _, _)| (view.clone(), self.uv))
+            .map(|(view, _, _)| (view.clone(), self.draw.mapping()))
     }
 
     pub fn with_context(mut self, context: egui::Context) -> Self {
@@ -702,7 +585,8 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         encoder: &mut wgpu::CommandEncoder,
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        *self.image.paint_mapping.lock().unwrap() = Some(self.uv);
+        let mapping = self.draw.mapping();
+        *self.image.paint_mapping.lock().unwrap() = Some(mapping);
         #[cfg(feature = "editor")]
         if let Some((view, submissions, context)) = &self.rendered {
             view.ensure_submitted(device, _queue, submissions, context);
@@ -714,7 +598,7 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
                     _queue,
                     encoder,
                     (root, &self.luts),
-                    self.uv,
+                    mapping,
                     self.context.clone(),
                 )
                 .expect("validated rendering resources");
@@ -728,12 +612,12 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         pass: &mut wgpu::RenderPass<'static>,
         _resources: &egui_wgpu::CallbackResources,
     ) {
-        if matches!(self.image.look_result_for(self.uv), Some(Err(_))) {
+        if matches!(
+            self.image.look_result_for(self.draw.mapping()),
+            Some(Err(_))
+        ) {
             return;
         }
-        match &*self.group.lock().unwrap() {
-            Some(group) => self.image.paint_group(pass, group),
-            None => self.image.paint(pass),
-        }
+        self.draw.paint(pass);
     }
 }

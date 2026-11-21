@@ -621,7 +621,9 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             .unwrap();
         let scope_frame =
             crate::frame_raster::FrameRaster::full(editor.source_composition(source)).unwrap();
+        let presentation = Presentation::new(&device).await.unwrap();
         let image_paint = ImagePaint::with_calculation(
+            &presentation,
             images[index].clone(),
             Some(roots[index].clone()),
             recipe.luts.clone(),

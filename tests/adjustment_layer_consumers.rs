@@ -474,6 +474,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             .unwrap(),
         );
         let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
+        let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
         let geometry =
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
         for corrected in [false, true] {
@@ -507,6 +508,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let image = Arc::new(image(&renderer, &device, geometry, [7, 5], target).await);
                 let paint = calculation::image_paint(
+                    &presentation,
                     image.clone(),
                     Some(processing.clone()),
                     antitone::geometry::TextureMapping::IDENTITY,
@@ -843,9 +845,7 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
                             queue.submit([encoder.finish()]);
                         }
                     }
-                    let output = GpuImage::new_rendered_shared(&renderer, &device, 5, 3, target)
-                        .await
-                        .unwrap();
+                    let output = GpuImage::new_rendered(&device, 5, 3, target).await.unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
                     average
                         .finish(&device, &mut encoder, &output.linear)

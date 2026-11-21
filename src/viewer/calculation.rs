@@ -41,7 +41,7 @@ impl GpuImage {
             prefix,
             luts,
             &processing.renderer.looks,
-            processing.renderer.drt.get(processing.target),
+            processing.renderer.drt.get(self.target),
         )
     }
 
@@ -56,10 +56,7 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let raster = PhotographGraph::resident_raster(
-            &processing.source,
-            [self.presentation.size[0], self.presentation.size[1]],
-        )?;
+        let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
         Ok(PhotographGraph::resident_photograph(
             &self.device_limits,
             processing.camera(raster)?,
@@ -81,10 +78,7 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let raster = PhotographGraph::resident_raster(
-            &processing.source,
-            [self.presentation.size[0], self.presentation.size[1]],
-        )?;
+        let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
         PhotographGraph::resident_inspection(
             processing.camera(raster)?,
             &processing.source,
@@ -106,9 +100,9 @@ impl GpuImage {
         capture.resident_output(
             &processing.renderer,
             &processing.source,
-            [self.presentation.size[0], self.presentation.size[1]],
+            self.size(),
             field,
-            processing.target,
+            self.target,
         )
     }
 
@@ -123,12 +117,7 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
-            .resident_processed(
-                &processing.renderer,
-                &processing.source,
-                [self.presentation.size[0], self.presentation.size[1]],
-                field,
-            )
+            .resident_processed(&processing.renderer, &processing.source, self.size(), field)
     }
 
     #[cfg(test)]
@@ -137,10 +126,7 @@ impl GpuImage {
         let processing = self.processing.as_ref().expect("admitted camera source");
         let image = if let Some(program) = input.source_transform() {
             let stages = input.definition();
-            let raster = PhotographGraph::resident_raster(
-                &processing.source,
-                [self.presentation.size[0], self.presentation.size[1]],
-            )?;
+            let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
             stages.compose(
                 PhotographGraph::resident_photograph(
                     &self.device_limits,
@@ -159,7 +145,7 @@ impl GpuImage {
             image,
             input.luts(),
             &processing.renderer.looks,
-            processing.renderer.drt.get(processing.target),
+            processing.renderer.drt.get(self.target),
         )
     }
 
@@ -176,11 +162,7 @@ impl GpuImage {
         if self.processing.is_none() {
             return Err(Error::Gpu("rendered image has no source buffer".into()));
         }
-        if root.domain().finite()?
-            != crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                [self.presentation.size[0], self.presentation.size[1]],
-            )
+        if root.domain().finite()? != crate::gpu::evaluation::CellRegion::new([0, 0], self.size())
             || !matches!(
                 root.domain().meaning,
                 Meaning::Neutral | Meaning::Graded | Meaning::Inspection | Meaning::Display

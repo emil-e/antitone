@@ -13,7 +13,7 @@ use antitone::{
     gpu_scopes::{GpuScopes, ScopePaint},
     processing::{InputSettings, RollSettings},
     scopes::{Counts, Settings},
-    viewer::{GpuImage, ImagePaint},
+    viewer::{GpuImage, ImagePaint, Presentation},
 };
 use glam::DMat3;
 use std::sync::Arc;
@@ -97,6 +97,7 @@ impl ImageCalculations for GpuImage {
 }
 
 pub fn image_paint(
+    presentation: &Presentation,
     image: Arc<GpuImage>,
     calculation: Option<Calculation>,
     uv: impl Into<TextureMapping>,
@@ -104,7 +105,7 @@ pub fn image_paint(
     let root = calculation
         .map(|calculation| calculation(&image))
         .transpose()?;
-    ImagePaint::with_calculation(image, root, Default::default(), uv)
+    ImagePaint::with_calculation(presentation, image, root, Default::default(), uv)
 }
 
 pub fn scope_paint(

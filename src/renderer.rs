@@ -1,44 +1,8 @@
-#[cfg(feature = "ui")]
-use crate::gpu::{FULLSCREEN_VERTEX, fullscreen_pipeline};
 use crate::{
     Error,
     gpu::{drt, lut3d},
 };
 use std::sync::Arc;
-
-#[cfg(feature = "ui")]
-const DISPLAY: &str = r#"
-@group(0) @binding(0) var image: texture_2d<f32>;
-
-struct Parameters {
-    c0: vec4f,
-    c1: vec4f,
-    c2: vec4f,
-    size: vec4u,
-    uv_x: vec4f,
-    uv_y: vec4f
-}
-
-@group(0) @binding(1) var<uniform> p: Parameters;
-
-@fragment
-fn main(@location(0) uv: vec2f) -> @location(0) vec4f {
-    let mapped = p.uv_x.xy + uv.x * p.uv_x.zw + uv.y * p.uv_y.xy;
-    if any(mapped < vec2f(0.)) || any(mapped > vec2f(1.)) {
-        discard;
-    }
-
-    let xy = min(vec2u(max(mapped, vec2f(0.)) * vec2f(p.size.xy)), p.size.xy - vec2u(1));
-    let pixel = textureLoad(image, vec2i(xy), 0);
-    if pixel.a <= 0. {
-        discard;
-    }
-
-    let linear = mat3x3f(p.c0.xyz, p.c1.xyz, p.c2.xyz) * pixel.rgb;
-    let a = abs(linear);
-    let encoded = select(1.055 * pow(a, vec3f(1. / 2.4)) - .055, 12.92 * a, a <= vec3f(.0031308));
-    return vec4f(sign(linear) * encoded, 1.);
-}"#;
 
 #[cfg(feature = "editor")]
 #[derive(Default)]
@@ -160,8 +124,6 @@ pub struct GpuRenderer {
     pub(crate) submissions: crate::gpu::submission::SubmissionGate,
     #[cfg(feature = "raw")]
     _pressure: crate::sys::MemoryPressureWatch,
-    #[cfg(feature = "ui")]
-    pub(crate) display: wgpu::RenderPipeline,
     pub(crate) drt: drt::Targets,
     pub(crate) looks: lut3d::Looks,
     #[cfg(feature = "render")]
@@ -210,21 +172,10 @@ impl GpuRenderer {
         let pressure = evaluation.materializations().watch_pressure();
         let looks = lut3d::Looks::new(device).await?;
         let drt = drt::Targets::new(device, queue).await?;
-        #[cfg(feature = "ui")]
-        let display = {
-            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let pipeline = display_pipeline(device);
-            if let Some(error) = scope.pop().await {
-                return Err(Error::Gpu(error.to_string()));
-            }
-            pipeline
-        };
         let renderer = Arc::new(Self {
             submissions,
             #[cfg(feature = "raw")]
             _pressure: pressure,
-            #[cfg(feature = "ui")]
-            display,
             drt,
             looks,
             #[cfg(feature = "render")]
@@ -292,23 +243,4 @@ impl GpuRenderer {
             validation,
         })
     }
-}
-
-#[cfg(feature = "ui")]
-pub(crate) fn display_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
-    let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("image fullscreen triangle"),
-        source: wgpu::ShaderSource::Wgsl(FULLSCREEN_VERTEX.into()),
-    });
-    let fragment = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("target-to-extended-sRGB presentation"),
-        source: wgpu::ShaderSource::Wgsl(DISPLAY.into()),
-    });
-    fullscreen_pipeline(
-        device,
-        &vertex,
-        &fragment,
-        None,
-        wgpu::TextureFormat::Rgba16Float,
-    )
 }
