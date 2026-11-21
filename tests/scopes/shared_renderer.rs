@@ -64,7 +64,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 };
                 let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
                 let scope = calculation::scope_paint(
-                    queue.clone(),
                     gpu.clone(),
                     image.clone(),
                     parameters.clone(),
@@ -74,7 +73,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
-                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(parameters.clone()),
@@ -218,7 +216,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         .is_none()
                 );
                 let scope = calculation::scope_paint(
-                    queue.clone(),
                     gpu.clone(),
                     image.clone(),
                     parameters.clone(),
@@ -228,7 +225,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
-                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(parameters.clone()),

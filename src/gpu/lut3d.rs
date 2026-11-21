@@ -1,12 +1,9 @@
-//! Immutable 3D-LUT resources and rendered-output admission.
+//! Immutable 3D-LUT resources and photographic Look operations.
 use crate::{
     Error,
     looks::{LookId, Lut3D},
 };
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 #[cfg(feature = "render")]
@@ -19,21 +16,19 @@ mod cache;
 pub struct Looks {
     device: wgpu::Device,
     cache: Mutex<cache::Cache>,
-    validation: Arc<Validation>,
     #[cfg(test)]
     uploads: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(feature = "render")]
 impl Looks {
-    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        Ok(Self {
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self {
             device: device.clone(),
             cache: Mutex::default(),
-            validation: Arc::new(Validation::new(device).await?),
             #[cfg(test)]
             uploads: std::sync::atomic::AtomicU64::new(0),
-        })
+        }
     }
 
     pub fn apply(&self, image: Value, chain: &crate::looks::LutChain) -> Result<Value, Error> {
@@ -45,10 +40,6 @@ impl Looks {
                 LookOperation { look },
             ))
         })
-    }
-
-    pub(crate) fn validation(&self) -> Arc<Validation> {
-        self.validation.clone()
     }
 
     #[cfg(test)]
@@ -69,26 +60,6 @@ impl Looks {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(value)
-    }
-
-    pub(crate) fn check_image(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-    ) -> Arc<Check> {
-        self.validation.check_rendered(device, encoder, image)
-    }
-
-    pub(crate) fn check_projection(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-        mapping: crate::geometry::TextureMapping,
-    ) -> Result<Arc<Check>, Error> {
-        self.validation
-            .check_projected(device, encoder, image, mapping)
     }
 }
 
@@ -214,113 +185,6 @@ pub(crate) fn shader() -> String {
     .join("\n")
 }
 
-pub(crate) struct Validation {
-    pipeline: wgpu::ComputePipeline,
-}
-impl Validation {
-    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let validation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rendered look admission"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("evaluation/footprint.wgsl"),
-                    include_str!("lut3d_validation.wgsl")
-                )
-                .into(),
-            ),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("rendered look admission"),
-            layout: None,
-            module: &validation_shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        if let Some(error) = scope.pop().await {
-            return Err(Error::Gpu(error.to_string()));
-        }
-        Ok(Self { pipeline })
-    }
-    pub fn check_rendered(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-    ) -> Arc<Check> {
-        self.check_projected(
-            device,
-            encoder,
-            image,
-            crate::geometry::TextureMapping::IDENTITY,
-        )
-        .expect("a nonempty texture has a finite identity footprint")
-    }
-
-    /// Check only texels with positive contribution to the requested source footprint.
-    pub fn check_projected(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-        mapping: crate::geometry::TextureMapping,
-    ) -> Result<Arc<Check>, Error> {
-        let size = [image.width() as f32, image.height() as f32];
-        let values = [
-            mapping.origin[0] * size[0],
-            mapping.origin[1] * size[1],
-            mapping.x_axis[0] * size[0],
-            mapping.x_axis[1] * size[1],
-            mapping.y_axis[0] * size[0],
-            mapping.y_axis[1] * size[1],
-            0.,
-            0.,
-        ];
-        let determinant = values[2] * values[5] - values[3] * values[4];
-        if values.iter().any(|value| !value.is_finite())
-            || !determinant.is_finite()
-            || determinant == 0.
-        {
-            return Err(Error::Gpu("invalid look admission footprint".into()));
-        }
-        let check = Check::new(device);
-        let parameters = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("look admission footprint"),
-            contents: bytemuck::cast_slice(&values),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let view = image.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rendered look admission"),
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: check.status.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: parameters.as_entire_binding(),
-                },
-            ],
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(image.width().div_ceil(8), image.height().div_ceil(8), 1);
-        }
-        encoder.copy_buffer_to_buffer(&check.status, 0, &check.readback, 0, 8);
-        Ok(check)
-    }
-}
-
 pub struct Lut {
     pub(super) buffer: wgpu::Buffer,
     minimum: [f32; 3],
@@ -403,81 +267,4 @@ pub(super) struct Parameters {
     maximum: [f32; 4],
     reciprocal: [f32; 4],
     dimensions: [u32; 4],
-}
-
-/// Fresh for each dispatch; mapped/retained old checks cannot alias a new render.
-pub struct Check {
-    status: wgpu::Buffer,
-    readback: wgpu::Buffer,
-    started: AtomicBool,
-    result: Arc<Mutex<Option<Result<(), Error>>>>,
-}
-
-impl Check {
-    pub(crate) fn new(device: &wgpu::Device) -> Arc<Self> {
-        Arc::new(Self {
-            status: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("look admission status"),
-                contents: bytemuck::cast_slice(&[0u32, u32::MAX]),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            }),
-            readback: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("look admission readback"),
-                size: 8,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
-            started: AtomicBool::new(false),
-            result: Arc::new(Mutex::new(None)),
-        })
-    }
-
-    /// Start mapping only after the encoder containing the check has been submitted.
-    pub fn begin(&self, ready: impl FnOnce() + Send + 'static) {
-        if self.started.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let buffer = self.readback.clone();
-        let state = self.result.clone();
-        self.readback
-            .map_async(wgpu::MapMode::Read, .., move |mapped| {
-                let result = match mapped {
-                    Ok(()) => Self::read_result(&buffer),
-                    Err(error) => Err(Error::Gpu(error.to_string())),
-                };
-
-                *state.lock().unwrap() = Some(result);
-                ready();
-            });
-    }
-
-    fn read_result(buffer: &wgpu::Buffer) -> Result<(), Error> {
-        let status = buffer
-            .get_mapped_range(..)
-            .map(|view| {
-                let values = bytemuck::cast_slice::<u8, u32>(&view);
-                (values[0], values[1])
-            })
-            .map_err(|error| Error::Gpu(error.to_string()));
-        buffer.unmap();
-
-        let (flags, first) = status?;
-        let problem = match flags {
-            0 => return Ok(()),
-            1 => "received a nonfinite scene-linear input",
-            2 => "produced a nonfinite scene-linear value",
-            _ => "encountered nonfinite input and output",
-        };
-        Err(Error::Rendering(format!(
-            "The selected look {problem} (first rejected sample {first})."
-        )))
-    }
-
-    pub fn result(&self) -> Option<Result<(), Error>> {
-        self.result.lock().unwrap().clone()
-    }
-
-    pub fn pending(&self) -> bool {
-        self.result.lock().unwrap().is_none()
-    }
 }

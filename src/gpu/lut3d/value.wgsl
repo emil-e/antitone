@@ -10,26 +10,21 @@ fn decode(v: f32) -> f32 {
     }
     return exp2(v * 17.52 - 9.72);
 }
-fn finite(v: vec3f) -> bool {
-    return all(abs(v) <= vec3f(3.4028234663852886e38));
-}
 fn at(v: vec3u) -> vec3f {
     return nodes[(v.z * p.dimensions.y + v.y) * p.dimensions.y + v.x].rgb;
 }
 
 fn look_pixel(pixel: vec4f) -> vec4f {
-    // A rejected upstream sample is not an uncovered sample. Preserve its failure across LUTs.
     if pixel.a < 0. {
         return vec4f(0.0, 0.0, 0.0, pixel.a);
     }
     if p.dimensions.w != 0u && (u32(pixel.a) & 8u) == 0u {
         return vec4f(0.0);
     }
-    if !finite(pixel.rgb) {
-        return vec4f(0.0, 0.0, 0.0, -1.0);
+    // Clamping nonfinite input could hide it from the display transform or output sink.
+    if any((bitcast<vec3u>(pixel.rgb) & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) {
+        return pixel;
     }
-    // Encoding can overflow for finite negative AP1. Clipping also bounds that
-    // intermediate infinity; it must not admit a nonfinite source pixel.
     let value = clamp(
             vec3f(encode(pixel.r), encode(pixel.g), encode(pixel.b)),
             p.minimum.xyz,
@@ -66,8 +61,5 @@ fn look_pixel(pixel: vec4f) -> vec4f {
     cell[order[2]] += 1u;
     output += at(cell) * c;
     let linear = vec3f(decode(output.r), decode(output.g), decode(output.b));
-    if !finite(linear) {
-        return vec4f(0.0, 0.0, 0.0, -2.0);
-    }
     return vec4f(linear, pixel.a);
 }

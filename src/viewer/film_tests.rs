@@ -65,7 +65,6 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         };
         assert!(
             ScopePaint::with_processing(
-                queue.clone(),
                 gpu,
                 image.clone(),
                 film.clone(),

@@ -150,7 +150,6 @@ impl Editor {
             .as_ref()
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
-        let look_error = self.look_rendering_error();
         let painted_source = self
             .canvas_frame
             .displayed
@@ -187,9 +186,7 @@ impl Editor {
                 {
                     ""
                 } else if self.document.visit.working_view.enabled() {
-                    if look_error.is_some() {
-                        " · Look unavailable"
-                    } else if self.document.visit.working_view.displayed.is_none() {
+                    if self.document.visit.working_view.displayed.is_none() {
                         " · Acquiring view"
                     } else {
                         ""
@@ -224,12 +221,11 @@ impl Editor {
                             .size()
                             .x
                     };
-                let view_error_width =
-                    if look_error.is_none() && self.document.visit.working_view.error.is_some() {
-                        ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP
-                    } else {
-                        0.
-                    };
+                let view_error_width = if self.document.visit.working_view.error.is_some() {
+                    ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP
+                } else {
+                    0.
+                };
                 let trailing_width = trailing_width + view_error_width;
                 let source_controls = 2;
                 // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
@@ -303,17 +299,6 @@ impl Editor {
                 ui.allocate_ui(egui::vec2(controls_width, ui::CONTROL_HEIGHT), |ui| {
                     controls(self, ui, navigating)
                 });
-                if let Some(error) = &look_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, "Look rendering failed");
-                    if TextAction::new("Details")
-                        .toolbar(60.)
-                        .name("Look rendering details")
-                        .show(ui)
-                        .clicked()
-                    {
-                        self.look_render_failed(error.to_string());
-                    }
-                }
                 let help = ui::icons::button(
                     ui,
                     Icon::Help,

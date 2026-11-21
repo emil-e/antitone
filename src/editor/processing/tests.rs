@@ -625,7 +625,6 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             crate::frame_raster::FrameRaster::full(editor.source_composition(source)).unwrap();
         let presentation = Presentation::new(&device).await.unwrap();
         let image_paint = ImagePaint::with_calculation(
-            queue.clone(),
             &presentation,
             images[index].clone(),
             Some(roots[index].clone()),
@@ -634,7 +633,6 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         )
         .unwrap();
         let scope_paint = ScopePaint::with_calculation(
-            queue.clone(),
             gpu.clone(),
             images[index].clone(),
             (roots[index].clone(), recipe.luts.clone()),

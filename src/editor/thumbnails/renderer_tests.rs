@@ -592,7 +592,6 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         };
         let gpu = Arc::new(crate::gpu_scopes::GpuScopes::new(&device).await.unwrap());
         let scope = crate::gpu_scopes::ScopePaint::with_processing(
-            queue.clone(),
             gpu.clone(),
             image.clone(),
             parameters.clone(),

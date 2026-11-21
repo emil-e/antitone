@@ -13,6 +13,7 @@ use crate::{
     gpu::test_inputs::AuthoredPhotograph,
     processing::{InputSettings, RollSettings},
 };
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[test]
@@ -58,11 +59,10 @@ fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_orig
     .unwrap();
     assert!(
         execute(
-            &renderer,
+            renderer.evaluation(),
             &device,
             &queue,
             root,
-            false,
             &output.linear,
             || false
         )
@@ -156,7 +156,7 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
         },
     ))
     .unwrap();
-    let renderer = pollster::block_on(GpuRenderer::new(&device, &queue)).unwrap();
+    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
     let file = crate::dng_fixture::Fixture {
         side: 64,
         ramp: true,

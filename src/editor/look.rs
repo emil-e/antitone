@@ -342,11 +342,6 @@ impl Editor {
     pub(super) fn clear_film_and_paper(&mut self) {
         self.clear_slot(Slot::FilmAndPaper);
     }
-
-    pub(super) fn look_rendering_error(&self) -> Option<Error> {
-        let view = &self.canvas_frame.displayed.as_ref()?.view;
-        view.image.look_failure(view.look_id()?)
-    }
 }
 
 impl Editor {
@@ -355,14 +350,6 @@ impl Editor {
             severity: super::ui::Severity::Error,
             title: "Could not prepare look",
             explanation: "Your existing look and layers are unchanged. Review the details, then choose another look or LUT file.",
-            details,
-        }));
-    }
-    pub(super) fn look_render_failed(&mut self, details: String) {
-        drop(self.dialogs.report(dialogs::Message {
-            severity: super::ui::Severity::Error,
-            title: "Could not render look",
-            explanation: "The look could not be rendered. Your selection and photographic layers are unchanged. Review the details before trying again.",
             details,
         }));
     }

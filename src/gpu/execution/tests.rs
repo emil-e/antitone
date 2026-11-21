@@ -272,7 +272,7 @@ fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origi
 }
 
 #[test]
-fn native_area_checks_only_contributing_samples_and_rejects_invalid_ap1_or_look_markers() {
+fn native_area_checks_only_contributing_samples_and_rejects_invalid_ap1_or_rejection_flags() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let composition = composition([13, 29, 411, 357].into(), 0.015);

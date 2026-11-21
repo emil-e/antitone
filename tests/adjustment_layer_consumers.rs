@@ -510,7 +510,6 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let image = Arc::new(image(&renderer, &device, geometry, [7, 5], target).await);
                 let paint = calculation::image_paint(
-                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(processing.clone()),
@@ -632,7 +631,6 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         let context = egui::Context::default();
         let paint = |input: Calculation| {
             calculation::scope_paint(
-                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 input,

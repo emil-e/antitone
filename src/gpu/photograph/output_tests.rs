@@ -16,14 +16,20 @@ fn render_reference(
     target: OutputTarget,
     luts: &crate::looks::LutChain,
     destination: &wgpu::Texture,
-) -> Result<crate::renderer::RenderBinding, Error> {
+) -> Result<crate::gpu::recorded_image::Texture, Error> {
     let endpoint = display_output(
         source.definition().clone(),
         luts,
         &renderer.looks,
         renderer.drt.get(target),
     )?;
-    renderer.render_binding(device, source, endpoint, destination)
+    crate::gpu::recorded_image::Texture::new(
+        renderer.evaluation(),
+        device,
+        source,
+        endpoint,
+        destination,
+    )
 }
 
 #[cfg(all(feature = "project", feature = "ocio-reference"))]
@@ -83,20 +89,14 @@ fn frontier_baked_luts_compose_both_targets() {
             )
             .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
-            let check = binding.encode(&device, &mut encoder).unwrap();
+            binding.encode(&device, &mut encoder).unwrap();
             let submission = queue.submit([encoder.finish()]);
-            if let Some(check) = &check {
-                check.begin(|| {});
-            }
             device
                 .poll(wgpu::PollType::Wait {
                     submission_index: Some(submission),
                     timeout: Some(std::time::Duration::from_secs(10)),
                 })
                 .unwrap();
-            if let Some(check) = check {
-                check.result().unwrap().unwrap();
-            }
             let actual = read_texture(&device, &queue, &output);
             let carrier: Vec<_> = pixels
                 .iter()
@@ -377,8 +377,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 )
                 .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
-                let check = binding.encode(&device, &mut encoder).unwrap();
-                assert_eq!(check.is_some(), selected.is_some());
+                binding.encode(&device, &mut encoder).unwrap();
                 drop(binding);
                 legacy(
                     &device,
@@ -389,18 +388,12 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                     &expected,
                 );
                 let submission = queue.submit([encoder.finish()]);
-                if let Some(check) = &check {
-                    check.begin(|| {});
-                }
                 device
                     .poll(wgpu::PollType::Wait {
                         submission_index: Some(submission),
                         timeout: Some(std::time::Duration::from_secs(10)),
                     })
                     .unwrap();
-                if let Some(check) = check {
-                    check.result().unwrap().unwrap();
-                }
                 let actual = read_texture(&device, &queue, &output);
                 assert_eq!(actual, read_texture(&device, &queue, &expected));
                 for (i, pixel) in actual.iter().enumerate() {
@@ -499,70 +492,56 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
 }
 
 #[test]
-fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite_samples() {
-    for look in admission_assets() {
-        compare_repeated_admission(look);
-    }
-}
-
-fn compare_repeated_admission(look: Arc<LookAsset>) {
+fn resident_recording_reads_updated_input_and_survives_owner_retirement() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let source = buffer(
-        &device,
-        &[[f32::NAN, 0.2, 0.3, 0.], [0.2, f32::INFINITY, 0.3, 8.]],
-    );
-    let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
-    let binding = render_reference(
-        &renderer,
-        &device,
-        supplied(&source, [2, 1, 1, 0]),
-        OutputTarget::Srgb,
-        &(Some(&look)).cloned().into(),
-        &output,
-    )
-    .unwrap();
+    let first = [[0.18f32, 0.2, 0.3, 8.]];
+    let next = [[0.75f32, 0.9, 1.1, 8.]];
+    let input = buffer(&device, &first);
+    let control = buffer(&device, &next);
+    let initial = texture(&device, [1, 1], wgpu::TextureFormat::Rgba32Float);
+    let expected = texture(&device, [1, 1], wgpu::TextureFormat::Rgba32Float);
+    let luts = Some(asset()).into();
+    let record = |source, output| {
+        render_reference(
+            &renderer,
+            &device,
+            supplied(source, [1, 1, 8, 0]),
+            OutputTarget::Srgb,
+            &luts,
+            output,
+        )
+        .unwrap()
+    };
+    let binding = record(&input, &initial);
+    let control = record(&control, &expected);
     let mut encoder = device.create_command_encoder(&Default::default());
-    let bad = binding.encode(&device, &mut encoder).unwrap().unwrap();
+    binding.encode(&device, &mut encoder).unwrap();
+    control.encode(&device, &mut encoder).unwrap();
     queue.submit([encoder.finish()]);
-    let values = [[f32::NAN, 0.2, 0.3, 0.], [0.2, 0.18, 0.3, 8.]];
-    queue.write_buffer(&source, 0, bytemuck::cast_slice(&values));
-    let mut encoder = device.create_command_encoder(&Default::default());
-    let good = binding.encode(&device, &mut encoder).unwrap().unwrap();
-    assert!(!Arc::ptr_eq(&bad, &good));
-    drop(binding);
-    drop(look);
-    drop(renderer);
-    let submission = queue.submit([encoder.finish()]);
-    bad.begin(|| {});
-    good.begin(|| {});
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(std::time::Duration::from_secs(10)),
-        })
-        .unwrap();
-    assert!(
-        bad.result()
-            .unwrap()
-            .unwrap_err()
-            .to_string()
-            .contains("first rejected sample 1")
+    let before = read_texture(&device, &queue, &initial);
+    let expected = read_texture(&device, &queue, &expected);
+    assert_ne!(
+        before, expected,
+        "the two input samples must render differently"
     );
-    good.result().unwrap().unwrap();
-    let actual = read_texture(&device, &queue, &output);
-    assert_eq!(actual[0], [0.; 4]);
-    assert_eq!(actual[1][3], 1.);
-    assert!(actual[1][..3].iter().all(|v| v.is_finite()));
+
+    queue.write_buffer(&input, 0, bytemuck::cast_slice(&next));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    binding.encode(&device, &mut encoder).unwrap();
+    let commands = encoder.finish();
+    drop((binding, control, renderer, input, luts));
+    queue.submit([commands]);
+    assert_eq!(read_texture(&device, &queue, &initial), expected);
 }
 
 #[test]
 fn display_and_look_values_preserve_sample_flags_and_ignore_uncovered_nonfinite_light() {
-    for look in admission_assets() {
+    for look in look_assets() {
         compare_sample_flags(look);
     }
 }
 
-fn admission_assets() -> Vec<Arc<LookAsset>> {
+fn look_assets() -> Vec<Arc<LookAsset>> {
     let assets = vec![asset()];
     #[cfg(feature = "project")]
     let assets = {
@@ -645,7 +624,7 @@ fn compare_sample_flags(look: Arc<LookAsset>) {
 }
 
 #[test]
-fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readout() {
+fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
     struct Pixel(Domain);
     impl Source for Pixel {
         fn domain(&self) -> Domain {
@@ -845,19 +824,12 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             &output,
         )
         .unwrap();
-        let mut checks = Vec::new();
         for _ in 0..2 {
             let mut encoder = device.create_command_encoder(&Default::default());
-            let check = binding.encode(&device, &mut encoder).unwrap().unwrap();
+            binding.encode(&device, &mut encoder).unwrap();
             queue.submit([encoder.finish()]);
-            check.begin(|| {});
-            checks.push(check);
         }
-        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        assert!(!Arc::ptr_eq(&checks[0], &checks[1]));
-        for check in checks {
-            assert_eq!(check.result().unwrap().is_err(), fails);
-        }
+        // The display transform still handles nonfinite inputs without a Look-specific check.
         assert_eq!(read_texture(&device, &queue, &output)[0][3] < 0., fails);
     }
 }
@@ -1016,20 +988,14 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
         )
         .unwrap();
         let mut encoder = device.create_command_encoder(&Default::default());
-        let check = binding.encode(&device, &mut encoder).unwrap();
+        binding.encode(&device, &mut encoder).unwrap();
         let submission = queue.submit([encoder.finish()]);
-        if let Some(check) = &check {
-            check.begin(|| {});
-        }
         device
             .poll(wgpu::PollType::Wait {
                 submission_index: Some(submission),
                 timeout: Some(std::time::Duration::from_secs(10)),
             })
             .unwrap();
-        if let Some(check) = check {
-            check.result().unwrap().unwrap();
-        }
         let actual = read_texture(&device, &queue, &output);
         for (actual, expected) in actual.iter().zip(expected) {
             for c in 0..3 {

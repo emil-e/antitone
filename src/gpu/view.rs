@@ -61,7 +61,7 @@ pub struct RenderedView {
     pub capture: PhotographRequest,
     pub target: OutputTarget,
     product: Option<Arc<ViewImage>>,
-    group: Option<crate::renderer::RenderBinding>,
+    recording: Option<crate::gpu::recorded_image::Texture>,
     composite: Option<composite::Composite>,
     submitted: Mutex<bool>,
     complete: Arc<AtomicBool>,
@@ -82,21 +82,27 @@ impl RenderedView {
             .expect("rendered capture was admitted")
     }
 
+    #[cfg(all(test, feature = "ui-tests"))]
     pub fn look_id(&self) -> Option<crate::looks::LookId> {
         self.capture.look_id()
     }
 
     pub fn look_resources(&self) -> Vec<Arc<super::lut3d::Lut>> {
-        self.group
-            .as_ref()
-            .map_or_else(Vec::new, |binding| binding.look_resources())
+        self.recording.as_ref().map_or_else(Vec::new, |binding| {
+            super::lut3d::applied_luts(binding.endpoint())
+        })
     }
 
-    /// Thumbnail payload beyond the target image and shared LUT storage.
+    /// Thumbnail payload beyond the target texture, including its shareable LUTs.
     pub fn photographic_bytes(&self) -> u64 {
-        self.group
+        self.recording
             .as_ref()
-            .map_or(0, |binding| binding.retained_bytes())
+            .map_or(0, |binding| binding.byte_len())
+            + self
+                .look_resources()
+                .iter()
+                .map(|lut| lut.byte_len())
+                .sum::<u64>()
             + self.product.as_ref().map_or(0, |image| {
                 image.byte_len() + crate::gpu::grading::Grading::captured_bytes(&image.definition)
             })
@@ -213,7 +219,8 @@ impl RenderedView {
         let image = Arc::new(pollster::block_on(GpuImage::new_rendered(
             device, width, height, target,
         ))?);
-        let group = product.renderer.render_binding(
+        let recording = crate::gpu::recorded_image::Texture::new(
+            product.renderer.evaluation(),
             device,
             product.supplied()?,
             endpoint,
@@ -225,7 +232,7 @@ impl RenderedView {
             capture,
             target,
             product: Some(product),
-            group: Some(group),
+            recording: Some(recording),
             composite: None,
             submitted: Mutex::new(false),
             complete: Arc::new(AtomicBool::new(false)),
@@ -244,7 +251,7 @@ impl RenderedView {
             capture,
             target,
             product: None,
-            group: None,
+            recording: None,
             composite: None,
             submitted: Mutex::new(true),
             complete: Arc::new(AtomicBool::new(true)),
@@ -366,8 +373,7 @@ impl RenderedView {
     }
 
     pub fn in_flight(&self) -> bool {
-        *self.submitted.lock().unwrap()
-            && (!self.complete.load(Ordering::Acquire) || self.image.look_result().is_none())
+        *self.submitted.lock().unwrap() && !self.complete.load(Ordering::Acquire)
     }
 
     // Submission, not encoder creation, initializes the cache. Abandoned UI passes cannot poison it.
@@ -386,21 +392,15 @@ impl RenderedView {
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, context);
             composite.encode(&mut encoder, &self.image);
-            if self.look_id().is_some() {
-                self.image
-                    .set_look_check(Some(composite.check(device, &mut encoder, &self.image)));
-            }
         } else {
             let graded = self.product.as_ref().expect("unsubmitted working view");
             if !**initialized.as_ref().unwrap() {
                 graded.encode(device, &mut encoder);
             }
-            let binding = self.group.as_ref().unwrap();
-            self.image.set_look_check(
-                binding
-                    .encode(device, &mut encoder)
-                    .expect("validated physical-view reference composition"),
-            );
+            let binding = self.recording.as_ref().unwrap();
+            binding
+                .encode(device, &mut encoder)
+                .expect("validated physical-view reference composition");
         }
         // Submitted bindings own their native versions until completion. The callback owns no
         // renderer/queue or GPU-resource lease: it may run under the shared submission gate.
@@ -414,14 +414,11 @@ impl RenderedView {
             log::info!(repairs = repairs; "working_colour_submitted");
         }
         let context = context.clone();
-        let repaint = context.clone();
         queue.submit_with_completion([encoder.finish()], move || {
             complete.store(true, Ordering::Release);
             if repairs > 0 { log::info!(repairs = repairs, seconds = started.elapsed().as_secs_f64(); "working_colour_complete"); }
             context.request_repaint();
         });
-        self.image
-            .begin_look_check_tracked(queue, move || repaint.request_repaint());
         if let Some(initialized) = initialized.as_mut() {
             **initialized = true;
         }

@@ -57,6 +57,7 @@ impl PhotographRequest {
         }
     }
 
+    #[cfg(all(test, feature = "ui-tests"))]
     pub fn look_id(&self) -> Option<crate::looks::LookId> {
         self.luts().id()
     }

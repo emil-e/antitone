@@ -591,8 +591,10 @@ pub struct ScopePaint {
     calculation: Option<Value>,
     luts: LutChain,
     #[cfg(feature = "editor")]
-    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
-    queue: crate::gpu::submission::Queue,
+    rendered: Option<(
+        Arc<crate::gpu::view::RenderedView>,
+        crate::gpu::submission::Queue,
+    )>,
     pub frame: FrameRaster,
     mapping: TextureMapping,
     pub settings: Settings,
@@ -615,8 +617,7 @@ impl ScopePaint {
             image: view.image.clone(),
             calculation: None,
             luts: Default::default(),
-            rendered: Some(view),
-            queue,
+            rendered: Some((view, queue)),
             frame,
             mapping: TextureMapping::IDENTITY,
             settings,
@@ -641,7 +642,6 @@ impl ScopePaint {
     }
 
     pub fn new(
-        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         parameters: ProcessingParameters,
@@ -654,7 +654,6 @@ impl ScopePaint {
             .and_then(|prefix| image.output(prefix, &Default::default()))
             .expect("admitted source-view transform");
         Self::with_calculation(
-            queue,
             gpu,
             image,
             (calculation, Default::default()),
@@ -666,7 +665,6 @@ impl ScopePaint {
     }
 
     pub fn with_calculation(
-        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         (calculation, luts): (Value, LutChain),
@@ -682,7 +680,6 @@ impl ScopePaint {
             luts,
             #[cfg(feature = "editor")]
             rendered: None,
-            queue,
             frame,
             mapping: TextureMapping::IDENTITY,
             settings,
@@ -693,7 +690,6 @@ impl ScopePaint {
 
     #[cfg(test)]
     pub(crate) fn with_processing(
-        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         processing: AuthoredPhotograph,
@@ -703,7 +699,6 @@ impl ScopePaint {
     ) -> Result<Self, Error> {
         let calculation = image.legacy_calculation(&processing)?;
         Self::with_calculation(
-            queue,
             gpu,
             image,
             (calculation, processing.luts().clone()),
@@ -718,38 +713,23 @@ impl ScopePaint {
     #[doc(hidden)]
     pub fn prepare_frame(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let key;
-        let coverage_ready;
-        let proxy_mapping = self.frame.composition.texture_mapping(
-            self.frame.min,
-            self.frame.max,
-            self.frame.composition.area(),
-        );
         #[cfg(feature = "editor")]
         let rendered = self.rendered.as_ref();
         #[cfg(not(feature = "editor"))]
         let rendered: Option<()> = None;
         #[cfg(feature = "editor")]
-        if let Some(view) = rendered {
-            view.ensure_submitted(device, &self.queue, &self.context);
+        if let Some((view, queue)) = rendered {
+            view.ensure_submitted(device, queue, &self.context);
             key = Key::rendered(view, self.frame, self.mapping, self.settings);
-            coverage_ready = matches!(self.image.look_result(), Some(Ok(())));
         } else {
             let root = self
                 .calculation
                 .as_ref()
                 .expect("source-backed scope calculation");
             self.image
-                .prepare_rendering_calculation(
-                    device,
-                    &self.queue,
-                    encoder,
-                    (root, &self.luts),
-                    proxy_mapping,
-                    Some(self.context.clone()),
-                )
+                .prepare_calculation(device, encoder, root, &self.luts)
                 .expect("validated rendering resources");
             key = Key::new(&self.image, (root, &self.luts), self.frame, self.settings);
-            coverage_ready = matches!(self.image.look_result_for(proxy_mapping), Some(Ok(())));
         }
         #[cfg(not(feature = "editor"))]
         {
@@ -758,17 +738,9 @@ impl ScopePaint {
                 .as_ref()
                 .expect("source-backed scope calculation");
             self.image
-                .prepare_rendering_calculation(
-                    device,
-                    &self.queue,
-                    encoder,
-                    (root, &self.luts),
-                    proxy_mapping,
-                    Some(self.context.clone()),
-                )
+                .prepare_calculation(device, encoder, root, &self.luts)
                 .expect("validated rendering resources");
             key = Key::new(&self.image, (root, &self.luts), self.frame, self.settings);
-            coverage_ready = matches!(self.image.look_result_for(proxy_mapping), Some(Ok(())));
         }
         let mut cached = self.gpu.prepared.lock().unwrap();
         let matches = cached
@@ -777,7 +749,7 @@ impl ScopePaint {
         // UI state supplies the newest request on the completion repaint. Don't enqueue another
         // reduction/readback while the previous one is outstanding, even after hide/source changes.
         let pending = self.gpu.diagnostic.lock().unwrap().pending;
-        if !matches && !pending && coverage_ready {
+        if !matches && !pending {
             let encoded = if rendered.is_some() {
                 self.gpu.encode_mapped(
                     device,

@@ -60,7 +60,7 @@ fn check(input: Vec<DVec3>) {
             kernel.encode(&mut encoder, &dispatch);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
             let submission = queue.submit([encoder.finish()]);
-            dispatch.check.begin(|| {});
+
             let (send, receive) = mpsc::channel();
             readback.map_async(wgpu::MapMode::Read, .., move |r| send.send(r).unwrap());
             device
@@ -73,7 +73,7 @@ fn check(input: Vec<DVec3>) {
                 .recv_timeout(Duration::from_secs(30))
                 .unwrap()
                 .unwrap();
-            dispatch.check.result().unwrap().unwrap();
+
             let mapped = readback.get_mapped_range(..).unwrap();
             let actual: Vec<_> = bytemuck::cast_slice::<u8, [f32; 4]>(&mapped)
                 .iter()

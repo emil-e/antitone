@@ -8,7 +8,6 @@ pub struct Kernel {
 pub struct Dispatch {
     group: wgpu::BindGroup,
     groups: [u32; 2],
-    pub check: Arc<Check>,
     _look: Arc<Lut>,
 }
 
@@ -60,7 +59,6 @@ impl Kernel {
             contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let check = Check::new(device);
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("immutable look dispatch"),
             layout: &self.pipeline.get_bind_group_layout(0),
@@ -81,16 +79,11 @@ impl Kernel {
                     binding: 3,
                     resource: uniform.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: check.status.as_entire_binding(),
-                },
             ],
         });
         Ok(Dispatch {
             group,
             groups: [x, y],
-            check,
             _look: look,
         })
     }
@@ -105,6 +98,5 @@ impl Kernel {
             pass.set_bind_group(0, &dispatch.group, &[]);
             pass.dispatch_workgroups(dispatch.groups[0], dispatch.groups[1], 1);
         }
-        encoder.copy_buffer_to_buffer(&dispatch.check.status, 0, &dispatch.check.readback, 0, 8);
     }
 }

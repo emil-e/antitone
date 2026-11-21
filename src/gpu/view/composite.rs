@@ -103,7 +103,7 @@ impl RenderedView {
             capture: detail.capture.clone(),
             target: detail.target,
             product: None,
-            group: None,
+            recording: None,
             composite: Some(Composite {
                 detail,
                 underlay,
@@ -124,21 +124,6 @@ impl Composite {
     ) {
         self.detail.ensure_submitted(device, queue, context);
         self.underlay.ensure_submitted(device, queue, context);
-    }
-
-    pub(super) fn check(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &GpuImage,
-    ) -> Arc<crate::gpu::lut3d::Check> {
-        self.detail
-            .product
-            .as_ref()
-            .unwrap()
-            .renderer
-            .looks
-            .check_image(device, encoder, &image.linear)
     }
 
     pub(super) fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &GpuImage) {

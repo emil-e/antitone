@@ -230,7 +230,6 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
             };
             let parameters = ProcessingParameters::source();
             let first = ScopePaint::new(
-                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -294,7 +293,6 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                 parameters
             };
             let latest = ScopePaint::new(
-                queue.clone(),
                 gpu.clone(),
                 requested_image.clone(),
                 latest_parameters,
@@ -509,7 +507,6 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         };
         let paint = |settings| {
             ScopePaint::new(
-                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -577,7 +574,6 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         );
         let paint = |settings| {
             ScopePaint::new(
-                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -810,7 +806,6 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         let context = egui::Context::default();
         let paint = |settings| {
             ScopePaint::new(
-                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
