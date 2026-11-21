@@ -12,10 +12,9 @@ pub(in crate::editor) const INSPECTOR_ITEM_GAP: f32 = 4.;
 pub(in crate::editor) const INSPECTOR_SECTION_GAP: f32 = 5.;
 pub(in crate::editor) const INSPECTOR_BODY_GAP: f32 = 3.;
 pub(in crate::editor) const PARAMETER_SLIDER_HEIGHT: f32 = 20.;
-pub(in crate::editor) const PARAMETER_NUMERIC_WIDTH: f32 = 52.;
-pub(in crate::editor) const PARAMETER_UNIT_WIDTH: f32 = 22.;
-/// Shared name column so every parameter track starts at the same x.
-pub(in crate::editor) const PARAMETER_LABEL_WIDTH: f32 = 76.;
+pub(in crate::editor) const PARAMETER_NUMERIC_WIDTH: f32 = 58.;
+/// Shared name column, including parameter rows alongside companion controls.
+const INSPECTOR_NAME_WIDTH: f32 = 62.;
 /// Adjacent value rows sit closer together than sections or shelves.
 pub(in crate::editor) const PARAMETER_GAP: f32 = 2.;
 /// One spacing scale for the inspector column; the rest of the application keeps its own.
@@ -27,14 +26,13 @@ pub(in crate::editor) fn inspector_spacing(ui: &mut Ui) {
     ui.spacing_mut().scroll.floating_allocated_width = 12.;
 }
 
-/// A fixed-width name cell; parameter and tool rows share it so their controls line up.
-pub(in crate::editor) fn name_label(ui: &mut Ui, text: &str) -> Response {
-    // The cell is fixed so tracks align; names sit against their track, not the column edge.
+/// A name aligned against its control within the row's name column.
+pub(super) fn name_label(ui: &mut Ui, text: &str) -> Response {
     ui.allocate_ui_with_layout(
-        egui::vec2(PARAMETER_LABEL_WIDTH, INSPECTOR_ROW_HEIGHT),
+        egui::vec2(INSPECTOR_NAME_WIDTH, INSPECTOR_ROW_HEIGHT),
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
-            ui.set_min_width(PARAMETER_LABEL_WIDTH);
+            ui.set_min_width(INSPECTOR_NAME_WIDTH);
             ui.add(egui::Label::new(text).truncate().selectable(false))
         },
     )

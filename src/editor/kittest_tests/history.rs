@@ -666,11 +666,9 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.read(|editor| assert_eq!(editor.photo_settings().exposure, 0.75));
 
         stage(&mut h, "Rendering");
-        h.get_by(|node| {
-            node.role() == egui::accesskit::Role::ComboBox
-                && node.value().as_deref() == Some("Display P3")
-        })
-        .click();
+        let role = egui::accesskit::Role::ComboBox;
+        scroll_to_control(&mut h, role, "Target");
+        h.get_by_role_and_label(role, "Target").click();
         h.step();
         assert!(egui::Popup::is_any_open(&h.ctx));
         let before_popup_undo = h.read(|editor| editor.document.state.project.clone());

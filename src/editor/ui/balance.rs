@@ -75,8 +75,10 @@ pub(in crate::editor) fn balance_pick_tool(
     }
 }
 
+const BALANCE_WHEEL_GAP: f32 = 6.;
+
 fn wheel_size(available: f32) -> f32 {
-    (available * 0.22).clamp(60., 76.)
+    (available * 0.22).clamp(58., 76.)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -226,8 +228,9 @@ impl BalanceControl {
     pub fn show(self, ui: &mut Ui, value: &mut Balance) -> [ControlResponse; 3] {
         ui.push_id(self.id, |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = BALANCE_WHEEL_GAP;
                 let size = wheel_size(ui.available_width());
-                let column = (ui.available_width() - size - ui.spacing().item_spacing.x).max(120.);
+                let column = (ui.available_width() - size - BALANCE_WHEEL_GAP).max(120.);
                 let axes = ui
                     .vertical(|ui| {
                         ui.set_width(column);
