@@ -66,7 +66,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
                 .commands
                 .as_ref()
                 .unwrap()
-                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                .cached_grain_field()
                 .unwrap()
                 .pixels,
         );

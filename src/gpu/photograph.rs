@@ -68,13 +68,8 @@ pub(crate) struct CameraGraph {
 }
 
 impl CameraGraph {
-    fn new(codes: Value, input: CameraInput) -> Result<Self, Error> {
-        if codes.domain().meaning != Meaning::CameraCodes {
-            return Err(Error::InvalidParameter(
-                "camera graph requires camera codes",
-            ));
-        }
-        Ok(Self { codes, input })
+    fn new(codes: Value, input: CameraInput) -> Self {
+        Self { codes, input }
     }
 
     fn camera(&self) -> Result<Value, Error> {
@@ -207,8 +202,7 @@ impl PhotographGraph {
             .filter(|height| *height > 0)
             .ok_or(Error::InvalidParameter("invalid camera footprint batch"))?;
 
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().bounds != Some(CellRegion::new([0, 0], [patch[0], height]))
+        if source.domain().bounds != Some(CellRegion::new([0, 0], [patch[0], height]))
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
         {
             return Err(Error::InvalidParameter(
@@ -242,14 +236,12 @@ impl PhotographGraph {
         .with_storage(18, bytemuck::cast_slice(origins).to_vec())
         .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
         let function = captured.bind_field(function, &geometry);
-        Ok(pointwise(source, Meaning::Camera, function))
+        Ok(pointwise(source, function))
     }
 
     /// Corrected original camera light, excluding interpretation and recorded positive exposure.
     pub fn camera_light(source: Value, field: Option<Arc<GpuFlatField>>) -> Result<Value, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
                 "camera-light conversion requires original camera cells",
             ));
@@ -329,9 +321,7 @@ impl PhotographGraph {
         input: &AuthoredPhotograph,
         matrix: glam::DMat3,
     ) -> Result<Assembly, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
                 "photographic conversion requires original camera cells",
             ));
@@ -379,7 +369,6 @@ impl PhotographGraph {
                 raster.size(),
             )),
             grid: Grid::from_raster(raster),
-            meaning: Meaning::CameraCodes,
         };
         let camera = Value::from_operation(
             domain,
@@ -462,7 +451,6 @@ fn view_domain(frame: crate::frame_raster::FrameRaster, coverage: u32) -> Domain
             coverage,
             ..Grid::from_frame(frame)
         },
-        meaning: Meaning::Graded,
     }
 }
 
@@ -489,22 +477,13 @@ impl NeutralInput {
             .map(|frame| {
                 let mut grid = Grid::from_frame(frame);
                 grid.coverage = 8;
-                reconstruct(
-                    neutral.clone(),
-                    Domain {
-                        bounds: None,
-                        grid,
-                        meaning: neutral.domain().meaning,
-                    },
-                )
+                reconstruct(neutral.clone(), Domain { bounds: None, grid })
             })
             .collect()
     }
 
     pub fn originals(&self, source: Value) -> Result<Value, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
                 "neutral conversion requires original camera cells",
             ));
@@ -538,7 +517,6 @@ impl NeutralInput {
                 raster.size(),
             )),
             grid: Grid::from_raster(raster),
-            meaning: Meaning::CameraCodes,
         };
         let image = Value::from_operation(
             domain,

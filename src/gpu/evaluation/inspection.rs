@@ -21,18 +21,12 @@ pub(crate) fn inspect(
     input: Value,
     parameters: crate::gpu::parameters::ProcessingParameters,
 ) -> Result<Value, Error> {
-    if input.domain.meaning != Meaning::Inspection {
-        return Err(Error::InvalidParameter(
-            "inspection requires source working light",
-        ));
-    }
     let operation = Inspection {
         columns: parameters.post.map(|column| column.to_array()),
         coverage: [input.domain.grid.coverage, 0, 0, 0],
     };
     value::pointwise(
         input,
-        Meaning::Inspection,
         value::Operation::pointwise_function(
             "source inspection v1",
             operation,
@@ -40,4 +34,11 @@ pub(crate) fn inspect(
                 .with_uniform(0, &operation),
         ),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn has_inspection(image: &Value) -> bool {
+    image
+        .ancestors()
+        .any(|node| node.parameters::<Inspection>().is_some())
 }

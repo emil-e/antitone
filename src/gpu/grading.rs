@@ -99,7 +99,7 @@ impl Grading {
         input: super::evaluation::Value,
         mut layer: AdjustmentLayer,
     ) -> Result<super::evaluation::Value, Error> {
-        use super::evaluation::{Function, Meaning, pointwise};
+        use super::evaluation::{Function, pointwise};
 
         layer.validate()?;
         if !layer.enabled {
@@ -115,7 +115,6 @@ impl Grading {
 
         Ok(pointwise(
             input,
-            Meaning::Weight,
             Function::new(code, "evaluation_layer_weight")
                 .with_storage(6, bytemuck::bytes_of(&parameters)),
         ))

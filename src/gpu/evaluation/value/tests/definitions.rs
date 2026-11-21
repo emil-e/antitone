@@ -6,7 +6,6 @@ impl Source for Constant {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [4, 2])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

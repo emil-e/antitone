@@ -22,7 +22,6 @@ fn domain() -> Domain {
     Domain {
         bounds: Some(CellRegion::new([0, 0], [8, 1])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     }
 }
 fn value(id: u32) -> Value {

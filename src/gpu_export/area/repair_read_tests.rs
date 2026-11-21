@@ -15,7 +15,6 @@ fn masked_replacement_declares_only_its_requested_original_cells_without_reading
     let domain = e::Domain {
         bounds: Some(e::CellRegion::new([0, 0], [128, 128])),
         grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: e::Meaning::Neutral,
     };
     let base = e::source(Arc::new(Unread(domain)));
     let replacement = e::source(Arc::new(Unread(e::Domain {

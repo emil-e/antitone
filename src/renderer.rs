@@ -119,7 +119,6 @@ impl GpuRenderer {
                 crate::gpu::evaluation::Domain {
                     bounds: Some([0, 0, 1, 1].into()),
                     grid: crate::gpu::evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
-                    meaning: crate::gpu::evaluation::Meaning::Display,
                 },
             ))?;
         crate::gpu::photograph::prewarm_output(&renderer.evaluation, &renderer.drt)?;

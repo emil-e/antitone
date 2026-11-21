@@ -246,7 +246,6 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
     .unwrap();
     source.image = crate::gpu::evaluation::pointwise(
         source.image.clone(),
-        crate::gpu::evaluation::Meaning::Neutral,
         crate::gpu::evaluation::Function::new(
             "fn overflow(p:vec4f, position:vec2f)->vec4f{return vec4f(p.rgb*1e35,p.w);}",
             "overflow",
@@ -353,10 +352,6 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
         &recipe,
     )
     .unwrap();
-    assert_eq!(
-        search.image().domain().meaning,
-        evaluation::Meaning::Neutral
-    );
     assert_eq!(
         search.image().domain().grid,
         evaluation::Grid::axis_aligned([0.; 2], [1.; 2])

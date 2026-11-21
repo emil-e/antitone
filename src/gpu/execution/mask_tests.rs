@@ -19,7 +19,6 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
     let input = crate::gpu::evaluation::Domain {
         bounds: Some(composition.area().try_into().unwrap()),
         grid: crate::gpu::evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: crate::gpu::evaluation::Meaning::Graded,
     };
     let frame = FrameRaster::full(composition).unwrap();
     let root = crate::gpu::evaluation::reconstruct_complete(
@@ -30,7 +29,6 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
                 frame.output,
             )),
             grid: crate::gpu::evaluation::Grid::from_frame(frame),
-            meaning: input.meaning,
         },
     )
     .unwrap();

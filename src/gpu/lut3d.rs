@@ -168,11 +168,7 @@ fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operati
 #[cfg(feature = "render")]
 pub(crate) fn prewarm_value(input: Value) -> Result<Value, Error> {
     let domain = input.domain();
-    value::pointwise(
-        input,
-        domain.meaning,
-        prewarm_calculation(domain.grid.coverage != 0),
-    )
+    value::pointwise(input, prewarm_calculation(domain.grid.coverage != 0))
 }
 
 #[cfg(test)]

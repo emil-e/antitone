@@ -54,7 +54,6 @@ fn samples(reads: Arc<AtomicUsize>) -> Arc<ConstantSamples> {
         domain: e::Domain {
             bounds: Some([0, 0, 4, 3].into()),
             grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: e::Meaning::CameraCodes,
         },
         // Original camera-code white is 65535, including continuous f32 storage.
         pixel: [-0.25, 0.125, 0.5, 0.].map(|value| value * 65535.),

@@ -1,13 +1,17 @@
 use super::*;
-use crate::gpu::evaluation::{Meaning, Region, Tiling, Value};
+use crate::gpu::evaluation::{Region, Tiling, Value};
 use crate::gpu::parameters::ProcessingParameters;
 use std::sync::{Arc, Weak};
 
-fn camera_cells(mut image: Value) -> Value {
-    while image.domain().meaning != Meaning::CameraCodes {
-        image = image.unary_input().expect("camera calculation").clone();
-    }
+fn resident_camera(image: &Value) -> Value {
     image
+        .ancestors()
+        .find(|node| {
+            (node.operation().as_ref() as &dyn std::any::Any)
+                .is::<crate::gpu::photograph::operations::ResidentCamera>()
+        })
+        .expect("resident camera input")
+        .clone()
 }
 
 fn pixels(
@@ -90,8 +94,8 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
             let inspection = image
                 .inspection(ProcessingParameters::source(), field)
                 .unwrap();
-            let codes = camera_cells(photograph.clone());
-            let inspected = camera_cells(inspection.clone());
+            let codes = resident_camera(&photograph);
+            let inspected = resident_camera(&inspection);
             assert!(codes.same_definition(&inspected));
             assert!(
                 crate::gpu::photograph::PhotographGraph::shares_resident_camera(&codes, &inspected)

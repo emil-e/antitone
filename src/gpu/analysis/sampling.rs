@@ -111,7 +111,6 @@ impl<'a> CameraSampler<'a> {
         let domain = evaluation::Domain {
             bounds: Some(evaluation::CellRegion::new([0, 0], [1, count])),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: evaluation::Meaning::CameraCodes,
         };
         let codes = evaluation::source(Arc::new(CameraSites {
             input: self.input.clone(),

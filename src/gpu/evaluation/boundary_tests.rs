@@ -58,7 +58,6 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
             Domain {
                 bounds: Some([0, 0, 2048, 2048].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Neutral,
             }
         }
 
@@ -68,7 +67,6 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
     }
     let node = pointwise(
         source(Arc::new(NeverRead)),
-        Meaning::Neutral,
         Function {
             code: r#"
 fn identity(p: vec4f, xy: vec2f) -> vec4f {
@@ -108,7 +106,6 @@ fn operation_constants_must_fit_their_gpu_representation() {
     );
     let graded = pointwise(
         camera,
-        Meaning::Graded,
         Function {
             code: r#"
 fn identity(p: vec4f, xy: vec2f) -> vec4f {
@@ -144,7 +141,6 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
         let source_domain = Domain {
             bounds: Some([0, 0, 7, 5].into()),
             grid: Grid::axis_aligned(origin, pitch),
-            meaning: Meaning::Neutral,
         };
         for offset in [-20., -0.5, 0., 6.5, 20.] {
             let output = Domain {
@@ -153,7 +149,6 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
                     [origin[0] + offset * pitch[0], origin[1] - 0.5 * pitch[1]],
                     pitch,
                 ),
-                meaning: Meaning::Neutral,
             };
             let root = reconstruct(source(Arc::new(Constant(source_domain))), output).unwrap();
             let plan = make_plan(root, [3, 2]);
@@ -200,7 +195,6 @@ fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples
     let domain = Domain {
         bounds: Some([11, 17, 17, 13].into()),
         grid: super::Grid::axis_aligned([11.1, 17.3], [0.3, 0.7]),
-        meaning: Meaning::Neutral,
     };
     let data = Grid(domain);
     let samples = data

@@ -12,7 +12,6 @@ impl Source for Plate {
         Domain {
             bounds: Some([0, 0, 96, 64].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -141,7 +140,6 @@ fn healing_is_lazy_masks_unused_nan_cells_and_preserves_signed_hdr_and_metadata(
     );
     let graded = pointwise(
         healed.clone(),
-        Meaning::Graded,
         Function::new(
             "fn twice(p:vec4f, at:vec2f)->vec4f { return vec4f(2.*p.rgb,p.w); }",
             "twice",
@@ -156,7 +154,6 @@ fn healing_is_lazy_masks_unused_nan_cells_and_preserves_signed_hdr_and_metadata(
     reads.lock().unwrap().clear();
     let another_grade = pointwise(
         healed,
-        Meaning::Graded,
         Function::new(
             "fn thrice(p:vec4f, at:vec2f)->vec4f { return vec4f(3.*p.rgb,p.w); }",
             "thrice",
@@ -286,7 +283,6 @@ fn failed_edge_repairs_fall_back_inside_rotated_and_exterior_footprints() {
                 Domain {
                     bounds: Some(CellRegion::new([0, 0], frame.output)),
                     grid: Grid::from_frame(frame),
-                    meaning: input.domain().meaning,
                 },
             )
             .unwrap()
@@ -392,7 +388,6 @@ fn failed_donor_is_local_to_its_repair_even_when_an_enclosing_read_covers_it() {
         Domain {
             bounds: Some([0, 0, 1, 1].into()),
             grid: Grid::from_frame(frame),
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap();
@@ -420,7 +415,6 @@ fn a_required_natural_heal_can_be_hoisted_without_deferring_the_whole_reconstruc
         Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([30., 30.], [1.; 2]),
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap();

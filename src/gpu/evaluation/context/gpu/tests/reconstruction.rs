@@ -31,7 +31,6 @@ impl Source for Constant {
         Domain {
             bounds: Some([0, 0, 128, 64].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
@@ -52,7 +51,6 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [128., 64.]),
-        meaning: Meaning::Neutral,
     };
     let root = crate::gpu::evaluation::reconstruct_cells(
         source(Arc::new(Constant(reads.clone()))),

@@ -8,7 +8,6 @@ fn external(fragment: &mut Fragment, size: [u32; 2], writable: bool) -> PlannedI
         domain: Domain {
             bounds: Some(bounds),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         },
         region: bounds,
         resource: fragment.resource(Storage::Input {

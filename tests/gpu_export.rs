@@ -7,7 +7,7 @@
 use antitone::{
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu::evaluation::{self, CellRegion, Domain, Grid, Meaning, Source},
+    gpu::evaluation::{self, CellRegion, Domain, Grid, Source},
     gpu_export::{Format, Request},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -18,7 +18,6 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 struct Linear {
     pixels: Vec<[f32; 4]>,
-    meaning: Meaning,
 }
 
 impl Source for Linear {
@@ -26,7 +25,6 @@ impl Source for Linear {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [self.pixels.len() as u32, 1])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: self.meaning,
         }
     }
 
@@ -82,7 +80,6 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
     let request = |gain: f32| Request {
         definition: evaluation::source(Arc::new(Linear {
             pixels: vec![[0.001 * gain, 0.002 * gain, 0.003 * gain, 0.]; 2],
-            meaning: Meaning::Display,
         })),
         composition: composition(2),
         format: Format::Tiff(OutputTarget::Srgb),
@@ -140,7 +137,6 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
             Request {
                 definition: evaluation::source(Arc::new(Linear {
                     pixels: pixels.clone(),
-                    meaning: Meaning::Graded,
                 })),
                 composition: composition(pixels.len() as u32),
                 format: Format::Exr(precision),

@@ -38,11 +38,9 @@ fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_orig
             coverage: 8,
             ..evaluation::Grid::axis_aligned([0.; 2], [1.; 2])
         },
-        meaning: evaluation::Meaning::Display,
     };
     let root = evaluation::pointwise(
         evaluation::source(Arc::new(Pixels(domain))),
-        evaluation::Meaning::Display,
         evaluation::Function {
             code: "fn coordinates(p: vec4f, xy: vec2f) -> vec4f { return vec4f(xy, 0.5, p.w); }"
                 .into(),
@@ -364,7 +362,6 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                 let domain = crate::gpu::evaluation::Domain {
                     bounds: Some([0, 0, 1, 1].into()),
                     grid: crate::gpu::evaluation::Grid::from_frame(frame),
-                    meaning: original.domain().meaning,
                 };
                 let root = crate::gpu::evaluation::reconstruct(original, domain).unwrap();
                 let cold = crate::gpu::evaluation::Context::new(

@@ -10,10 +10,7 @@ pub(crate) fn grain(
         return Ok(input);
     }
     let field = value::Value::captured(
-        Domain {
-            meaning: Meaning::Arguments,
-            ..input.domain()
-        },
+        input.domain(),
         [],
         Arc::new(Field {
             grain_size: model.grain_size,
@@ -136,4 +133,10 @@ impl Operation for GrainOperation {
         )
         .map(Some)
     }
+}
+
+#[cfg(all(test, feature = "editor"))]
+pub(super) fn is_field_key(key: &RetainedKey) -> bool {
+    key.get::<(&'static str, Field)>()
+        .is_some_and(|(name, _)| *name == "source-anchored grain field v1")
 }

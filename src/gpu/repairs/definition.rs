@@ -20,9 +20,7 @@ pub(crate) fn compose_images(
     base: Value,
     replacements: Vec<(SupportMask, Value)>,
 ) -> Result<Value, Error> {
-    if base.domain().meaning != Meaning::Neutral
-        || base.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-    {
+    if base.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
         return Err(Error::InvalidParameter(
             "healing requires original neutral cells",
         ));
@@ -43,8 +41,7 @@ pub(crate) fn compose_images(
                 "repair supports overlap or exceed the source",
             ));
         }
-        if image.domain().meaning != Meaning::Neutral
-            || !image.domain().same_grid(base.domain())
+        if !image.domain().same_grid(base.domain())
             || !image.domain().contains_region(region.try_into()?)
         {
             return Err(Error::InvalidParameter(
@@ -64,9 +61,7 @@ pub(crate) fn compose_images(
 /// Failed healing is a finite image with a negative fourth component. Composition
 /// keeps the underlying pixels; Dust can inspect the same result for its failure cue.
 pub(crate) fn healing_image(base: &Value, repair: &Repair) -> Result<Value, Error> {
-    if base.domain().meaning != Meaning::Neutral
-        || base.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-    {
+    if base.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
         return Err(Error::InvalidParameter(
             "healing requires original neutral cells",
         ));

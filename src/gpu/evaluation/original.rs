@@ -48,7 +48,6 @@ impl Source for Native {
         Domain {
             bounds: Some(self.bounds),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
 

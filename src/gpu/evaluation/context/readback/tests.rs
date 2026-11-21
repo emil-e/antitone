@@ -34,11 +34,9 @@ fn image(reads: Arc<AtomicUsize>) -> Value {
             pitch: [2., 3.],
             coverage: 1,
         },
-        meaning: Meaning::Graded,
     };
     pointwise(
         operators::source(Arc::new(Pattern { domain, reads })),
-        Meaning::Graded,
         Function::new(
             r#"
 @group(0) @binding(1)
@@ -225,7 +223,6 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     let domain = Domain {
         bounds: Some([0, 0, 1, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let plan = |bytes: Vec<u8>| {
         let mut fragment = Fragment::default();

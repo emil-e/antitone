@@ -46,7 +46,6 @@ fn normal_traversal_rejects_device_and_semantic_failures_without_shape_search() 
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let budget = Tiling { tile: [8, 4] };
     let limits = wgpu::Limits {
@@ -118,7 +117,6 @@ fn executor_distinguishes_invalid_dispatch_and_buffer_capability_from_resource_l
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let mut fragment = Fragment::default();
     let output = fragment.image(domain, region);

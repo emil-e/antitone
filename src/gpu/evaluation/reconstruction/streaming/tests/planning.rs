@@ -6,7 +6,6 @@ impl Source for Unreadable {
         Domain {
             bounds: Some(Rect::new([0, 0], [8192, 6144])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

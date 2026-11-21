@@ -228,7 +228,6 @@ fn filter_authored_repairs(
     let domain = e::Domain {
         bounds: Some(area.try_into().unwrap()),
         grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: e::Meaning::Neutral,
     };
     let base = fixtures::image(domain, read(device, queue, &source.pixels)).unwrap();
     let repaired =
@@ -242,7 +241,6 @@ fn filter_authored_repairs(
                 coverage: 8,
                 ..e::Grid::from_frame(frame)
             },
-            meaning: e::Meaning::Neutral,
         },
     )
     .unwrap();

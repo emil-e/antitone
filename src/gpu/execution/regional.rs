@@ -60,7 +60,6 @@ pub(crate) fn definition(
             demand.output,
         )),
         grid,
-        meaning: root.domain().meaning,
     };
     evaluation::reconstruct(root, domain)
 }
@@ -80,9 +79,9 @@ pub(crate) fn execute(
     let grid = domain.grid;
     let bounds = domain.finite()?;
     let size = [bounds.width, bounds.height];
-    if domain.meaning != evaluation::Meaning::Display || grid.coverage == 0 {
+    if grid.coverage == 0 {
         return Err(Error::InvalidParameter(
-            "regional output requires covered display pixels",
+            "regional output requires covered pixels",
         ));
     }
     if output.width() != size[0]

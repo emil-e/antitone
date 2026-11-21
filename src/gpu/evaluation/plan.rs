@@ -122,8 +122,7 @@ impl Job {
 
     #[cfg(feature = "render")]
     pub(crate) fn texture_plan(&self, texture: &wgpu::Texture) -> Result<Plan, Error> {
-        if self.root.domain.meaning != Meaning::Display
-            || texture.format() != wgpu::TextureFormat::Rgba32Float
+        if texture.format() != wgpu::TextureFormat::Rgba32Float
             || texture.dimension() != wgpu::TextureDimension::D2
             || texture.depth_or_array_layers() != 1
             || texture.sample_count() != 1
@@ -135,7 +134,7 @@ impl Job {
             || self.tiling.tile[1] < self.region.height
         {
             return Err(Error::InvalidParameter(
-                "display attachment differs from composed image",
+                "texture attachment differs from composed image",
             ));
         }
         let planning = Planning {
@@ -173,7 +172,7 @@ impl Job {
             }
         }
         Err(Error::InvalidParameter(
-            "image cannot be recorded into the display attachment",
+            "image cannot be recorded into the texture attachment",
         ))
     }
 

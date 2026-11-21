@@ -6,7 +6,6 @@ impl Source for InputPlate {
         Domain {
             bounds: Some([0, 0, 32, 32].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -76,7 +75,6 @@ fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
         let source = source(Arc::new(InputPlate(reads.clone())));
         let gpu = pointwise(
             source,
-            Meaning::Neutral,
             Function::new(
                 "fn double(p:vec4f,at:vec2f)->vec4f {return vec4f(2.*p.rgb,p.w);}",
                 "double",
@@ -87,7 +85,6 @@ fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
             Domain {
                 bounds: Some(region),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Neutral,
             },
             [gpu],
             Mean,

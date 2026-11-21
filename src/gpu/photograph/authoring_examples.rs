@@ -3,7 +3,7 @@
 use crate::{
     Error,
     gpu::evaluation::CellRegion as Rect,
-    gpu::evaluation::{self, Domain, Function, Meaning, Operation, Value, value},
+    gpu::evaluation::{self, Domain, Function, Operation, Value, value},
     processing_support::Support,
 };
 
@@ -24,9 +24,6 @@ impl SignedCurve {
 
 impl SignedCurve {
     pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        if input.domain().meaning != Meaning::Graded {
-            return Err(Error::InvalidParameter("example curve requires graded AP1"));
-        }
         let parameters = [
             self.gain,
             self.curvature,
@@ -35,7 +32,6 @@ impl SignedCurve {
         ];
         Ok(evaluation::pointwise(
             input,
-            Meaning::Graded,
             Function::new(
                 include_str!("fixtures/signed_curve.wgsl"),
                 "apply_signed_curve",
@@ -63,11 +59,6 @@ impl TentConvolution {
 
 impl TentConvolution {
     pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        if input.domain().meaning != Meaning::Graded {
-            return Err(Error::InvalidParameter(
-                "example convolution requires graded AP1",
-            ));
-        }
         let support = Support(
             input
                 .domain()

@@ -5,11 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod copies;
 mod lifetimes;
 
-fn domain(meaning: Meaning) -> Domain {
+fn domain() -> Domain {
     Domain {
         bounds: Some([4, 5, 8, 6].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning,
     }
 }
 #[derive(Clone)]
@@ -42,7 +41,7 @@ impl Codes {
 }
 impl Source for Codes {
     fn domain(&self) -> Domain {
-        domain(Meaning::CameraCodes)
+        domain()
     }
     fn identity(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new((self.capture, self.values.clone())))
@@ -70,7 +69,7 @@ impl Source for Codes {
 struct Float(Arc<Vec<[f32; 4]>>);
 impl Source for Float {
     fn domain(&self) -> Domain {
-        domain(Meaning::Neutral)
+        domain()
     }
     fn identity(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(NumericKey(self.0.clone())))
@@ -108,7 +107,7 @@ fn a_live_containing_region_supplies_an_unbounded_calculation_without_source_io(
         source(Arc::new(codes.clone())),
         Domain {
             bounds: None,
-            ..domain(Meaning::CameraCodes)
+            ..domain()
         },
     )
     .unwrap();
@@ -185,7 +184,6 @@ fn roundtrip(
             ],
             [1.; 2],
         ),
-        meaning: original.meaning,
     };
     let root = super::super::reconstruction::reconstruct(bound, output).unwrap();
     let evaluation = context
@@ -381,7 +379,7 @@ fn source_texture_uploads_are_bounded_and_preserve_every_row_across_strips() {
     let original = source(Arc::new(Rows {
         domain: Domain {
             bounds: Some(bounds),
-            ..domain(Meaning::Neutral)
+            ..domain()
         },
         reads: reads.clone(),
     }));
@@ -449,7 +447,6 @@ fn uploaded_inputs_reuse_the_common_budget_across_changed_consumers() {
         for factor in [1, 2] {
             let root = value::pointwise(
                 original.clone(),
-                Meaning::Neutral,
                 value::Operation::new(
                     "uploaded value consumer",
                     factor,
@@ -675,7 +672,6 @@ fn a_larger_stored_extent_supplies_a_smaller_demand_without_source_reads() {
     let output = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([6., 7.], [1.; 2]),
-        meaning: Meaning::CameraCodes,
     };
     let root = super::super::reconstruction::reconstruct(original, output).unwrap();
     let result = pollster::block_on(
@@ -715,7 +711,7 @@ fn stored_domain_and_representation_are_validated_before_source_acquisition() {
             backing: ImageBacking::Buffer,
         };
         if bad_domain {
-            layout.domain.meaning = Meaning::Graded;
+            layout.domain.grid.origin[0] += 1.;
         } else {
             layout.backing = ImageBacking::Texture;
         }
@@ -801,14 +797,7 @@ fn a_cached_intermediate_stops_fusion_and_recording_owns_its_shared_image() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
     let original = source(Arc::new(data.clone()));
-    let first = Value::from_operation(
-        Domain {
-            meaning: Meaning::Neutral,
-            ..original.domain
-        },
-        Some(original),
-        Gain(2.),
-    );
+    let first = Value::from_operation(original.domain, Some(original), Gain(2.));
     let image = pollster::block_on(
         context
             .materialize(

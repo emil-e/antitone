@@ -118,7 +118,6 @@ impl Source for Ramp {
         Domain {
             bounds: Some([0, 0, 1000, 20].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -245,7 +244,6 @@ fn cpu_graph(calls: Arc<AtomicUsize>, stop: Option<Arc<AtomicBool>>) -> Value {
     );
     pointwise(
         node,
-        Meaning::Neutral,
         Function::new(
             "fn finish(p: vec4f, at: vec2f) -> vec4f { return p + vec4f(1., 2., 3., 0.); }",
             "finish",
@@ -473,7 +471,6 @@ fn independent_cpu_dependencies_are_fulfilled_before_intervening_gpu_commands() 
     );
     let b = pointwise(
         b,
-        Meaning::Neutral,
         Function::new(
             "fn finish(p:vec4f, at:vec2f)->vec4f { return p+vec4f(1.,2.,3.,0.); }",
             "finish",
@@ -585,7 +582,6 @@ fn an_owned_gpu_unit_materialization_executes_without_joining_its_own_pending_re
         Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [250., 20.]),
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap();

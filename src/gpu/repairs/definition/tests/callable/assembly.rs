@@ -134,7 +134,6 @@ fn standalone_host_materialization_submits_before_publishing_a_gpu_value() {
     let domain = Domain {
         bounds: Some([0, 0, 2, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let root = Value::from_operation(domain, [], HostValue(counter.clone()));
     let query = context

@@ -43,7 +43,6 @@ fn related_valid_roots_execute_once_without_fractional_working_reserves() {
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let budget = Tiling { tile: [1, 1] };
     let calls = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];

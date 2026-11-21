@@ -32,7 +32,6 @@ fn fixture() -> Pixels {
         domain: Domain {
             bounds: Some([4, 5, 8, 6].into()),
             grid,
-            meaning: Meaning::Neutral,
         },
         values: Arc::new(
             (0..6)
@@ -149,7 +148,6 @@ fn awaiting_a_composed_image_submits_its_gpu_work_without_a_consumer_submission(
     let output = Domain {
         bounds: Some([0, 0, 4, 3].into()),
         grid,
-        meaning: Meaning::Neutral,
     };
     let root =
         super::super::super::reconstruction::reconstruct(source(Arc::new(data)), output).unwrap();

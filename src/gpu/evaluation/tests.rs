@@ -53,7 +53,6 @@ pub(super) fn fixture() -> Authored {
         domain: Domain {
             bounds: Some(area),
             grid: Grid::axis_aligned([0., 0.], [1., 1.]),
-            meaning: Meaning::Camera,
         },
         pixels: Arc::new(pixels),
     }
@@ -72,7 +71,6 @@ pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
                 f64::from(area.height) * domain.grid.pitch[1] / f64::from(size[1]),
             ],
         ),
-        meaning: domain.meaning,
     }
 }
 
@@ -214,10 +212,7 @@ pub(super) fn scalar(
     target: Option<OutputTarget>,
     sigma: f64,
 ) -> Vec<DVec3> {
-    let mut domain = Domain {
-        meaning: Meaning::Neutral,
-        ..data.domain
-    };
+    let mut domain = data.domain;
     let mut pixels = data
         .pixels
         .iter()
@@ -276,7 +271,6 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
     let data = fixture();
     let node = chain(&device, &renderer, Arc::new(data.clone()), false, None, 0.9);
     let plan = make_plan_with_policy(node, [13, 11], Policy::Composed);
-    assert_eq!(plan.domain.meaning, Meaning::Graded);
     assert!(plan.scheduled_bytes() <= 32 << 20);
     assert!(plan.tiles.len() > 1);
     let first = &plan.tiles[0];

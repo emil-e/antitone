@@ -28,7 +28,6 @@ fn evaluate(
     let input = Domain {
         bounds: Some(crate::gpu::evaluation::CellRegion::new([11, 17], size)),
         grid: Grid::axis_aligned([123.25, -81.5], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let mapping = Mapping {
         start: [mapping.start[0] + 11., mapping.start[1] + 17.],
@@ -42,7 +41,6 @@ fn evaluate(
             pitch: mapping.axes.map(|a| a[0].hypot(a[1])),
             coverage: 8,
         },
-        meaning: Meaning::Neutral,
     };
     let root = reconstruct(
         source(Arc::new(Pixels {
@@ -69,7 +67,6 @@ fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tile
             coverage: 8,
             ..Grid::axis_aligned([0.; 2], [1.; 2])
         },
-        meaning: Meaning::Neutral,
     };
     let values = (0..8)
         .map(|i| {
@@ -88,7 +85,6 @@ fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tile
                 coverage: 8,
                 ..Grid::axis_aligned([0.; 2], [2.; 2])
             },
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap();

@@ -308,13 +308,6 @@ pub(crate) fn execute(
     mut check: impl FnMut() -> Result<(), Error>,
 ) -> Result<Stats, Error> {
     check()?;
-    if matches!(request.encoding, SampleEncoding::Rgb16(_))
-        && request.definition.domain().meaning != evaluation::Meaning::Display
-    {
-        return Err(Error::InvalidParameter(
-            "RGB16 requires display-referred processing",
-        ));
-    }
     if request.definition.domain().finite()?.source()? != request.composition.area()
         || request.definition.domain().grid != evaluation::Grid::axis_aligned([0.; 2], [1.; 2])
     {
@@ -344,7 +337,6 @@ pub(crate) fn execute(
                 request.composition,
             )?)
         },
-        meaning: original.domain().meaning,
     };
     let root = evaluation::reconstruct_complete(original, domain)?;
     let mut executor = renderer.evaluation.executor();

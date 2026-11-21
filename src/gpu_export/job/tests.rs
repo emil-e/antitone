@@ -154,7 +154,6 @@ fn repair_demand(
         Domain {
             bounds: Some(region),
             grid: Grid::from_frame(frame),
-            meaning: photo.processed.domain().meaning,
         },
     )
     .unwrap();

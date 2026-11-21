@@ -30,7 +30,6 @@ impl Prepared {
         let domain = evaluation::Domain {
             bounds: Some(evaluation::CellRegion::new([0, 0], raster.size())),
             grid: evaluation::Grid::from_raster(raster),
-            meaning: evaluation::Meaning::Graded,
         };
         let root = pipeline.processed(evaluation::raster_input(domain), None)?;
         if pipeline.is_empty() {
@@ -50,7 +49,6 @@ impl Prepared {
         let expected = evaluation::Domain {
             bounds: Some(evaluation::CellRegion::new([0, 0], raster.size())),
             grid: evaluation::Grid::from_raster(raster),
-            meaning: root.domain().meaning,
         };
         if root.domain().bounds != expected.bounds || !root.domain().same_grid(expected) {
             return Err(Error::InvalidParameter(
@@ -114,7 +112,7 @@ impl Prepared {
     }
 }
 
-/// Prepared recording from a supplied image into a resident display attachment.
+/// Prepared recording from a supplied image into a resident float texture.
 #[cfg(feature = "render")]
 pub(crate) struct Texture {
     source: evaluation::SuppliedImage,

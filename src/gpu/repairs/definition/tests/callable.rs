@@ -21,7 +21,6 @@ impl Source for Codes {
         Domain {
             bounds: Some([0, 0, 512, 512].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -147,14 +146,7 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
                 .unwrap(),
         )
         .unwrap();
-        let base = Value::from_operation(
-            Domain {
-                meaning: Meaning::Neutral,
-                ..camera.domain()
-            },
-            [camera],
-            Normalize,
-        );
+        let base = Value::from_operation(camera.domain(), [camera], Normalize);
         let mask = (240..272)
             .flat_map(|y| (240..272).map(move |x| Codes::marked(x, y)))
             .collect();
@@ -181,7 +173,6 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
         let domain = Domain {
             bounds: Some([0, 0, 64, 64].into()),
             grid: Grid::from_frame(frame),
-            meaning: Meaning::Neutral,
         };
         let damaged = reconstruct(base.clone(), domain).unwrap();
         let control = read_frame(&context, &queue, damaged);
@@ -215,7 +206,6 @@ impl Source for MarkedPlate {
         Domain {
             bounds: Some([0, 0, 256, 128].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -351,7 +341,6 @@ fn a_wide_base_retains_the_repair_grade_and_window_binding_fallbacks() {
         let root = match endpoint {
             "grade" => pointwise(
                 root,
-                Meaning::Graded,
                 Function::new(
                     "fn twice(p:vec4f,at:vec2f)->vec4f {return vec4f(2.*p.rgb,p.w);}",
                     "twice",
@@ -394,7 +383,6 @@ impl Source for Replacement {
         Domain {
             bounds: Some([0, 0, 1024, 128].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

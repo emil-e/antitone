@@ -39,7 +39,6 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
             domain: Domain {
                 bounds: Some(region.try_into().unwrap()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::CameraCodes,
             },
             value: [codes.x, codes.y, codes.z, 0.],
         }));

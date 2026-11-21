@@ -9,7 +9,6 @@ impl Source for Plane {
         Domain {
             bounds: Some([17, 23, 512, 384].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -29,7 +28,6 @@ impl Source for Plane {
 fn squared(source: Value) -> Value {
     value::pointwise(
         source,
-        Meaning::Neutral,
         value::Operation::new(
             "squared source plane",
             (),
@@ -50,7 +48,6 @@ fn view(input: Value, origin: [f64; 2]) -> Value {
                 coverage: 8,
                 ..Grid::axis_aligned(origin, [0.5; 2])
             },
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap()
@@ -253,7 +250,6 @@ impl Source for Diamond {
         Domain {
             bounds: Some([0, 0, 256, 256].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -304,7 +300,6 @@ fn rotated_slice_padding_does_not_contribute_pixels_or_flags() {
                     pitch: [64. * 2f64.sqrt(); 2],
                     coverage: 8,
                 },
-                meaning: Meaning::Neutral,
             },
         )
         .unwrap();
@@ -348,7 +343,6 @@ impl Source for WidePlane {
         Domain {
             bounds: Some([0, 0, 4096, 3072].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

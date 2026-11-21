@@ -11,7 +11,6 @@ impl e::Source for Coordinates {
         e::Domain {
             bounds: Some([0, 0, 8, 4].into()),
             grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: e::Meaning::Neutral,
         }
     }
 
@@ -30,7 +29,6 @@ impl e::Source for Coordinates {
 fn endpoint(input: e::Value, delta: f32) -> e::Value {
     e::value::pointwise(
         input,
-        e::Meaning::Graded,
         e::value::Operation::new(
             "selected view stage", NumericKey(delta),
             "struct Parameters { delta:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f { return vec4f(a.rgb+v.delta.xyz,a.w); }",

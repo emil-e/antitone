@@ -346,25 +346,15 @@ impl RenderedView {
             .as_ref()
             .zip(other.product.as_ref())
             .is_some_and(|(a, b)| {
-                if !a.spec.same_acquisition(&b.spec) {
+                if !a.spec.same_acquisition(&b.spec)
+                    || self.capture.is_inspection() != other.capture.is_inspection()
+                {
                     return false;
                 }
-                if a.pixels == b.pixels && a.definition.same_definition(&b.definition) {
-                    return true;
-                }
-                let neutral = |view: &ViewImage| {
-                    view.definition
-                        .ancestors()
-                        .find(|node| {
-                            node.domain().meaning == crate::gpu::evaluation::Meaning::Neutral
-                        })
-                        .cloned()
-                };
-                if let (Some(left), Some(right)) = (neutral(a), neutral(b)) {
-                    return left.same_definition(&right);
-                }
                 a.definition.ancestors().any(|left| {
-                    left.domain().meaning == crate::gpu::evaluation::Meaning::Inspection
+                    let operation = left.operation().as_ref() as &dyn std::any::Any;
+                    (left.source().is_some()
+                        || operation.is::<crate::gpu::photograph::operations::ResidentCamera>())
                         && b.definition
                             .ancestors()
                             .any(|right| left.same_definition(right))

@@ -17,7 +17,6 @@ impl Source for crate::scan::Scan {
         Domain {
             bounds: Some(self.area.try_into().unwrap()),
             grid: Grid::axis_aligned([0., 0.], [1., 1.]),
-            meaning: Meaning::Camera,
         }
     }
 
@@ -105,20 +104,16 @@ impl Operation for SourceOp {
     }
 }
 
-pub fn pointwise(input: Value, meaning: Meaning, function: Function) -> Value {
-    value::pointwise(
-        input,
-        meaning,
-        value::Operation::shader_function(None, function),
-    )
-    .expect("a pointwise function has pointwise access")
+pub fn pointwise(input: Value, function: Function) -> Value {
+    value::pointwise(input, value::Operation::shader_function(None, function))
+        .expect("a pointwise function has pointwise access")
 }
 
 #[cfg(all(test, feature = "editor"))]
 pub fn interpret(device: &wgpu::Device, input: Value, matrix: glam::DMat3) -> Result<Value, Error> {
-    if input.domain.meaning != Meaning::Camera || !matrix.is_finite() {
+    if !matrix.is_finite() {
         return Err(Error::InvalidParameter(
-            "interpretation requires camera samples",
+            "interpretation requires a finite matrix",
         ));
     }
     let columns = crate::gpu::parameters::CameraMatrix::new(matrix)?.columns;
@@ -129,7 +124,6 @@ pub fn interpret(device: &wgpu::Device, input: Value, matrix: glam::DMat3) -> Re
     });
     Ok(pointwise(
         input,
-        Meaning::Neutral,
         Function {
             code: include_str!("matrix.wgsl").into(),
             symbol: "evaluation_interpret",

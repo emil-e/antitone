@@ -9,7 +9,6 @@ fn partial_external_arguments_need_only_storage_and_preserve_all_sample_bits() {
     let domain = Domain {
         bounds: Some(bounds),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let original: Vec<[u32; 4]> = (0..24u32)
         .map(|i| {
@@ -86,7 +85,6 @@ fn argument(pixels: Vec<[f32; 4]>) -> Value {
         Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Arguments,
         },
         region,
         vec![],
@@ -164,7 +162,6 @@ fn cropped_image_values_flatten_requested_rows_without_changing_identity_or_meta
         Domain {
             bounds: Some(full),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         },
         full,
         vec![],

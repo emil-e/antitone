@@ -26,7 +26,6 @@ impl NeighbourEffect {
         );
         value::pointwise(
             neighbourhood,
-            input.domain().meaning,
             value::Operation::new(
                 "independent source bias v1",
                 (),

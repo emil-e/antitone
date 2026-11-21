@@ -40,7 +40,6 @@ fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>
         domain: Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new([11, 17], size)),
             grid,
-            meaning: Meaning::Graded,
         },
         pixels,
     }

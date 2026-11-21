@@ -34,7 +34,6 @@ fn render(
                 f64::from(crop.height) / f64::from(size[1]),
             ],
         ),
-        meaning: display.domain().meaning,
     };
     let image = reconstruct(display, domain).unwrap();
     let request = renderer

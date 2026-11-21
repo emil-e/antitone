@@ -39,7 +39,6 @@ fn fixture(size: [u32; 2], values: Vec<[f32; 4]>) -> (Value, Arc<Mutex<Vec<Rect>
             domain: Domain {
                 bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Graded,
             },
             values: Arc::new(values),
             reads: reads.clone(),
@@ -177,7 +176,6 @@ fn output(mapping: Mapping, region: Rect) -> Domain {
             pitch: mapping.axes.map(|a| a[0].hypot(a[1])),
             coverage: 8,
         },
-        meaning: Meaning::Graded,
     }
 }
 fn materialize(root: Value, tile: [u32; 2]) -> Vec<[f32; 4]> {
@@ -1183,7 +1181,6 @@ fn invalid_addressing_rejects_before_io_and_valid_neighbourhoods_propagate_sourc
             Domain {
                 bounds: Some(Rect::new([0; 2], [100_000; 2])),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Graded,
             }
         }
         fn read(&self, _: Rect) -> Result<Vec<[f32; 4]>, Error> {

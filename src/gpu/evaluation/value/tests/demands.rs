@@ -19,7 +19,6 @@ impl Source for WideRamp {
         Domain {
             bounds: Some(CellRegion::new([-1024, -32], [2048, 64])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

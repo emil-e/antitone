@@ -10,7 +10,6 @@ impl Source for Plane {
         Domain {
             bounds: Some([0, 0, 64, 64].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -281,7 +280,6 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
     .unwrap();
     let first = value::pointwise(
         input,
-        Meaning::Graded,
         value::Operation::new(
             "shared pointwise plane",
             (),
@@ -447,11 +445,10 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
             coverage: 8,
             ..Grid::axis_aligned([0.; 2], [2.; 2])
         },
-        meaning: Meaning::Graded,
     };
     let projected = reconstruct_tiled(input, domain).unwrap();
     let scale = |factor: f32| {
-        value::pointwise(projected.clone(), Meaning::Graded, value::Operation::new(
+        value::pointwise(projected.clone(), value::Operation::new(
         "projected plane gain", NumericKey(factor),
         "struct Parameters { factor:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f {return vec4f(a.rgb*v.factor.x,a.w);}",
         "pixel", value::Access::Pointwise,

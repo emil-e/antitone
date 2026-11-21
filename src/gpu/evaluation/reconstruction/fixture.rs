@@ -26,7 +26,6 @@ pub(crate) fn encode_supplied(
     let input = Domain {
         bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], source_size)),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let domain = Domain {
         bounds: Some(region),
@@ -36,7 +35,6 @@ pub(crate) fn encode_supplied(
             pitch: mapping.axes.map(|axis| axis[0].hypot(axis[1])),
             coverage: 1,
         },
-        meaning: Meaning::Graded,
     };
     let operation = Reconstruction {
         tiled: false,

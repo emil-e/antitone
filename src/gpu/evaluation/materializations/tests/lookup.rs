@@ -136,7 +136,6 @@ fn equal_image_content_with_signed_zero_grids_uses_the_same_bucket() {
             Domain {
                 bounds: Some(region),
                 grid: Grid::axis_aligned([origin, 0.], [1.; 2]),
-                meaning: Meaning::Neutral,
             },
             region,
             Some(RetainedKey::new("constant plane")),

@@ -354,7 +354,6 @@ impl PhotographRequest {
                     coverage: 8,
                     ..Grid::from_frame(spec.plan().output())
                 },
-                meaning: root.domain().meaning,
             },
         };
         reconstruct(root, output)
@@ -450,21 +449,10 @@ impl PhotographRequest {
             Self::Recipe(recipe) => {
                 super::PhotographGraph::filtered_recipe(limits, spec, neutral, recipe)
             }
-            Self::Inspection(view) => {
-                if neutral.domain().meaning != crate::gpu::evaluation::Meaning::Inspection {
-                    return Err(Error::InvalidParameter(
-                        "inspection requires its source-view prefix",
-                    ));
-                }
-                Ok((
-                    super::PhotographGraph::inspection_view(
-                        neutral,
-                        view.parameters()?,
-                        spec.frame(),
-                    )?,
-                    spec.plan().clone(),
-                ))
-            }
+            Self::Inspection(view) => Ok((
+                super::PhotographGraph::inspection_view(neutral, view.parameters()?, spec.frame())?,
+                spec.plan().clone(),
+            )),
             #[cfg(test)]
             Self::Fixture(input) => Self::filtered_fixture(limits, spec, neutral, input),
         }

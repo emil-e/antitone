@@ -1,6 +1,6 @@
 //! Incremental supplied-texture adapter for the shared image reconstruction calculation.
 use crate::gpu::evaluation::{
-    self, Binding, Domain, Fragment, Grid, Meaning, PlannedImage, Shared, Storage, Work,
+    self, Binding, Domain, Fragment, Grid, PlannedImage, Shared, Storage, Work,
 };
 use std::sync::Arc;
 
@@ -169,7 +169,6 @@ impl AreaAverage {
         let input = Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], source)),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Display,
         };
         let domain = Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], output)),
@@ -179,7 +178,6 @@ impl AreaAverage {
                 pitch: [mapping[1], mapping[2]].map(|a| f64::from(a[0]).hypot(f64::from(a[1]))),
                 coverage: 8,
             },
-            meaning: Meaning::Display,
         };
         let image = evaluation::reconstruct_complete(evaluation::borrowed_input(input), domain)?;
         let buffer = |size, label| {

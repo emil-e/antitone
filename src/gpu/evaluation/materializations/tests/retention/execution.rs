@@ -8,7 +8,6 @@ impl Source for Constant {
         Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -134,7 +133,6 @@ fn inline_execution_inherits_a_live_roots_reservation() {
         domain: Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         },
         region,
         format: ImageFormat::Rgba32Float,

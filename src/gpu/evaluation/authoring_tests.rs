@@ -39,7 +39,6 @@ fn pattern(coverage: u32) -> Pattern {
             pitch: [2., 3.],
             coverage,
         },
-        meaning: Meaning::Graded,
     };
     let pixels = (0..11)
         .flat_map(|y| {
@@ -427,7 +426,6 @@ fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() 
     let untouched = pattern(0);
     let oversized = pointwise(
         source(Arc::new(untouched.clone())),
-        Meaning::Graded,
         Function::new(
             r#"
 @group(0) @binding(18)
@@ -458,17 +456,8 @@ fn choose(p: vec4f, pos: vec2f) -> vec4f {
     assert!(SignedCurve::new(1., -0.1).is_err());
     assert!(TentConvolution::new(f64::INFINITY).is_err());
     assert!(TentConvolution::new(0.).is_err());
-    let mut bad = data.clone();
-    bad.domain.meaning = Meaning::CameraCodes;
-    assert!(
-        SignedCurve::new(1., 0.)
-            .unwrap()
-            .compose(source(Arc::new(bad)))
-            .is_err()
-    );
     let invalid = pointwise(
         source(Arc::new(data)),
-        Meaning::Graded,
         Function::new(
             r#"
 fn identity(p: vec4f, pos: vec2f) -> vec4f {

@@ -77,7 +77,6 @@ impl Source for DustyPhoto {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [self.side, self.side])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -199,14 +198,7 @@ fn exercise(
             .unwrap(),
     )
     .unwrap();
-    let base = Value::from_operation(
-        Domain {
-            meaning: Meaning::Neutral,
-            ..camera.domain()
-        },
-        [camera],
-        Signed,
-    );
+    let base = Value::from_operation(camera.domain(), [camera], Signed);
     let frame = photo.frame();
     let bounds = CellRegion::new([0, 0], frame.output);
     let request = |repairs: &[Repair]| {
@@ -216,7 +208,6 @@ fn exercise(
             Domain {
                 bounds: Some(bounds),
                 grid: Grid::from_frame(frame),
-                meaning: Meaning::Neutral,
             },
         )
         .unwrap();

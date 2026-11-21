@@ -250,15 +250,7 @@ impl Calculation {
             .clone()
             .plan_unit(&inputs, self.domain(), output, budget)
     }
-    pub(crate) fn concatenate(mut inputs: Vec<Self>) -> Result<Self, Error> {
-        if inputs.len() == 1
-            && inputs[0].domain().meaning == Meaning::Arguments
-            && inputs[0].coverage().x == 0
-            && inputs[0].coverage().y == 0
-            && inputs[0].coverage().height == 1
-        {
-            return Ok(inputs.pop().unwrap());
-        }
+    pub(crate) fn concatenate(inputs: Vec<Self>) -> Result<Self, Error> {
         let mut cells = 0u32;
         for input in &inputs {
             let region = input.coverage();
@@ -280,7 +272,6 @@ impl Calculation {
             Domain {
                 bounds: Some(region),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Arguments,
             },
             region,
             inputs,

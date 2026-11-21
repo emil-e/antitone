@@ -47,7 +47,6 @@ impl PhotographGraph {
         let domain = Domain {
             bounds: Some(CellRegion::new([0, 0], raster.size())),
             grid: Grid::from_raster(raster),
-            meaning: Meaning::CameraCodes,
         };
         Ok(Value::from_operation(
             domain,
@@ -117,7 +116,7 @@ impl PhotographGraph {
                 continuous: source.continuous,
                 mapping: Mapping::Resident(source.geometry()),
             },
-        )?
+        )
         .inspection(view)
     }
 }

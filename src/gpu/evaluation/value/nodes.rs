@@ -5,17 +5,14 @@ pub fn source(source: Arc<dyn Source>) -> Value {
     super::super::source(source)
 }
 
-pub fn pointwise(input: Value, meaning: Meaning, operation: Operation) -> Result<Value, Error> {
+pub fn pointwise(input: Value, operation: Operation) -> Result<Value, Error> {
     if operation.access() != Access::Pointwise {
         return Err(Error::InvalidParameter(
             "pointwise node requires same-position input access",
         ));
     }
     Ok(Value::from_operation(
-        Domain {
-            meaning,
-            ..input.domain()
-        },
+        input.domain(),
         [input],
         Pointwise(operation),
     ))
@@ -46,9 +43,9 @@ impl Group for Pointwise {
 }
 
 pub fn gaussian(input: Value, sigma: f64) -> Result<Value, Error> {
-    if input.domain().meaning != Meaning::Graded || !sigma.is_finite() || sigma <= 0. {
+    if !sigma.is_finite() || sigma <= 0. {
         return Err(Error::InvalidParameter(
-            "Gaussian requires graded AP1 and positive sigma",
+            "Gaussian requires finite positive sigma",
         ));
     }
     for pitch in input.domain().grid.pitch {

@@ -20,7 +20,6 @@ impl evaluation::Source for CameraCodes {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [3, 1])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
 
@@ -188,7 +187,6 @@ impl evaluation::Source for PatternCodes {
         Domain {
             bounds: Some(self.0.try_into().unwrap()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
 
@@ -264,7 +262,6 @@ fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive(
             InspectionView::new(DMat3::from_diagonal(DVec3::new(0.5, 1.1, 1.4)), 1.).unwrap(),
         )
         .unwrap();
-    assert_eq!(inspection.domain().meaning, Meaning::Inspection);
     // Normalization, camera-to-working conversion, then this viewer's WB/exposure.
     near(
         &read(&renderer, &queue, inspection),
@@ -330,10 +327,6 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
     )
     .unwrap();
     assert!(grading.roll(positive.clone()).is_ok());
-    assert!(
-        grading.roll(inspection.clone()).is_err(),
-        "source-view light cannot substitute for the positive prefix"
-    );
     #[cfg(feature = "editor")]
     {
         let spec = crate::gpu::view::request::SourceRequest::for_recipe(
@@ -345,22 +338,10 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
             PhotographGraph::filtered_recipe(&device.limits(), &spec, positive.clone(), &recipe)
                 .is_ok()
         );
-        assert!(
-            PhotographGraph::filtered_recipe(&device.limits(), &spec, inspection.clone(), &recipe)
-                .is_err(),
-            "an inspection of the same corrected camera cells cannot satisfy photographic filtering"
-        );
     }
     for branch in [positive, inspection] {
-        let mut upstream = branch;
-        while upstream.domain().meaning != Meaning::Camera {
-            upstream = upstream
-                .unary_input()
-                .expect("branch retains corrected camera input")
-                .clone();
-        }
         assert!(
-            upstream.same_definition(&camera),
+            branch.ancestors().any(|node| node.same_definition(&camera)),
             "view choices cannot redefine camera correction"
         );
     }

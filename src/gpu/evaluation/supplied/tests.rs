@@ -22,7 +22,6 @@ impl Source for Pixels {
         Domain {
             bounds: Some([7, 3, 2, 1].into()),
             grid: Grid::axis_aligned([0.25, -2.], [0.5, 1.25]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -44,7 +43,6 @@ impl Source for Pixels {
 fn square(input: Value) -> Value {
     pointwise(
         input,
-        Meaning::Neutral,
         Function::new(
             "fn supplied_square(p:vec4f,position:vec2f)->vec4f {return vec4f(p.rgb*p.rgb,p.a);}",
             "supplied_square",
@@ -111,7 +109,6 @@ fn recorded_arguments_keep_the_complete_unnamed_calculation_and_own_values_witho
                 coverage: 8,
                 ..Grid::axis_aligned(domain.point([7., 3.]), [1., 1.25])
             },
-            meaning: Meaning::Neutral,
         },
     )
     .unwrap();
@@ -251,7 +248,7 @@ fn materialized_consumers_recycle_scratch_without_overwriting_a_supplied_value()
     )
     .unwrap();
     let double = |input| {
-        value::pointwise(input,Meaning::Neutral,value::Operation::new("double supplied pixels",(),"fn double(p:vec2i,at:vec2f,pixel:vec4f)->vec4f{return vec4f(pixel.rgb*2.0,pixel.a);}","double",value::Access::Pointwise)).unwrap()
+        value::pointwise(input,value::Operation::new("double supplied pixels",(),"fn double(p:vec2i,at:vec2f,pixel:vec4f)->vec4f{return vec4f(pixel.rgb*2.0,pixel.a);}","double",value::Access::Pointwise)).unwrap()
     };
     let root = double(double(definition));
     let recorded = context

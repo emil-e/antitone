@@ -13,7 +13,6 @@ impl Source for AnalyticPlane {
                 coverage: 8,
                 ..Grid::axis_aligned([0.; 2], [1.; 2])
             },
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -112,7 +111,6 @@ fn tiled_reconstruction_describes_disjoint_dependencies_without_knowing_their_op
             pitch: [2f64.sqrt(); 2],
             coverage: 8,
         },
-        meaning: Meaning::Neutral,
     };
     let a = reconstruct_tiled(first.clone(), domain).unwrap();
     let b = reconstruct_tiled(changed.clone(), domain).unwrap();
@@ -157,7 +155,6 @@ fn regional_content_does_not_hide_a_captured_dependency() {
             coverage: 8,
             ..Grid::axis_aligned([0.; 2], [2.; 2])
         },
-        meaning: Meaning::Neutral,
     };
     let make =
         |blue| reconstruct_tiled(mosaic(blue, [512, 0, 512, 256].into(), &reads), domain).unwrap();
@@ -173,7 +170,6 @@ fn regional_content_does_not_hide_a_captured_dependency() {
     let wrapper = Value::new(
         Domain {
             bounds: Some(region),
-            meaning: Meaning::Graded,
             ..domain
         },
         region,
@@ -260,7 +256,6 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
                     coverage: 8,
                     ..Grid::axis_aligned([0.; 2], [1., 2.])
                 },
-                meaning: Meaning::Neutral,
             },
         )
         .unwrap()

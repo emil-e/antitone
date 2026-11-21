@@ -33,7 +33,6 @@ fn reconstructed(
     let domain = Domain {
         bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let input = source(Arc::new(Pixels {
         domain,
@@ -82,7 +81,6 @@ fn reconstructed(
             pitch: mapping.axes.map(|a| a[0].hypot(a[1])),
             coverage: 8,
         },
-        meaning: Meaning::Neutral,
     };
     let root = super::super::reconstruction::reconstruct_mapped(input, output, mapping).unwrap();
     let request = context

@@ -14,7 +14,6 @@ fn regional_callable_candidates_do_not_bypass_reusable_unit_boundaries() {
             Domain {
                 bounds: Some([0, 0, 512, 128].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Neutral,
             }
         }
         fn identity(&self) -> Option<RetainedKey> {
@@ -69,7 +68,6 @@ fn self_production_uses_declared_outputs_not_logical_or_lowered_node_pointers() 
     let make = |gain: f32| {
         value::pointwise(
             input.clone(),
-            Meaning::Neutral,
             value::Operation::new(
                 "self-production coordinates",
                 NumericKey(gain),
@@ -117,7 +115,6 @@ impl Source for ObservedRamp {
         Domain {
             bounds: Some(CellRegion::new([-3, 5], [7, 5])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {

@@ -89,7 +89,6 @@ impl ForwardModel for ResponseModel<'_> {
                 [width, height],
             )),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: evaluation::Meaning::Camera,
         };
         let camera = evaluation::source(Arc::new(CameraSamples {
             domain,

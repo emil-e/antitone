@@ -57,7 +57,6 @@ impl Plate {
             domain: Domain {
                 bounds: Some(CellRegion::new([-5, 3], [21, 15])),
                 grid: Grid::axis_aligned([2., -1.], [0.5, 2.]),
-                meaning: Meaning::Graded,
             },
         }
     }
@@ -98,7 +97,6 @@ fn pixel(p: vec2i, position: vec2f, original: vec4f, parameters: Parameters) -> 
 fn affine(input: Value, gain: f64, offset: f64) -> Value {
     pointwise(
         input,
-        Meaning::Graded,
         Operation::new(
             "affine position v1",
             NumericKey([gain, offset]),
@@ -465,7 +463,6 @@ fn gaussian_opposite_extreme_signs_use_a_finite_convex_mean_and_preserve_metadat
             Domain {
                 bounds: Some([0, 0, 2, 1].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Graded,
             }
         }
         fn identity(&self) -> Option<RetainedKey> {

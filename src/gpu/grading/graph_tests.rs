@@ -17,7 +17,6 @@ fn retained_grading_arguments_follow_branches_and_count_each_shared_definition_o
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let base = borrowed_input(domain);
     let make = || {
@@ -151,7 +150,6 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let input = buffer(&device, &pixels);
     let paper = Arc::new(
@@ -243,7 +241,6 @@ fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic()
     let domain = Domain {
         bounds: Some(area.try_into().unwrap()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let input = buffer(&device, &pixels);
     for contrast in [0.4, 1., 1.6] {
@@ -347,7 +344,6 @@ fn extreme_grading_stays_finite_through_actual_grain_generation_and_application(
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let grading = Grading::new(
         &device.limits(),
@@ -411,7 +407,6 @@ fn overflowing_matrix_products_retry_without_turning_signed_channels_into_nan() 
     let domain = Domain {
         bounds: Some([0, 0, 2, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let function = Function::new(
         format!(
@@ -430,7 +425,7 @@ fn matrix_retry_probe(pixel: vec4f, position: vec2f) -> vec4f {
         ),
         "matrix_retry_probe",
     );
-    let root = pointwise(borrowed_input(domain), Meaning::Neutral, function);
+    let root = pointwise(borrowed_input(domain), function);
     let (actual, _) = record(
         &device,
         &queue,
@@ -472,7 +467,6 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
     let source = borrowed_input(Domain {
         bounds: Some(area.try_into().unwrap()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     });
     let grade = input.grade().unwrap().compose(source.clone()).unwrap();
     let weights = Grading::weight_image(source, layer).unwrap();
@@ -496,7 +490,6 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
     let domain = Domain {
         bounds: Some([11, 17, 8, 5].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let pixels: Vec<_> = (0..40)
         .map(|i| [i as f32 * 0.1 - 0.4, i as f32, 1.5, 0.])
@@ -533,7 +526,6 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
             pitch: [1.3, 1.2],
             coverage: 8,
         },
-        meaning: Meaning::Neutral,
     };
     let area = [45, 70, 48, 48].into();
     let roll = RollSettings {
@@ -643,7 +635,6 @@ fn private_module_slots_preserve_each_captured_resource_when_fused() {
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let pixels = [[-0.2, 0.4, 1.3, 0.]; 6];
     let input = buffer(&device, &pixels);
@@ -686,7 +677,6 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
     ] {
         let root = pointwise(
             borrowed_input(domain),
-            Meaning::Graded,
             Function {
                 code: code.clone(),
                 symbol: "times",
@@ -695,7 +685,6 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
         );
         let root = pointwise(
             root,
-            Meaning::Graded,
             Function {
                 code: module,
                 symbol,

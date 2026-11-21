@@ -31,7 +31,6 @@ fn domain() -> Domain {
     Domain {
         bounds: Some([0, 0, 8, 4].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     }
 }
 fn layout(region: CellRegion, backing: ImageBacking) -> ImageLayout {

@@ -77,13 +77,9 @@ impl Reconstruction {
             [x, y],
             [(demand.right() - x) as u32, (demand.bottom() - y) as u32],
         );
-        let arguments = Domain {
-            meaning: Meaning::Arguments,
-            ..domain
-        };
         let seed = "fn pixel(p:vec2i, position:vec2f)->array<vec4f,2>{return array<vec4f,2>(vec4f(0.0),vec4f(0.0));}";
         let mut sum = Calculation::new(
-            arguments,
+            domain,
             output,
             vec![],
             Mathematics::new(
@@ -174,12 +170,12 @@ impl Reconstruction {
                     operation = operation.with_table(rows);
                 }
                 let input = source.request(if aligned_inputs { chunk } else { part })?;
-                let contribution = Calculation::new(arguments, affected, vec![input], operation)?;
+                let contribution = Calculation::new(domain, affected, vec![input], operation)?;
                 sum = if first && affected == output {
                     contribution
                 } else {
                     Calculation::new(
-                        arguments,
+                        domain,
                         output,
                         vec![sum, contribution],
                         Mathematics::new(

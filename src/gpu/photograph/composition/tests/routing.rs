@@ -8,10 +8,8 @@ use crate::rendering::OutputTarget;
 struct Suffix;
 impl Suffix {
     fn compose(&self, input: Value) -> Result<Value, Error> {
-        let meaning = input.domain().meaning;
         evaluation::value::pointwise(
             input,
-            meaning,
             evaluation::value::Operation::new(
                 "purpose routing suffix",
                 (),

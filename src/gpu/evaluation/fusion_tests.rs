@@ -112,12 +112,10 @@ fn apply(pixel: vec4f, position: vec2f) -> vec4f {
 "#;
     let first = pointwise(
         source(Arc::new(data)),
-        Meaning::Graded,
         Function::new(module, "apply").with_uniform(0, &[2.0f32, 1., 0., 0.]),
     );
     let root = pointwise(
         first,
-        Meaning::Graded,
         Function::new(module, "apply").with_uniform(0, &[-0.5f32, 0.25, 0., 0.]),
     );
     let budget = Tiling { tile: [13, 11] };

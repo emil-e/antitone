@@ -43,7 +43,7 @@ fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
         .commands
         .as_ref()
         .unwrap()
-        .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+        .cached_grain_field()
         .unwrap()
 }
 
@@ -231,7 +231,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
                 .commands
                 .as_ref()
                 .unwrap()
-                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                .cached_grain_field()
                 .is_none(),
             "omitted grain does not allocate a field; warm reuse may retain an existing value"
         );
@@ -244,7 +244,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
                 .commands
                 .as_ref()
                 .unwrap()
-                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                .cached_grain_field()
                 .is_none()
         );
         assert!(
@@ -491,7 +491,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
                         .commands
                         .as_ref()
                         .unwrap()
-                        .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                        .cached_grain_field()
                         .is_some(),
                     "a live recording owns its required field independently of optional retention"
                 );

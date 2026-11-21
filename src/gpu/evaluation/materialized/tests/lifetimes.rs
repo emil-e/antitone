@@ -61,7 +61,6 @@ fn pixels(native: bool) -> (Value, Arc<AtomicUsize>, Vec<[f32; 4]>) {
             domain: Domain {
                 bounds: Some([11, 17, 8, 4].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Arguments,
             },
             values: Arc::new(values.clone()),
             native,
@@ -216,7 +215,6 @@ fn submitted_consumers_keep_materialized_inputs_after_owner_and_waiter_retire() 
             pitch: [2., 2.],
             coverage: 8,
         },
-        meaning: source.domain().meaning,
     };
     let root = reconstruct(source, domain).unwrap();
     let gate = queue.clone();

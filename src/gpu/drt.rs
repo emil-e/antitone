@@ -55,14 +55,6 @@ impl Target {
 
     pub fn apply(&self, input: Value) -> Result<Value, Error> {
         let domain = input.domain();
-        if !matches!(
-            domain.meaning,
-            Meaning::Graded | Meaning::Neutral | Meaning::Inspection
-        ) {
-            return Err(Error::InvalidParameter(
-                "display rendering requires working AP1",
-            ));
-        }
         let code = format!(
             r#"
 {}
@@ -103,10 +95,7 @@ fn pixel(cell:vec2i,position:vec2f,value:vec4f,coverage:vec4u)->vec4f {{
         .with_bindings(bindings)
         .with_uniform("vec4u", &[u32::from(domain.grid.coverage != 0), 0, 0, 0]);
         Ok(Value::from_operation(
-            Domain {
-                meaning: Meaning::Display,
-                ..domain
-            },
+            domain,
             Some(input),
             Display {
                 target: self.target,
