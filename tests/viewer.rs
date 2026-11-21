@@ -23,7 +23,10 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let matrix = DMat3::from_cols(
             DVec3::new(0.6, 0.02, -0.01),
             DVec3::new(0.4, 1.2, -0.15),
@@ -177,7 +180,10 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -409,7 +415,10 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let matrix = DMat3::from_cols(
             DVec3::new(3., 0., -0.6),
             DVec3::new(-0.9, 3., 0.),
@@ -666,7 +675,10 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
         let area = SourceRegion {
             x: 12,
@@ -873,7 +885,10 @@ fn gpu_yellows_retain_hue_and_continuity_across_exposure() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let mut inputs = Vec::new();
         for blue in [0., 0.25, 0.5] {
             for i in 0..=320 {
@@ -940,7 +955,10 @@ fn tiled_linear_area_average_matches_scalar_fractional_footprints() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let pixels: Vec<[f32; 4]> = (0..15 * 9)
             .map(|i| {
                 [
@@ -1063,7 +1081,10 @@ fn large_retina_fit_area_average_uses_supported_buffer_limits() {
         let size = u64::from(output[0]) * u64::from(output[1]) * 16;
         assert!(size > wgpu::Limits::default().max_storage_buffer_binding_size);
         assert!(size > wgpu::Limits::default().max_buffer_size);
-        let (default_device, _) = adapter.request_device(&Default::default()).await.unwrap();
+        let (default_device, _) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         assert!(matches!(
             antitone::resample::AreaAverage::new(
                 &default_device,
@@ -1076,13 +1097,15 @@ fn large_retina_fit_area_average_uses_supported_buffer_limits() {
         ));
         drop(default_device);
         let limits = antitone::platform::device_limits(adapter.limits());
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = antitone::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: limits.clone(),
                 ..Default::default()
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(device.limits(), limits);
         let average =
             antitone::resample::AreaAverage::new(&device, [source.width, source.height], output)
@@ -1198,7 +1221,7 @@ fn large_retina_fit_area_average_uses_supported_buffer_limits() {
 
 async fn read(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &antitone::gpu::submission::Queue,
     texture: &wgpu::Texture,
 ) -> Vec<[f32; 4]> {
     let component = if texture.format() == wgpu::TextureFormat::Rgba16Float {

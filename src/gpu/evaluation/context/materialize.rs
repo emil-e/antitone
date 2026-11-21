@@ -51,8 +51,7 @@ fn read_source(
 impl Context {
     pub fn materialize(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         scope: &Materializations,
         evaluation: Evaluation,
         format: ImageFormat,
@@ -121,7 +120,7 @@ impl Context {
         let context = self.clone();
         let products = scope.clone();
         let queue = queue.clone();
-        let gate = gate.clone();
+
         Ok(scope.obtain_for(
             key,
             Arc::new(layout),
@@ -217,7 +216,7 @@ impl Context {
                                                 depth_or_array_layers: 1,
                                             },
                                         );
-                                        uploads.push_back(gate.submit(&queue, std::iter::empty()));
+                                        uploads.push_back(queue.submit(std::iter::empty()));
                                         submitted = true;
                                         if uploads.len() == 2 {
                                             context
@@ -240,7 +239,6 @@ impl Context {
                                 if submitted {
                                     context.submit(
                                         &queue,
-                                        &gate,
                                         context.device.create_command_encoder(&Default::default()),
                                         || false,
                                     )?;
@@ -254,7 +252,6 @@ impl Context {
                         let worker = Worker {
                             context: &context,
                             queue: &queue,
-                            gate: &gate,
                             scope: &products,
                             working: &working,
                             cancelled: &|| stop.is_cancelled(),

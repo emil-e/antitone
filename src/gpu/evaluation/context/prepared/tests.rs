@@ -79,7 +79,7 @@ fn recording_capacity_includes_prerequisites_not_only_the_root_plan() {
 
 #[test]
 fn independent_preparations_join_the_same_pending_image() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let root = shifted(source(Arc::new(Pixels(reads.clone()))), 3.);
@@ -88,11 +88,11 @@ fn independent_preparations_join_the_same_pending_image() {
         .unwrap();
     let second = context.prepare_image(request(&context, root)).unwrap();
     let first = context
-        .produce_images(&queue, &renderer.submissions, vec![first])
+        .produce_images(&queue, vec![first])
         .unwrap()
         .remove(0);
     let second = context
-        .produce_images(&queue, &renderer.submissions, vec![second])
+        .produce_images(&queue, vec![second])
         .unwrap()
         .remove(0);
     assert_eq!(reads.load(Ordering::SeqCst), 0);
@@ -121,7 +121,7 @@ impl Operation for UndeclaredReads {
 
 #[test]
 fn incomplete_read_descriptions_use_ordinary_preparation() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Pixels(reads.clone())));
@@ -133,7 +133,7 @@ fn incomplete_read_descriptions_use_ordinary_preparation() {
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     let image = pollster::block_on(
         context
-            .produce_images(&queue, &renderer.submissions, vec![prepared])
+            .produce_images(&queue, vec![prepared])
             .unwrap()
             .remove(0),
     )
@@ -198,7 +198,7 @@ impl Operation for Sum {
 
 #[test]
 fn multiple_missing_operands_execute_without_completed_source_pins() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let inputs = [0, 1].map(|identity| {
@@ -218,7 +218,6 @@ fn multiple_missing_operands_execute_without_completed_source_pins() {
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &renderer.submissions,
         scope: &scope,
         working: &working,
         cancelled: &|| false,
@@ -258,7 +257,7 @@ fn shifted(source: Value, delta: f32) -> Value {
 
 #[test]
 fn prepared_requests_share_production_without_pinning_finished_source_inputs() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Pixels(reads.clone())));
@@ -272,7 +271,6 @@ fn prepared_requests_share_production_without_pinning_finished_source_inputs() {
     let mut requests = context
         .materialize_many(
             &queue,
-            &renderer.submissions,
             &context.materializations(),
             vec![request(&context, root.clone()), request(&context, root)],
         )
@@ -295,7 +293,6 @@ fn prepared_requests_share_production_without_pinning_finished_source_inputs() {
         context
             .materialize_many(
                 &queue,
-                &renderer.submissions,
                 &context.materializations(),
                 vec![request(&context, shifted(input, 5.))],
             )

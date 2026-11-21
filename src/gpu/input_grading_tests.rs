@@ -24,7 +24,10 @@ fn packed_camera_constants_do_not_stand_in_for_a_captured_photograph() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, _queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, _queue) =
+            crate::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let fixture = CameraFixture::new(&device).await.unwrap();
         let source =
             ProcessingSource::new(&device, &[[20000, 30000, 40000, 0]], DMat3::IDENTITY, None)
@@ -64,7 +67,9 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let area = SourceRegion::from([0, 0, 2, 1]);
         let roll = RollSettings {

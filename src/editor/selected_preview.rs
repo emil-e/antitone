@@ -50,13 +50,13 @@ impl CallbackTrait for SelectionPaint {
     fn prepare(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        screen: &egui_wgpu::ScreenDescriptor,
+        _queue: &wgpu::Queue,
+        _screen: &egui_wgpu::ScreenDescriptor,
         encoder: &mut wgpu::CommandEncoder,
-        resources: &mut egui_wgpu::CallbackResources,
+        _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        self.image
-            .prepare(device, queue, screen, encoder, resources)
+        self.image.prepare_frame(device, encoder);
+        Vec::new()
     }
 
     fn paint(

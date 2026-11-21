@@ -5,7 +5,6 @@ use crate::{
     crop::Crop,
     export::Overwrite,
     geometry::Composition,
-    gpu::submission::SubmissionGate,
     gpu_export::authored::{self as gpu_export, Format},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
@@ -20,13 +19,15 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::TIMESTAMP_QUERY,
                 ..Default::default()
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
@@ -70,7 +71,6 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         format: Format::Tiff(OutputTarget::Srgb),
         luts: (None).into(),
     };
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("destination.tif");
     let capture = || {
@@ -78,7 +78,7 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
             gpu_export::write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 request(),
                 &path,
                 Overwrite::Refuse,
@@ -102,7 +102,7 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         with_clock(Some(invalid.clone()), || gpu_export::write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             request(),
             &path,
             Overwrite::Confirmed,

@@ -39,7 +39,6 @@ fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_ext
     context
         .read(
             &queue,
-            &Default::default(),
             &context
                 .request(
                     damaged.clone(),
@@ -87,7 +86,6 @@ fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_ext
     context
         .read(
             &queue,
-            &Default::default(),
             &context
                 .request(
                     root,

@@ -26,8 +26,7 @@ pub(crate) struct CameraSampler<'a> {
     input: Arc<AnalysisInput>,
     floor: f64,
     context: &'a evaluation::Context,
-    queue: &'a wgpu::Queue,
-    submissions: &'a SubmissionGate,
+    queue: &'a crate::gpu::submission::Queue,
     field: Option<Arc<GpuFlatField>>,
 }
 
@@ -56,7 +55,7 @@ impl<'a> CameraSampler<'a> {
     #[cfg(test)]
     pub(crate) fn new(
         context: &'a evaluation::Context,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
         scan: &Scan,
     ) -> Result<Self, Error> {
         let input = AnalysisInput::capture(scan, || false)?
@@ -67,7 +66,7 @@ impl<'a> CameraSampler<'a> {
     #[cfg(test)]
     pub(crate) fn retained(
         context: &'a evaluation::Context,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
         input: Arc<AnalysisInput>,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
@@ -79,7 +78,7 @@ impl<'a> CameraSampler<'a> {
 
     pub(crate) fn captured(
         context: &'a evaluation::Context,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
         input: Arc<AnalysisInput>,
         field: Option<Arc<GpuFlatField>>,
     ) -> Result<Self, Error> {
@@ -91,8 +90,7 @@ impl<'a> CameraSampler<'a> {
             input,
             floor,
             context,
-            queue: gpu.0,
-            submissions: gpu.1,
+            queue: gpu,
             field,
         })
     }
@@ -213,7 +211,6 @@ impl<'a> CameraSampler<'a> {
         let mut output = Vec::with_capacity(count);
         let result = self.context.read(
             self.queue,
-            self.submissions,
             &request,
             || interrupted.get() || (**cancelled.borrow_mut())(),
             |block, pixels| {

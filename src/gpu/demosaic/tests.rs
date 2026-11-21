@@ -3,7 +3,8 @@ use super::{Demosaicer, Layout};
 const PATTERNS: [[u8; 4]; 4] = [[0, 1, 1, 2], [2, 1, 1, 0], [1, 0, 2, 1], [1, 2, 0, 1]];
 
 fn gpu() -> Demosaicer {
-    static DEVICE: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+    static DEVICE: std::sync::OnceLock<(wgpu::Device, crate::gpu::submission::Queue)> =
+        std::sync::OnceLock::new();
     let (device, queue) = DEVICE.get_or_init(|| {
         pollster::block_on(async {
             let adapter = crate::gpu::instance()
@@ -11,8 +12,9 @@ fn gpu() -> Demosaicer {
                 .await
                 .unwrap();
             let supported = adapter.limits();
-            adapter
-                .request_device(&wgpu::DeviceDescriptor {
+            crate::gpu::submission::request_device(
+                &adapter,
+                &wgpu::DeviceDescriptor {
                     required_limits: wgpu::Limits {
                         max_storage_buffers_per_shader_stage: 10,
                         max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
@@ -20,12 +22,13 @@ fn gpu() -> Demosaicer {
                         ..Default::default()
                     },
                     ..Default::default()
-                })
-                .await
-                .unwrap()
+                },
+            )
+            .await
+            .unwrap()
         })
     });
-    Demosaicer::new(device, queue, Default::default(), 4 << 30)
+    Demosaicer::new(device, queue, 4 << 30)
 }
 
 fn image(w: u32, h: u32, pattern: [u8; 4], base: [u16; 3]) -> Vec<[u16; 4]> {

@@ -372,7 +372,7 @@ pub(super) struct Thumbnails {
     embedded: embedded::EmbeddedPreviews,
     gpu: Option<(
         wgpu::Device,
-        wgpu::Queue,
+        crate::gpu::submission::Queue,
         Arc<crate::renderer::RendererCache>,
     )>,
     services: Option<Services>,
@@ -706,7 +706,7 @@ impl Thumbnails {
 
     pub fn new(
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        queue: crate::gpu::submission::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         developments: source_loading::SourceLoader,
     ) -> Self {
@@ -734,7 +734,7 @@ impl Thumbnails {
     #[cfg(test)]
     fn with_disk(
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        queue: crate::gpu::submission::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
     ) -> Self {
@@ -749,7 +749,7 @@ impl Thumbnails {
 
     fn with_developments(
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        queue: crate::gpu::submission::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
         developments: source_loading::SourceLoader,
@@ -932,7 +932,7 @@ struct ThumbnailMetrics {
 
 fn make_image(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderers: &crate::renderer::RendererCache,
     job: &Job,
     proxy: &Proxy,
@@ -1326,7 +1326,12 @@ impl Editor {
                                         None => Ok(None),
                                     };
                                     match field.and_then(|field| {
+                                        let (_, queue, _) =
+                                            self.document.thumbnails.gpu.as_ref().ok_or_else(
+                                                || Error::Gpu("Thumbnail GPU unavailable".into()),
+                                            )?;
                                         processing::image_paint(
+                                            queue.clone(),
                                             self.presentation.as_ref().map_err(Clone::clone)?,
                                             image.image.clone(),
                                             parameters,
@@ -1850,7 +1855,7 @@ struct Worker {
     #[cfg(test)]
     observe: Option<Arc<dyn Fn(SourceId, bool) + Send + Sync>>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     renderers: Arc<crate::renderer::RendererCache>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
@@ -1943,7 +1948,6 @@ impl Worker {
         let tick = std::time::Instant::now();
         let renderer = self.renderers.get(&self.device, &self.queue)?;
         metrics.renderer_seconds = tick.elapsed().as_secs_f64();
-        let submissions = self.renderers.submissions();
         let previous = job
             .previous
             .as_ref()
@@ -1955,7 +1959,6 @@ impl Worker {
             RenderedView::render_from_retained(
                 &self.device,
                 &self.queue,
-                submissions,
                 source.clone(),
                 capture,
                 job.correction.gpu()?,
@@ -1982,7 +1985,6 @@ impl Worker {
             let source = ViewImage::camera_preview(
                 &self.device,
                 &self.queue,
-                submissions,
                 renderer,
                 kernels,
                 proxy,
@@ -2000,7 +2002,6 @@ impl Worker {
         view.ensure_submitted(
             &self.device,
             &self.queue,
-            submissions,
             self.repaint.get().unwrap_or(&egui::Context::default()),
         );
         if !recipe.luts.is_empty() {
@@ -2019,9 +2020,9 @@ impl Worker {
                 mapping,
             )?;
             view.image.set_look_check(Some(check));
-            submissions.submit(&self.queue, [encoder.finish()]);
+            self.queue.submit([encoder.finish()]);
             let repaint = self.repaint.clone();
-            view.image.begin_look_check_tracked(submissions, move || {
+            view.image.begin_look_check_tracked(&self.queue, move || {
                 if let Some(context) = repaint.get() {
                     context.request_repaint();
                 }
@@ -2167,7 +2168,7 @@ struct ReadyWork {
 impl Worker {
     fn new(
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        queue: crate::gpu::submission::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
         repaint: Arc<std::sync::OnceLock<egui::Context>>,

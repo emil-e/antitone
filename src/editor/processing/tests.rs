@@ -9,10 +9,12 @@ use crate::{
     project::{AdjustmentLayers, SourceDevelopment},
 };
 
-pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) {
+pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, crate::gpu::submission::Queue) {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+    let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap();
     let mut editor = super::super::tests::fixture();
     editor.initialize_viewer(&device, &queue);
     let record = Source {
@@ -569,7 +571,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
     use crate::gpu::photograph::request::PhotographRequest;
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use crate::image_recipe::ImageRecipe;
-    use egui_wgpu::CallbackTrait;
+
     use std::{sync::Weak, time::Instant};
 
     pollster::block_on(async {
@@ -623,6 +625,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             crate::frame_raster::FrameRaster::full(editor.source_composition(source)).unwrap();
         let presentation = Presentation::new(&device).await.unwrap();
         let image_paint = ImagePaint::with_calculation(
+            queue.clone(),
             &presentation,
             images[index].clone(),
             Some(roots[index].clone()),
@@ -631,6 +634,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         )
         .unwrap();
         let scope_paint = ScopePaint::with_calculation(
+            queue.clone(),
             gpu.clone(),
             images[index].clone(),
             (roots[index].clone(), recipe.luts.clone()),
@@ -643,14 +647,9 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
             context.clone(),
         )
         .unwrap();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [1100, 800],
-            pixels_per_point: 1.,
-        };
-        let mut resources = Default::default();
         let mut encoder = device.create_command_encoder(&Default::default());
-        image_paint.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-        scope_paint.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        image_paint.prepare_frame(&device, &mut encoder);
+        scope_paint.prepare_frame(&device, &mut encoder);
         for (image, root) in images.iter().zip(&roots) {
             image
                 .prepare_calculation(&device, &mut encoder, root, &recipe.luts)

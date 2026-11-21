@@ -57,13 +57,15 @@ fn profile_dust_pointer_to_gpu_display() {
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: crate::platform::device_limits(adapter.limits()),
                 ..Default::default()
-            })
-            .await
-            .unwrap()
+            },
+        )
+        .await
+        .unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
     let pressure = std::env::var("ANTITONE_DUST_PRESSURE").unwrap_or_else(|_| "host".into());
@@ -87,12 +89,7 @@ fn profile_dust_pointer_to_gpu_display() {
     );
     editor.document.thumbnails = Thumbnails::default().with_sources(editor.document.cache.clone());
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
-    let renderer = FloatRenderer::new(
-        &device,
-        &queue,
-        host::App::submission_gate(&editor).clone(),
-        capture.clone(),
-    );
+    let renderer = FloatRenderer::new(&device, &queue, capture.clone());
     let owner = RefCell::new(None);
     let mut h = app_harness(&owner, editor, renderer);
     h.set_size(if large {

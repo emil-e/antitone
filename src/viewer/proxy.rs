@@ -93,8 +93,7 @@ impl GpuProxy {
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn view_source(
         &self,
-        queue: &wgpu::Queue,
-        submissions: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         kernels: Arc<crate::gpu::view::ViewKernels>,
         input: &AuthoredPhotograph,
         spec: crate::gpu::view::request::SourceRequest,
@@ -102,7 +101,6 @@ impl GpuProxy {
         crate::gpu::view::ViewImage::from_processing(
             self.0.renderer.evaluation().device(),
             queue,
-            submissions,
             self.0.renderer.clone(),
             kernels,
             self.0.source.clone(),

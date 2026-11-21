@@ -30,19 +30,19 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
     e.set_dmax(None);
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&wgpu::DeviceDescriptor {
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: limits,
                 ..Default::default()
-            })
-            .await
-            .unwrap()
+            },
+        )
+        .await
+        .unwrap()
     });
     let scheduler = source_loading::SourceLoader::new();
-    let renderers = Arc::new(crate::renderer::RendererCache::new(e.submissions.clone()));
+    let renderers = Arc::new(crate::renderer::RendererCache::default());
     e.source_services = Some(source::Services {
         developments: scheduler.clone(),
         renderers: renderers.clone(),

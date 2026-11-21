@@ -71,10 +71,7 @@ fn partial_presentation_maps_coverage_clears_old_padding_and_preserves_supplied_
             depth_or_array_layers: 1,
         },
     );
-    context
-        .submit(&queue, &Default::default(), encoder, || false)
-        .unwrap()
-        .unwrap();
+    context.submit(&queue, encoder, || false).unwrap().unwrap();
     let read = execute::read(&device, &queue, &output);
     for y in 0..3 {
         for x in 0..4 {
@@ -143,7 +140,7 @@ fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_floor_flags
         .unwrap();
     renderer
         .evaluation
-        .submit(&queue, &Default::default(), encoder, || false)
+        .submit(&queue, encoder, || false)
         .unwrap()
         .unwrap();
     for (actual, input) in execute::read(&device, &queue, &output).iter().zip(values) {

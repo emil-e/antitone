@@ -3,7 +3,6 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu::submission::SubmissionGate,
     gpu_export::{
         authored::{Format, Request, write},
         tests::{context, exr_pixels, tiff_pixels},
@@ -26,7 +25,6 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
     )
     .unwrap();
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     let film = GrainPreset::ThirtyFiveMm.settings();
     let seed = (1 << 60) + 17;
@@ -39,7 +37,7 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
         write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Request {
                 scan: &scan,
                 field: None,
@@ -209,7 +207,6 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         .unwrap(),
     );
     let input = crate::gpu::test_inputs::AuthoredPhotograph::from(grade);
-    let gate = SubmissionGate::default();
     let generation = AtomicU64::new(1);
     let directory = tempfile::tempdir().unwrap();
     for crop in [
@@ -234,7 +231,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         let view = crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             (&scan, None),
             input.clone(),
             OutputTarget::Srgb,
@@ -256,7 +253,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Request {
                 scan: &scan,
                 field: None,

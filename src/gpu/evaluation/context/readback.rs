@@ -14,8 +14,7 @@ impl Context {
     /// This worker-side operation submits and waits; never call it during paint.
     pub fn read(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
@@ -30,7 +29,7 @@ impl Context {
             .unwrap_or_else(|| self.materializations())
             .requested(evaluation.job.image(), evaluation.job.region());
         self.read_in(
-            (queue, gate),
+            queue,
             evaluation,
             (&cancelled, &|| {}),
             RunWorkingSet::default(),
@@ -40,7 +39,7 @@ impl Context {
 
     pub(super) fn read_in(
         &self,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         evaluation: &Evaluation,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
         working: RunWorkingSet,
@@ -54,7 +53,6 @@ impl Context {
         let worker = Worker {
             context: self,
             queue,
-            gate,
             scope: &scope,
             working: &working,
             cancelled,
@@ -100,7 +98,7 @@ impl Worker<'_> {
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
         self.working.finish_gpu()?;
-        let (queue, gate) = (self.queue, self.gate);
+        let queue = self.queue;
         let (cancelled, progress) = (self.cancelled, self.progress);
         let mut executor = Executor::with_scope(self.context.programs.clone(), self.scope.clone())
             .with_working(self.working.clone());
@@ -155,7 +153,7 @@ impl Worker<'_> {
 
             let Some(stats) = self.context.run_sink(
                 &mut executor,
-                (queue, gate),
+                queue,
                 &plan,
                 (cancelled, progress),
                 (

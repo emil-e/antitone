@@ -13,7 +13,7 @@ use std::{
 
 fn render(
     _device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &GpuRenderer,
     image: Value,
     crop: CellRegion,
@@ -53,7 +53,6 @@ fn render(
         .evaluation()
         .read(
             queue,
-            &Default::default(),
             &request,
             || false,
             |region, pixels| {

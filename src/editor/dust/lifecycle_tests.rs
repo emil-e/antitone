@@ -144,7 +144,11 @@ fn gpu_editor() -> Editor {
     let mut e = editor();
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &Default::default(),
+    ))
+    .unwrap();
     e.document.visit.working_view = WorkingView::new(device, queue);
     e
 }

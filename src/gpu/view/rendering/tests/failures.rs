@@ -43,7 +43,7 @@ fn worker_production_preserves_memory_failure_without_publishing_a_view() {
     )
     .unwrap();
     assert!(request.ready().is_none());
-    let result = pollster::block_on(request.produce(&queue, &renderer.submissions, || false));
+    let result = pollster::block_on(request.produce(&queue, || false));
     assert!(matches!(result, Err(Error::GpuOutOfMemory(_))));
     assert!(
         request.ready().is_none(),

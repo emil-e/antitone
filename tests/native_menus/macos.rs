@@ -1,10 +1,7 @@
 //! Explicit AppKit menu/event-loop check. Ordinary invocation never opens a window.
-use antitone::{
-    gpu::submission::SubmissionGate,
-    platform::{
-        host,
-        menu::{self, Action},
-    },
+use antitone::platform::{
+    host,
+    menu::{self, Action},
 };
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSMenu};
@@ -61,7 +58,6 @@ fn shortcut_with_modifiers(character: &str, modifiers: NSEventModifierFlags) {
 }
 
 struct MenuApp {
-    submissions: SubmissionGate,
     state: menu::State,
     installed: bool,
     minimizing: Option<objc2::rc::Retained<objc2_app_kit::NSWindow>>,
@@ -73,9 +69,6 @@ struct MenuApp {
 }
 
 impl host::App for MenuApp {
-    fn submission_gate(&self) -> SubmissionGate {
-        self.submissions.clone()
-    }
     fn menu_state(&self) -> Option<menu::State> {
         Some(self.state.clone())
     }
@@ -317,7 +310,6 @@ pub fn main() -> host::Result<()> {
             .enabled
             .extend([Action::Settings, Action::Quit, Action::Scopes]);
         Ok(MenuApp {
-            submissions: SubmissionGate::default(),
             state,
             installed: false,
             minimizing: None,

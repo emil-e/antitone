@@ -1,5 +1,5 @@
 //! Opt-in native idle-executor check; ordinary test invocations do not open a window.
-use antitone::{application::UiContext, gpu::submission::SubmissionGate, platform::host};
+use antitone::{application::UiContext, platform::host};
 use futures_channel::oneshot;
 use std::{
     cell::Cell,
@@ -58,7 +58,6 @@ impl Drop for Cancelled {
 }
 
 struct View {
-    submissions: SubmissionGate,
     report: Arc<Report>,
     in_ui: Rc<Cell<bool>>,
     completed: bool,
@@ -68,10 +67,6 @@ struct View {
 }
 
 impl host::App for View {
-    fn submission_gate(&self) -> SubmissionGate {
-        self.submissions.clone()
-    }
-
     fn on_exit(&mut self) {
         assert!(
             self.report.cancelled.load(Ordering::SeqCst),
@@ -174,7 +169,6 @@ pub fn main() -> host::Result<()> {
         move |_, _, access: UiContext<'_, View>| {
             let in_ui = Rc::new(Cell::new(false));
             let mut view = View {
-                submissions: SubmissionGate::default(),
                 report: view_report.clone(),
                 in_ui: in_ui.clone(),
                 completed: false,

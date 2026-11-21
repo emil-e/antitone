@@ -110,7 +110,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             sources: scheduler.provider(None),
             device,
             queue,
-            renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+            renderers: Arc::new(crate::renderer::RendererCache::default()),
         };
         let captured = input(&services, &request);
         let mut state = services.fit(request.clone(), captured.clone()).unwrap();
@@ -271,7 +271,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -387,7 +387,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -435,7 +435,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -491,7 +491,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -522,7 +522,7 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let error = futures_lite::future::block_on(run(

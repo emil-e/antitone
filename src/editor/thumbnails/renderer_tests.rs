@@ -60,7 +60,9 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderers = Arc::new(RendererCache::default());
         let mut thumbnails = Thumbnails {
             gpu: Some((device.clone(), queue.clone(), renderers.clone())),
@@ -205,7 +207,9 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut scan = Scan::open(&PathBuf::from("samples/DSC04416.ARW"), None).unwrap();
         let a = scan.area;
         let field = Arc::new(
@@ -308,7 +312,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                 let image = crate::refinement::refine(
                     &renderer,
                     &device,
-                    (&queue, &crate::platform::SubmissionGate::default()),
+                    &queue,
                     (&scan, Some(gpu_field.clone())),
                     parameters.clone(),
                     target,
@@ -349,7 +353,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     crate::refinement::refine(
                         &renderer,
                         &device,
-                        (&queue, &crate::platform::SubmissionGate::default()),
+                        &queue,
                         (&scan, Some(gpu_field.clone())),
                         parameters.clone(),
                         target,
@@ -367,7 +371,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     crate::refinement::refine(
                         &renderer,
                         &device,
-                        (&queue, &crate::platform::SubmissionGate::default()),
+                        &queue,
                         (&scan, Some(gpu_field.clone())),
                         parameters.clone(),
                         target,
@@ -389,7 +393,9 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderers = Arc::new(RendererCache::default());
         renderers.prewarm(device.clone(), queue.clone());
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
@@ -425,7 +431,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         seeded.seed(source, file.clone(), proxy);
         let key = tests::key(&document, document.project.order[2]);
         let _ = file;
-        use egui_wgpu::CallbackTrait;
+
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
         let parameters = crate::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
@@ -459,6 +465,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         };
         let gpu = Arc::new(crate::gpu_scopes::GpuScopes::new(&device).await.unwrap());
         let scope = crate::gpu_scopes::ScopePaint::with_processing(
+            queue.clone(),
             gpu.clone(),
             image.clone(),
             parameters.clone(),
@@ -467,11 +474,6 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             egui::Context::default(),
         )
         .unwrap();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [1100, 800],
-            pixels_per_point: 1.,
-        };
-        let mut resources = egui_wgpu::CallbackResources::default();
         let job = tests::service_job(
             &seeded,
             key.clone(),
@@ -481,7 +483,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             true,
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        scope.prepare_frame(&device, &mut encoder);
         assert!(
             !image
                 .prepare_processing(&device, &mut encoder, &parameters)
@@ -518,7 +520,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         tests::complete_service_request(&mut restarted, &document, job);
         assert_eq!(restarted.ready_count(&document, OutputTarget::DisplayP3), 1);
         let mut encoder = device.create_command_encoder(&Default::default());
-        scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        scope.prepare_frame(&device, &mut encoder);
         assert!(
             !image
                 .prepare_processing(&device, &mut encoder, &parameters)
@@ -558,7 +560,9 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
         let source = document.project.source(id).unwrap().clone();
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut thumbnails = Thumbnails::with_disk(
             device,
             queue,
@@ -582,7 +586,7 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
     });
 }
 
-fn wait(device: &wgpu::Device, queue: &wgpu::Queue) {
+fn wait(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) {
     let submission = queue.submit([]);
     device
         .poll(wgpu::PollType::Wait {
@@ -593,7 +597,11 @@ fn wait(device: &wgpu::Device, queue: &wgpu::Queue) {
 }
 
 #[cfg(feature = "ocio-reference")]
-fn pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<u8> {
+fn pixels(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    image: &GpuImage,
+) -> Vec<u8> {
     let width = image.linear.width();
     let height = image.linear.height();
     let row = (width * 16).div_ceil(256) * 256;

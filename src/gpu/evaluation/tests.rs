@@ -299,13 +299,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
     assert!(first.last_use[first.result.resource.0] == first.fragment.work.len());
     let mut executor = execute::Executor::default();
     let result = executor
-        .run(
-            &device,
-            &queue,
-            &crate::gpu::submission::SubmissionGate::default(),
-            &plan,
-            || false,
-        )
+        .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
     assert_eq!(result.counts.submissions, plan.tiles.len());
@@ -328,13 +322,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
         [41, 35],
     );
     let whole = executor
-        .run(
-            &device,
-            &queue,
-            &crate::gpu::submission::SubmissionGate::default(),
-            &whole,
-            || false,
-        )
+        .run(&device, &queue, &whole, || false)
         .unwrap()
         .unwrap();
     let whole = execute::read(&device, &queue, &whole.pixels);
@@ -343,7 +331,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
         [13, 11],
     );
     let omitted = executor
-        .run(&device, &queue, &Default::default(), &omitted, || false)
+        .run(&device, &queue, &omitted, || false)
         .unwrap()
         .unwrap();
     let omitted = execute::read(&device, &queue, &omitted.pixels);
@@ -380,13 +368,7 @@ fn both_sampling_orders_are_compositions_with_independent_ocio_expectations() {
                 [13, 11],
             );
             let result = execute::Executor::default()
-                .run(
-                    &device,
-                    &queue,
-                    &crate::gpu::submission::SubmissionGate::default(),
-                    &p,
-                    || false,
-                )
+                .run(&device, &queue, &p, || false)
                 .unwrap()
                 .unwrap();
             let actual = execute::read(&device, &queue, &result.pixels);

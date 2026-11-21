@@ -120,7 +120,7 @@ fn query(context: &Context, root: Value, region: CellRegion) -> Evaluation {
 }
 fn consume(
     context: Context,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     evaluation: Evaluation,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<Result<Option<Vec<[f32; 4]>>, crate::Error>> {
@@ -128,7 +128,6 @@ fn consume(
         let mut pixels = Vec::new();
         let counts = context.read(
             &queue,
-            &Default::default(),
             &evaluation,
             || stop.load(Ordering::Acquire),
             |_, values| {
@@ -258,7 +257,6 @@ fn host_delivery_of_a_cpu_calculation_needs_no_gpu_upload_or_readback() {
     let counts = context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, part| {
@@ -317,7 +315,7 @@ fn backend_value(input: Value) -> Value {
 }
 fn consume_backend(
     context: Context,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     evaluation: Evaluation,
     stop: Arc<AtomicBool>,
     unit: WorkUnit,
@@ -326,7 +324,7 @@ fn consume_backend(
 }
 fn consume_backend_observed(
     context: Context,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     evaluation: Evaluation,
     stop: Arc<AtomicBool>,
     unit: WorkUnit,
@@ -334,13 +332,11 @@ fn consume_backend_observed(
 ) -> thread::JoinHandle<Result<Option<Vec<[f32; 4]>>, crate::Error>> {
     thread::spawn(move || {
         let scope = context.materializations();
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let working = RunWorkingSet::default();
         let cancelled = || stop.load(Ordering::Acquire);
         let worker = Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &cancelled,
@@ -461,7 +457,7 @@ fn retiring_a_queued_materialization_does_not_claim_or_run_its_unit() {
     let input = Value::from_operation(Ramp.domain(), [], ConstantCpu);
     let encoded = Arc::new(AtomicUsize::new(0));
     let observed = encoded.clone();
-    let submissions = crate::gpu::submission::SubmissionGate::default();
+    let submissions = queue.clone();
     submissions.observe_encoded_resources(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
@@ -482,7 +478,6 @@ fn retiring_a_queued_materialization_does_not_claim_or_run_its_unit() {
         context
             .materialize(
                 &queue,
-                &submissions,
                 &scope,
                 evaluation.clone(),
                 ImageFormat::Rgba32Float,
@@ -501,7 +496,6 @@ fn retiring_a_queued_materialization_does_not_claim_or_run_its_unit() {
         context
             .materialize(
                 &queue,
-                &submissions,
                 &scope,
                 evaluation,
                 ImageFormat::Rgba32Float,
@@ -767,7 +761,6 @@ fn one_worker_pool_completes_nested_units_and_dependent_batches_in_both_orders()
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &context.materializations(),
                     evaluation(root.clone()),
                     ImageFormat::Rgba32Float,
@@ -790,12 +783,7 @@ fn one_worker_pool_completes_nested_units_and_dependent_batches_in_both_orders()
             };
             let results = pollster::block_on(futures_util::future::try_join_all(
                 context
-                    .materialize_many(
-                        &queue,
-                        &Default::default(),
-                        &scope,
-                        nodes.into_iter().map(evaluation).collect(),
-                    )
+                    .materialize_many(&queue, &scope, nodes.into_iter().map(evaluation).collect())
                     .unwrap(),
             ))
             .unwrap();
@@ -879,7 +867,6 @@ fn malformed_host_backing_and_format_are_rejected_before_delivering_pixels() {
         let mut delivered = false;
         let result = context.read(
             &queue,
-            &Default::default(),
             &query(&context, root, [0, 0, 1, 1].into()),
             || false,
             |_, _| {

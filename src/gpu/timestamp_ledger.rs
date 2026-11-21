@@ -1,6 +1,5 @@
 //! Opt-in pass counters without additional per-tile submissions or completion waits.
 use crate::Error;
-use crate::gpu::submission::SubmissionGate;
 use objc2_metal::MTLDevice;
 use std::sync::Arc;
 use std::{
@@ -271,7 +270,10 @@ impl Timebase {
     }
 
     #[cfg(feature = "editor")]
-    pub fn calibrate(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
+    pub fn calibrate(
+        device: &wgpu::Device,
+        queue: &crate::gpu::submission::Queue,
+    ) -> Result<Arc<Self>, Error> {
         if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err(Error::Gpu("timestamp feature was not requested".into()));
         }
@@ -463,8 +465,7 @@ impl TimestampProbe {
     pub fn flush(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
     ) -> Result<(), Error> {
         if self.record.is_none() {
             return Ok(());
@@ -472,7 +473,7 @@ impl TimestampProbe {
         let result = (|| {
             let mut encoder = device.create_command_encoder(&Default::default());
             self.resolve(&mut encoder);
-            let submission = gate.submit(queue, [encoder.finish()]);
+            let submission = queue.submit([encoder.finish()]);
             self.stats.collection_submissions += 1;
             self.arm();
             device

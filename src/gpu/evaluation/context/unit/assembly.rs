@@ -49,7 +49,7 @@ impl Copies {
             if gpu_only {
                 production.working.submit_gpu(
                     production.context.device(),
-                    (production.queue, production.gate),
+                    production.queue,
                     encoder,
                     resources,
                     || {},
@@ -57,7 +57,7 @@ impl Copies {
             } else {
                 production
                     .context
-                    .submit(production.queue, production.gate, encoder, || false)?
+                    .submit(production.queue, encoder, || false)?
                     .ok_or(Error::Cancelled)?;
             }
             drop(images);

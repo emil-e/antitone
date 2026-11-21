@@ -3,14 +3,12 @@ use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
 use crate::gpu::{
     evaluation as e,
     repairs::{definition, fixtures},
-    submission::SubmissionGate,
 };
 use std::sync::Arc;
 
 #[test]
 fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_untouched_samples() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let gate = SubmissionGate::default();
     let start = 1 << 25;
     let area: SourceRegion = [start, start, 256, 128].into();
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
@@ -80,7 +78,6 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                     .evaluation
                     .materialize(
                         &queue,
-                        &gate,
                         &scope,
                         request,
                         e::ImageFormat::Rgba32Float,
@@ -95,7 +92,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                 .encode(&device, &mut encoder, &unit, &texture, &working)
                 .unwrap();
             reconstruction
-                .read(&device, gate.submit(&queue, [encoder.finish()]), [128; 2])
+                .read(&device, queue.submit([encoder.finish()]), [128; 2])
                 .unwrap()
         };
         let plain = render(base.clone());

@@ -25,11 +25,9 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
     let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
         &device,
         &queue,
-        SubmissionGate::default(),
         crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },
     ))
     .unwrap();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     for (name, format) in [
         ("srgb.tif", Format::Tiff(OutputTarget::Srgb)),
@@ -42,7 +40,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Job {
                     scan: &scan,
                     field: None,
@@ -97,14 +95,9 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let reader = crate::gpu::repair_source::Source::from_recipe(
-        field,
-        &renderer,
-        (&queue, &gate),
-        &scan,
-        &repaired,
-    )
-    .unwrap();
+    let reader =
+        crate::gpu::repair_source::Source::from_recipe(field, &renderer, &queue, &scan, &repaired)
+            .unwrap();
     assert_eq!(
         reader
             .repair_succeeded(&repaired.repairs[0], &|| false)

@@ -282,7 +282,6 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &scope,
                     query,
                     ImageFormat::Rgba32Float,

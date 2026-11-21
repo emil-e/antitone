@@ -24,7 +24,6 @@ fn cost_and_retirement(with_underlay: bool) {
             _ => [1920, 1080],
         };
         let (device, queue, renderer, kernels) = context().await;
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let (mut scan, cal) = if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
             crate::raw_test_support::train_raw::load()
         } else {
@@ -78,7 +77,6 @@ fn cost_and_retirement(with_underlay: bool) {
         let mut sources = ViewImage::prefixes(
             &device,
             &queue,
-            &gate,
             renderer,
             kernels,
             &scan,
@@ -187,7 +185,7 @@ fn cost_and_retirement(with_underlay: bool) {
                         previous.as_ref().unwrap().product.as_ref().unwrap()
                     ));
                 }
-                visible.ensure_submitted(&device, &queue, &gate, &context);
+                visible.ensure_submitted(&device, &queue, &context);
                 peak = peak.max(native());
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert!(!visible.in_flight());

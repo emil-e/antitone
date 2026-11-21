@@ -189,7 +189,6 @@ fn materialize(root: Value, tile: [u32; 2]) -> Vec<[f32; 4]> {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 context
                     .request(
@@ -346,13 +345,16 @@ fn nested_reconstruction_uses_natural_contributions_when_coalescing_exceeds_a_bi
     let alias = Value::from_operation(inner.domain, Some(inner), Alias);
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 1 << 20,
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 1 << 20,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     let limits = device.limits();
     let budget = Tiling { tile: [32, 32] };
@@ -400,7 +402,6 @@ fn nested_reconstruction_uses_natural_contributions_when_coalescing_exceeds_a_bi
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request,
                 ImageFormat::Rgba32Float,
@@ -503,7 +504,6 @@ fn nested_workers_execute_without_a_parent_residual_byte_allowance() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request,
                 ImageFormat::Rgba32Float,
@@ -552,7 +552,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
     });
     let stopped = Arc::new(AtomicBool::new(false));
     let submissions = Arc::new(AtomicUsize::new(0));
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let (stop, count) = (stopped.clone(), submissions.clone());
     gate.observe_submissions(Arc::new(move || {
         if count.fetch_add(1, Ordering::SeqCst) == 1 {
@@ -575,7 +575,6 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
         worker: Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &RunWorkingSet::default(),
             cancelled: &|| stopped.load(Ordering::SeqCst),
@@ -645,9 +644,7 @@ fn shared_neighbourhoods_preserve_individual_results_without_reacquiring_the_sam
         })
         .collect();
     let images = pollster::block_on(futures_util::future::try_join_all(
-        context
-            .materialize_many(&queue, &Default::default(), &scope, requests)
-            .unwrap(),
+        context.materialize_many(&queue, &scope, requests).unwrap(),
     ))
     .unwrap();
     for (image, expected) in images.iter().zip(expected) {
@@ -712,9 +709,7 @@ fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
         })
         .collect();
     let images = pollster::block_on(futures_util::future::try_join_all(
-        context
-            .materialize_many(&queue, &Default::default(), &scope, requests)
-            .unwrap(),
+        context.materialize_many(&queue, &scope, requests).unwrap(),
     ))
     .unwrap();
     for (image, expected) in images.iter().zip([[-2., 3., 4., 9.], [5., -4., 8., 10.]]) {
@@ -771,7 +766,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
         })
         .collect();
     let futures = context
-        .materialize_many(&queue, &Default::default(), &scope, evaluations)
+        .materialize_many(&queue, &scope, evaluations)
         .unwrap();
     let images = pollster::block_on(futures_util::future::try_join_all(futures)).unwrap();
     assert!(Arc::ptr_eq(&images[0].image, &images[2].image));
@@ -856,7 +851,6 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
                 context
                     .read(
                         &queue,
-                        &Default::default(),
                         &evaluation,
                         || false,
                         |region, pixels| {
@@ -881,7 +875,6 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
                 context
                     .evaluate_with(
                         &queue,
-                        &Default::default(),
                         &evaluation,
                         || false,
                         Sink {
@@ -934,7 +927,6 @@ fn large_aperture_bounds_source_reads_and_applies_upstream_math_before_averaging
         context
             .read(
                 &queue,
-                &Default::default(),
                 &evaluation,
                 || !reads.lock().unwrap().is_empty(),
                 |_, _| panic!("cancelled production must not deliver a result"),
@@ -1077,12 +1069,11 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
     let budget = Tiling { tile: [512, 256] };
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let resident = pollster::block_on(
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 context
                     .request(
@@ -1151,7 +1142,6 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 context
                     .request(
@@ -1234,7 +1224,6 @@ fn invalid_addressing_rejects_before_io_and_valid_neighbourhoods_propagate_sourc
             .unwrap();
         let result = context.read(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             |_, _| panic!("inadmissible neighbourhood delivered"),
@@ -1266,7 +1255,6 @@ fn a_normal_reduction_executes_without_a_per_request_byte_allowance() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &context.test_materializations(false),
                 context
                     .request(

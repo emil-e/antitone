@@ -3,7 +3,6 @@ use super::*;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewKernels;
@@ -95,8 +94,7 @@ fn non_cfa_import_reopen_view_and_bounded_exports() {
 
 pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let gate = SubmissionGate::default();
-    let renderers = crate::renderer::RendererCache::new(gate.clone());
+    let renderers = crate::renderer::RendererCache::default();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let directory =
         tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".cache")).unwrap();
@@ -191,13 +189,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             let spec = SourceRequest::new(frame, settings, matrix, None).unwrap();
             let source = ready
                 .proxy
-                .view_source(
-                    &queue,
-                    &gate,
-                    kernels.clone(),
-                    &spec.processing_fixture(),
-                    spec,
-                )
+                .view_source(&queue, kernels.clone(), &spec.processing_fixture(), spec)
                 .unwrap();
             let input: AuthoredPhotograph = Arc::new(
                 AuthoredPhotograph::new(
@@ -214,7 +206,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let view =
                     RenderedView::new(&device, source.clone(), &input, target, None).unwrap();
-                view.ensure_submitted(&device, &queue, &gate, &egui::Context::default());
+                view.ensure_submitted(&device, &queue, &egui::Context::default());
                 let pixels = crate::viewer::readback::image_pixels(&device, &queue, &view.image);
                 assert_eq!(pixels.len(), (view_size[0] * view_size[1]) as usize);
                 assert!(pixels.iter().flatten().all(|v| v.is_finite()));
@@ -319,7 +311,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 crate::gpu_export::authored::write(
                     &renderer,
                     &device,
-                    (&queue, &gate),
+                    &queue,
                     crate::gpu_export::authored::Request {
                         scan: &reopened_scan,
                         field: None,

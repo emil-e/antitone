@@ -160,11 +160,9 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
     recorded
         .encode_result(&device, &mut encoder, &output)
         .unwrap();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     context
         .submit_with(
             &queue,
-            &gate,
             encoder,
             || false,
             || {
@@ -186,7 +184,6 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(),
                 ImageFormat::Rgba32Float,
@@ -228,7 +225,6 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(),
                 ImageFormat::Rgba32Float,

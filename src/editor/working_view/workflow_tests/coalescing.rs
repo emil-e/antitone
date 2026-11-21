@@ -69,7 +69,6 @@ fn assert_coherent(editor: &mut Editor, wanted: &Demand) {
 fn ready_inputs_preserve_coherent_gamma_and_wb_snapshots_without_requiring_worker_submission() {
     let (editor, pixels, base, scheduler) = fixture();
     let services = editor.source_services.as_ref().unwrap().clone();
-    let submissions = editor.submissions.clone();
     with_application(editor, |app| {
         let initial = capture(&pixels, &base, 0., 0.);
         app.enter(|editor, cx| editor.request_working(initial, cx));
@@ -88,7 +87,6 @@ fn ready_inputs_preserve_coherent_gamma_and_wb_snapshots_without_requiring_worke
                     .clone()
             }),
             &services,
-            &submissions,
         );
         for (gamma, wb) in [(0.02, 0.15), (-0.01, -0.07), (-0.03, -0.2)] {
             let wanted = capture(&pixels, &base, gamma, wb);
@@ -109,7 +107,6 @@ fn ready_inputs_preserve_coherent_gamma_and_wb_snapshots_without_requiring_worke
                         .clone()
                 }),
                 &services,
-                &submissions,
             );
         }
     });
@@ -123,7 +120,7 @@ fn running_capture_coalesces_superseded_controls_and_finishes_with_the_latest_co
     let last = capture(&pixels, &base, -0.03, -0.2);
     assert!(first.same_source(&last));
     assert!(!first.same_calculation(&last));
-    let submissions = editor.submissions.clone();
+    let submissions = editor.submissions().clone();
     let services = editor.source_services.as_ref().unwrap().clone();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
@@ -204,7 +201,6 @@ fn running_capture_coalesces_superseded_controls_and_finishes_with_the_latest_co
                     .clone()
             }),
             &services,
-            &submissions,
         );
     });
     scheduler.close_and_wait().unwrap();

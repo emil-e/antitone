@@ -1,6 +1,5 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
@@ -14,7 +13,6 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,
@@ -91,11 +89,9 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             .unwrap()
             .with_definition(input.definition())
             .unwrap();
-        let gate = SubmissionGate::default();
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &gate,
             renderer,
             kernels,
             &scan,
@@ -108,7 +104,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         let first =
             RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None).unwrap();
         let context = egui::Context::default();
-        first.ensure_submitted(&device, &queue, &gate, &context);
+        first.ensure_submitted(&device, &queue, &context);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let pixels = crate::viewer::readback::image_pixels(&device, &queue, &first.image);
         assert!(pixels.iter().any(|p| p[..3].iter().any(|&c| c > 0.)));
@@ -126,7 +122,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             next.product.as_ref().unwrap()
         ));
         assert!(first.matches(&next.spec, &input, OutputTarget::Srgb));
-        next.ensure_submitted(&device, &queue, &gate, &context);
+        next.ensure_submitted(&device, &queue, &context);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(
             pixels,
@@ -195,10 +191,9 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
         );
         let other =
             RenderedView::new(&device, b, &input, OutputTarget::Srgb, Some(&first)).unwrap();
-        let gate = SubmissionGate::default();
         let ui = egui::Context::default();
-        first.ensure_submitted(&device, &queue, &gate, &ui);
-        other.ensure_submitted(&device, &queue, &gate, &ui);
+        first.ensure_submitted(&device, &queue, &ui);
+        other.ensure_submitted(&device, &queue, &ui);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         for (view, expected) in [(&first, [0.25, 0.5, 1.]), (&other, [0.75, 1., 1.5])] {
             let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
@@ -228,7 +223,7 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
             .with_identity(crate::gpu::source::identity::Identity::camera(
                 unrelated.source().identity(),
             ));
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed = count.clone();
         gate.observe_submissions(Arc::new(move || {
@@ -238,7 +233,6 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
             ViewImage::prefix(
                 &device,
                 &queue,
-                &gate,
                 renderer,
                 kernels,
                 &scan,

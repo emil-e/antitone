@@ -3,7 +3,7 @@ use crate::grain::{GrainPreset, GrainSettings};
 
 fn processed(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
     settings: GrainSettings,
     frame_size: [u32; 2],
@@ -13,7 +13,7 @@ fn processed(
 
 fn processed_with_flags(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
     settings: GrainSettings,
     flags: f32,
@@ -27,7 +27,7 @@ fn processed_with_flags(
 
 fn processed_pipeline(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
     pipeline: &crate::gpu::photograph::assembly::Assembly,
     flags: f32,
@@ -49,7 +49,7 @@ fn processed_pipeline(
 
 fn processed_pixels(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
     pipeline: &crate::gpu::photograph::assembly::Assembly,
     values: &[[f32; 4]],

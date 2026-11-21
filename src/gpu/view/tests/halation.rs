@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
@@ -98,12 +97,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         }),
     ));
     let view = RenderedView::new(&device, source, &processing, OutputTarget::Srgb, None).unwrap();
-    view.ensure_submitted(
-        &device,
-        &queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(&device, &queue, &egui::Context::default());
     let actual = crate::gpu::evaluation::read_buffer(
         &device,
         &queue,

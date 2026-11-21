@@ -24,7 +24,7 @@ fn negative(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
 
 fn capture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     fixture: &CameraFixture,
     source: &ProcessingSource,
     parameters: ProcessingParameters,
@@ -77,7 +77,9 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let fixture = CameraFixture::new(&device).await.unwrap();
         let base = DVec3::new(40000., 45000., 50000.);
         let dense = DVec3::new(5000., 7000., 9000.);
@@ -198,7 +200,9 @@ fn film_base_and_signed_neighbours_follow_represented_camera_values() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     let fixture = pollster::block_on(CameraFixture::new(&device)).unwrap();
     let base = 0.5_f32;
@@ -254,7 +258,9 @@ fn creative_operators_preserve_identity_oklab_lightness_hue_and_finite_signed_va
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("direct photographic primitive gate"),
             source: wgpu::ShaderSource::Wgsl(

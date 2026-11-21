@@ -93,15 +93,14 @@ fn case(
 
 fn regional(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &Arc<crate::renderer::GpuRenderer>,
-    gate: &crate::gpu::submission::SubmissionGate,
     case: &Case,
 ) -> Arc<crate::viewer::GpuImage> {
     crate::refinement::refine(
         renderer,
         device,
-        (queue, gate),
+        queue,
         (&case.scan, None),
         case.input.clone(),
         OutputTarget::Srgb,
@@ -124,8 +123,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
     .write();
     let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
     let case = case(&device, &renderer, scan, [73, 59]);
-    let gate = crate::gpu::submission::SubmissionGate::default();
-    let original = regional(&device, &queue, &renderer, &gate, &case);
+    let original = regional(&device, &queue, &renderer, &case);
     let original = crate::viewer::readback::image_pixels(&device, &queue, &original);
     assert!(original.iter().flatten().all(|v| v.is_finite()));
     let expected = original
@@ -141,7 +139,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
         )
         .unwrap();
         let result = execute::Executor::default()
-            .run(&device, &queue, &gate, &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         let actual = execute::read(&device, &queue, &result.pixels);
@@ -166,15 +164,14 @@ fn native_evaluation_resource_comparison() {
     .write();
     let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
     let case = case(&device, &renderer, scan, [147, 113]);
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let peak = Arc::new(AtomicU64::new(0));
     let submissions = Arc::new(AtomicU64::new(0));
     let submitted = submissions.clone();
-    gate.observe_submissions(Arc::new(move || {
+    queue.observe_submissions(Arc::new(move || {
         submitted.fetch_add(1, Ordering::Relaxed);
     }));
     let (observed, observed_device) = (peak.clone(), device.clone());
-    gate.observe_encoded_resources(Arc::new(move || {
+    queue.observe_encoded_resources(Arc::new(move || {
         observed.fetch_max(
             crate::sys::allocated_resource_bytes(&observed_device).unwrap_or(0) as u64,
             Ordering::Relaxed,
@@ -221,7 +218,7 @@ fn native_evaluation_resource_comparison() {
         let start = std::time::Instant::now();
         if let Some(plan) = &plan {
             let result = executor
-                .run(&device, &queue, &gate, plan, || false)
+                .run(&device, &queue, plan, || false)
                 .unwrap()
                 .unwrap();
             println!(
@@ -238,7 +235,7 @@ fn native_evaluation_resource_comparison() {
                 std::fs::write(path, bytemuck::cast_slice(&pixels)).unwrap();
             }
         } else {
-            let result = regional(&device, &queue, &renderer, &gate, &case);
+            let result = regional(&device, &queue, &renderer, &case);
             println!(
                 "evaluation_compare implementation={mode} run={run} seconds={:.9} retained={:?} encoded_peak={}",
                 start.elapsed().as_secs_f64(),

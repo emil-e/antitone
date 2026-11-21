@@ -75,8 +75,7 @@ impl Operation for Normalize {
 
 fn read_frame(
     context: &Context,
-    queue: &wgpu::Queue,
-    gate: &crate::gpu::submission::SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {
     let region = image.domain().finite().unwrap();
@@ -96,7 +95,6 @@ fn read_frame(
     context
         .read(
             queue,
-            gate,
             &query,
             || false,
             |block, values| {
@@ -119,7 +117,7 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
     let (device, queue, _) = crate::gpu::test_support::render_context();
     for angle in [0., 0.2] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let observed = count.clone();
         gate.observe_encoded_resources(Arc::new(move || {
@@ -141,7 +139,6 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
             context
                 .materialize(
                     &queue,
-                    &gate,
                     &context.materializations(),
                     query,
                     ImageFormat::Rgba16Uint,
@@ -187,14 +184,14 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
             meaning: Meaning::Neutral,
         };
         let damaged = reconstruct(base.clone(), domain).unwrap();
-        let control = read_frame(&context, &queue, &gate, damaged);
+        let control = read_frame(&context, &queue, damaged);
         assert!(
             control.iter().any(|pixel| pixel[0] < 0.05),
             "the visible defect must distinguish healing from a no-op"
         );
         let healed = reconstruct(compose(base, &[repair]).unwrap(), domain).unwrap();
         count.store(0, Ordering::Relaxed);
-        let pixels = read_frame(&context, &queue, &gate, healed);
+        let pixels = read_frame(&context, &queue, healed);
         for pixel in pixels {
             for (actual, expected) in pixel.into_iter().zip([0.1, 0.2, 0.4, 0.]) {
                 assert!(
@@ -320,7 +317,6 @@ fn a_wide_base_retains_the_repair_grade_and_window_binding_fallbacks() {
             context
                 .read(
                     &queue,
-                    &Default::default(),
                     &query,
                     || false,
                     |block, values| {
@@ -472,7 +468,6 @@ fn replacement_arguments_keep_private_captures_masks_and_original_metadata_separ
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |block, pixels| {

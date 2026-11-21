@@ -147,12 +147,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
             }),
         ));
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None)?;
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &SubmissionGate::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         Ok(read_buffer(
             &device,
             &queue,

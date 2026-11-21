@@ -591,10 +591,8 @@ pub struct ScopePaint {
     calculation: Option<Value>,
     luts: LutChain,
     #[cfg(feature = "editor")]
-    rendered: Option<(
-        Arc<crate::gpu::view::RenderedView>,
-        crate::gpu::submission::SubmissionGate,
-    )>,
+    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
+    queue: crate::gpu::submission::Queue,
     pub frame: FrameRaster,
     mapping: TextureMapping,
     pub settings: Settings,
@@ -609,7 +607,7 @@ impl ScopePaint {
         view: Arc<crate::gpu::view::RenderedView>,
         frame: FrameRaster,
         settings: Settings,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Self {
         Self {
@@ -617,7 +615,8 @@ impl ScopePaint {
             image: view.image.clone(),
             calculation: None,
             luts: Default::default(),
-            rendered: Some((view, submissions)),
+            rendered: Some(view),
+            queue,
             frame,
             mapping: TextureMapping::IDENTITY,
             settings,
@@ -633,15 +632,16 @@ impl ScopePaint {
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Self {
-        let mut paint = Self::rendered(gpu, view, frame, settings, submissions, context);
+        let mut paint = Self::rendered(gpu, view, frame, settings, queue, context);
         paint.mapping = mapping;
         paint
     }
 
     pub fn new(
+        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         parameters: ProcessingParameters,
@@ -654,6 +654,7 @@ impl ScopePaint {
             .and_then(|prefix| image.output(prefix, &Default::default()))
             .expect("admitted source-view transform");
         Self::with_calculation(
+            queue,
             gpu,
             image,
             (calculation, Default::default()),
@@ -665,6 +666,7 @@ impl ScopePaint {
     }
 
     pub fn with_calculation(
+        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         (calculation, luts): (Value, LutChain),
@@ -680,6 +682,7 @@ impl ScopePaint {
             luts,
             #[cfg(feature = "editor")]
             rendered: None,
+            queue,
             frame,
             mapping: TextureMapping::IDENTITY,
             settings,
@@ -690,6 +693,7 @@ impl ScopePaint {
 
     #[cfg(test)]
     pub(crate) fn with_processing(
+        queue: crate::gpu::submission::Queue,
         gpu: Arc<GpuScopes>,
         image: Arc<GpuImage>,
         processing: AuthoredPhotograph,
@@ -699,6 +703,7 @@ impl ScopePaint {
     ) -> Result<Self, Error> {
         let calculation = image.legacy_calculation(&processing)?;
         Self::with_calculation(
+            queue,
             gpu,
             image,
             (calculation, processing.luts().clone()),
@@ -709,15 +714,9 @@ impl ScopePaint {
     }
 }
 
-impl egui_wgpu::CallbackTrait for ScopePaint {
-    fn prepare(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        _screen: &egui_wgpu::ScreenDescriptor,
-        encoder: &mut wgpu::CommandEncoder,
-        _resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
+impl ScopePaint {
+    #[doc(hidden)]
+    pub fn prepare_frame(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let key;
         let coverage_ready;
         let proxy_mapping = self.frame.composition.texture_mapping(
@@ -730,8 +729,8 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         #[cfg(not(feature = "editor"))]
         let rendered: Option<()> = None;
         #[cfg(feature = "editor")]
-        if let Some((view, submissions)) = rendered {
-            view.ensure_submitted(device, queue, submissions, &self.context);
+        if let Some(view) = rendered {
+            view.ensure_submitted(device, &self.queue, &self.context);
             key = Key::rendered(view, self.frame, self.mapping, self.settings);
             coverage_ready = matches!(self.image.look_result(), Some(Ok(())));
         } else {
@@ -742,7 +741,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
             self.image
                 .prepare_rendering_calculation(
                     device,
-                    queue,
+                    &self.queue,
                     encoder,
                     (root, &self.luts),
                     proxy_mapping,
@@ -761,7 +760,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
             self.image
                 .prepare_rendering_calculation(
                     device,
-                    queue,
+                    &self.queue,
                     encoder,
                     (root, &self.luts),
                     proxy_mapping,
@@ -851,6 +850,19 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
                     .request_repaint_after(std::time::Duration::from_millis(16));
             }
         }
+    }
+}
+
+impl egui_wgpu::CallbackTrait for ScopePaint {
+    fn prepare(
+        &self,
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _screen: &egui_wgpu::ScreenDescriptor,
+        encoder: &mut wgpu::CommandEncoder,
+        _resources: &mut egui_wgpu::CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        self.prepare_frame(device, encoder);
         Vec::new()
     }
 

@@ -6,7 +6,6 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::submission::SubmissionGate,
     gpu_export::Format,
     processing::{Calibration, InputSettings},
     renderer::GpuRenderer,
@@ -98,7 +97,10 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
@@ -111,7 +113,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         authored_export::write(
             &renderer,
             &device,
-            (&queue, &SubmissionGate::default()),
+            &queue,
             Request {
                 scan: &scan,
                 field: None,

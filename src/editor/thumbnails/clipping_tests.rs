@@ -61,7 +61,7 @@ fn callbacks(output: &egui::FullOutput) -> Vec<(egui::Rect, egui::Rect)> {
 
 pub(super) fn paint(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     context: &egui::Context,
     renderer: &mut egui_wgpu::Renderer,
     mut output: egui::FullOutput,
@@ -70,7 +70,7 @@ pub(super) fn paint(
 ) -> Vec<[u16; 4]> {
     for (id, deltas) in &output.textures_delta.set {
         for delta in deltas {
-            renderer.update_texture(device, queue, *id, delta);
+            queue.update_egui_texture(renderer, device, *id, delta);
         }
     }
     output.textures_delta.clear();
@@ -90,7 +90,7 @@ pub(super) fn paint(
         pixels_per_point,
     );
     let mut encoder = device.create_command_encoder(&Default::default());
-    let commands = renderer.update_buffers(device, queue, &mut encoder, &jobs, &screen);
+    let commands = queue.update_egui_buffers(renderer, device, &mut encoder, &jobs, &screen);
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("thumbnail clipping regression"),
         size: wgpu::Extent3d {
@@ -156,7 +156,9 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let shared = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -192,6 +194,8 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     let mut editor = crate::editor::tests::fixture();
                     editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
+                    editor.document.thumbnails.gpu =
+                        Some((device.clone(), queue.clone(), Arc::default()));
                     if let Some(contrast) = contrast {
                         for source in &mut editor.document.state.project.sources {
                             source.adjustment_layers.as_mut().unwrap().layers[0]

@@ -117,7 +117,7 @@ fn export_cancellation_reaches_the_real_healer_after_its_inputs_arrive_and_prese
     let result = crate::gpu_export::write_checked(
         &renderer,
         &device,
-        (&queue, &Default::default()),
+        &queue,
         crate::gpu_export::Request {
             definition,
             composition: recipe.composition,

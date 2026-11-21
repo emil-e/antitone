@@ -4,7 +4,7 @@ use crate::gpu::photograph::request::PhotographRequest;
 
 pub(super) fn materialize(
     renderer: &crate::renderer::GpuRenderer,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     scope: &Materializations,
     image: Value,
     bounds: CellRegion,
@@ -26,7 +26,6 @@ pub(super) fn materialize(
         context
             .materialize(
                 queue,
-                &Default::default(),
                 scope,
                 evaluation,
                 ImageFormat::Rgba32Float,

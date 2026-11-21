@@ -154,7 +154,7 @@ fn emitted_record_functions_execute_the_polynomial_on_supplied_pixels() {
     sample.materialize(&mut fragment, output).unwrap();
     let plan = Plan::from_work(fragment, output).unwrap();
     let result = Executor::default()
-        .run(&device, &queue, &Default::default(), &plan, || false)
+        .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
     let actual = super::super::super::execute::read(&device, &queue, &result.pixels);

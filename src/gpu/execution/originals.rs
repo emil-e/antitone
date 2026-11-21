@@ -3,7 +3,6 @@
 use super::{OutputBlock, Request, SampleEncoding};
 use crate::gpu::evaluation;
 use crate::gpu::rgb16;
-use crate::gpu::submission::SubmissionGate;
 #[cfg(all(test, target_os = "macos"))]
 use crate::scan::Scan;
 use crate::{Error, renderer::GpuRenderer, rendering::OutputTarget};
@@ -303,7 +302,7 @@ pub(crate) struct Stats {}
 pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    (queue, gate): (&wgpu::Queue, &SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     request: Request,
     sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
     mut check: impl FnMut() -> Result<(), Error>,
@@ -407,7 +406,7 @@ pub(crate) fn execute(
             let receiver = std::cell::RefCell::new(None);
             let executed = renderer.evaluation.run_sink(
                 &mut executor,
-                (queue, gate),
+                queue,
                 &plan,
                 (
                     &|| match check() {
@@ -485,7 +484,7 @@ pub(crate) fn execute(
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             {
                 if let Some(probe) = timestamps.borrow_mut().as_mut() {
-                    probe.flush(device, queue, gate)?;
+                    probe.flush(device, queue)?;
                 }
                 if let Some(clock) = &clock {
                     clock.require_valid()?;

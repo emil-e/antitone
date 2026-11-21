@@ -20,7 +20,7 @@ impl Source for FailingPlane {
 
 #[test]
 fn interrupted_acquisition_releases_completed_slices_without_publishing_the_consumer() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     for failure in [false, true] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let reads = Arc::new(AtomicUsize::new(0));
@@ -59,7 +59,7 @@ fn interrupted_acquisition_releases_completed_slices_without_publishing_the_cons
             .unwrap()
             .clone();
         let root_key = root.output(region).unwrap().identity().unwrap().clone();
-        let result = context.produce_prepared(&queue, &renderer.submissions, prepared, || {
+        let result = context.produce_prepared(&queue, prepared, || {
             !failure && reads.load(Ordering::Relaxed) >= 2
         });
         if failure {
@@ -92,13 +92,16 @@ fn interrupted_acquisition_releases_completed_slices_without_publishing_the_cons
 fn prefetched_units_do_not_bypass_complete_result_storage_limits() {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, _) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 32 << 10,
+    let (device, _) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 32 << 10,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
@@ -231,7 +234,7 @@ impl Operation for SlicedPlane {
 
 #[test]
 fn prefetch_keeps_useful_slices_without_subdividing_the_consumer_to_fit_them() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     for (retention, widths) in [
         (0, vec![8; 8]),
         (1 << 20, vec![8; 8]),
@@ -289,7 +292,7 @@ fn prefetch_keeps_useful_slices_without_subdividing_the_consumer_to_fit_them() {
         *observed_source.lock().unwrap() = Some(prepared.dependencies[0].evaluation.job.region());
         let image = pollster::block_on(
             context
-                .produce_images(&queue, &renderer.submissions, vec![prepared])
+                .produce_images(&queue, vec![prepared])
                 .unwrap()
                 .remove(0),
         )

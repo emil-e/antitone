@@ -164,7 +164,6 @@ fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_without
         context
             .read(
                 &queue,
-                &Default::default(),
                 &query,
                 || false,
                 |block, pixels| {

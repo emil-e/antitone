@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
@@ -145,7 +144,6 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,
@@ -156,7 +154,6 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
         .unwrap()
         .unwrap();
         let neutral = read(&device, &queue, &source.pixels);
-        let gate = SubmissionGate::default();
         let context = egui::Context::default();
         let mut previous = None;
         for (global_ev, local_ev) in [(0.5, 0.75), (0.6, 0.75), (0.5, 0.5), (0.5, 0.)] {
@@ -199,7 +196,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
                 previous.as_ref(),
             )
             .unwrap();
-            view.ensure_submitted(&device, &queue, &gate, &context);
+            view.ensure_submitted(&device, &queue, &context);
             let graded = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             for (i, (actual, original)) in graded.iter().zip(&neutral).enumerate() {
                 let point = frame
@@ -237,7 +234,6 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,

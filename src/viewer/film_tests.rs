@@ -15,7 +15,9 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let area = [120, 73, 1200, 1200];
         let image = GpuImage::new_shared(
@@ -63,6 +65,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         };
         assert!(
             ScopePaint::with_processing(
+                queue.clone(),
                 gpu,
                 image.clone(),
                 film.clone(),
@@ -134,7 +137,9 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let small = [0, 0, 6000, 3000].into();
         let large = [0, 0, 6000, 6000].into();

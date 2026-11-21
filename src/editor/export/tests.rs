@@ -118,7 +118,7 @@ fn hold_first_submission(editor: &Editor) -> (mpsc::Receiver<()>, mpsc::Sender<(
     let armed = AtomicBool::new(true);
     // The fixture has completed source preparation and disables background thumbnails.
     // With no frames or other demand, the next submission belongs to this export.
-    editor.submissions.observe_submissions(Arc::new(move || {
+    editor.submissions().observe_submissions(Arc::new(move || {
         if armed.swap(false, Ordering::AcqRel) {
             started.send(()).unwrap();
             resume
@@ -155,7 +155,9 @@ fn fixture() -> Editor {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         editor.document.thumbnails =
             (Thumbnails::default()).with_sources(editor.document.cache.clone());

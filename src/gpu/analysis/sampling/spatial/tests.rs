@@ -14,8 +14,7 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
     let scan = Scan::open(file.path(), None).unwrap();
     let area = SourceRegion::from([scan.area.x + 12, scan.area.y + 20, 901, 641]);
     assert!(scan.area.contains_region(area));
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
@@ -64,8 +63,8 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
             spread: 0.,
         },
     ));
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let gate = queue.clone();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let inside = |f: SourceRegion| area.contains_region(f) && f.x >= a.x + 20;
     let raster = sampler.spatial(area, inside, || false).unwrap().unwrap();
@@ -139,8 +138,7 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
         )
         .unwrap(),
     )));
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
@@ -169,8 +167,7 @@ fn uncorrected_spatial_capture_accepts_native_white_and_releases_the_original_le
     let scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
     let area = SourceRegion::from([scan.area.x + 8, scan.area.y + 8, 48, 48]);
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()

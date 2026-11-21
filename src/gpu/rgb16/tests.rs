@@ -2,7 +2,7 @@ use super::*;
 
 fn run(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     kernel: &Rgb16,
     values: &[[f32; 4]],
 ) -> Vec<[u32; 2]> {
@@ -28,8 +28,7 @@ fn run(
         .encode(device, &mut encoder, &input, &output, values.len() as u32)
         .unwrap();
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-    let submission =
-        crate::gpu::submission::SubmissionGate::default().submit(queue, [encoder.finish()]);
+    let submission = queue.submit([encoder.finish()]);
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
     device

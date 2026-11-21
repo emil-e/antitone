@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::{
     color::Balance,
     processing::{Calibration, Inversion, Response},
@@ -22,8 +21,7 @@ fn negative() -> NegativeInput {
 fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_programs() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy { generated_bytes: 0 });
-    let gate = SubmissionGate::default();
-    let mut model = ResponseModel::new(&context, (&queue, &gate));
+    let mut model = ResponseModel::new(&context, &queue);
     let negative = negative();
     let kinds = [
         negative.calibration.dmin * 1.1,
@@ -119,7 +117,6 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     use crate::roll_analysis::{FrameSamples, estimate, estimate_with_model};
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy::default());
-    let gate = SubmissionGate::default();
     let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
     // A legal continuous source can exceed its development ceiling after residual correction.
     let base = DVec3::new(0.8, 0.4, 0.2) * 512.;
@@ -172,7 +169,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     )
     .unwrap()
     .unwrap();
-    let mut model = ResponseModel::new(&context, (&queue, &gate));
+    let mut model = ResponseModel::new(&context, &queue);
     let actual = estimate_with_model(
         &frames,
         crate::processing::CAMERA_INPUT_FLOOR,
@@ -247,8 +244,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
 fn response_batches_stop_before_acquisition_or_during_delivery_and_can_be_reused() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy::default());
-    let gate = SubmissionGate::default();
-    let mut model = ResponseModel::new(&context, (&queue, &gate));
+    let mut model = ResponseModel::new(&context, &queue);
     let points = vec![DVec3::splat(0.03); 10];
     assert!(
         !model

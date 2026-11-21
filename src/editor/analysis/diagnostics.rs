@@ -135,7 +135,9 @@ fn diagnose_sample_rolls() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         let mut reports = Vec::new();
         for case in cases {

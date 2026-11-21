@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::{processing::InputSettings, rendering::CpuRenderer};
 
 use crate::exposure_fixture;
@@ -13,7 +12,6 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
             exposure_fixture::neutral_dng(1.3)
         };
         let (device, queue, renderer) = super::super::super::tests::context();
-        let gate = SubmissionGate::default();
         let directory = tempfile::tempdir().unwrap();
         let scene = 6000. / 65535. * 2_f64.powf(recorded.unwrap_or(1.3));
         let reference = CpuRenderer::new(OutputTarget::Srgb)
@@ -86,7 +84,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Job {
                     scan: &scan,
                     field: None,

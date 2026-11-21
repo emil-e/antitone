@@ -208,7 +208,7 @@ fn asset() -> Arc<LookAsset> {
 
 fn read_texture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     texture: &wgpu::Texture,
 ) -> Vec<[f32; 4]> {
     let row = (texture.width() * 16).div_ceil(256) * 256;
@@ -710,7 +710,6 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
     );
     let context = renderer.evaluation();
     let scope = context.materializations();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let budget = Tiling { tile: [1, 1] };
     for (fails, paired) in [(false, false), (true, false), (false, true), (true, true)] {
         let chain = |first: &Arc<LookAsset>| crate::looks::LutChain {
@@ -803,7 +802,6 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             context
                 .materialize(
                     &queue,
-                    &gate,
                     &scope,
                     evaluation,
                     ImageFormat::Rgba32Float,

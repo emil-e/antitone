@@ -1,6 +1,5 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
@@ -53,7 +52,6 @@ fn batched_fixture_demands_keep_their_own_captured_neutral_arguments() {
         let sources = ViewImage::prefixes(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,
@@ -89,11 +87,10 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         let spec =
             SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1, None).unwrap();
         let scope = renderer.evaluation().test_materializations(false);
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let base = ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             kernels,
             &scan,
@@ -123,7 +120,6 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         let mut leaving = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             base.kernels.clone(),
             &scan,
@@ -141,7 +137,6 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         let mut first = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             base.kernels.clone(),
             &scan,
@@ -153,7 +148,6 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         let mut second = Box::pin(ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             base.kernels.clone(),
             &scan,
@@ -190,7 +184,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
 #[allow(clippy::too_many_arguments)]
 fn render_repaired(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     scan: &Scan,
     scope: &crate::gpu::evaluation::Materializations,
     base: Arc<ViewImage>,
@@ -205,7 +199,6 @@ fn render_repaired(
     let source = pollster::block_on(ViewImage::original_prefixes(
         device,
         queue,
-        &SubmissionGate::default(),
         base.renderer.clone(),
         base.kernels.clone(),
         scan,
@@ -218,18 +211,13 @@ fn render_repaired(
     .unwrap()
     .remove(0);
     let view = RenderedView::new(device, source, &input, target, previous).unwrap();
-    view.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(device, queue, &egui::Context::default());
     view
 }
 
 fn filter_authored_repairs(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     source: Arc<ViewImage>,
     frame: FrameRaster,
     replacements: &[Replacement],
@@ -273,12 +261,10 @@ fn filter_authored_repairs(
         )
         .unwrap();
     let scope = evaluation.materializations();
-    let gate = SubmissionGate::default();
     let value = pollster::block_on(
         evaluation
             .materialize(
                 queue,
-                &gate,
                 &scope,
                 request,
                 e::ImageFormat::Rgba32Float,
@@ -417,12 +403,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_ignores_replaced_values() {
         input.replacements = patches;
         let view =
             RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None).unwrap();
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &SubmissionGate::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         let actual = read(
             &device,
             &queue,
@@ -479,7 +460,6 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let source = ViewImage::original_prefixes(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -675,7 +655,6 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
             pollster::block_on(ViewImage::original_prefixes(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -853,7 +832,7 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
             crate::refinement::refine(
                 &renderer,
                 &device,
-                (&queue, &SubmissionGate::default()),
+                &queue,
                 (&scan, None),
                 input,
                 OutputTarget::Srgb,

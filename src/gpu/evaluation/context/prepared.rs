@@ -314,8 +314,7 @@ impl Context {
     /// This submits and waits; presentation callbacks must use recording or async production.
     pub(crate) fn produce_prepared(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         preparation: Preparation,
         cancelled: impl Fn() -> bool,
     ) -> Result<Image<ImageLayout>, Error> {
@@ -345,7 +344,6 @@ impl Context {
         let worker = Worker {
             context: self,
             queue,
-            gate,
             scope: &scope,
             working: &working,
             cancelled: &cancelled,
@@ -365,8 +363,7 @@ impl Context {
 
     pub(crate) fn produce_images(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         prepared: Vec<Preparation>,
     ) -> Result<Vec<ImageFuture<ImageLayout>>, Error> {
         let scope = self.materializations();
@@ -396,7 +393,7 @@ impl Context {
                 evaluation.request_policy(),
             ));
         }
-        let (context, queue, gate) = (self.clone(), queue.clone(), gate.clone());
+        let (context, queue) = (self.clone(), queue.clone());
         let owned_scope = scope.clone();
         Ok(
             scope.obtain_many_owned(requests, move |missing| async move {
@@ -429,7 +426,6 @@ impl Context {
                             let worker = Worker {
                                 context: &context,
                                 queue: &queue,
-                                gate: &gate,
                                 scope: &owned_scope,
                                 working: &working,
                                 cancelled: &cancelled,
@@ -459,7 +455,6 @@ impl Context {
                         let worker = Worker {
                             context: &context,
                             queue: &queue,
-                            gate: &gate,
                             scope: &owned_scope,
                             working: &working,
                             cancelled: &cancelled,

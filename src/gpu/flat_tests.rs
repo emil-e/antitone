@@ -120,7 +120,9 @@ fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() 
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let matrix = DMat3::from_cols(
             DVec3::new(
                 0.6062051167485374,

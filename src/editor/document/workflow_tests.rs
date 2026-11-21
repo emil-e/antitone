@@ -26,11 +26,8 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     editor.set_dmax(None);
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&Default::default())
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });
@@ -572,7 +569,6 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             .proxy
             .view_source(
                 queue,
-                &crate::gpu::submission::SubmissionGate::default(),
                 pollster::block_on(ViewKernels::new(device)).unwrap(),
                 &spec.processing_fixture().with_flat_field(field),
                 spec,
@@ -591,7 +587,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         ));
         let view =
             RenderedView::new(device, source, &parameters, e.document.target(), None).unwrap();
-        view.ensure_submitted(device, queue, &e.submissions, &egui::Context::default());
+        view.ensure_submitted(device, queue, &egui::Context::default());
         crate::viewer::readback::image_pixels(device, queue, &view.image)
     }
 }

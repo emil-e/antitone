@@ -19,8 +19,7 @@ fn target(device: &wgpu::Device) -> wgpu::Buffer {
 fn copy(
     working: &RunWorkingSet,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gate: &crate::gpu::submission::SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
     source: &Arc<ImageValue>,
     destination: &wgpu::Buffer,
 ) {
@@ -30,7 +29,7 @@ fn copy(
     resources.image(source);
     resources.buffer(destination);
     working
-        .submit_gpu(device, (queue, gate), encoder, resources, || {})
+        .submit_gpu(device, queue, encoder, resources, || {})
         .unwrap();
 }
 fn read(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u32> {
@@ -59,14 +58,7 @@ fn submitted_values_survive_logical_retirement_and_release_at_completion() {
     let source = ImageValue::new(buffer(&device, 7));
     let weak = Arc::downgrade(&source);
     let destination = target(&device);
-    copy(
-        &working,
-        &device,
-        &queue,
-        &Default::default(),
-        &source,
-        &destination,
-    );
+    copy(&working, &device, &queue, &source, &destination);
     drop(source);
     assert!(weak.upgrade().is_some());
     working.finish_gpu().unwrap();
@@ -81,9 +73,8 @@ fn submitted_storage_is_deduplicated_without_a_separate_byte_allowance() {
     let source = ImageValue::new(buffer(&device, 11));
     let weak = Arc::downgrade(&source);
     let destination = target(&device);
-    let gate = Default::default();
-    copy(&working, &device, &queue, &gate, &source, &destination);
-    copy(&working, &device, &queue, &gate, &source, &destination);
+    copy(&working, &device, &queue, &source, &destination);
+    copy(&working, &device, &queue, &source, &destination);
     drop(source);
     assert_eq!(working.gpu.submitted_bytes(), 128);
     assert_eq!(working.gpu.counts(), (2, 0));
@@ -101,19 +92,18 @@ fn deferred_submissions_preserve_interleaved_queue_write_order() {
     let source = ImageValue::new(buffer(&device, 0));
     let first = target(&device);
     let second = target(&device);
-    let gate = Default::default();
     queue.write_buffer(
         source.as_buffer().unwrap(),
         0,
         bytemuck::cast_slice(&[1u32; 16]),
     );
-    copy(&working, &device, &queue, &gate, &source, &first);
+    copy(&working, &device, &queue, &source, &first);
     queue.write_buffer(
         source.as_buffer().unwrap(),
         0,
         bytemuck::cast_slice(&[2u32; 16]),
     );
-    copy(&working, &device, &queue, &gate, &source, &second);
+    copy(&working, &device, &queue, &source, &second);
     assert_eq!(
         working.gpu.counts(),
         (2, 0),
@@ -138,22 +128,16 @@ fn submission_establishes_completion_ownership_before_publication() {
     resources.buffer(&destination);
     drop(source);
     let mut published = false;
-    let result = working.submit_gpu(
-        &device,
-        (&queue, &Default::default()),
-        encoder,
-        resources,
-        || {
-            let image = weak
-                .upgrade()
-                .expect("publication retains the physical source");
-            assert!(
-                working.gpu.owns(&image),
-                "the submission owns storage before publication"
-            );
-            published = true;
-        },
-    );
+    let result = working.submit_gpu(&device, &queue, encoder, resources, || {
+        let image = weak
+            .upgrade()
+            .expect("publication retains the physical source");
+        assert!(
+            working.gpu.owns(&image),
+            "the submission owns storage before publication"
+        );
+        published = true;
+    });
     result.unwrap();
     assert!(published);
     assert_eq!(working.gpu.counts(), (1, 0));
@@ -169,9 +153,8 @@ fn reused_storage_does_not_allow_unbounded_submission_descriptors() {
     let working = RunWorkingSet::default();
     let source = ImageValue::new(buffer(&device, 23));
     let destination = target(&device);
-    let gate = Default::default();
     for _ in 0..96 {
-        copy(&working, &device, &queue, &gate, &source, &destination);
+        copy(&working, &device, &queue, &source, &destination);
     }
     assert_eq!(working.gpu.counts().0, 96);
     assert!(working.gpu.peak_queued() <= 32);
@@ -185,7 +168,7 @@ fn publication_unwinding_keeps_completion_owned_cleanup() {
     let source = ImageValue::new(buffer(&device, 29));
     let weak = Arc::downgrade(&source);
     let destination = target(&device);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let working = RunWorkingSet::default();
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -195,7 +178,7 @@ fn publication_unwinding_keeps_completion_owned_cleanup() {
         resources.buffer(&destination);
         drop(source);
         working
-            .submit_gpu(&device, (&queue, &gate), encoder, resources, || {
+            .submit_gpu(&device, &queue, encoder, resources, || {
                 panic!("publication failed")
             })
             .unwrap();
@@ -214,14 +197,7 @@ fn cancellation_cleanup_drains_submitted_storage_without_optional_retention() {
     let destination = target(&device);
     let result: Result<(), Error> = {
         let working = RunWorkingSet::default();
-        copy(
-            &working,
-            &device,
-            &queue,
-            &Default::default(),
-            &source,
-            &destination,
-        );
+        copy(&working, &device, &queue, &source, &destination);
         drop(source);
         Err(Error::Cancelled)
     };

@@ -38,8 +38,9 @@ fn source(rgb: impl Fn(u32, u32) -> [f64; 3]) -> fixture_path::FixturePath {
 }
 
 #[cfg(feature = "gpu")]
-fn gpu_context() -> &'static (wgpu::Device, wgpu::Queue) {
-    static CONTEXT: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+fn gpu_context() -> &'static (wgpu::Device, antitone::gpu::submission::Queue) {
+    static CONTEXT: std::sync::OnceLock<(wgpu::Device, antitone::gpu::submission::Queue)> =
+        std::sync::OnceLock::new();
     CONTEXT.get_or_init(|| {
         pollster::block_on(async {
             let adapter = antitone::gpu::instance()
@@ -47,8 +48,9 @@ fn gpu_context() -> &'static (wgpu::Device, wgpu::Queue) {
                 .await
                 .unwrap();
             let limits = adapter.limits();
-            adapter
-                .request_device(&wgpu::DeviceDescriptor {
+            antitone::gpu::submission::request_device(
+                &adapter,
+                &wgpu::DeviceDescriptor {
                     required_limits: wgpu::Limits {
                         max_storage_buffers_per_shader_stage: 10,
                         max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
@@ -56,9 +58,10 @@ fn gpu_context() -> &'static (wgpu::Device, wgpu::Queue) {
                         ..Default::default()
                     },
                     ..Default::default()
-                })
-                .await
-                .unwrap()
+                },
+            )
+            .await
+            .unwrap()
         })
     })
 }
@@ -69,7 +72,7 @@ fn open(file: &fixture_path::FixturePath) -> Scan {
         let (device, queue) = gpu_context();
         let mut raw = antitone::raw::RawFile::open(file.path()).unwrap();
         raw.set_demosaicer(Some(std::sync::Arc::new(
-            antitone::gpu::demosaic::Demosaicer::new(device, queue, Default::default(), 4 << 30),
+            antitone::gpu::demosaic::Demosaicer::new(device, queue, 4 << 30),
         )));
         Scan::from_raw(raw, Some([1.; 4])).unwrap()
     };
@@ -233,7 +236,6 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
         crop::Crop,
         export::{ExrPrecision, Overwrite},
         geometry::{Composition, SourceRegion},
-        gpu::submission::SubmissionGate,
         processing::{InputSettings, Response},
         renderer::GpuRenderer,
     };
@@ -279,7 +281,7 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
     gpu_export::write(
         &renderer,
         &device,
-        (&queue, &SubmissionGate::default()),
+        &queue,
         Request {
             scan: &scan,
             field: None,

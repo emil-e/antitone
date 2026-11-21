@@ -311,16 +311,12 @@ impl SourceLoader {
 
     /// Accelerate admitted Bayer development on the host's existing device and queue.
     #[cfg(feature = "gpu")]
-    pub fn with_gpu(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: crate::gpu::submission::SubmissionGate,
-    ) -> Self {
+    pub fn with_gpu(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
         // One serialized working set, separate from optional image retention. Unknown
         // hardware memory gives zero admission and retains native CPU development.
         let working_bytes = (crate::sys::physical_memory() / 4).min(3 << 30);
         let demosaicer = Arc::new(
-            crate::gpu::demosaic::Demosaicer::new(device, queue, submissions, working_bytes)
+            crate::gpu::demosaic::Demosaicer::new(device, queue, working_bytes)
                 .with_system_pressure(),
         );
         Self::start_native(

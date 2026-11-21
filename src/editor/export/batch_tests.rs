@@ -10,7 +10,9 @@ fn fixture() -> Editor {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         editor.document.thumbnails =
             (Thumbnails::default()).with_sources(editor.document.cache.clone());

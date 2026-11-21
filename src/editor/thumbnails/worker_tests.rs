@@ -101,11 +101,11 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let pixels = Arc::downgrade(&proxy);
     let cache = Arc::downgrade(&document.cache);
     let (device, queue) = pollster::block_on(async {
-        crate::gpu::instance()
+        let adapter = crate::gpu::instance()
             .request_adapter(&Default::default())
             .await
-            .unwrap()
-            .request_device(&Default::default())
+            .unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });
@@ -194,11 +194,11 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     let document: super::super::document_scope::DocumentScope = document.into();
     let ids = document.project.order.clone();
     let (device, queue) = pollster::block_on(async {
-        crate::gpu::instance()
+        let adapter = crate::gpu::instance()
             .request_adapter(&Default::default())
             .await
-            .unwrap()
-            .request_device(&Default::default())
+            .unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });

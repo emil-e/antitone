@@ -1,6 +1,5 @@
 use super::*;
 use crate::gpu::interpretation::InputTransform;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::view::request::SourceRequest;
 
 #[test]
@@ -55,12 +54,10 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
         assert!(large_region.contains_region(small_region));
         assert!(large_region.x < small_region.x && large_region.y < small_region.y);
         let cache = renderer.evaluation().test_materializations(false);
-        let gate = SubmissionGate::default();
         let acquire = |spec| {
             ViewImage::original_prefixes(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -105,13 +102,11 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let frame = frame(&scan);
-        let gate = SubmissionGate::default();
         let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
         let cache = renderer.evaluation().test_materializations(true);
         let source = ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             kernels.clone(),
             &scan,
@@ -139,7 +134,6 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let repeated = ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             renderer.clone(),
             kernels.clone(),
             &scan,
@@ -256,7 +250,6 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let off_renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
             &device,
             &queue,
-            Default::default(),
             crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },
         )
         .await
@@ -265,7 +258,6 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let off = ViewImage::original_prefixes(
             &device,
             &queue,
-            &gate,
             off_renderer.clone(),
             kernels.clone(),
             &scan,

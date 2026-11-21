@@ -118,7 +118,7 @@ fn tent(pixels: &[[f64; 4]], size: [u32; 2], radii: [u32; 2], coverage: u32) -> 
 
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     context: &Context,
     image: Value,
     region: Rect,
@@ -144,7 +144,6 @@ fn render(
     context
         .evaluate(
             queue,
-            &Default::default(),
             &evaluation,
             || false,
             |encoder, image, pixels| {

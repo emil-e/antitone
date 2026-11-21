@@ -3,7 +3,6 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 #[test]
 fn idle_host_polling_completes_projected_look_admission_without_another_frame_or_submission() {
     use crate::{
-        gpu::submission::SubmissionGate,
         looks::{LookAsset, LookOrigin, Lut3D},
         processing::{Calibration, RollSettings},
     };
@@ -12,11 +11,11 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let gate = SubmissionGate::default();
-        let renderer = GpuRenderer::new_with_submissions(&device, &queue, gate.clone())
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
+        let gate = queue.clone();
+        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let image = GpuImage::new_shared(
             &renderer,
             &device,

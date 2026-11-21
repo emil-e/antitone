@@ -272,18 +272,16 @@ impl Context {
 
     pub(crate) fn submit(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         encoder: wgpu::CommandEncoder,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<()>, Error> {
-        self.submit_with(queue, gate, encoder, cancelled, || {})
+        self.submit_with(queue, encoder, cancelled, || {})
     }
 
     pub(crate) fn submit_with(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         encoder: wgpu::CommandEncoder,
         cancelled: impl Fn() -> bool,
         submitted: impl FnOnce(),
@@ -291,7 +289,7 @@ impl Context {
         if cancelled() {
             return Ok(None);
         }
-        execute::submit(&self.device, queue, gate, encoder, submitted)?;
+        execute::submit(&self.device, queue, encoder, submitted)?;
         Ok((!cancelled()).then_some(()))
     }
 
@@ -299,15 +297,13 @@ impl Context {
     /// Sinks own publication; callers keep their writes private until successful completion.
     pub fn evaluate(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
         self.evaluate_with(
             queue,
-            gate,
             evaluation,
             cancelled,
             Sink {
@@ -320,8 +316,7 @@ impl Context {
     /// Arm sink readback after each submission, before waiting for that bounded unit.
     pub fn evaluate_with<E, S>(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
@@ -351,7 +346,7 @@ impl Context {
             };
             let Some(stats) = self.run_sink(
                 &mut executor,
-                (queue, gate),
+                queue,
                 &plan?,
                 (&cancelled, &|| {}),
                 (

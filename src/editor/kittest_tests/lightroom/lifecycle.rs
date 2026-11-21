@@ -255,7 +255,6 @@ fn lightroom_retirement_signals_a_return_waiting_on_cold_source_before_publicati
                 services.renderers.clone(),
                 services.device.clone(),
                 services.queue.clone(),
-                editor.submissions.clone(),
                 services,
             ));
             editor.developments = Some(loader);

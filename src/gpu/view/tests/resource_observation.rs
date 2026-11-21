@@ -1,6 +1,5 @@
 //! Bounded authored workload; run alone for comparable cold/warm and allocator observations.
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::view::request::SourceRequest;
 use crate::{adjustment_layers::AdjustmentLayer, gpu::test_inputs::AuthoredPhotograph};
 use std::{
@@ -31,7 +30,7 @@ fn acquisition_execution_resources() {
         .unwrap();
         let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
         let settings = crate::grain::GrainPreset::ThirtyFiveMm.settings();
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let peak = Arc::new(AtomicU64::new(0));
         let (observed, observed_device) = (peak.clone(), device.clone());
         gate.observe_encoded_resources(Arc::new(move || {
@@ -67,7 +66,6 @@ fn acquisition_execution_resources() {
         let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
             device,
             queue,
-            SubmissionGate::default(),
             policy,
         ))
         .unwrap();
@@ -104,7 +102,6 @@ fn acquisition_execution_resources() {
         let mut sources = ViewImage::prefixes(
             device,
             queue,
-            &gate,
             renderer.clone(),
             kernels.clone(),
             &scan,
@@ -141,8 +138,8 @@ fn acquisition_execution_resources() {
                 previous_underlay.as_ref(),
             )
             .unwrap();
-            view.ensure_submitted(device, queue, &gate, &context);
-            background.ensure_submitted(device, queue, &gate, &context);
+            view.ensure_submitted(device, queue, &context);
+            background.ensure_submitted(device, queue, &context);
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
             checkpoint(
                 if edit == 0 {
@@ -172,7 +169,7 @@ fn acquisition_execution_resources() {
             let image = crate::refinement::refine(
                 &renderer,
                 device,
-                (queue, &gate),
+                queue,
                 (&scan, None),
                 input.clone(),
                 OutputTarget::Srgb,
@@ -230,11 +227,11 @@ fn neutral_image_retention_resources() {
         let composition=Composition::new(scan.area,Default::default(),Default::default()).unwrap();
         let frame=FrameRaster::new(composition,FramePoint([256.,256.]),FramePoint([1216.,976.]),[640,480]).unwrap();
         let policy=crate::gpu::evaluation::CachePolicy{generated_bytes:std::env::var("ANTITONE_GENERATED_CACHE_BYTES").ok().map(|v|v.parse::<u64>().unwrap()).unwrap_or(crate::gpu::evaluation::CachePolicy::default().generated_bytes)};
-        let renderer=pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(device,queue,Default::default(),policy)).unwrap();
+        let renderer=pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(device,queue,policy)).unwrap();
         let kernels=pollster::block_on(ViewKernels::new(device)).unwrap();
         let cache=renderer.evaluation().test_materializations(true);
         let spec=SourceRequest::new(frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::gpu::source::identity::Identity::camera(scan.source().identity()));
-        let gate=SubmissionGate::default();
+        let gate=queue.clone();
         let peak=Arc::new(AtomicU64::new(0));let observed=peak.clone();let observed_device=device.clone();
         gate.observe_encoded_resources(Arc::new(move||{observed.fetch_max(crate::sys::allocated_resource_bytes(&observed_device).unwrap() as u64,Ordering::Relaxed);}));
         let mut reference=None;
@@ -245,7 +242,7 @@ fn neutral_image_retention_resources() {
             let start=Instant::now();
             let cached=ViewImage::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec,&scan,None);
             let hit=cached.is_some();
-            let source=if let Some(source)=cached{source}else{pollster::block_on(ViewImage::original_prefixes(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,vec![spec.clone()],&cache,||monitor.check().is_err())).unwrap().unwrap().remove(0)};
+            let source=if let Some(source)=cached{source}else{pollster::block_on(ViewImage::original_prefixes(device,queue,renderer.clone(),kernels.clone(),&scan,None,vec![spec.clone()],&cache,||monitor.check().is_err())).unwrap().unwrap().remove(0)};
             let [creations,bytes]=crate::gpu::test_support::take_evaluation_buffer_creations();
             println!("neutral_retention run={run} hit={hit} seconds={:.9} retained_payload={} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",start.elapsed().as_secs_f64(),renderer.evaluation().retained_bytes(),crate::sys::allocated_resource_bytes(device).unwrap(),peak.load(Ordering::Relaxed));
             let pixels=read(device,queue,&source.pixels);

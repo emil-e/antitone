@@ -1,9 +1,6 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::{
-    gpu::{
-        analysis::CameraSampler, drt, evaluation, photograph::camera_response,
-        submission::SubmissionGate,
-    },
+    gpu::{analysis::CameraSampler, drt, evaluation, photograph::camera_response},
     rendering::OutputTarget,
 };
 #[cfg(all(test, target_os = "macos"))]
@@ -37,8 +34,7 @@ pub(super) struct Resources {
 
 pub(super) struct Fit {
     evaluation: evaluation::Context,
-    queue: wgpu::Queue,
-    submissions: SubmissionGate,
+    queue: crate::gpu::submission::Queue,
     request: Arc<Request>,
     correction: Option<Arc<Correction>>,
     matrix: glam::DMat3,
@@ -52,7 +48,7 @@ pub(super) struct Fit {
 impl Fit {
     pub(super) async fn acquire(
         evaluation: evaluation::Context,
-        (queue, submissions): (wgpu::Queue, SubmissionGate),
+        queue: crate::gpu::submission::Queue,
         mut request: Request,
         resources: Resources,
         cancelled: &Cancellation,
@@ -146,7 +142,6 @@ impl Fit {
         Ok(Some(Self {
             evaluation,
             queue,
-            submissions,
             request: Arc::new(request),
             correction,
             matrix,
@@ -263,10 +258,9 @@ impl Fit {
         }
         let evaluation = self.evaluation.clone();
         let queue = self.queue.clone();
-        let submissions = self.submissions.clone();
         let sampler = CameraSampler::captured(
             &evaluation,
-            (&queue, &submissions),
+            &queue,
             input,
             self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
@@ -384,10 +378,7 @@ impl Fit {
                 picture: &frame.picture.pixels,
             })
             .collect();
-        let mut model = crate::gpu::analysis::ResponseModel::new(
-            &self.evaluation,
-            (&self.queue, &self.submissions),
-        );
+        let mut model = crate::gpu::analysis::ResponseModel::new(&self.evaluation, &self.queue);
         let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
             floor,
@@ -475,7 +466,7 @@ impl Fit {
         let photo = project.source(project.order[index])?;
         let sampler = CameraSampler::captured(
             &self.evaluation,
-            (&self.queue, &self.submissions),
+            &self.queue,
             self.cameras[index].clone(),
             self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
@@ -488,12 +479,7 @@ impl Fit {
         let size = preview.size.map(|n| n as u32);
         let endpoint =
             camera_response::classifier_image(size, &preview.camera, negative, post, drt)?;
-        let Some(rgb) = read_classifier_rgb(
-            &self.evaluation,
-            (&self.queue, &self.submissions),
-            endpoint,
-            cancelled,
-        )?
+        let Some(rgb) = read_classifier_rgb(&self.evaluation, &self.queue, endpoint, cancelled)?
         else {
             return Ok(None);
         };
@@ -613,7 +599,7 @@ impl Fit {
 // Model input encoding is downstream of the graph's target-linear sRGB endpoint.
 fn read_classifier_rgb(
     context: &evaluation::Context,
-    (queue, submissions): (&wgpu::Queue, &SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     image: evaluation::Value,
     cancelled: &mut dyn FnMut() -> bool,
 ) -> Result<Option<Vec<[u8; 3]>>, Error> {
@@ -632,7 +618,6 @@ fn read_classifier_rgb(
     let stop = std::cell::RefCell::new(cancelled);
     let read = context.read(
         queue,
-        submissions,
         &request,
         || (stop.borrow_mut())(),
         |block, pixels| {

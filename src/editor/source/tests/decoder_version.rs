@@ -132,8 +132,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
     let source =
         crate::preview_fixture::append(source.path(), [32, 32], &[128; 32 * 32 * 3], true, Some(2));
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let gate = crate::gpu::submission::SubmissionGate::default();
-    let renderers = crate::renderer::RendererCache::new(gate.clone());
+    let renderers = crate::renderer::RendererCache::default();
     let directory = tempfile::tempdir().unwrap();
     for (sdk, path) in [
         (false, source.path().to_owned()),
@@ -266,7 +265,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             crate::gpu_export::job::write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: correction.as_ref().map(|field| field.gpu.clone()),

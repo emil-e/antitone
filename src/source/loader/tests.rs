@@ -399,8 +399,9 @@ fn native_source_acquisition_submits_bayer_work_through_the_shared_gpu_gate() {
             .await
             .unwrap();
         let supported = adapter.limits();
-        adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: wgpu::Limits {
                     max_storage_buffers_per_shader_stage: 10,
                     max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
@@ -408,11 +409,12 @@ fn native_source_acquisition_submits_bayer_work_through_the_shared_gpu_gate() {
                     ..Default::default()
                 },
                 ..Default::default()
-            })
-            .await
-            .unwrap()
+            },
+        )
+        .await
+        .unwrap()
     });
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let submitted = Arc::new(AtomicUsize::new(0));
     let observed = submitted.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -421,7 +423,6 @@ fn native_source_acquisition_submits_bayer_work_through_the_shared_gpu_gate() {
     let demosaicer = Arc::new(crate::gpu::demosaic::Demosaicer::new(
         &device,
         &queue,
-        gate.clone(),
         4 << 20,
     ));
     let scheduler = SourceLoader::start_native(Arc::new(|_, _, _| Ok(())), Some(demosaicer));

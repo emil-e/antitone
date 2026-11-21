@@ -499,7 +499,9 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let matrix = glam::DMat3::from_cols_array(&[0.9, 0.02, 0., 0.05, 1.1, 0., 0., 0.03, 0.8]);
         let shared_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
@@ -569,7 +571,8 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
             };
             let jobs = context.tessellate(output.shapes, output.pixels_per_point);
             let mut encoder = device.create_command_encoder(&Default::default());
-            let commands = renderer.update_buffers(&device, &queue, &mut encoder, &jobs, &screen);
+            let commands =
+                queue.update_egui_buffers(&mut renderer, &device, &mut encoder, &jobs, &screen);
             queue.submit(commands.into_iter().chain([encoder.finish()]));
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         };

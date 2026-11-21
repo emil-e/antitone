@@ -3,8 +3,6 @@
 use std::sync::{Mutex, OnceLock, mpsc};
 use wgpu::util::DeviceExt;
 
-use super::submission::SubmissionGate;
-
 const STAGES: &[&str] = &[
     "prepare",
     "reduce_bounds",
@@ -27,8 +25,7 @@ const STAGES: &[&str] = &[
 /// Unavailable acceleration leaves the supplied prepared image unchanged.
 pub struct Demosaicer {
     device: wgpu::Device,
-    queue: wgpu::Queue,
-    submissions: SubmissionGate,
+    queue: crate::gpu::submission::Queue,
     working_bytes: u64,
     pressure: fn() -> crate::sys::MemoryPressure,
     execution: Mutex<()>,
@@ -132,14 +129,12 @@ impl Demosaicer {
     /// The allowance bounds one call's buffers, readback and input staging, not image retention.
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         working_bytes: u64,
     ) -> Self {
         Self {
             device: device.clone(),
             queue: queue.clone(),
-            submissions,
             working_bytes,
             pressure: || crate::sys::MemoryPressure::Normal,
             execution: Mutex::new(()),
@@ -342,8 +337,8 @@ impl Demosaicer {
         }
         encoder.copy_buffer_to_buffer(&buffers[7], 0, &frame.readback, 0, layout.image_bytes);
         #[cfg(any(feature = "ui", test))]
-        let _pending = self.submissions.track();
-        let submission = self.submissions.submit(&self.queue, [encoder.finish()]);
+        let _pending = self.queue.track();
+        let submission = self.queue.submit([encoder.finish()]);
         let mut frame = frame;
         let (send, receive) = mpsc::channel();
         frame

@@ -6,7 +6,9 @@ fn look_failures_survive_reconstruction_only_for_positive_weight_samples() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let pipelines = Arc::new(AveragePipelines::new(&device).await.unwrap());
         let check = Validation::new(&device).await.unwrap();
         let texture = |width, usage| {

@@ -57,7 +57,9 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let source =
             ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1, None).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);

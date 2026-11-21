@@ -7,11 +7,12 @@ fn native_treatment_matches_source_and_reports_final_bake_approximation() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let reference = crate::looks::reference::ReferenceTransforms::new(&device, &queue)
             .await
             .unwrap();
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let cancel = AtomicBool::new(false);
         let f = fixtures();
         let cases = f
@@ -102,9 +103,7 @@ fn native_treatment_matches_source_and_reports_final_bake_approximation() {
             worst.0
         };
         let count = expected.len();
-        let actual = reference
-            .apply(&device, &queue, &gate, false, &scene)
-            .unwrap();
+        let actual = reference.apply(&device, &queue, false, &scene).unwrap();
         let maximum = errors(actual, expected, &contexts);
         println!(
             "{count} executed-source cases, scanner/inverse/native component/reference-GPU maxRGB error {maximum}"
@@ -119,7 +118,7 @@ fn native_treatment_matches_source_and_reports_final_bake_approximation() {
             "every medium must exercise paper-only and selected-negative production-size baking"
         );
         let actual = reference
-            .apply(&device, &queue, &gate, false, &baked_scene)
+            .apply(&device, &queue, false, &baked_scene)
             .unwrap();
         let maximum = errors(actual, baked_expected, &baked_contexts);
         // Approximation diagnostics are not perceptual acceptance thresholds;

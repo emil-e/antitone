@@ -20,13 +20,15 @@ impl Source for Authored {
             .collect())
     }
 }
-fn context() -> (wgpu::Device, wgpu::Queue) {
+fn context() -> (wgpu::Device, crate::gpu::submission::Queue) {
     pollster::block_on(async {
         let adapter = crate::gpu::instance()
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     })
 }
 fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>) -> Authored {
@@ -45,7 +47,7 @@ fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>
 }
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     root: Value,
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
@@ -61,7 +63,6 @@ fn render(
         .run_sink(
             device,
             queue,
-            &Default::default(),
             &plan,
             || false,
             |encoder, image, buffer| {

@@ -384,7 +384,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         let ui_submissions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed_ui = ui_submissions.clone();
         harness.read(|editor| {
-            editor.submissions.observe_submissions(Arc::new(move || {
+            editor.submissions().observe_submissions(Arc::new(move || {
                 // Provisional rendering shares the host gate. Park only the background
                 // acquisition, not the UI submission whose nonblocking behavior we test.
                 if std::thread::current().id() == ui_thread {

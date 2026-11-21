@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn recording_allocates_scratch_before_encoding_so_painting_cannot_fail_allocating_it() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let evaluation = request(&context, source(Arc::new(Pixels(reads.clone()))));
@@ -44,7 +44,7 @@ fn recording_allocates_scratch_before_encoding_so_painting_cannot_fail_allocatin
         crate::gpu::test_support::take_evaluation_buffer_creations(),
         [0, 0]
     );
-    renderer.submissions.submit(&queue, [encoder.finish()]);
+    queue.submit([encoder.finish()]);
     commands.submitted();
     assert_eq!(
         super::super::super::super::execute::read(&device, &queue, &recorded.pixels),

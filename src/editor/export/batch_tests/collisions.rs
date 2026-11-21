@@ -27,7 +27,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
         let armed = AtomicBool::new(true);
         // Source preparation is finished and authored_fixture disables thumbnails.
         // The next GPU submission is export, after its destination planning await.
-        editor.submissions.observe_submissions(Arc::new(move || {
+        editor.submissions().observe_submissions(Arc::new(move || {
             if armed.swap(false, Ordering::Relaxed) {
                 std::fs::write(&competing, b"competing writer").unwrap();
             }

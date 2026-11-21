@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
@@ -83,18 +82,13 @@ fn ready_source(
 
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     source: Arc<ViewImage>,
     pipeline: Assembly,
 ) -> Vec<[f32; 4]> {
     let input = input(device, source.spec.frame(), pipeline);
     let view = RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap();
-    view.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(device, queue, &egui::Context::default());
     read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 
@@ -252,7 +246,6 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
                 &device,
                 &queue,
-                Default::default(),
                 crate::gpu::evaluation::CachePolicy {
                     generated_bytes: budget,
                 },
@@ -300,12 +293,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
                 "recording alone must not initialize a generated value"
             );
         }
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &Default::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         let initial = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
         let p = pipeline(0.09, 0.8, 0.8);
         let edited = RenderedView::new(
@@ -353,12 +341,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             b.unwrap().ready(),
             "Amount, Colour and fixed-support halation reuse the live initialized field even without optional retention"
         );
-        edited.ensure_submitted(
-            &device,
-            &queue,
-            &Default::default(),
-            &egui::Context::default(),
-        );
+        edited.ensure_submitted(&device, &queue, &egui::Context::default());
         let pixels = read(&device, &queue, &edited.product.as_ref().unwrap().pixels);
         assert!(
             pixels
@@ -451,7 +434,6 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             ViewImage::prefix(
                 &device,
                 &queue,
-                &Default::default(),
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -474,12 +456,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 None,
             )
             .unwrap();
-            view.ensure_submitted(
-                &device,
-                &queue,
-                &Default::default(),
-                &egui::Context::default(),
-            );
+            view.ensure_submitted(&device, &queue, &egui::Context::default());
             read(&device, &queue, &view.product.as_ref().unwrap().pixels)
         };
         let source = acquire(frame, pipeline.clone());

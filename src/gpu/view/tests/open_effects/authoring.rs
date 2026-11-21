@@ -101,7 +101,6 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
     let physical = ViewImage::prefixes(
         &device,
         &queue,
-        &Default::default(),
         renderer.clone(),
         kernels,
         &scan,
@@ -133,7 +132,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         let regional = crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &Default::default()),
+            &queue,
             (&scan, None),
             processing.clone(),
             target,
@@ -183,12 +182,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             "resident composition"
         );
         let view = RenderedView::new(&device, physical.clone(), &processing, target, None).unwrap();
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &Default::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         assert!(
             max_error(
                 &expected,

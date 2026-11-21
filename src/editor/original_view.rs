@@ -89,7 +89,6 @@ impl Request {
     pub async fn prepare(
         self,
         services: source::Services,
-        submissions: crate::platform::SubmissionGate,
     ) -> Result<Option<Arc<crate::viewer::GpuImage>>, String> {
         let demand = self.demand;
         demand.source.correction.clone().acquire().await?;
@@ -110,7 +109,7 @@ impl Request {
             crate::refinement::refine_definition(
                 &renderer,
                 &services.device,
-                (&services.queue, &submissions),
+                &services.queue,
                 original,
                 (demand.target, demand.view.expect("requested original view")),
                 demand.capture.look_id().is_some(),
@@ -225,7 +224,6 @@ impl OriginalView {
     pub(super) fn request_with(
         &mut self,
         services: source::Services,
-        submissions: crate::platform::SubmissionGate,
         context: &egui::Context,
         cx: &UiContext<'_, Editor>,
     ) {
@@ -235,7 +233,7 @@ impl OriginalView {
             };
             let stopped = completion.clone();
             self.task = cx.spawn(move |cx| async move {
-                let result = request.prepare(services, submissions).await;
+                let result = request.prepare(services).await;
                 cx.update(|editor| {
                     if let Some(error) = completion.receive(result) {
                         editor.status = error;
@@ -322,10 +320,9 @@ impl Editor {
                 }
                 return;
             };
-            let submissions = self.submissions.clone();
             let completion_on_shutdown = completion.clone();
             let Some(task) = cx.spawn(move |cx| async move {
-                let result = request.prepare(services, submissions).await;
+                let result = request.prepare(services).await;
                 cx.update(|editor| {
                     let visible = completion.belongs_to(&editor.active_canvas().original);
                     if let Some(error) = completion.receive(result)

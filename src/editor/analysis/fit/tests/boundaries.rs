@@ -173,13 +173,16 @@ fn actual_fit_and_acceptance_ignore_unrelated_look_capacity_and_replace_old_grad
     document.project.input = request.document.project.input;
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 8 * 1024 * 1024,
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 8 * 1024 * 1024,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     let look = Arc::new(
         crate::looks::LookAsset::new(

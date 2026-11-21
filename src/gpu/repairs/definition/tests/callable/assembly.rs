@@ -54,7 +54,6 @@ fn packed_replacements_cover_bin_edges_collisions_and_overlapping_unselected_env
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |block, pixels| {
@@ -128,7 +127,7 @@ fn standalone_host_materialization_submits_before_publishing_a_gpu_value() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let counter = Arc::new(AtomicUsize::new(0));
     let observed = counter.clone();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     gate.observe_encoded_resources(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
@@ -152,7 +151,6 @@ fn standalone_host_materialization_submits_before_publishing_a_gpu_value() {
         context
             .materialize(
                 &queue,
-                &gate,
                 &context.materializations(),
                 query,
                 ImageFormat::Rgba32Float,

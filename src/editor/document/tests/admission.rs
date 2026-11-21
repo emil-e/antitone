@@ -10,7 +10,10 @@ use glam::DVec3;
 async fn device() -> wgpu::Device {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    adapter.request_device(&Default::default()).await.unwrap().0
+    crate::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap()
+        .0
 }
 
 fn layers() -> AdjustmentLayers {

@@ -99,16 +99,10 @@ fn read(
     let mut pixels = Vec::new();
     renderer
         .evaluation()
-        .read(
-            &services.queue,
-            services.renderers.submissions(),
-            &request,
-            cancelled,
-            |_, block| {
-                pixels.extend_from_slice(block);
-                Ok(())
-            },
-        )?
+        .read(&services.queue, &request, cancelled, |_, block| {
+            pixels.extend_from_slice(block);
+            Ok(())
+        })?
         .ok_or(Error::Cancelled)?;
     Ok(pixels)
 }

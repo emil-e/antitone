@@ -26,7 +26,7 @@ fn superseded_layouts_cannot_publish_and_cached_inputs_keep_visit_independent_ow
         let latest = make([24., 20.], [120., 92.]);
         assert!(first.same_source(&latest));
         assert!(first != latest);
-        let submissions = editor.submissions.clone();
+        let submissions = editor.submissions().clone();
         let services = editor.source_services.as_ref().unwrap().clone();
         let renderer = services
             .renderers
@@ -56,7 +56,6 @@ fn superseded_layouts_cannot_publish_and_cached_inputs_keep_visit_independent_ow
                             .clone()
                     }),
                     &services,
-                    &submissions,
                 );
             }
             let before: Vec<_> = scope

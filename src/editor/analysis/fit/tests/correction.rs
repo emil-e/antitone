@@ -45,7 +45,7 @@ fn fitting_waits_for_its_captured_map_and_cancellation_preserves_another_reader(
         let mut tasks = Vec::new();
         for stop in [cancelled.clone(), Cancellation::default()] {
             let evaluation = renderer.evaluation().clone();
-            let queue_and_gate = (queue.clone(), renderer.submissions.clone());
+            let queue_and_gate = queue.clone();
             let request = request.clone();
             let resources = super::super::Resources {
                 correction: correction.clone(),

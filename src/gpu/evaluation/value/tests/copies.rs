@@ -102,7 +102,6 @@ fn argument(pixels: Vec<[f32; 4]>) -> Value {
 #[test]
 fn concatenated_values_copy_distinct_inputs_without_shader_arithmetic_or_metadata_changes() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let a = vec![[1., -2., 3., -0.], [-5., 6., 7., 0.5]];
     let b = vec![
         [10_000., -40_000., 0.25, 1.],
@@ -139,7 +138,6 @@ fn concatenated_values_copy_distinct_inputs_without_shader_arithmetic_or_metadat
     context
         .read(
             &queue,
-            &gate,
             &query,
             || false,
             |r, block| {
@@ -198,7 +196,6 @@ fn cropped_image_values_flatten_requested_rows_without_changing_identity_or_meta
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, block| {
@@ -281,7 +278,7 @@ fn window_values_preserve_cropped_domain_and_exact_pixels_without_copy_shaders()
             "a physical image restriction must not invent pixel mathematics"
         );
         let result = execute::Executor::default()
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         assert_eq!(

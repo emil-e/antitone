@@ -70,7 +70,7 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
             .unwrap(),
         )
         .unwrap();
-        let product = pollster::block_on(request.produce(&queue, &renderer.submissions, || false))
+        let product = pollster::block_on(request.produce(&queue, || false))
             .unwrap()
             .unwrap()
             .remove(0);
@@ -132,7 +132,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
 
     let cold = Request::new(prepare(endpoint(input.clone(), 3.))).unwrap();
     assert!(cold.ready().is_none());
-    let first = pollster::block_on(cold.produce(&queue, &renderer.submissions, || false))
+    let first = pollster::block_on(cold.produce(&queue, || false))
         .unwrap()
         .unwrap()
         .remove(0);
@@ -160,7 +160,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
     );
     let mut encoder = device.create_command_encoder(&Default::default());
     next.encode(&device, &mut encoder);
-    renderer.submissions.submit(&queue, [encoder.finish()]);
+    queue.submit([encoder.finish()]);
     next.commands.as_ref().unwrap().submitted();
     next.pixels.submitted(&scope);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();

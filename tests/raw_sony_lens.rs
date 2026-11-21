@@ -498,7 +498,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         export::{self, ExrPrecision, Overwrite},
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
-        gpu::{flat::GpuFlatField, submission::SubmissionGate},
+        gpu::flat::GpuFlatField,
         gpu_export::Format,
         processing::{Calibration, InputSettings, RollSettings},
         renderer::GpuRenderer,
@@ -512,7 +512,10 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
@@ -572,7 +575,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             authored_export::write(
                 &renderer,
                 &device,
-                (&queue, &SubmissionGate::default()),
+                &queue,
                 authored_export::Request {
                     scan: &scan,
                     field: field.clone(),

@@ -149,7 +149,7 @@ fn recipe() -> ImageRecipe {
 
 fn read(
     renderer: &crate::renderer::GpuRenderer,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {
     let domain = image.domain();
@@ -169,7 +169,6 @@ fn read(
         .evaluation()
         .read(
             queue,
-            &Default::default(),
             &request,
             || false,
             |_, block| {

@@ -6,7 +6,6 @@ use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::ProcessingSource;
-use crate::gpu::submission::SubmissionGate;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
@@ -150,8 +149,7 @@ impl RenderedView {
     #[allow(clippy::too_many_arguments)]
     pub fn render_from_retained(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         source: Arc<ViewImage>,
         capture: PhotographRequest,
         field: Option<Arc<GpuFlatField>>,
@@ -170,7 +168,7 @@ impl RenderedView {
             source.kernels().clone(),
             spec,
             definition,
-            (queue, submissions),
+            queue,
             cancelled,
         )?;
         Self::from_image(device, image, capture, target)
@@ -376,8 +374,7 @@ impl RenderedView {
     pub fn ensure_submitted(
         self: &Arc<Self>,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         context: &egui::Context,
     ) {
         let mut submitted = self.submitted.lock().unwrap();
@@ -387,7 +384,7 @@ impl RenderedView {
         let mut initialized = self.product.as_ref().map(|g| g.submitted.lock().unwrap());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
-            composite.ensure_parents(device, queue, submissions, context);
+            composite.ensure_parents(device, queue, context);
             composite.encode(&mut encoder, &self.image);
             if self.look_id().is_some() {
                 self.image
@@ -418,13 +415,13 @@ impl RenderedView {
         }
         let context = context.clone();
         let repaint = context.clone();
-        submissions.submit_with_completion(queue, [encoder.finish()], move || {
+        queue.submit_with_completion([encoder.finish()], move || {
             complete.store(true, Ordering::Release);
             if repairs > 0 { log::info!(repairs = repairs, seconds = started.elapsed().as_secs_f64(); "working_colour_complete"); }
             context.request_repaint();
         });
         self.image
-            .begin_look_check_tracked(submissions, move || repaint.request_repaint());
+            .begin_look_check_tracked(queue, move || repaint.request_repaint());
         if let Some(initialized) = initialized.as_mut() {
             **initialized = true;
         }

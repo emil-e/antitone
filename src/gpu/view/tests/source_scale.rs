@@ -1,6 +1,5 @@
 use super::*;
 use crate::gpu::evaluation as e;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
@@ -8,7 +7,6 @@ use crate::gpu::view::request::SourceRequest;
 fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_headroom() {
     pollster::block_on(async {
         let (device, queue, renderer, _) = context().await;
-        let gate = SubmissionGate::default();
         for (rgb, ev) in [
             ([2949, 11796, 5898], 0.),
             ([64000; 3], 0.),
@@ -123,7 +121,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 let prepared = renderer.evaluation().prepare_image(evaluation).unwrap();
                 let pixels = renderer
                     .evaluation()
-                    .produce_images(&queue, &gate, vec![prepared])
+                    .produce_images(&queue, vec![prepared])
                     .unwrap()
                     .remove(0)
                     .await

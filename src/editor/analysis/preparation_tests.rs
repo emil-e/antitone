@@ -8,11 +8,15 @@ pub(in crate::editor) fn request() -> (
     analysis::Request,
     tempfile::TempDir,
     wgpu::Device,
-    wgpu::Queue,
+    crate::gpu::submission::Queue,
 ) {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &Default::default(),
+    ))
+    .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths: Vec<_> = ["roll-0.dng", "roll-1.dng"]
@@ -61,7 +65,7 @@ pub(super) fn detect(
     request: &mut analysis::Request,
     scheduler: &source_loading::SourceLoader,
     _device: &wgpu::Device,
-    _queue: &wgpu::Queue,
+    _queue: &crate::gpu::submission::Queue,
 ) {
     let metadata = futures_lite::future::block_on(crate::editor::spatial::preparation::prepare(
         Arc::new(request.document.clone()),
@@ -83,13 +87,16 @@ fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission(
     let (mut request, _directory, _, _) = request();
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, _) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 1024,
+    let (device, _) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 1024,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     request.document.project.output.lut = Some(Arc::new(
         LookAsset::new(

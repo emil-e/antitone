@@ -377,7 +377,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             .request_adapter(&Default::default())
             .await
             .expect("authored correction worker test requires Metal");
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         editor.document.thumbnails =
             (Thumbnails::default()).with_sources(editor.document.cache.clone());

@@ -5,7 +5,6 @@ use crate::{
     },
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, SourcePoint},
-    gpu::submission::SubmissionGate,
     gpu_export::{
         authored::{Format, Request, write},
         tests::{context, exr_pixels, tiff_pixels},
@@ -126,14 +125,13 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
         "source-anchored exposure must distinguish wrong order: delta {wrong_order_delta}, area {a:?}, sigma {sigma}"
     );
     let directory = tempfile::tempdir().unwrap();
-    let gate = SubmissionGate::default();
     let write_file =
         |name: &str, format, settings, look: Option<std::sync::Arc<crate::looks::LookAsset>>| {
             let path = directory.path().join(name);
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Request {
                     scan: &scan,
                     field: None,

@@ -12,7 +12,6 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::submission::SubmissionGate,
     gpu_export::Format,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},
@@ -23,14 +22,21 @@ use antitone::{
 use authored_export::Request;
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
-fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
+fn context() -> (
+    wgpu::Device,
+    antitone::gpu::submission::Queue,
+    Arc<GpuRenderer>,
+) {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     })
@@ -168,7 +174,6 @@ fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
     )
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let gate = SubmissionGate::default();
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let actual = directory.path().join("gpu.tif");
         let expected = directory.path().join("cpu.tif");
@@ -177,7 +182,7 @@ fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
             authored_export::write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Request {
                     calculation: None,
                     scan: &scan,
@@ -254,7 +259,6 @@ fn compare_exr(repaired: bool) {
     };
     let narrow = look([0.99; 3], [1.; 3]);
     let directory = tempfile::tempdir().unwrap();
-    let gate = SubmissionGate::default();
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let plain = directory.path().join("plain.exr");
         let selected = directory.path().join("selected.exr");
@@ -262,7 +266,7 @@ fn compare_exr(repaired: bool) {
             authored_export::write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Request {
                     calculation: None,
                     scan: &scan,
@@ -348,11 +352,10 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("crop.tif");
-    let gate = SubmissionGate::default();
     authored_export::write(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         Request {
             calculation: None,
             scan: &scan,
@@ -373,7 +376,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
     authored_export::write(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         Request {
             calculation: None,
             scan: &scan,
@@ -418,7 +421,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         authored_export::write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Request {
                 calculation: None,
                 scan: &scan,

@@ -1,7 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::processing::{NegativeInput, Response};
 
 fn source(
@@ -72,7 +71,6 @@ fn mapped(map: TextureMapping, uv: [f64; 2]) -> [f64; 2] {
 fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_floor_flags() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         for corrected in [false, true] {
             let mut scan = scan();
             let field = corrected.then(|| {
@@ -122,7 +120,6 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
             let paired = ViewImage::prefixes(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -136,7 +133,6 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
                 let separate = ViewImage::prefix(
                     &device,
                     &queue,
-                    &gate,
                     renderer.clone(),
                     kernels.clone(),
                     &scan,
@@ -168,7 +164,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
 fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_target_and_scopes() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
@@ -266,8 +262,8 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                             .is_err()
                     );
                 }
-                detail.ensure_submitted(&device, &queue, &gate, &context);
-                base.ensure_submitted(&device, &queue, &gate, &context);
+                detail.ensure_submitted(&device, &queue, &context);
+                base.ensure_submitted(&device, &queue, &context);
                 let detail_values = image(&device, &queue, &detail.image);
                 let base_values = image(&device, &queue, &base.image);
                 let mut turned = FrameRaster::full(
@@ -321,7 +317,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                         .is_err(),
                         "never recursively resample a composite"
                     );
-                    composite.ensure_submitted(&device, &queue, &gate, &context);
+                    composite.ensure_submitted(&device, &queue, &context);
                     let actual = image(&device, &queue, &composite.image);
                     let dmap = detail.mapping(requested);
                     let bmap = base.mapping(requested);
@@ -362,18 +358,8 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                         context.clone(),
                     );
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    egui_wgpu::CallbackTrait::prepare(
-                        &paint,
-                        &device,
-                        &queue,
-                        &egui_wgpu::ScreenDescriptor {
-                            size_in_pixels: requested.output,
-                            pixels_per_point: 1.,
-                        },
-                        &mut encoder,
-                        &mut Default::default(),
-                    );
-                    gate.submit(&queue, [encoder.finish()]);
+                    paint.prepare_frame(&device, &mut encoder);
+                    queue.submit([encoder.finish()]);
                     let totals = read(&device, &queue, &gpu.totals);
                     let (_, columns, counts) =
                         crate::scopes::reference(requested.output, &actual, settings).unwrap();
@@ -416,7 +402,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                                     "coalesce navigation rather than queue another display-sized target"
                                 );
                             }
-                            next.ensure_submitted(&device, &queue, &gate, &context);
+                            next.ensure_submitted(&device, &queue, &context);
                             held = next;
                         }
                         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -433,7 +419,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                             latest,
                             "completion reaches the latest requested navigation"
                         );
-                        newest.ensure_submitted(&device, &queue, &gate, &context);
+                        newest.ensure_submitted(&device, &queue, &context);
                         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                     }
                 }
@@ -465,7 +451,6 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
 fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
@@ -520,7 +505,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
                 let base = make(base_source.clone());
                 let composite =
                     RenderedView::composite(&device, detail.clone(), base, full, None).unwrap();
-                composite.ensure_submitted(&device, &queue, &gate, &context);
+                composite.ensure_submitted(&device, &queue, &context);
                 let expected = image(&device, &queue, &detail.image)[0];
                 for pixel in image(&device, &queue, &composite.image) {
                     assert_eq!(pixel[3], 1.);
@@ -540,7 +525,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
 fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_owners() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
@@ -583,7 +568,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
         let detail = make(detail_source.clone());
         let base = make(base_source.clone());
         let composite = RenderedView::composite(&device, detail, base, full, None).unwrap();
-        composite.ensure_submitted(&device, &queue, &gate, &context);
+        composite.ensure_submitted(&device, &queue, &context);
         drop(composite);
         drop(detail_source);
         drop(base_source);
@@ -604,18 +589,19 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
             max_storage_buffer_binding_size: 4 * 1024 * 1024,
             ..Default::default()
         };
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: limits,
                 ..Default::default()
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();
-        let gate = SubmissionGate::default();
         let context = egui::Context::default();
         let scan = scan();
         let cal = calibration();
@@ -660,7 +646,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         let composite =
             RenderedView::composite(&device, make(detail_source), make(base_source), full, None)
                 .unwrap();
-        composite.ensure_submitted(&device, &queue, &gate, &context);
+        composite.ensure_submitted(&device, &queue, &context);
         assert!(
             image(&device, &queue, &composite.image)
                 .iter()

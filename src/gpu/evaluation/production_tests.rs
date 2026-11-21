@@ -16,7 +16,7 @@ use glam::DVec3;
 fn canonical(
     renderer: &crate::renderer::GpuRenderer,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     request: crate::gpu::execution::test_support::OriginalControls<'_>,
 ) -> Vec<[f32; 4]> {
     let composition = request.composition;
@@ -24,7 +24,7 @@ fn canonical(
     crate::gpu::execution::execute(
         renderer,
         device,
-        (queue, &Default::default()),
+        queue,
         request.lower(device, renderer).unwrap(),
         |render, finish| {
             let size = composition.size();
@@ -246,7 +246,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     let actual = crate::refinement::refine(
         &renderer,
         &device,
-        (&queue, &Default::default()),
+        &queue,
         (&scan, Some(field)),
         input,
         OutputTarget::Srgb,
@@ -397,7 +397,7 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
         result = crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &Default::default()),
+            &queue,
             (&scan, None),
             input,
             OutputTarget::Srgb,

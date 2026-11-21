@@ -47,14 +47,13 @@ fn fused_values_preserve_acquisition_and_pixels_with_lower_transient_storage() {
                 );
                 assert!(after.fragment.work.len() < before.fragment.work.len());
             }
-            let gate = crate::gpu::submission::SubmissionGate::default();
             let before = execute::Executor::default()
-                .run(&device, &queue, &gate, &baseline, || false)
+                .run(&device, &queue, &baseline, || false)
                 .unwrap()
                 .unwrap();
             let before = execute::read(&device, &queue, &before.pixels);
             let after = execute::Executor::default()
-                .run(&device, &queue, &gate, &composed, || false)
+                .run(&device, &queue, &composed, || false)
                 .unwrap()
                 .unwrap();
             let after = execute::read(&device, &queue, &after.pixels);
@@ -89,7 +88,7 @@ fn sampling_an_effect_result_is_not_a_mandatory_image_allocation() {
     )
     .unwrap();
     let result = execute::Executor::default()
-        .run(&device, &queue, &Default::default(), &plan, || false)
+        .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
     let actual = execute::read(&device, &queue, &result.pixels);
@@ -135,7 +134,7 @@ fn apply(pixel: vec4f, position: vec2f) -> vec4f {
     );
     for plan in plans {
         let result = execute::Executor::default()
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         let actual = execute::read(&device, &queue, &result.pixels);
@@ -218,7 +217,7 @@ fn independent_map(p: vec4f, position: vec2f) -> vec4f {
         modified.tiles[0].fragment.work.len()
     );
     let result = execute::Executor::default()
-        .run(&device, &queue, &Default::default(), &modified, || false)
+        .run(&device, &queue, &modified, || false)
         .unwrap()
         .unwrap();
     let pixels = execute::read(&device, &queue, &result.pixels);

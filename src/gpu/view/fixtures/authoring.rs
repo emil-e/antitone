@@ -256,7 +256,6 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let complete = photograph.processed;
         assert_eq!(reads.load(Ordering::Relaxed), 0);
         assert!(complete.identity().is_some());
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let request = |root: e::Value| {
             let grid = root.domain().grid;
             context
@@ -273,7 +272,6 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let native = context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(photograph.neutral),
                 e::ImageFormat::Rgba32Float,
@@ -290,7 +288,6 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let output = context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(complete.clone()),
                 e::ImageFormat::Rgba32Float,
@@ -317,7 +314,6 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let rebuilt = context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(complete),
                 e::ImageFormat::Rgba32Float,

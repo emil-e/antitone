@@ -23,16 +23,19 @@ fn set_map(document: &mut Document, gain: f64) {
         .unwrap();
 }
 
-fn limited_device() -> (wgpu::Device, wgpu::Queue) {
+fn limited_device() -> (wgpu::Device, crate::gpu::submission::Queue) {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 1024,
+    pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 1024,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap()
 }
 

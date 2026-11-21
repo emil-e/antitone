@@ -14,7 +14,7 @@ struct Resources {
     sampling_inputs: SamplingInputs,
     initialization: Arc<crate::source::Initialization>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     renderers: Arc<crate::renderer::RendererCache>,
 }
 
@@ -31,7 +31,7 @@ impl Resources {
         let renderer = self.renderers.get(&self.device, &self.queue)?;
         pollster::block_on(Fit::acquire(
             renderer.evaluation().clone(),
-            (self.queue.clone(), renderer.submissions.clone()),
+            self.queue.clone(),
             request,
             super::Resources {
                 correction: input.into(),
@@ -81,7 +81,7 @@ async fn run(
         .get(&resources.device, &resources.queue)?;
     let state = Fit::acquire(
         renderer.evaluation().clone(),
-        (resources.queue, renderer.submissions.clone()),
+        resources.queue,
         request,
         super::Resources {
             correction: input.into(),
@@ -159,7 +159,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured.clone()).unwrap();
@@ -288,7 +288,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
         sources: scheduler.provider(None),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let captured = input(&services, &request);
     let cancelled = Cancellation::default();

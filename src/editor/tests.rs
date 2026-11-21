@@ -177,7 +177,8 @@ pub(super) fn fixture() -> Editor {
 
 /// Real resource services and authored inputs for command/outcome tests.
 pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
-    static GPU: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+    static GPU: std::sync::OnceLock<(wgpu::Device, crate::gpu::submission::Queue)> =
+        std::sync::OnceLock::new();
     let (device, queue) = GPU.get_or_init(|| {
         pollster::block_on(async {
             let instance = crate::gpu::instance();
@@ -185,7 +186,9 @@ pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
                 .request_adapter(&Default::default())
                 .await
                 .expect("workflow tests require Metal");
-            adapter.request_device(&Default::default()).await.unwrap()
+            crate::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap()
         })
     });
     let mut editor = Editor::new(device, queue);
@@ -365,11 +368,13 @@ fn sdk_source_inspection_does_not_repeat_libraw_wb_headroom_compensation() {
 }
 
 #[test]
-fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
+fn refinement_worker_submits_through_the_editor_queue() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         editor.document.thumbnails =
             (Thumbnails::default()).with_sources(editor.document.cache.clone());
@@ -407,15 +412,14 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
             ));
         editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
-        let submissions = host::App::submission_gate(&editor).clone();
+        let submissions = editor.submissions().clone();
         let request = editor.document.visit.canvas.original.request().unwrap();
         let services = editor.source_services.clone().unwrap();
-        let gate = submissions.clone();
         let (completed, result) = mpsc::channel();
-        let worker = submissions.configure(|| {
+        let worker = submissions.hold_submission_lock(|| {
             let worker = std::thread::spawn(move || {
                 completed
-                    .send(pollster::block_on(request.prepare(services, gate)))
+                    .send(pollster::block_on(request.prepare(services)))
                     .unwrap();
             });
             assert!(matches!(
@@ -439,7 +443,9 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -1129,7 +1135,11 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     } else {
         let instance = crate::gpu::instance();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-        pollster::block_on(adapter.request_device(&Default::default())).unwrap()
+        pollster::block_on(crate::gpu::submission::request_device(
+            &adapter,
+            &Default::default(),
+        ))
+        .unwrap()
     };
     if !editor.document.visit.working_view.enabled() {
         editor.initialize_viewer(&device, &queue);

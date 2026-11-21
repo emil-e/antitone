@@ -3,7 +3,6 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
-use crate::gpu::submission::SubmissionGate;
 
 #[test]
 fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_dimensions() {
@@ -47,7 +46,6 @@ fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_di
             let image = ViewImage::from_processing(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),
@@ -98,7 +96,6 @@ fn digital_source_marks_neutral_coverage() {
         let source = ViewImage::from_processing(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             Arc::new(source),
@@ -259,7 +256,6 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
             let composed = ViewImage::from_processing(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),
@@ -329,7 +325,6 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
             let composed = ViewImage::from_processing(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),

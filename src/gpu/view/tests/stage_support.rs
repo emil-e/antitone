@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
@@ -89,12 +88,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 }),
             ));
             let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None)?;
-            view.ensure_submitted(
-                &device,
-                &queue,
-                &SubmissionGate::default(),
-                &egui::Context::default(),
-            );
+            view.ensure_submitted(&device, &queue, &egui::Context::default());
             Ok::<_, Error>(read(
                 &device,
                 &queue,

@@ -7,10 +7,7 @@
 use antitone::{
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu::{
-        evaluation::{self, CellRegion, Domain, Grid, Meaning, Source},
-        submission::SubmissionGate,
-    },
+    gpu::evaluation::{self, CellRegion, Domain, Grid, Meaning, Source},
     gpu_export::{Format, Request},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -41,13 +38,20 @@ impl Source for Linear {
     }
 }
 
-fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
+fn context() -> (
+    wgpu::Device,
+    antitone::gpu::submission::Queue,
+    Arc<GpuRenderer>,
+) {
     pollster::block_on(async {
         let adapter = antitone::gpu::instance()
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     })
@@ -73,7 +77,6 @@ fn tiff(path: &Path) -> Vec<u16> {
 #[test]
 fn file_writer_executes_already_authored_linear_nodes_without_photographic_reinterpretation() {
     let (device, queue, renderer) = context();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("authored.tif");
     let request = |gain: f32| Request {
@@ -89,7 +92,7 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
         antitone::gpu_export::write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             request(gain),
             &path,
             Overwrite::Confirmed,
@@ -101,7 +104,7 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
     let stopped = antitone::gpu_export::write_checked(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         request(1.),
         &path,
         Overwrite::Confirmed,
@@ -116,7 +119,6 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
     use exr::prelude::{FlatSamples, Vec2, read_first_flat_layer_from_file};
 
     let (device, queue, renderer) = context();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     // Basis colours expose a missing/doubled matrix or channel permutation;
     // signed/HDR and non-half-exact values expose clipping or premature packing.
@@ -134,7 +136,7 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
         antitone::gpu_export::write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Request {
                 definition: evaluation::source(Arc::new(Linear {
                     pixels: pixels.clone(),

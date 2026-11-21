@@ -1,5 +1,4 @@
 use super::*;
-use antitone::gpu::submission::SubmissionGate;
 use antitone::{
     editor::Editor,
     project::{Project, Save, Source, SourceDevelopment, SourceId},
@@ -95,10 +94,6 @@ impl host::App for EditorApp<'_> {
 
     fn request_quit(&mut self) {
         self.update(host::App::request_quit);
-    }
-
-    fn submission_gate(&self) -> SubmissionGate {
-        self.read(host::App::submission_gate)
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {

@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 
 pub(super) struct Composite {
     detail: Arc<RenderedView>,
@@ -120,12 +119,11 @@ impl Composite {
     pub(super) fn ensure_parents(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         context: &egui::Context,
     ) {
-        self.detail.ensure_submitted(device, queue, gate, context);
-        self.underlay.ensure_submitted(device, queue, gate, context);
+        self.detail.ensure_submitted(device, queue, context);
+        self.underlay.ensure_submitted(device, queue, context);
     }
 
     pub(super) fn check(

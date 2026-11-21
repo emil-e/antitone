@@ -67,7 +67,7 @@ impl GpuRun {
     pub(super) fn submit(
         &self,
         device: &wgpu::Device,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         encoder: wgpu::CommandEncoder,
         resources: Allocations,
         submitted: impl FnOnce(),
@@ -80,7 +80,7 @@ impl GpuRun {
         let completion = pending.clone();
         let index = timed!(
             Submit,
-            gate.submit_with_completion(queue, [encoder.finish()], move || {
+            queue.submit_with_completion([encoder.finish()], move || {
                 completion.complete.store(true, Ordering::Release);
             })
         );

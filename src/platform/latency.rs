@@ -234,16 +234,15 @@ mod tests {
         pollster::block_on(async {
             let instance = crate::gpu::instance();
             let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-            let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+            let (device, queue) =
+                crate::gpu::submission::request_device(&adapter, &Default::default())
+                    .await
+                    .unwrap();
             let mut trace = Trace::new();
             let mut frame = trace.begin();
             trace.submitting(&mut frame);
             let encoder = device.create_command_encoder(&Default::default());
-            let index = crate::gpu::submission::SubmissionGate::default().submit_with_completion(
-                &queue,
-                [encoder.finish()],
-                trace.completion(&frame),
-            );
+            let index = queue.submit_with_completion([encoder.finish()], trace.completion(&frame));
             device
                 .poll(wgpu::PollType::Wait {
                     submission_index: Some(index),

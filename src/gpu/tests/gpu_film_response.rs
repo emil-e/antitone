@@ -24,7 +24,7 @@ fn negative(cal: Calibration, response: Response, gamma: f64, balance: Balance) 
 
 fn read(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     kernel: &CameraFixture,
     source: &ProcessingSource,
     params: &AuthoredPhotograph,
@@ -86,7 +86,9 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let fixture = CameraFixture::new(&device).await.unwrap();
         let matrices = [
             DMat3::from_cols(
@@ -257,7 +259,9 @@ fn very_dense_calibration_keeps_its_anchor_and_zero_light_finite_on_gpu() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let anchor_code = (floor as f32) * 65535.;
         assert_eq!(
@@ -311,7 +315,9 @@ fn gpu_shoulder_join_matches_its_independent_rational_and_tangent_branches() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let gamma = 0.1;
         let toe = 2.5;
@@ -384,7 +390,9 @@ fn analytic_highlight_tail_and_camera_unit_scaling_reach_the_gpu_unchanged() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let join = 1. / (1. + 99. * 65536.);
         let samples = [1., 0.01, 0.005, join * 1.01, join * 0.99, join * 0.5, 0.];
@@ -446,7 +454,9 @@ fn finite_gpu_density_survives_an_overflowing_light_ratio() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let base = 1e-37_f64;
         let white = 0.01 * base;

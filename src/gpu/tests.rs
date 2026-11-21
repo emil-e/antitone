@@ -138,7 +138,9 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let codes = [
             [16384, 8192, 4096, 0],
             [0, 0, 0, 5432],
@@ -244,7 +246,9 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let codes: Vec<_> = (0..=65535u16).map(|v| [v, 65535 - v, v / 2, 0]).collect();
         let continuous: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();

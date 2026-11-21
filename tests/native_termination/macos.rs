@@ -1,9 +1,6 @@
 //! Explicit native termination negotiation. --run uses only isolated child apps;
 //! it never requests logout/shutdown or changes personal projects/preferences.
-use antitone::{
-    gpu::submission::SubmissionGate,
-    platform::host::{self, QuitState},
-};
+use antitone::platform::host::{self, QuitState};
 use objc2::{
     ClassType, MainThreadMarker,
     runtime::{AnyObject, ClassBuilder, NSObject, Sel},
@@ -167,7 +164,6 @@ impl egui_wgpu::CallbackTrait for PaintAck {
 }
 
 struct NativeApp {
-    submissions: SubmissionGate,
     mode: Mode,
     marker: PathBuf,
     identity: (usize, usize),
@@ -184,9 +180,6 @@ struct NativeApp {
 }
 
 impl host::App for NativeApp {
-    fn submission_gate(&self) -> SubmissionGate {
-        self.submissions.clone()
-    }
     fn quit_state(&self) -> Option<QuitState> {
         Some(self.state)
     }
@@ -353,7 +346,6 @@ fn child(mode: Mode, marker: PathBuf) -> host::Result<()> {
             install_existing_handler();
         }
         Ok(NativeApp {
-            submissions: SubmissionGate::default(),
             mode,
             marker,
             identity: delegate_identity(),

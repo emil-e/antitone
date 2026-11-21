@@ -54,7 +54,7 @@ fn evaluate(
     .unwrap();
     let plan = super::super::tests::make_plan(root, tile);
     let result = Executor::default()
-        .run(&device, &queue, &Default::default(), &plan, || false)
+        .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
     super::super::execute::read(&device, &queue, &result.pixels)
@@ -95,7 +95,7 @@ fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tile
     for tile in [[2, 1], [1, 1]] {
         let plan = super::super::tests::make_plan(root.clone(), tile);
         let result = Executor::default()
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         assert_eq!(

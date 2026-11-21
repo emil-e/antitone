@@ -43,10 +43,12 @@ fn assert_same_pixels(actual: &[[f32; 4]], expected: &[[f32; 4]]) {
     }
 }
 
-async fn gpu() -> (wgpu::Device, wgpu::Queue) {
+async fn gpu() -> (wgpu::Device, crate::gpu::submission::Queue) {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    adapter.request_device(&Default::default()).await.unwrap()
+    crate::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap()
 }
 
 fn proxy() -> Arc<Proxy> {
@@ -113,14 +115,14 @@ fn frame(
 
 fn draw(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     context: &egui::Context,
     renderer: &mut egui_wgpu::Renderer,
     mut output: egui::FullOutput,
 ) {
     for (id, deltas) in &output.textures_delta.set {
         for delta in deltas {
-            renderer.update_texture(device, queue, *id, delta);
+            queue.update_egui_texture(renderer, device, *id, delta);
         }
     }
     output.textures_delta.clear();
@@ -130,7 +132,7 @@ fn draw(
     };
     let jobs = context.tessellate(output.shapes, output.pixels_per_point);
     let mut encoder = device.create_command_encoder(&Default::default());
-    let commands = renderer.update_buffers(device, queue, &mut encoder, &jobs, &screen);
+    let commands = queue.update_egui_buffers(renderer, device, &mut encoder, &jobs, &screen);
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("pending preview offscreen paint"),
         size: wgpu::Extent3d {

@@ -1,6 +1,5 @@
 use super::*;
 mod recovery;
-use crate::gpu::submission::SubmissionGate;
 use crate::processing::InputSettings;
 use glam::{DMat3, DVec3};
 
@@ -31,7 +30,6 @@ fn recipe(scan: &Scan, input: InputSettings) -> crate::image_recipe::ImageRecipe
 #[test]
 fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_and_cache_policies() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let gate = SubmissionGate::default();
     let no_cache =
         evaluation::Context::new(&device, evaluation::CachePolicy { generated_bytes: 0 });
     let file = crate::raw::fixture::bayer_dng_with_camera(
@@ -87,7 +85,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         let mut source = Source::from_recipe(
             prepared_field(&device, &scan),
             &renderer,
-            (&queue, &gate),
+            &queue,
             &scan,
             &recipe,
         )
@@ -203,8 +201,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
         &Default::default(),
     )
     .unwrap();
-    let gate = SubmissionGate::default();
-    let mut source = Source::from_image(&renderer, (&queue, &gate), graph.neutral).unwrap();
+    let mut source = Source::from_image(&renderer, &queue, graph.neutral).unwrap();
     assert_eq!(
         source
             .read(region, Some(&[false; 4]), &|| false)
@@ -239,11 +236,10 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
     });
-    let gate = SubmissionGate::default();
     let mut source = Source::from_recipe(
         prepared_field(&device, &scan),
         &renderer,
-        (&queue, &gate),
+        &queue,
         &scan,
         &recipe(&scan, input),
     )
@@ -286,12 +282,11 @@ fn repair_inputs_accept_developed_zero_and_native_white() {
     let camera = scan.pixel(region.x, region.y).unwrap();
     assert_eq!(camera.x, 0.);
     assert_eq!(camera.y, 1.);
-    let gate = SubmissionGate::default();
     let recipe = recipe(&scan, InputSettings::Digital);
     let mut source = Source::from_recipe(
         prepared_field(&device, &scan),
         &renderer,
-        (&queue, &gate),
+        &queue,
         &scan,
         &recipe,
     )
@@ -305,7 +300,6 @@ fn repair_inputs_accept_developed_zero_and_native_white() {
 fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let gate = SubmissionGate::default();
     let file = crate::dng_fixture::Fixture {
         side: 192,
         bits: 16,
@@ -345,7 +339,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     let original = graph.interpreted().unwrap().unrepaired;
     let photograph = graph.photograph(&device.limits()).unwrap();
     let read = |image| {
-        Source::from_image(&renderer, (&queue, &gate), image)
+        Source::from_image(&renderer, &queue, image)
             .unwrap()
             .read(region, None, &|| false)
             .unwrap()
@@ -354,7 +348,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     let mut search = Source::from_recipe(
         prepared_field(&device, &scan),
         &renderer,
-        (&queue, &gate),
+        &queue,
         &scan,
         &recipe,
     )
@@ -394,7 +388,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     let values = Source::from_recipe(
         prepared_field(&device, &scan),
         &renderer,
-        (&queue, &gate),
+        &queue,
         &scan,
         &recipe,
     )
@@ -413,7 +407,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     .photograph(&device.limits())
     .unwrap()
     .neutral;
-    let fallback = Source::from_image(&renderer, (&queue, &gate), repaired)
+    let fallback = Source::from_image(&renderer, &queue, repaired)
         .unwrap()
         .read(edge, None, &|| false)
         .unwrap()

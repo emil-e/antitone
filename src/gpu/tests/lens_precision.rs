@@ -171,7 +171,7 @@ enum ProcessingCase {
 
 struct Gpu {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     kernel: CameraFixture,
 }
 
@@ -183,7 +183,9 @@ impl Gpu {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         println!("precision adapter={:?}", adapter.get_info());
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         Self {
             device,

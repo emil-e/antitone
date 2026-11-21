@@ -77,7 +77,6 @@ fn related_valid_roots_execute_once_without_fractional_working_reserves() {
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &context.test_materializations(false),
                     constrained,
                     ImageFormat::Rgba32Float,
@@ -104,7 +103,6 @@ fn related_valid_roots_execute_once_without_fractional_working_reserves() {
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &context.test_materializations(false),
                     evaluation.clone(),
                     ImageFormat::Rgba32Float,
@@ -157,7 +155,7 @@ fn related_valid_roots_execute_once_without_fractional_working_reserves() {
         .collect();
     let submissions = Arc::new(AtomicUsize::new(0));
     let observed = submissions.clone();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
@@ -165,7 +163,6 @@ fn related_valid_roots_execute_once_without_fractional_working_reserves() {
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &|| false,

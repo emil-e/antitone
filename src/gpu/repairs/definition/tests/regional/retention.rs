@@ -95,9 +95,7 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
             .map(|root| query(&context, root.clone()))
             .collect();
         pollster::block_on(futures_util::future::try_join_all(
-            context
-                .materialize_many(&queue, &Default::default(), &scope, requests)
-                .unwrap(),
+            context.materialize_many(&queue, &scope, requests).unwrap(),
         ))
         .unwrap()
     };
@@ -107,7 +105,6 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
         context
             .read(
                 &queue,
-                &Default::default(),
                 &query(&context, root),
                 || false,
                 |block, values| {

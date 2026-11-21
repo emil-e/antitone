@@ -1,6 +1,5 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::submission::SubmissionGate;
 use crate::rendering::OutputTarget;
 use crate::scan::Scan;
 #[cfg(feature = "ocio-reference")]
@@ -61,7 +60,7 @@ fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_orig
         execute(
             &renderer,
             &device,
-            (&queue, &SubmissionGate::default()),
+            &queue,
             root,
             false,
             &output.linear,
@@ -93,7 +92,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
     let scan = Scan::open(file.path(), None).unwrap();
     let generation = Arc::new(AtomicU64::new(7));
     let count = Arc::new(AtomicUsize::new(0));
-    let gate = SubmissionGate::default();
+    let gate = queue.clone();
     let (changed, observed) = (generation.clone(), count.clone());
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
@@ -107,7 +106,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
     let result = crate::refinement::refine(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         (&scan, None),
         ProcessingParameters::source(),
         OutputTarget::Srgb,
@@ -125,7 +124,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
         crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             (&scan, None),
             ProcessingParameters::source(),
             OutputTarget::Srgb,
@@ -146,13 +145,16 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
 fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places_tail_tiles() {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 1 << 20,
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 1 << 20,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     let renderer = pollster::block_on(GpuRenderer::new(&device, &queue)).unwrap();
     let file = crate::dng_fixture::Fixture {
@@ -183,7 +185,7 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
         crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &SubmissionGate::default()),
+            &queue,
             (&scan, None),
             ProcessingParameters::source(),
             OutputTarget::Srgb,
@@ -388,7 +390,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
             let actual = crate::refinement::refine(
                 &renderer,
                 &device,
-                (&queue, &SubmissionGate::default()),
+                &queue,
                 (&scan, None),
                 input.clone(),
                 target,

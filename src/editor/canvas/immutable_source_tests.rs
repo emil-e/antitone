@@ -24,7 +24,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
         let original = editor.active_canvas().preview.rendered().unwrap().clone();
-        original.ensure_submitted(&device, &queue, &editor.submissions, &context);
+        original.ensure_submitted(&device, &queue, &context);
         let original_pixels =
             crate::viewer::readback::image_pixels(&device, &queue, &original.image);
         editor
@@ -66,7 +66,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .unwrap();
         let corrected = editor.active_canvas().preview.rendered().unwrap().clone();
         assert!(!Arc::ptr_eq(&original, &corrected));
-        corrected.ensure_submitted(&device, &queue, &editor.submissions, &context);
+        corrected.ensure_submitted(&device, &queue, &context);
         let corrected_pixels =
             crate::viewer::readback::image_pixels(&device, &queue, &corrected.image);
         assert_eq!(original_pixels.len(), corrected_pixels.len());
@@ -96,7 +96,7 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
         let cleared = editor.active_canvas().preview.rendered().unwrap().clone();
-        cleared.ensure_submitted(&device, &queue, &editor.submissions, &context);
+        cleared.ensure_submitted(&device, &queue, &context);
         assert_eq!(
             original_pixels,
             crate::viewer::readback::image_pixels(&device, &queue, &cleared.image)

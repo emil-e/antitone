@@ -567,8 +567,7 @@ impl Executor {
     pub fn run(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<ResultImage>, Error> {
@@ -584,13 +583,8 @@ impl Executor {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })?;
-        let Some(mut stats) = self.run_sink(
-            device,
-            queue,
-            gate,
-            plan,
-            cancelled,
-            |encoder, image, buffer| {
+        let Some(mut stats) =
+            self.run_sink(device, queue, plan, cancelled, |encoder, image, buffer| {
                 for row in 0..image.region.height {
                     let destination = (u64::from((image.region.y - plan.region.y) as u32)
                         + u64::from(row))
@@ -605,8 +599,7 @@ impl Executor {
                     );
                 }
                 Ok(())
-            },
-        )?
+            })?
         else {
             return Ok(None);
         };
@@ -623,15 +616,14 @@ impl Executor {
     pub fn run_sink(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
     ) -> Result<Option<WorkCounts>, Error> {
         self.run_produced_sink(
             device,
-            (queue, gate),
+            queue,
             plan,
             cancelled,
             (
@@ -656,7 +648,7 @@ impl Executor {
     pub(in crate::gpu::evaluation) fn run_produced_sink<E, S>(
         &mut self,
         device: &wgpu::Device,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         (mut sink, destination): (Sink<E, S>, Option<&wgpu::Buffer>),
@@ -749,12 +741,12 @@ impl Executor {
                 let mut resources = self.resources(&tile.fragment);
                 resources.buffer(destination.unwrap());
                 self.working
-                    .submit_gpu(device, (queue, gate), encoder, resources, || {
+                    .submit_gpu(device, queue, encoder, resources, || {
                         self.submitted();
                         (sink.submitted)()
                     })?;
             } else {
-                submit(device, queue, gate, encoder, || {
+                submit(device, queue, encoder, || {
                     self.submitted();
                     (sink.submitted)()
                 })?;
@@ -769,7 +761,7 @@ impl Executor {
     fn encode_tile(
         &self,
         device: &wgpu::Device,
-        (queue, cancelled): (Option<&wgpu::Queue>, &dyn Fn() -> bool),
+        (queue, cancelled): (Option<&crate::gpu::submission::Queue>, &dyn Fn() -> bool),
         encoder: &mut wgpu::CommandEncoder,
         tile: &Tile,
         stats: &mut WorkCounts,
@@ -1559,12 +1551,11 @@ impl Recorded {
 
 pub(super) fn submit(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gate: &crate::gpu::submission::SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
     encoder: wgpu::CommandEncoder,
     submitted: impl FnOnce(),
 ) -> Result<(), Error> {
-    let submission = timed!(Submit, gate.submit(queue, [encoder.finish()]));
+    let submission = timed!(Submit, queue.submit([encoder.finish()]));
     submitted();
     timed!(
         DeviceWait,
@@ -1671,7 +1662,11 @@ fn bind<'a>(
 }
 
 #[cfg(all(test, feature = "editor"))]
-pub fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<[f32; 4]> {
+pub fn read(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    buffer: &wgpu::Buffer,
+) -> Vec<[f32; 4]> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("evaluation result readback"),
         size: buffer.size(),
@@ -1680,7 +1675,7 @@ pub fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -
     });
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
-    queue.submit([encoder.finish()]);
+    queue.unobserved().submit([encoder.finish()]);
     let (send, receive) = std::sync::mpsc::channel();
     staging.map_async(wgpu::MapMode::Read, .., move |value| {
         send.send(value).unwrap()

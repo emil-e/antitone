@@ -36,9 +36,9 @@ fn main() -> ProbeResult<()> {
                     0.001,
                 ))?;
                 pollster::block_on(validate_ui(device, queue))?;
-                let submissions = antitone::platform::SubmissionGate::default();
-                let worker = submission_stress
-                    .then(|| SubmissionWorker::new(device, queue, submissions.clone(), report));
+
+                let worker =
+                    submission_stress.then(|| SubmissionWorker::new(device, queue, report));
                 Ok(Probe {
                     chart: Arc::new(Chart::new(
                         device,
@@ -46,7 +46,7 @@ fn main() -> ProbeResult<()> {
                         wgpu::TextureFormat::Rgba16Float,
                     )),
                     frame: 0,
-                    submissions,
+
                     worker,
                     last_size: None,
                     resizes: 0,
@@ -93,8 +93,7 @@ struct SubmissionWorker {
 impl SubmissionWorker {
     fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: antitone::platform::SubmissionGate,
+        queue: &antitone::gpu::submission::Queue,
         report: SubmissionReport,
     ) -> Self {
         let device = device.clone();
@@ -112,7 +111,7 @@ impl SubmissionWorker {
             while !stopping.load(std::sync::atomic::Ordering::Acquire) {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 encoder.clear_buffer(&buffer, 0, None);
-                let index = submissions.submit(&queue, [encoder.finish()]);
+                let index = queue.submit([encoder.finish()]);
                 device
                     .poll(wgpu::PollType::Wait {
                         submission_index: Some(index),
@@ -144,7 +143,7 @@ impl SubmissionWorker {
 
 struct Probe {
     chart: Arc<Chart>,
-    submissions: antitone::platform::SubmissionGate,
+
     #[cfg(target_os = "macos")]
     worker: Option<SubmissionWorker>,
     last_size: Option<egui::Vec2>,
@@ -155,10 +154,6 @@ struct Probe {
 
 #[cfg(target_os = "macos")]
 impl host::App for Probe {
-    fn submission_gate(&self) -> antitone::platform::SubmissionGate {
-        self.submissions.clone()
-    }
-
     fn on_exit(&mut self) {
         if let Some(worker) = self.worker.take() {
             worker.finish(self.resizes);
@@ -342,7 +337,7 @@ fn target(
 
 async fn validate_transfer(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &antitone::gpu::submission::Queue,
     format: wgpu::TextureFormat,
     tolerance: f32,
 ) -> ProbeResult<()> {
@@ -399,7 +394,10 @@ async fn validate_transfer(
     Ok(())
 }
 
-async fn validate_ui(device: &wgpu::Device, queue: &wgpu::Queue) -> ProbeResult<()> {
+async fn validate_ui(
+    device: &wgpu::Device,
+    queue: &antitone::gpu::submission::Queue,
+) -> ProbeResult<()> {
     let context = egui::Context::default();
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(64.0, 64.0));
     let mut output = context.run_ui(
@@ -424,7 +422,7 @@ async fn validate_ui(device: &wgpu::Device, queue: &wgpu::Queue) -> ProbeResult<
     );
     for (id, deltas) in output.textures_delta.set.drain() {
         for delta in deltas {
-            renderer.update_texture(device, queue, id, &delta);
+            queue.update_egui_texture(&mut renderer, device, id, &delta);
         }
     }
     let screen = egui_wgpu::ScreenDescriptor {
@@ -432,7 +430,7 @@ async fn validate_ui(device: &wgpu::Device, queue: &wgpu::Queue) -> ProbeResult<
         pixels_per_point: output.pixels_per_point,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
-    let commands = renderer.update_buffers(device, queue, &mut encoder, &jobs, &screen);
+    let commands = queue.update_egui_buffers(&mut renderer, device, &mut encoder, &jobs, &screen);
     let view = texture.create_view(&Default::default());
     {
         let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -473,7 +471,7 @@ async fn validate_ui(device: &wgpu::Device, queue: &wgpu::Queue) -> ProbeResult<
 
 async fn readback(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &antitone::gpu::submission::Queue,
     texture: &wgpu::Texture,
     mut encoder: wgpu::CommandEncoder,
 ) -> ProbeResult<Vec<Vec4>> {

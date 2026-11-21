@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu_export::authored::{Request, write};
 use crate::{
     gpu::evaluation::{self, Value},
@@ -113,11 +112,10 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
 
     let directory = tempfile::tempdir().unwrap();
     let actual = directory.path().join("pipeline.exr");
-    let gate = SubmissionGate::default();
     write(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         Request {
             scan: &scan,
             field: None,

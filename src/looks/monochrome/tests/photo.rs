@@ -2,7 +2,6 @@
 //! Scalar input/roll evaluation supplies a photographic distribution, not a
 //! pixel-exact oracle for the composed GPU photograph; local grades/texture omit.
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::photographic;
 
 #[test]
@@ -57,11 +56,12 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let reference = crate::looks::reference::ReferenceTransforms::new(&device, &queue)
             .await
             .unwrap();
-        let gate = SubmissionGate::default();
         for paper in Paper::all() {
             for negative in std::iter::once(None).chain(Negative::all().map(Some)) {
                 let selection = Selection { negative, paper };
@@ -91,12 +91,8 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
                         )
                     })
                     .collect::<Vec<_>>();
-                let expected = reference
-                    .apply(&device, &queue, &gate, false, &expected)
-                    .unwrap();
-                let actual = reference
-                    .apply(&device, &queue, &gate, false, &actual)
-                    .unwrap();
+                let expected = reference.apply(&device, &queue, false, &expected).unwrap();
+                let actual = reference.apply(&device, &queue, false, &actual).unwrap();
                 let mut errors = expected
                     .iter()
                     .zip(&actual)

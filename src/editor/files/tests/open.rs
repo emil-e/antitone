@@ -19,16 +19,19 @@ fn path(name: &str) -> PathBuf {
 
 fn editor(loader: source_loading::SourceLoader, limits: wgpu::Limits) -> Editor {
     let (device, queue) = pollster::block_on(async {
-        crate::gpu::instance()
+        let adapter = crate::gpu::instance()
             .request_adapter(&Default::default())
             .await
-            .unwrap()
-            .request_device(&wgpu::DeviceDescriptor {
+            .unwrap();
+        crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: limits,
                 ..Default::default()
-            })
-            .await
-            .unwrap()
+            },
+        )
+        .await
+        .unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
     editor.source_services.as_mut().unwrap().developments = loader.clone();

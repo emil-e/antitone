@@ -7,8 +7,7 @@ mod tests;
 #[derive(Clone, Copy)]
 pub struct Worker<'a> {
     pub context: &'a Context,
-    pub queue: &'a wgpu::Queue,
-    pub gate: &'a crate::gpu::submission::SubmissionGate,
+    pub queue: &'a crate::gpu::submission::Queue,
     pub scope: &'a Materializations,
     pub working: &'a RunWorkingSet,
     pub cancelled: &'a dyn Fn() -> bool,
@@ -125,7 +124,7 @@ impl Production<'_> {
     ) -> Result<Option<WorkCounts>, Error> {
         self.context.run_sink(
             executor,
-            (self.queue, self.gate),
+            self.queue,
             plan,
             (self.cancelled, self.progress),
             (
@@ -170,7 +169,7 @@ impl Production<'_> {
             }
             self.working.submit_gpu(
                 self.context.device(),
-                (self.queue, self.gate),
+                self.queue,
                 encoder,
                 resources,
                 || recorded.submitted(),
@@ -224,7 +223,7 @@ impl Worker<'_> {
         }
         self.working.submit_gpu(
             self.context.device(),
-            (self.queue, self.gate),
+            self.queue,
             encoder,
             encoded.resources,
             || recorded.submitted(),
@@ -243,7 +242,7 @@ impl Context {
     pub(crate) fn run_sink<E, S>(
         &self,
         executor: &mut Executor,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         plan: &Plan,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
         sink: (Sink<E, S>, Option<&wgpu::Buffer>),
@@ -256,7 +255,7 @@ impl Context {
         let working = executor.working.clone();
         let result = executor.run_produced_sink(
             self.device(),
-            (queue, gate),
+            queue,
             plan,
             cancelled,
             sink,
@@ -277,7 +276,6 @@ impl Context {
                 let worker = Worker {
                     context: self,
                     queue,
-                    gate,
                     scope: &scope,
                     working: &working,
                     cancelled,

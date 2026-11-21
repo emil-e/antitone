@@ -81,7 +81,6 @@ fn host_delivery_preserves_grid_coordinates_metadata_and_signed_hdr_values_acros
     let stats = context
         .read(
             &queue,
-            &crate::gpu::submission::SubmissionGate::default(),
             &evaluation,
             || false,
             |region, pixels| {
@@ -127,14 +126,12 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
     let reads = Arc::new(AtomicUsize::new(0));
     let image = image(reads.clone());
     let evaluation = request(context, image.clone());
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let cancelled = AtomicBool::new(true);
 
     assert!(
         context
             .read(
                 &queue,
-                &gate,
                 &evaluation,
                 || cancelled.load(Ordering::Relaxed),
                 |_, _| panic!("cancelled delivery")
@@ -162,7 +159,6 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
         context
             .read(
                 &queue,
-                &gate,
                 &evaluation,
                 || cancelled.load(Ordering::Relaxed),
                 |_, _| {
@@ -177,7 +173,6 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
 
     let failure = context.read(
         &queue,
-        &gate,
         &evaluation,
         || false,
         |_, _| Err(Error::InvalidParameter("consumer stopped")),
@@ -193,7 +188,6 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
         context
             .read(
                 &queue,
-                &gate,
                 &evaluation,
                 || false,
                 |_, pixels| {
@@ -213,7 +207,7 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let context = renderer.evaluation();
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let submissions = Arc::new(AtomicUsize::new(0));
     let observed = submissions.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -223,7 +217,6 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     let worker = Worker {
         context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &|| false,

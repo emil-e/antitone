@@ -168,7 +168,7 @@ fn frozen_preparation_uses_nine_late_live_fragments_without_source_reads() {
         "the four-binding route must genuinely miss this fixture"
     );
     let image = context
-        .produce_prepared(&queue, &Default::default(), preparation, || false)
+        .produce_prepared(&queue, preparation, || false)
         .unwrap();
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     bits(
@@ -188,13 +188,11 @@ fn generated_values_copy_into_existing_output_and_own_fragments_until_gpu_comple
     let held = pieces(&context, &root, None, true);
     let weak: Vec<_> = held.iter().map(Arc::downgrade).collect();
     let output = output(&device);
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let working = RunWorkingSet::default();
     let production = Production {
         worker: Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &|| false,
@@ -279,10 +277,7 @@ fn overlapping_support_clips_to_disjoint_copies_without_changing_pixel_bits() {
     let pixels = output(&device);
     let mut encoder = device.create_command_encoder(&Default::default());
     cover.encode(&mut encoder, &pixels).unwrap();
-    context
-        .submit(&queue, &Default::default(), encoder, || false)
-        .unwrap()
-        .unwrap();
+    context.submit(&queue, encoder, || false).unwrap().unwrap();
     bits(&execute::read(&device, &queue, &pixels), &field(wanted()));
 }
 
@@ -297,7 +292,7 @@ fn incomplete_coverage_falls_back_and_cancellation_cannot_publish_a_copied_resul
             .prepare_image(query(&context, root.clone()))
             .unwrap();
         let _held = pieces(&context, &root, if cancel { None } else { Some(4) }, true);
-        let result = context.produce_prepared(&queue, &Default::default(), preparation, || cancel);
+        let result = context.produce_prepared(&queue, preparation, || cancel);
         if cancel {
             assert!(matches!(result, Err(Error::Cancelled)));
             assert_eq!(calls.load(Ordering::Relaxed), 0);
@@ -383,14 +378,13 @@ fn frozen_upload_reuse_preserves_queued_inputs_after_cancellation_on_submission(
     let held = Arc::new(std::sync::Mutex::new(Some(held)));
     let first_pixels = output(&device);
     let second_pixels = output(&device);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let working = RunWorkingSet::default();
     let stop = Arc::new(AtomicBool::new(false));
     let cancelled = || stop.load(Ordering::Relaxed);
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &cancelled,

@@ -39,7 +39,7 @@ fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{
             )
             .unwrap();
             let result = Executor::default()
-                .run(&device, &queue, &Default::default(), &plan, || false)
+                .run(&device, &queue, &plan, || false)
                 .unwrap()
                 .unwrap();
             let pixels = execute::read(&device, &queue, &result.pixels);

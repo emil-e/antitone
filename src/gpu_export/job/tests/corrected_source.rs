@@ -1,7 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerPipeline;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]
@@ -38,7 +37,6 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     );
     scan.set_flat_field(Some(field.clone()));
     let (device, queue, renderer) = super::super::super::tests::context();
-    let gate = SubmissionGate::default();
     let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
     let (mut project, id) = fixture(&scan);
     // The shaded source exceeds nominal white; keep the response off the black plateau.
@@ -72,7 +70,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Job {
                     scan: &scan,
                     field: Some(gpu_field.clone()),

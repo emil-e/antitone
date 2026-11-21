@@ -26,9 +26,8 @@ fn scratch_pool_replaces_oversized_storage_when_the_tile_shape_shrinks() {
     let node = source(Arc::new(fixture()));
     let large = make_plan(node.clone(), [41, 35]);
     let mut executor = execute::Executor::default();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let result = executor
-        .run(&device, &queue, &gate, &large, || false)
+        .run(&device, &queue, &large, || false)
         .unwrap()
         .unwrap();
     assert!(executor.pool_bytes() > 16);
@@ -40,7 +39,7 @@ fn scratch_pool_replaces_oversized_storage_when_the_tile_shape_shrinks() {
     };
     let small = Plan::new(node, region, Tiling { tile: [1, 1] }).unwrap();
     let _result = executor
-        .run(&device, &queue, &gate, &small, || false)
+        .run(&device, &queue, &small, || false)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -159,7 +158,7 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
             let root = reconstruct(source(Arc::new(Constant(source_domain))), output).unwrap();
             let plan = make_plan(root, [3, 2]);
             let result = execute::Executor::default()
-                .run(&device, &queue, &Default::default(), &plan, || false)
+                .run(&device, &queue, &plan, || false)
                 .unwrap()
                 .unwrap();
             let actual = execute::read(&device, &queue, &result.pixels);
@@ -218,7 +217,7 @@ fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples
         let root = reconstruct(source(Arc::new(Grid(domain))), output).unwrap();
         let plan = make_plan(root, [4, 3]);
         let result = execute::Executor::default()
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         let actual = execute::read(&device, &queue, &result.pixels);

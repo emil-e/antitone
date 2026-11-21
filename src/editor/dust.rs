@@ -2062,7 +2062,7 @@ fn search_pixels(
     let mut source = crate::gpu::repair_source::Source::from_recipe(
         input.context.correction.gpu()?,
         &renderer,
-        (&services.queue, services.renderers.submissions()),
+        &services.queue,
         &scan,
         &recipe,
     )?;

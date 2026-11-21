@@ -88,7 +88,7 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
     let stopped = Arc::new(AtomicBool::new(false));
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let (stop, accumulating) = (stopped.clone(), armed.clone());
     gate.observe_submissions(Arc::new(move || {
         if accumulating.load(Ordering::SeqCst) {
@@ -101,7 +101,6 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &cancelled,

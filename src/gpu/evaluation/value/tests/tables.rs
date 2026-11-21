@@ -167,7 +167,6 @@ fn cached_shader_libraries_do_not_capture_arguments_or_requested_coverage() {
                 context
                     .read(
                         &queue,
-                        &Default::default(),
                         &evaluation,
                         || false,
                         |block, pixels| {

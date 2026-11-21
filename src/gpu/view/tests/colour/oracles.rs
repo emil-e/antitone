@@ -2,7 +2,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{crop::Crop, geometry::Composition};
@@ -157,7 +156,6 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,
@@ -247,12 +245,7 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         graded.encode(&device, &mut abandoned);
         drop(abandoned);
         assert!(!*graded.submitted.lock().unwrap());
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &SubmissionGate::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         let expected = read(&device, &queue, &graded.pixels);
         assert!(expected.iter().all(|p| *p == [0.5, 1., 2., 8.]));
         let mut deferred = device.create_command_encoder(&Default::default());

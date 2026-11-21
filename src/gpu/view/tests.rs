@@ -1,7 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::processing::Calibration;
@@ -39,7 +38,7 @@ mod underlay;
 
 async fn context() -> (
     wgpu::Device,
-    wgpu::Queue,
+    crate::gpu::submission::Queue,
     Arc<crate::renderer::GpuRenderer>,
     Arc<ViewKernels>,
 ) {
@@ -50,27 +49,24 @@ async fn context_with_cache_policy(
     policy: crate::gpu::evaluation::CachePolicy,
 ) -> (
     wgpu::Device,
-    wgpu::Queue,
+    crate::gpu::submission::Queue,
     Arc<crate::renderer::GpuRenderer>,
     Arc<ViewKernels>,
 ) {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
+    let (device, queue) = crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
             required_limits: crate::platform::device_limits(adapter.limits()),
             ..Default::default()
-        })
-        .await
-        .unwrap();
-    let renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
-        &device,
-        &queue,
-        SubmissionGate::default(),
-        policy,
+        },
     )
     .await
     .unwrap();
+    let renderer = crate::renderer::GpuRenderer::new_with_cache_policy(&device, &queue, policy)
+        .await
+        .unwrap();
     let kernels = ViewKernels::new(&device).await.unwrap();
     (device, queue, renderer, kernels)
 }
@@ -145,7 +141,11 @@ fn independent_image(image: &Arc<ViewImage>) -> Arc<ViewImage> {
     .unwrap()
 }
 
-fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<[f32; 4]> {
+fn read(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    source: &wgpu::Buffer,
+) -> Vec<[f32; 4]> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: source.size(),
@@ -234,7 +234,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
 fn physical_view_acquisition_and_publication_preserve_original_reference_and_target_reuse() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
+        let gate = queue.clone();
         let context = egui::Context::default();
         for corrected in [false, true] {
             let mut scan = scan();
@@ -279,7 +279,6 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let source = ViewImage::prefix(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -306,8 +305,8 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 .unwrap();
             assert!(!view.in_flight());
             let buffer = view.product.as_ref().unwrap().pixels.clone();
-            view.ensure_submitted(&device, &queue, &gate, &context);
-            view.ensure_submitted(&device, &queue, &gate, &context);
+            view.ensure_submitted(&device, &queue, &context);
+            view.ensure_submitted(&device, &queue, &context);
             let actual = image(&device, &queue, &view.image);
             assert!(!view.in_flight());
             assert!(!gate.pending());
@@ -315,7 +314,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let reference = crate::refinement::refine(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 (&scan, gpu_field.clone()),
                 input.clone(),
                 OutputTarget::Srgb,
@@ -350,7 +349,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             )
             .unwrap();
             assert_eq!(buffer, p3.product.as_ref().unwrap().pixels);
-            p3.ensure_submitted(&device, &queue, &gate, &context);
+            p3.ensure_submitted(&device, &queue, &context);
             image(&device, &queue, &p3.image);
             assert_eq!(original, read(&device, &queue, &source.pixels));
             let changed_cal = Calibration {
@@ -391,7 +390,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             ));
             let partial =
                 RenderedView::new(&device, partial, &input, OutputTarget::Srgb, None).unwrap();
-            partial.ensure_submitted(&device, &queue, &gate, &context);
+            partial.ensure_submitted(&device, &queue, &context);
             let actual = image(&device, &queue, &partial.image);
             assert_eq!(actual.last().unwrap()[3], 0.);
             let gpu = Arc::new(crate::gpu_scopes::GpuScopes::new(&device).await.unwrap());
@@ -408,18 +407,8 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 context.clone(),
             );
             let mut encoder = device.create_command_encoder(&Default::default());
-            egui_wgpu::CallbackTrait::prepare(
-                &paint,
-                &device,
-                &queue,
-                &egui_wgpu::ScreenDescriptor {
-                    size_in_pixels: frame.output,
-                    pixels_per_point: 1.,
-                },
-                &mut encoder,
-                &mut Default::default(),
-            );
-            gate.submit(&queue, [encoder.finish()]);
+            paint.prepare_frame(&device, &mut encoder);
+            queue.submit([encoder.finish()]);
             let totals = read(&device, &queue, &gpu.totals);
             let words: Vec<u32> = totals.iter().flatten().map(|v| v.to_bits()).collect();
             let (expected_bins, expected_columns, expected_counts) =
@@ -447,7 +436,6 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let cancelled = ViewImage::prefix(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,

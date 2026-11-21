@@ -71,7 +71,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
         let (release, resume) = mpsc::channel();
         let resume = Mutex::new(resume);
         let first = std::sync::atomic::AtomicBool::new(true);
-        editor.submissions.observe_submissions(Arc::new(move || {
+        editor.submissions().observe_submissions(Arc::new(move || {
             if first.swap(false, Ordering::Relaxed) {
                 started.send(()).unwrap();
                 resume
@@ -169,7 +169,7 @@ fn pressure_retires_optional_ownership_without_withdrawing_pending_frame_publica
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let first = std::sync::atomic::AtomicBool::new(true);
-    editor.submissions.observe_submissions(Arc::new(move || {
+    editor.submissions().observe_submissions(Arc::new(move || {
         if first.swap(false, Ordering::Relaxed) {
             started.send(()).unwrap();
             resume
@@ -234,7 +234,7 @@ fn preparation_survives_view_change(retire_view: bool) {
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let first_submission = std::sync::atomic::AtomicBool::new(true);
-    editor.submissions.observe_submissions(Arc::new(move || {
+    editor.submissions().observe_submissions(Arc::new(move || {
         if first_submission.swap(false, Ordering::Relaxed) {
             started.send(()).unwrap();
             resume

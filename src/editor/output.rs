@@ -45,8 +45,7 @@ enum PhotoResult {
 pub(super) struct Services {
     pub(super) renderers: Arc<crate::renderer::RendererCache>,
     pub(super) device: wgpu::Device,
-    pub(super) queue: wgpu::Queue,
-    pub(super) submissions: crate::platform::SubmissionGate,
+    pub(super) queue: crate::gpu::submission::Queue,
     pub(super) sources: source::Services,
 }
 
@@ -54,15 +53,13 @@ impl Services {
     pub fn new(
         renderers: Arc<crate::renderer::RendererCache>,
         device: wgpu::Device,
-        queue: wgpu::Queue,
-        submissions: crate::platform::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         sources: source::Services,
     ) -> Self {
         Self {
             renderers,
             device,
             queue,
-            submissions,
             sources,
         }
     }
@@ -308,7 +305,7 @@ impl Services {
             crate::gpu_export::job::write(
                 &renderer,
                 &self.device,
-                (&self.queue, &self.submissions),
+                &self.queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: request.input.correction.gpu()?,

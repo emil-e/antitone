@@ -418,7 +418,7 @@ impl Worker<'_> {
                     .device()
                     .create_command_encoder(&Default::default());
                 self.context
-                    .submit(self.queue, self.gate, encoder, self.cancelled)?
+                    .submit(self.queue, encoder, self.cancelled)?
                     .ok_or(Error::Cancelled)?;
                 counts.submitted();
             }
@@ -460,7 +460,7 @@ impl Worker<'_> {
             let stats = self
                 .context
                 .read_in(
-                    (self.queue, self.gate),
+                    self.queue,
                     &query,
                     (self.cancelled, self.progress),
                     self.working.clone(),

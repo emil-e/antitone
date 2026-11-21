@@ -82,14 +82,12 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
         ).unwrap();
         context.request(root,Region {bounds:region,grid:domain.grid},budget).unwrap()
     });
-    let gate = crate::gpu::submission::SubmissionGate::default();
     for (evaluation, bias) in evaluations.iter().zip([5., 9.]) {
         let scope = context.test_materializations(false);
         let working = RunWorkingSet::default();
         let worker = Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &|| false,
@@ -110,7 +108,6 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &|| false,

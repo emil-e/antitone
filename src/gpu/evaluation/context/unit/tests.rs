@@ -202,7 +202,12 @@ fn query(context: &Context, root: Value) -> Evaluation {
         )
         .unwrap()
 }
-fn check_pixels(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image<ImageLayout>, gain: f32) {
+fn check_pixels(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    image: &Image<ImageLayout>,
+    gain: f32,
+) {
     let pixels = super::super::super::execute::read(device, queue, image.as_buffer().unwrap());
     let region = image.descriptor.region;
     assert_eq!(pixels.len(), 35);
@@ -221,14 +226,12 @@ fn declared_units_execute_without_search_and_completed_outputs_ignore_partitioni
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let events = Arc::new(Mutex::new(Vec::new()));
     let materialize = |max_cells, gain| {
         pollster::block_on(
             context
                 .materialize(
                     &queue,
-                    &gate,
                     &scope,
                     query(&context, root(&events, max_cells, gain, false)),
                     ImageFormat::Rgba32Float,
@@ -316,7 +319,7 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let submissions = Arc::new(AtomicUsize::new(0));
     let observed = submissions.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -344,7 +347,6 @@ fn irreducible_and_semantic_description_errors_do_not_execute() {
             worker: Worker {
                 context: &context,
                 queue: &queue,
-                gate: &gate,
                 scope: &scope,
                 working: &working,
                 cancelled: &|| false,

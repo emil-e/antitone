@@ -58,7 +58,7 @@ fn view(input: Value, origin: [f64; 2]) -> Value {
 
 fn render(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     input: Value,
     origin: [f64; 2],
 ) -> Image<ImageLayout> {
@@ -67,7 +67,7 @@ fn render(
 
 fn render_root(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     root: Value,
     bounds: Rect,
 ) -> Image<ImageLayout> {
@@ -87,12 +87,15 @@ fn render_root(
                 .unwrap(),
         )
         .unwrap();
-    context
-        .produce_prepared(queue, &Default::default(), work, || false)
-        .unwrap()
+    context.produce_prepared(queue, work, || false).unwrap()
 }
 
-fn check(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image<ImageLayout>, origin: [f64; 2]) {
+fn check(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    image: &Image<ImageLayout>,
+    origin: [f64; 2],
+) {
     // Integrate the squared unit-cell staircase, not the square of its reconstructed mean.
     let mean = |low: f64, divisor: f64, offset: f64| {
         let high = low + 0.5;
@@ -387,7 +390,6 @@ fn source_prefetch_preserves_renderability_without_reserving_a_consumer_byte_all
                 context
                     .materialize(
                         &queue,
-                        &Default::default(),
                         &context.materializations(),
                         request,
                         ImageFormat::Rgba32Float,
@@ -521,7 +523,7 @@ fn source_slices_survive_execution_but_retire_while_completed_outputs_remain_liv
         let seen = during_execution.clone();
         let active = scope.clone();
         let identity = source.identity().unwrap().clone();
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         gate.observe_submissions(Arc::new(move || {
             if !active.ready::<ImageLayout>(&identity).is_empty() {
                 seen.store(true, Ordering::Relaxed);
@@ -539,9 +541,7 @@ fn source_slices_survive_execution_but_retire_while_completed_outputs_remain_liv
             )
             .unwrap();
         let work = context.prepare_image(request).unwrap();
-        let image = context
-            .produce_prepared(&queue, &gate, work, || false)
-            .unwrap();
+        let image = context.produce_prepared(&queue, work, || false).unwrap();
         assert!(during_execution.load(Ordering::Relaxed));
         assert!(
             scope

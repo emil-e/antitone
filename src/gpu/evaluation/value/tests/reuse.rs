@@ -4,7 +4,6 @@ use super::*;
 #[test]
 fn live_completed_units_are_consumed_without_rebuilding_their_constituent_graphs() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let plate = Plate::new();
     let area = CellRegion::new([0, 6], [8, 4]);
     let plans = Arc::new(AtomicUsize::new(0));
@@ -28,7 +27,6 @@ fn live_completed_units_are_consumed_without_rebuilding_their_constituent_graphs
             context
                 .materialize(
                     &queue,
-                    &gate,
                     &scope,
                     context
                         .request(

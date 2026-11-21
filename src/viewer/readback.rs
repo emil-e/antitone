@@ -2,7 +2,7 @@ use super::GpuImage;
 
 pub(crate) fn image_pixels(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     image: &GpuImage,
 ) -> Vec<[f32; 4]> {
     assert_eq!(image.linear.format(), wgpu::TextureFormat::Rgba32Float);

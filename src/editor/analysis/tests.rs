@@ -65,7 +65,9 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .request_adapter(&Default::default())
             .await
             .expect("authored worker test requires Metal");
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         // Thumbnail scheduling is separate; this worker test must not touch the user's disk cache.
         editor.document.thumbnails =
@@ -682,7 +684,9 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples"));
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         let mut paths: Vec<_> = [4321, 4322, 4323]
             .iter()

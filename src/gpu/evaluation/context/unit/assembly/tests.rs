@@ -109,7 +109,7 @@ fn cached_units_assemble_partial_nonlocal_regions_as_one_ready_group() {
             )
             .unwrap()
             .without_retention();
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         let submissions = Arc::new(AtomicUsize::new(0));
         let observed = submissions.clone();
         gate.observe_encoded_resources(Arc::new(move || {
@@ -120,7 +120,6 @@ fn cached_units_assemble_partial_nonlocal_regions_as_one_ready_group() {
                 context
                     .materialize(
                         &queue,
-                        &gate,
                         &scope,
                         query.clone(),
                         ImageFormat::Rgba32Float,
@@ -171,14 +170,14 @@ fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_rete
     {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         let working = RunWorkingSet::default();
         let region = [0, 0, 8, 4].into();
         let destination = gpu(&device, &[[99.; 4]; 32]);
         let visible = Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed = visible.clone();
         let read_device = device.clone();
-        let read_queue = queue.clone();
+        let read_queue = queue.unobserved();
         let read_pixels = destination.as_buffer().unwrap().clone();
         // The observer runs after submit and outside the gate. A separate readback
         // observes the pixels actually copied by each group, including host writes.
@@ -194,7 +193,6 @@ fn mixed_copy_inputs_keep_physical_owners_until_completion_without_optional_rete
             worker: Worker {
                 context: &context,
                 queue: &queue,
-                gate: &gate,
                 scope: &scope,
                 working: &working,
                 cancelled: &|| false,
@@ -248,7 +246,7 @@ fn cancellation_drops_unsubmitted_copies_and_finishes_committed_host_or_gpu_tran
         for committed in [false, true] {
             let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
             let scope = context.materializations();
-            let gate = crate::gpu::submission::SubmissionGate::default();
+            let gate = queue.clone();
             let submissions = Arc::new(AtomicUsize::new(0));
             let working = RunWorkingSet::default();
             let stop = Arc::new(AtomicBool::new(false));
@@ -259,7 +257,6 @@ fn cancellation_drops_unsubmitted_copies_and_finishes_committed_host_or_gpu_tran
                 worker: Worker {
                     context: &context,
                     queue: &queue,
-                    gate: &gate,
                     scope: &scope,
                     working: &working,
                     cancelled: &cancelled,
@@ -325,14 +322,12 @@ fn an_assembly_failure_does_not_cancel_an_independently_joined_unit() {
     for failure in [Error::Cancelled, Error::Gpu("copy failed".into())] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let working = RunWorkingSet::default();
         let stop = AtomicBool::new(false);
         let cancelled = || stop.load(Ordering::Relaxed);
         let worker = Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &cancelled,

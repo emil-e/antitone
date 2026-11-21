@@ -283,7 +283,6 @@ fn submitted_compiler_values_share_retention_with_independent_image_demands() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(seed),
                 ImageFormat::Rgba32Float,

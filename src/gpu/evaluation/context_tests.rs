@@ -146,7 +146,6 @@ fn evaluation_preserves_the_requested_grid_and_cancels_before_source_acquisition
         context
             .evaluate(
                 &queue,
-                &Default::default(),
                 &evaluation,
                 || true,
                 |_, _, _| panic!("cancelled request reached its sink")
@@ -165,7 +164,6 @@ fn evaluation_preserves_the_requested_grid_and_cancels_before_source_acquisition
     let stats = context
         .evaluate(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             |encoder, image, buffer| {
@@ -208,7 +206,6 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &context.materializations(),
                     request(&context, field(domain(), 7), region),
                     ImageFormat::Rgba32Float,
@@ -231,7 +228,7 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
         let mut executor = context.executor();
         for _ in 0..2 {
             let result = executor
-                .run(&device, &queue, &Default::default(), &plan, || false)
+                .run(&device, &queue, &plan, || false)
                 .unwrap()
                 .unwrap();
             assert_eq!(
@@ -254,7 +251,7 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
         drop((executor, materialized));
         let mut fresh = context.executor();
         let result = fresh
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -484,7 +481,6 @@ fn evaluation_arms_its_readback_sink_before_the_completion_wait() {
     let completed = context
         .evaluate_with(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             Sink {

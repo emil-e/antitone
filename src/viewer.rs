@@ -50,7 +50,7 @@ impl GpuImage {
 
     pub async fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         size: [u32; 2],
         pixels: &[[u16; 4]],
         camera_to_ap1: DMat3,
@@ -284,7 +284,7 @@ impl GpuImage {
 
     pub(crate) fn begin_look_check_tracked(
         &self,
-        submissions: &crate::gpu::submission::SubmissionGate,
+        submissions: &crate::gpu::submission::Queue,
         ready: impl FnOnce() + Send + 'static,
     ) {
         let pending = submissions.track();
@@ -337,7 +337,7 @@ impl GpuImage {
     pub(crate) fn prepare_rendering(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         encoder: &mut wgpu::CommandEncoder,
         input: &AuthoredPhotograph,
         mapping: TextureMapping,
@@ -357,7 +357,7 @@ impl GpuImage {
     pub fn prepare_rendering_calculation(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         encoder: &mut wgpu::CommandEncoder,
         (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
         mapping: TextureMapping,
@@ -373,7 +373,7 @@ impl GpuImage {
     fn prepare_looked(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
         mapping: TextureMapping,
         context: Option<egui::Context>,
@@ -384,10 +384,7 @@ impl GpuImage {
             .ok_or_else(|| Error::Gpu("rendered image has no processing source".into()))?;
         let mut encoder = device.create_command_encoder(&Default::default());
         if self.prepare_calculation(device, &mut encoder, root, luts)? {
-            processing
-                .renderer
-                .submissions
-                .submit(queue, [encoder.finish()]);
+            queue.submit([encoder.finish()]);
         }
         // Source proxies include film margins and other undrawn pixels. Admit only the
         // consumer's composed footprint; failed texels remain marked in the shared image.
@@ -406,11 +403,8 @@ impl GpuImage {
                 &self.linear,
                 mapping,
             )?;
-            processing
-                .renderer
-                .submissions
-                .submit(queue, [encoder.finish()]);
-            let pending = processing.renderer.submissions.track();
+            queue.submit([encoder.finish()]);
+            let pending = queue.track();
             check.begin(move || {
                 drop(pending);
                 if let Some(context) = context {
@@ -447,11 +441,8 @@ impl GpuImage {
 
 pub struct ImagePaint {
     #[cfg(feature = "editor")]
-    rendered: Option<(
-        Arc<crate::gpu::view::RenderedView>,
-        crate::gpu::submission::SubmissionGate,
-        egui::Context,
-    )>,
+    rendered: Option<(Arc<crate::gpu::view::RenderedView>, egui::Context)>,
+    queue: crate::gpu::submission::Queue,
     image: Arc<GpuImage>,
     calculation: Option<crate::gpu::evaluation::Value>,
     luts: crate::looks::LutChain,
@@ -465,18 +456,18 @@ impl ImagePaint {
         presentation: &Presentation,
         view: Arc<crate::gpu::view::RenderedView>,
         uv: TextureMapping,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Result<Self, Error> {
         let draw = view.image.presentation_draw(presentation, uv)?;
-        Ok(Self::from_rendered(view, draw, submissions, context))
+        Ok(Self::from_rendered(view, draw, queue, context))
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn retained(
         presentation: &Presentation,
         view: Arc<crate::gpu::view::RenderedView>,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Result<Self, Error> {
         let previous = view.image.bindings.lock().unwrap().retained();
@@ -486,14 +477,14 @@ impl ImagePaint {
                 .image
                 .presentation_draw(presentation, TextureMapping::IDENTITY)?,
         };
-        Ok(Self::from_rendered(view, draw, submissions, context))
+        Ok(Self::from_rendered(view, draw, queue, context))
     }
 
     #[cfg(feature = "editor")]
     fn from_rendered(
         view: Arc<crate::gpu::view::RenderedView>,
         draw: Draw,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Self {
         Self {
@@ -502,11 +493,13 @@ impl ImagePaint {
             luts: Default::default(),
             context: None,
             draw,
-            rendered: Some((view, submissions, context)),
+            queue,
+            rendered: Some((view, context)),
         }
     }
 
     pub fn with_calculation(
+        queue: crate::gpu::submission::Queue,
         presentation: &Presentation,
         image: Arc<GpuImage>,
         calculation: Option<crate::gpu::evaluation::Value>,
@@ -525,6 +518,7 @@ impl ImagePaint {
         Ok(Self {
             #[cfg(feature = "editor")]
             rendered: None,
+            queue,
             image,
             calculation,
             luts,
@@ -535,6 +529,7 @@ impl ImagePaint {
 
     #[cfg(test)]
     pub(crate) fn with_processing(
+        queue: crate::gpu::submission::Queue,
         presentation: &Presentation,
         image: Arc<GpuImage>,
         processing: Option<AuthoredPhotograph>,
@@ -548,7 +543,7 @@ impl ImagePaint {
             .as_ref()
             .map(|input| input.luts().clone())
             .unwrap_or_default();
-        Self::with_calculation(presentation, image, calculation, luts, uv)
+        Self::with_calculation(queue, presentation, image, calculation, luts, uv)
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -558,7 +553,7 @@ impl ImagePaint {
 
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn view_frame(&self) -> Option<crate::frame_raster::FrameRaster> {
-        self.rendered.as_ref().map(|(view, _, _)| view.spec.frame())
+        self.rendered.as_ref().map(|(view, _)| view.spec.frame())
     }
 
     #[cfg(feature = "editor")]
@@ -567,12 +562,36 @@ impl ImagePaint {
     ) -> Option<(Arc<crate::gpu::view::RenderedView>, TextureMapping)> {
         self.rendered
             .as_ref()
-            .map(|(view, _, _)| (view.clone(), self.draw.mapping()))
+            .map(|(view, _)| (view.clone(), self.draw.mapping()))
     }
 
     pub fn with_context(mut self, context: egui::Context) -> Self {
         self.context = Some(context);
         self
+    }
+}
+
+impl ImagePaint {
+    #[doc(hidden)]
+    pub fn prepare_frame(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let mapping = self.draw.mapping();
+        *self.image.paint_mapping.lock().unwrap() = Some(mapping);
+        #[cfg(feature = "editor")]
+        if let Some((view, context)) = &self.rendered {
+            view.ensure_submitted(device, &self.queue, context);
+        }
+        if let Some(root) = &self.calculation {
+            self.image
+                .prepare_rendering_calculation(
+                    device,
+                    &self.queue,
+                    encoder,
+                    (root, &self.luts),
+                    mapping,
+                    self.context.clone(),
+                )
+                .expect("validated rendering resources");
+        }
     }
 }
 
@@ -585,24 +604,7 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         encoder: &mut wgpu::CommandEncoder,
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let mapping = self.draw.mapping();
-        *self.image.paint_mapping.lock().unwrap() = Some(mapping);
-        #[cfg(feature = "editor")]
-        if let Some((view, submissions, context)) = &self.rendered {
-            view.ensure_submitted(device, _queue, submissions, context);
-        }
-        if let Some(root) = &self.calculation {
-            self.image
-                .prepare_rendering_calculation(
-                    device,
-                    _queue,
-                    encoder,
-                    (root, &self.luts),
-                    mapping,
-                    self.context.clone(),
-                )
-                .expect("validated rendering resources");
-        }
+        self.prepare_frame(device, encoder);
         Vec::new()
     }
 

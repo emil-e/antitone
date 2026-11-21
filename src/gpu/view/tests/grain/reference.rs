@@ -1,21 +1,15 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 
 fn render_configured(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
     config: ProbeConfig,
     seed: u64,
 ) -> Vec<[f32; 4]> {
     let view = configured_probe(device, renderer, kernels, config, seed);
-    view.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(device, queue, &egui::Context::default());
     read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 

@@ -25,7 +25,6 @@ use antitone::scopes::Plot;
 use antitone::scopes::Settings;
 use antitone::viewer::GpuImage;
 use calculation::{Calculation, ImageCalculations, ScopeCalculations};
-use egui_wgpu::CallbackTrait;
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
 
@@ -112,10 +111,12 @@ fn input(
     .unwrap()
 }
 
-async fn device() -> (wgpu::Device, wgpu::Queue) {
+async fn device() -> (wgpu::Device, antitone::gpu::submission::Queue) {
     let instance = antitone::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    adapter.request_device(&Default::default()).await.unwrap()
+    antitone::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap()
 }
 
 fn codes([x, y]: [u32; 2]) -> [u16; 4] {
@@ -176,7 +177,11 @@ async fn image(
     .unwrap()
 }
 
-async fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f32; 4]> {
+async fn read_image(
+    device: &wgpu::Device,
+    queue: &antitone::gpu::submission::Queue,
+    image: &GpuImage,
+) -> Vec<[f32; 4]> {
     let texture = &image.linear;
     let row = (texture.width() * 16).div_ceil(256) * 256;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -215,7 +220,11 @@ async fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage
     pixels
 }
 
-fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<u32> {
+fn read_buffer(
+    device: &wgpu::Device,
+    queue: &antitone::gpu::submission::Queue,
+    source: &wgpu::Buffer,
+) -> Vec<u32> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: source.size(),
@@ -234,13 +243,6 @@ fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer
     drop(mapped);
     staging.unmap();
     result
-}
-
-fn screen() -> egui_wgpu::ScreenDescriptor {
-    egui_wgpu::ScreenDescriptor {
-        size_in_pixels: [600, 400],
-        pixels_per_point: 2.,
-    }
 }
 
 #[test]
@@ -508,6 +510,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let image = Arc::new(image(&renderer, &device, geometry, [7, 5], target).await);
                 let paint = calculation::image_paint(
+                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(processing.clone()),
@@ -515,13 +518,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                 )
                 .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
-                paint.prepare(
-                    &device,
-                    &queue,
-                    &screen(),
-                    &mut encoder,
-                    &mut Default::default(),
-                );
+                paint.prepare_frame(&device, &mut encoder);
                 assert!(
                     !image
                         .prepare_authored(&device, &mut encoder, &processing)
@@ -635,6 +632,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         let context = egui::Context::default();
         let paint = |input: Calculation| {
             calculation::scope_paint(
+                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 input,
@@ -644,15 +642,14 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             )
             .unwrap()
         };
-        let mut resources = Default::default();
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(first.clone()).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
+        paint(first.clone()).prepare_frame(&device, &mut encoder);
         assert!(
             !image
                 .prepare_authored(&device, &mut encoder, &first)
                 .unwrap()
         );
-        paint(latest.clone()).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
+        paint(latest.clone()).prepare_frame(&device, &mut encoder);
         assert_eq!(gpu.reduction_count(), 1, "one readback remains outstanding");
         assert!(
             gpu.status_authored(&image, &latest, frame, settings)
@@ -673,7 +670,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             "reordering must distinguish these fixtures' scope data"
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(latest.clone()).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
+        paint(latest.clone()).prepare_frame(&device, &mut encoder);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 2);
@@ -706,7 +703,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             input(&device, calibration(), a, None)
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(duplicate).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
+        paint(duplicate).prepare_frame(&device, &mut encoder);
         assert_eq!(
             gpu.reduction_count(),
             2,
