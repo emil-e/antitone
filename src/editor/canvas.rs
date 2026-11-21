@@ -581,11 +581,10 @@ impl Editor {
                 self.submissions.clone(),
                 ui.ctx().clone(),
             )
-        } else if let Some(paint) =
-            self.preview_paint(&proxy, geometry, &capture, source_outside_frame, ui.ctx())
-        {
-            paint
         } else {
+            self.preview_paint(&proxy, geometry, &capture, source_outside_frame, ui.ctx())
+        };
+        let Some(paint) = paint else {
             ui.label("Preview unavailable");
             return None;
         };
@@ -607,17 +606,28 @@ impl Editor {
         mapping: crate::geometry::TextureMapping,
         submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
-    ) -> ImagePaint {
+    ) -> Option<ImagePaint> {
+        let presentation = match &self.presentation {
+            Ok(presentation) => presentation,
+            Err(error) => {
+                self.document
+                    .visit
+                    .working_view
+                    .presentation_failed(error.clone());
+                return None;
+            }
+        };
         match ImagePaint::rendered(
+            presentation,
             rendered.clone(),
             mapping,
             submissions.clone(),
             context.clone(),
         ) {
-            Ok(paint) => paint,
+            Ok(paint) => Some(paint),
             Err(error) => {
                 self.document.visit.working_view.presentation_failed(error);
-                ImagePaint::retained(rendered, submissions, context)
+                ImagePaint::retained(presentation, rendered, submissions, context).ok()
             }
         }
     }
@@ -668,12 +678,12 @@ impl Editor {
             && *requested_frame == frame
             && rendered.target == self.document.target()
         {
-            return Some(self.rendered_paint(
+            return self.rendered_paint(
                 rendered.clone(),
                 mapping,
                 self.submissions.clone(),
                 context.clone(),
-            ));
+            );
         }
         if matches!(
             self.document.visit.working_view.error,
@@ -704,12 +714,7 @@ impl Editor {
         .ok()?;
         let source = proxy.clone();
         self.active_canvas_mut().preview_rendered = Some((source, frame, rendered.clone()));
-        Some(self.rendered_paint(
-            rendered.clone(),
-            mapping,
-            self.submissions.clone(),
-            context.clone(),
-        ))
+        self.rendered_paint(rendered, mapping, self.submissions.clone(), context.clone())
     }
 
     pub(super) fn viewer_canvas(
@@ -875,10 +880,19 @@ impl SourceView {
             }
         };
         let draw = layout.image.intersect(layout.canvas);
+        let presentation = match &editor.presentation {
+            Ok(presentation) => presentation,
+            Err(error) => {
+                editor.status = error.to_string();
+                canvas.ui.label("Preview unavailable");
+                return false;
+            }
+        };
         let paint = if let Some(rendered) = original {
             self.preview = None;
             let mapping = rendered.mapping(layout.frame_raster(ppp));
             ImagePaint::rendered(
+                presentation,
                 rendered,
                 mapping,
                 editor.submissions.clone(),
@@ -936,6 +950,7 @@ impl SourceView {
                     }
                 };
                 ImagePaint::rendered(
+                    presentation,
                     rendered,
                     mapping,
                     editor.submissions.clone(),

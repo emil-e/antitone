@@ -20,7 +20,7 @@ use crate::refinement::ViewRequest;
 use crate::rendering::OutputTarget;
 use crate::scan::Scan;
 use crate::viewer::GpuImage;
-use crate::viewer::ImagePaint;
+use crate::viewer::{ImagePaint, Presentation};
 use crate::viewport::PickDrag;
 use crate::viewport::Viewport;
 use glam::DVec3;
@@ -253,6 +253,7 @@ pub struct Editor {
     scopes: Scopes,
     fullscreen: Option<Fullscreen>,
     canvas_frame: canvas::Frame,
+    presentation: Result<Presentation, Error>,
     // Running physical work outlives logical cancellation.
     id: u64,
     look: look::Session,
@@ -384,6 +385,7 @@ impl Editor {
     }
 
     fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.presentation = pollster::block_on(Presentation::new(device));
         self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
         // here avoids a shader-compilation pause when the first provisional view is selected.
@@ -420,6 +422,7 @@ impl Editor {
             scopes: Scopes::default(),
             fullscreen: None,
             canvas_frame: Default::default(),
+            presentation: Err(Error::Gpu("viewer presentation not initialized".into())),
             started: false,
             menus: menu::Menus::default(),
             id: 0,

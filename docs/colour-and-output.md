@@ -42,7 +42,7 @@ Canvas and source-preview thumbnails use a common **+1 EV** ACES inspection base
 
 ## Let the OS handle the monitor
 
-The preview converts linear target RGB to extended-sRGB and encodes it once. Presentation is SDR on both platforms: macOS uses an explicitly extended-sRGB-tagged layer with EDR disabled; Windows uses a 10-bit or 8-bit Vulkan swapchain. The OS performs the monitor conversion; applying a monitor profile ourselves as well would introduce a second conversion. A correct tagged layer is not proof of a calibrated monitor or of correct behavior on every display.
+The canvas and filmstrip share a [presentation pipeline](../src/viewer/presentation.rs) that maps the finished target-linear texture to the viewport and converts it to encoded extended-sRGB. Presentation is SDR on both platforms: macOS uses an explicitly extended-sRGB-tagged layer with EDR disabled; Windows uses a 10-bit or 8-bit Vulkan swapchain. The OS performs the monitor conversion; applying a monitor profile ourselves as well would introduce a second conversion. A correct tagged layer is not proof of a calibrated monitor or of correct behavior on every display.
 
 ## TIFF and EXR serve different purposes
 

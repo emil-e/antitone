@@ -1327,6 +1327,7 @@ impl Editor {
                                     };
                                     match field.and_then(|field| {
                                         processing::image_paint(
+                                            self.presentation.as_ref().map_err(Clone::clone)?,
                                             image.image.clone(),
                                             parameters,
                                             field,

@@ -169,6 +169,7 @@ impl Editor {
 }
 
 pub(super) fn image_paint(
+    presentation: &Presentation,
     image: Arc<GpuImage>,
     capture: Option<crate::gpu::photograph::request::PhotographRequest>,
     field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
@@ -188,11 +189,16 @@ pub(super) fn image_paint(
         None => (None, Default::default()),
         #[cfg(test)]
         Some(PhotographRequest::Fixture(input)) => {
-            return ImagePaint::with_processing(image, Some(input.with_flat_field(field)), mapping)
-                .map(|paint| paint.with_context(context.clone()));
+            return ImagePaint::with_processing(
+                presentation,
+                image,
+                Some(input.with_flat_field(field)),
+                mapping,
+            )
+            .map(|paint| paint.with_context(context.clone()));
         }
     };
-    ImagePaint::with_calculation(image, root, luts, mapping)
+    ImagePaint::with_calculation(presentation, image, root, luts, mapping)
         .map(|paint| paint.with_context(context.clone()))
 }
 

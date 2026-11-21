@@ -21,6 +21,7 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
             .await
             .unwrap(),
         );
+        let presentation = crate::viewer::Presentation::new(&device).await.unwrap();
         let packed = ProcessingParameters::interpret(
             InputSettings::Digital,
             Default::default(),
@@ -29,6 +30,7 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         .unwrap();
         assert!(matches!(
             crate::viewer::ImagePaint::with_processing(
+                &presentation,
                 image.clone(),
                 Some(packed.into()),
                 [0., 0., 1., 1.],
@@ -39,8 +41,13 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         ));
         let inspection = AuthoredPhotograph::from(ProcessingParameters::source());
         assert!(
-            crate::viewer::ImagePaint::with_processing(image, Some(inspection), [0., 0., 1., 1.],)
-                .is_ok()
+            crate::viewer::ImagePaint::with_processing(
+                &presentation,
+                image,
+                Some(inspection),
+                [0., 0., 1., 1.]
+            )
+            .is_ok()
         );
     });
 }

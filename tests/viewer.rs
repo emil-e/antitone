@@ -363,11 +363,9 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                             }
                         }
-                        let result = GpuImage::new_rendered_shared(
-                            &renderer, &device, output[0], output[1], target,
-                        )
-                        .await
-                        .unwrap();
+                        let result = GpuImage::new_rendered(&device, output[0], output[1], target)
+                            .await
+                            .unwrap();
                         let mut encoder = device.create_command_encoder(&Default::default());
                         average
                             .finish(&device, &mut encoder, &result.linear)
@@ -546,9 +544,8 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     .await
                     .is_err()
             );
-            let rendered = GpuImage::new_rendered(&device, &queue, 4, 2, target)
-                .await
-                .unwrap();
+            let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
+            let rendered = GpuImage::new_rendered(&device, 4, 2, target).await.unwrap();
             assert_eq!(rendered.processing_byte_len(), (0, 0));
             assert!(
                 rendered
@@ -612,7 +609,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     ([0., 0., 1., 1.], [0, 1, 2, 3, 4, 5, 6, 7]),
                     ([0.25, 0., 0.5, 1.], [1, 1, 2, 2, 5, 5, 6, 6]),
                 ] {
-                    let group = image.presentation_group(&device, uv).unwrap();
+                    let draw = presentation.bind(&image.linear, target, uv).unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
                     {
                         let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -628,7 +625,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                             })],
                             ..Default::default()
                         });
-                        image.paint_group(&mut pass.forget_lifetime(), &group);
+                        draw.paint(&mut pass.forget_lifetime());
                     }
                     queue.submit([encoder.finish()]);
                     let output = read(&device, &queue, &texture).await;
@@ -670,34 +667,50 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
-            .await
-            .unwrap();
+        let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
         let area = SourceRegion {
             x: 12,
             y: 7,
             width: 5,
             height: 3,
         };
-        let pixels: Vec<_> = (0..15)
-            .map(|i| [3000 + i * 2500, 12000 + i * 700, 35000 - i * 1500, 0])
+        // Distinct target-linear texels, including signed and extended-range values.
+        let linear: Vec<[f32; 4]> = (0..15)
+            .map(|i| {
+                [
+                    -0.05 + i as f32 * 0.08,
+                    0.12 + i as f32 * 0.03,
+                    0.7 - i as f32 * 0.04,
+                    1.,
+                ]
+            })
             .collect();
+        let size = wgpu::Extent3d {
+            width: area.width,
+            height: area.height,
+            depth_or_array_layers: 1,
+        };
+        let image = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("authored target-linear pixels"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            image.as_image_copy(),
+            bytemuck::cast_slice(&linear),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(area.width * 16),
+                rows_per_image: Some(area.height),
+            },
+            size,
+        );
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let image = GpuImage::new_shared(
-                &renderer,
-                &device,
-                [5, 3],
-                &pixels,
-                DMat3::IDENTITY,
-                None,
-                target,
-            )
-            .await
-            .unwrap();
-            let mut encoder = device.create_command_encoder(&Default::default());
-            image.encode(&device, &mut encoder, ProcessingParameters::source());
-            queue.submit([encoder.finish()]);
-            let linear = read(&device, &queue, &image.linear).await;
             let crop = Some(Crop::from_region(SourceRegion {
                 x: 13,
                 y: 8,
@@ -766,8 +779,8 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
                                             ]),
                                             area,
                                         );
-                                        let group =
-                                            image.presentation_group(&device, mapping).unwrap();
+                                        let draw =
+                                            presentation.bind(&image, target, mapping).unwrap();
                                         let mut encoder =
                                             device.create_command_encoder(&Default::default());
                                         {
@@ -790,7 +803,7 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
                                                     ..Default::default()
                                                 },
                                             );
-                                            image.paint_group(&mut pass.forget_lifetime(), &group);
+                                            draw.paint(&mut pass.forget_lifetime());
                                         }
                                         queue.submit([encoder.finish()]);
                                         let actual = read(&device, &queue, &texture).await;

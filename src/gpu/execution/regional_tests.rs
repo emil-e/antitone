@@ -50,8 +50,7 @@ fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_orig
             bindings: vec![],
         },
     );
-    let output = pollster::block_on(crate::viewer::GpuImage::new_rendered_shared(
-        &renderer,
+    let output = pollster::block_on(crate::viewer::GpuImage::new_rendered(
         &device,
         2,
         2,

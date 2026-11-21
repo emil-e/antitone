@@ -14,6 +14,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
     pollster::block_on(async {
         let (device, queue) = device().await;
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [600, 400],
             pixels_per_point: 2.,
@@ -77,6 +78,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
+                    &presentation,
                     image.clone(),
                     Some(parameters.clone()),
                     [0.25, 0., 0.5, 1.],
@@ -228,6 +230,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
+                    &presentation,
                     image.clone(),
                     Some(parameters.clone()),
                     [0.25, 0., 0.5, 1.],

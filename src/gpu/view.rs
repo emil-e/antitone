@@ -211,12 +211,8 @@ impl RenderedView {
         endpoint: crate::gpu::evaluation::Value,
     ) -> Result<Arc<Self>, Error> {
         let [width, height] = product.spec.frame().output;
-        let image = Arc::new(pollster::block_on(GpuImage::new_rendered_shared(
-            &product.renderer,
-            device,
-            width,
-            height,
-            target,
+        let image = Arc::new(pollster::block_on(GpuImage::new_rendered(
+            device, width, height, target,
         ))?);
         let group = product.renderer.render_binding(
             device,

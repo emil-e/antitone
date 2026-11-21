@@ -53,8 +53,7 @@ impl RenderedView {
             return Ok(old.clone());
         }
         let source = detail.product.as_ref().unwrap();
-        let image = Arc::new(pollster::block_on(GpuImage::new_rendered_shared(
-            &source.renderer,
+        let image = Arc::new(pollster::block_on(GpuImage::new_rendered(
             device,
             frame.output[0],
             frame.output[1],

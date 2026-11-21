@@ -142,7 +142,6 @@ impl GpuProxy {
             self.0.size[0],
             self.0.size[1],
             Some((self.0.renderer.clone(), self.0.source.clone())),
-            self.0.renderer.display.clone(),
             target,
         ))?))
     }

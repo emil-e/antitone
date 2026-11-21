@@ -83,8 +83,7 @@ pub(crate) fn refine_definition(
         return Ok(None);
     }
     let root = crate::gpu::execution::regional::definition(original, view)?;
-    let output = pollster::block_on(GpuImage::new_rendered_shared(
-        renderer,
+    let output = pollster::block_on(GpuImage::new_rendered(
         device,
         view.output[0],
         view.output[1],

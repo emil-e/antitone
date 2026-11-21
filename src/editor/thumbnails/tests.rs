@@ -1672,6 +1672,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
             .await
             .unwrap();
         let mut editor = Editor::state();
+        editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         *editor.document = fixture();
         editor.document.state.project.order.truncate(36);
         editor
@@ -1729,6 +1730,15 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
                     |ui| editor.filmstrip(ui, &crate::application::UiContext::render_only()),
                 );
                 output.textures_delta.clear();
+                if frame == 11 {
+                    assert!(
+                        output
+                            .shapes
+                            .iter()
+                            .any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+                        "settled warm filmstrip must emit thumbnail draws after scrolling by {delta}",
+                    );
+                }
                 for shape in output.shapes {
                     if let egui::Shape::Text(text) = shape.shape {
                         assert_ne!(text.galley.job.text, "…", "warm thumbnail was evicted");
