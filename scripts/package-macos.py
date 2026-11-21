@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / ".cache" / "app"
 APP = OUTPUT / "Antitone.app"
 ARCHIVE = OUTPUT / "Antitone-macos-arm64.zip"
+ONNX_DYLIB = "libonnxruntime.dylib"
+ONNX_NOTICES = ("LICENSE", "ThirdPartyNotices.txt", "pins.txt")
 
 
 def run(*command, **kwargs):
@@ -168,6 +170,17 @@ def openmp_prefix():
     return ROOT / f".cache/native-deps/openmp-{native_pins('openmp')['version']}-install"
 
 
+def onnx_runtime_prefix():
+    return ROOT / f".cache/native-deps/onnxruntime-{native_pins('onnxruntime')['version']}"
+
+
+def copy_onnx_runtime_notices(notices):
+    destination = notices / "ONNX-Runtime"
+    for name in ONNX_NOTICES:
+        source = ROOT / "native/onnxruntime" if name == "pins.txt" else onnx_runtime_prefix()
+        copy_notice(source / name, destination)
+
+
 def rawspeed_prefix():
     return (
         ROOT / f".cache/native-deps/rawspeed-{native_pins('rawspeed')['revision'][:12]}-macos-arm64"
@@ -248,6 +261,9 @@ def write_notices(resources):
     copy_rawspeed_notices(notices)
     copy_dht_notices(notices)
     copy_notice(openmp_prefix() / "share/licenses/LLVM-OpenMP.txt", notices / "OpenMP")
+    copy_onnx_runtime_notices(notices)
+    for name in ("README.md", "KERAS-MODEL-CARD.md", "MIT.txt"):
+        copy_notice(f"assets/analysis/{name}", notices / "SegFormer")
 
     # Include the selected production dependency graph's declared licenses and
     # shipped notice files. This is an inventory, not automated legal clearance.
@@ -293,13 +309,25 @@ def write_notices(resources):
 def verify_bundle(bundle, version):
     binary = bundle / "Contents/MacOS/antitone"
     runtime = bundle / "Contents/Frameworks/libomp.dylib"
+    onnx_runtime = bundle / "Contents/Frameworks" / ONNX_DYLIB
     if not runtime.is_file():
         raise RuntimeError("Packaged OpenMP runtime is missing")
+    if onnx_runtime.is_symlink() or not onnx_runtime.is_file():
+        raise RuntimeError("Packaged ONNX Runtime is missing or not a standalone dylib")
+    for name in ONNX_NOTICES:
+        if not (bundle / "Contents/Resources/Licenses/ONNX-Runtime" / name).is_file():
+            raise RuntimeError(f"Packaged ONNX Runtime notice is missing: {name}")
     for path in [binary, runtime]:
         audit_dependencies(dependencies(text("otool", "-L", path)), bundled=True)
         allowed = ["@executable_path/../Frameworks"] if path == binary else []
         if rpaths(text("otool", "-l", path)) != allowed:
             raise RuntimeError(f"Unexpected runtime search paths in {path}")
+    install_name, *imports = dependencies(text("otool", "-L", onnx_runtime))
+    if install_name != f"@rpath/{ONNX_DYLIB}":
+        raise RuntimeError(f"Unexpected ONNX Runtime install name: {install_name}")
+    audit_dependencies(imports, bundled=False)
+    if rpaths(text("otool", "-l", onnx_runtime)):
+        raise RuntimeError(f"Unexpected runtime search paths in {onnx_runtime}")
     run("codesign", "--verify", "--deep", "--strict", bundle)
     with tempfile.TemporaryDirectory(prefix="antitone-package-home-") as home:
         # No developer/Cargo paths or inherited DYLD overrides can rescue a bad bundle.
@@ -322,6 +350,21 @@ def verify_bundle(bundle, version):
             raise RuntimeError(f"Unexpected packaged executable response: {result.stdout!r}")
         if str(runtime) not in result.stderr:
             raise RuntimeError("Loader did not report the bundled OpenMP runtime")
+        try:
+            onnx = run(
+                binary,
+                "--check-semantic-wb-runtime",
+                cwd=home,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"Packaged ONNX Runtime smoke failed:\n{error.stderr}") from error
+        expected_onnx_path = str(onnx_runtime.resolve())
+        if onnx.stdout.strip() != expected_onnx_path or expected_onnx_path not in onnx.stderr:
+            raise RuntimeError(f"Smoke check did not use bundled ONNX Runtime: {onnx.stdout!r}")
         protocol = run(
             binary,
             "--lightroom-protocol-version",
@@ -351,17 +394,22 @@ def package(data):
     if text("lipo", "-archs", binary).strip() != "arm64":
         raise RuntimeError("Expected the Apple Silicon production executable")
     openmp = openmp_prefix() / "lib/libomp.dylib"
+    onnx = onnx_runtime_prefix() / ONNX_DYLIB
+    if not onnx.is_file():
+        raise RuntimeError(f"Missing {onnx}; run cargo xtask setup-native first")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="staging-", dir=OUTPUT) as temporary:
         bundle = Path(temporary) / "Antitone.app"
         contents = bundle / "Contents"
         executable = contents / "MacOS/antitone"
         runtime = contents / "Frameworks/libomp.dylib"
+        onnx_runtime = contents / "Frameworks" / ONNX_DYLIB
         resources = contents / "Resources"
         for directory in [executable.parent, runtime.parent, resources]:
             directory.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, executable)
         shutil.copy2(openmp, runtime)
+        shutil.copy2(onnx, onnx_runtime)
         shutil.copy2(ROOT / "assets/branding/icon.icns", resources / "Antitone.icns")
         for name in dependencies(text("otool", "-L", executable)):
             if system_library(name):
@@ -374,6 +422,8 @@ def package(data):
         remove_rpaths(runtime)
         run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", executable)
         run("install_name_tool", "-id", "@rpath/libomp.dylib", runtime)
+        remove_rpaths(onnx_runtime)
+        run("install_name_tool", "-id", f"@rpath/{ONNX_DYLIB}", onnx_runtime)
         info = {
             "CFBundleDevelopmentRegion": "en",
             "CFBundleDisplayName": "Antitone",
@@ -410,7 +460,7 @@ def package(data):
             "distribution": "local test package; ad-hoc signed, not Developer ID signed or notarized",
         }
         (resources / "build-info.json").write_text(json.dumps(provenance, indent=2) + "\n")
-        for path in [runtime, bundle]:
+        for path in [runtime, onnx_runtime, bundle]:
             run("codesign", "--force", "--sign", "-", "--timestamp=none", path)
         protocol = verify_bundle(bundle, item["version"])
         if APP.exists():

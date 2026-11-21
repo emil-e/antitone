@@ -378,7 +378,7 @@ impl Fit {
             self.renderer.evaluation(),
             (&self.queue, &self.renderer.submissions),
         );
-        let Some(proposal) = roll_analysis::estimate_anchor_spans(
+        let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
             floor,
             self.matrix,
@@ -389,7 +389,121 @@ impl Fit {
         else {
             return Ok(None);
         };
+        // Validate capture support before semantic filtering, which may abstain on an individual photo.
+        require_statistics(
+            self.owned.iter().map(|frame| frame.film.pixels.len()).sum(),
+            &proposal.frames,
+        )?;
+        if cancelled() {
+            return Ok(None);
+        }
+        let load_started = std::time::Instant::now();
+        let mut classifier = semantic::Classifier::load()?;
+        let load_seconds = load_started.elapsed().as_secs_f64();
+        let initial = proposal.roll;
+        let negative = proposal.input.negative_input().expect("anchor proposal");
+        let post = crate::color::wb_matrix(initial.wb)? * self.matrix * initial.exposure.exp2();
+        let started = std::time::Instant::now();
+        if !roll_analysis::semantic_refit(
+            &mut proposal,
+            &frames,
+            self.matrix,
+            &mut model,
+            &mut || cancelled(),
+            |index, ids, stop| {
+                self.semantic_sites(index, ids, negative, post, &mut classifier, stop)
+            },
+        )? {
+            return Ok(None);
+        }
+        log::info!(
+            seconds = started.elapsed().as_secs_f64(),
+            load_seconds,
+            warmth = proposal.roll.wb.warmth,
+            tint = proposal.roll.wb.tint;
+            "analysis_semantic_wb_completed"
+        );
         self.propose(proposal, cancelled)
+    }
+
+    fn semantic_sites(
+        &self,
+        index: usize,
+        ids: &[usize],
+        negative: crate::processing::NegativeInput,
+        post: glam::DMat3,
+        classifier: &mut semantic::Classifier,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Vec<bool>>, Error> {
+        use crate::geometry::{Orientation, SourcePoint};
+        if ids.len() < 256 {
+            return Ok(Some(vec![true; ids.len()]));
+        }
+        let positions = &self.owned[index].picture.positions;
+        let mut lo = [u32::MAX; 2];
+        let mut hi = [0; 2];
+        for &p in positions {
+            for c in 0..2 {
+                lo[c] = lo[c].min(p[c]);
+                hi[c] = hi[c].max(p[c]);
+            }
+        }
+        let bounds = Rect {
+            x: lo[0],
+            y: lo[1],
+            width: hi[0] - lo[0] + 1,
+            height: hi[1] - lo[1] + 1,
+        };
+        let project = &self.request.document.project;
+        let photo = project.source(project.order[index])?;
+        let sampler = crate::gpu::analysis::CameraSampler::captured(
+            &self.renderer,
+            (&self.queue, &self.renderer.submissions),
+            self.cameras[index].clone(),
+            self.correction.as_ref().map(|c| c.gpu.clone()),
+        )?;
+        let Some(preview) = sampler.preview_centres(bounds, &mut || cancelled())? else {
+            return Ok(None);
+        };
+        let Some(rgb) = preview.render(&self.renderer, &self.queue, negative, post, cancelled)?
+        else {
+            return Ok(None);
+        };
+        let [width, height] = preview.size.map(|n| n as u32);
+        let orientation = Orientation::new(
+            Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            project.orientation,
+            photo.orientation,
+        )?;
+        let [w, h] = orientation.size();
+        let mut image = image::RgbImage::new(w, h);
+        for (i, rgb) in rgb.into_iter().enumerate() {
+            let point = SourcePoint([
+                (i as u32 % width) as f64 + 0.5,
+                (i as u32 / width) as f64 + 0.5,
+            ]);
+            let [x, y] = orientation.source_to_oriented(point).0;
+            image.put_pixel(x as u32, y as u32, image::Rgb(rgb));
+        }
+        let sites: Vec<_> = ids
+            .iter()
+            .map(|&i| {
+                let p = positions[i];
+                let raw = std::array::from_fn(|c| {
+                    let extent = preview.hi[c].saturating_sub(preview.lo[c]).max(1);
+                    0.5 + (p[c] as f64 - preview.lo[c] as f64) / f64::from(extent)
+                        * (preview.size[c] - 1) as f64
+                });
+                let [x, y] = orientation.source_to_oriented(SourcePoint(raw)).0;
+                [x / f64::from(w), y / f64::from(h)]
+            })
+            .collect();
+        classifier.keep(&image, &sites, cancelled)
     }
 
     fn propose(
@@ -402,10 +516,13 @@ impl Fit {
         if proposal.frames.len() != project.order.len() {
             return Err(Error::UnusableSample("analysis statistics count changed"));
         }
-        require_statistics(
-            self.owned.iter().map(|frame| frame.film.pixels.len()).sum(),
-            &proposal.frames,
-        )?;
+        if proposal
+            .frames
+            .iter()
+            .any(|frame| frame.exposure_samples < MIN_PICTURE_SAMPLES)
+        {
+            return Err(Error::UnusableSample("too few positive exposure samples"));
+        }
         let wb_rejections: Vec<_> = proposal
             .frames
             .iter()

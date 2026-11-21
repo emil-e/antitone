@@ -45,11 +45,13 @@ Channel gammas are proportional to their spans: a channel that travelled farther
 
 ## 4. Set shared photographic WB
 
-After setting gamma, Analyze uses the mean working log-chroma of each usable photograph to suggest a white balance. It takes the coordinate-wise median of those suggestions and limits the result to the control range. This is one Roll WB, not a neutral target for each photo. If no photo has usable colour measurements, Analyze declines to install a grade.
+After setting gamma, Analyze initially estimates WB and exposure from the full eligible picture population. This starting grade supplies small positive previews for CPU segmentation. The segmentation vetoes confident sky, vegetation and earth at original WB sample sites; it does not treat other materials as neutral. Chroma comes from the original camera samples after inversion and camera mapping, not from the previews.
+
+Each photo with at least 256 retained sites contributes one negative mean log-chroma vote. The coordinate-wise median of these votes sets the shared Roll WB, limited to the control range. If fewer than half the photos can vote, Analyze keeps the unfiltered grade. If no photo has usable colour measurements in the initial fit, Analyze declines to install a grade.
 
 ## 5. Set shared roll exposure
 
-Each photo supplies the median of its eligible positive AP1 luminances after curve fitting and Roll WB. The median of those frame medians supplies the roll key, giving each photo equal influence regardless of sample count:
+Each photo supplies the median of its eligible positive AP1 luminances after curve fitting and Roll WB, without the semantic veto. The median of those frame medians supplies the roll key, giving each photo equal influence regardless of sample count:
 
 ```text
 roll_key = median(frame_luminance_medians)
@@ -78,7 +80,7 @@ Analyze replaces calibration, channel balance, Roll WB/EV and all ordered Photo 
 
 Every run reviews sampling areas. Nondefault layer settings or a stack other than the initial global layer add an explicit reset warning to that same review, not a second modal; the warning names layer replacement, and the accepted installation is one undoable history entry. Complete numeric entry to include it in the accepted settings captured at confirmation. Switching tools retires the unfinished analysis. Selected global gamma/response, accepted correction and Roll/Photo orientation and crop are preserved; no review draft is saved.
 
-Fitting validates the complete proposal—including every photo's resulting numerical domain—using its acquired camera matrix and captured correction before one atomic installation of both support and grading. Output colour assets do not participate in this calculation. Acceptance installs that checked result through a live edit, without repeating rendering admission against viewing-resolved facts. Failure or cancellation preserves accepted processing and multi-selection. Replacing Analyze leaves the displayed photo in place for the next tool. Explicit cancellation waits for worker acknowledgement; tool replacement retires the action immediately while native/GPU work cleans up cooperatively.
+Fitting validates the complete proposal—including every photo's resulting numerical domain—using its acquired camera matrix and captured correction before one atomic installation of both support and grading. The segmentation proxy uses a fixed sRGB display transform without the project's output looks. Acceptance installs that checked result through a live edit, without repeating rendering admission against viewing-resolved facts. Failure or cancellation preserves accepted processing and multi-selection. Replacing Analyze leaves the displayed photo in place for the next tool. Explicit cancellation waits for worker acknowledgement; tool replacement retires the action immediately while native/GPU work cleans up cooperatively.
 
 ## Where the estimate can fail
 

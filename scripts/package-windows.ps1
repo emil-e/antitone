@@ -16,6 +16,38 @@ $dist = Join-Path $root '.cache/dist'
 $stage = Join-Path $dist 'Antitone-windows-x64'
 $archive = Join-Path $dist 'Antitone-windows-x64.zip'
 
+function Assert-PortableApplication {
+    param([string]$Directory, [string]$Version)
+    Push-Location -LiteralPath $Directory
+    $originalPath = $env:PATH
+    $originalEncoding = [Console]::OutputEncoding
+    try {
+        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $smoke = @(& '.\antitone.exe' --version)
+        if ($LASTEXITCODE -ne 0 -or $smoke.Count -ne 1 -or $smoke[0] -ne $Version) {
+            throw "Packaged executable failed version check: '$smoke' (exit $LASTEXITCODE)"
+        }
+        $loaded = @(& '.\antitone.exe' --check-semantic-wb-runtime)
+        if ($LASTEXITCODE -ne 0 -or $loaded.Count -ne 1) {
+            throw "Packaged ONNX Runtime smoke failed: '$loaded' (exit $LASTEXITCODE)"
+        }
+        # Rust canonicalizes to an extended-length Windows path.
+        $path = $loaded[0]
+        if ($path.StartsWith('\\?\UNC\')) {
+            $path = '\\' + $path.Substring(8)
+        } elseif ($path.StartsWith('\\?\')) {
+            $path = $path.Substring(4)
+        }
+        $expected = (Get-Item -LiteralPath 'onnxruntime.dll').FullName
+        if ($path -ne $expected) { throw "Smoke check did not use packaged ONNX Runtime: '$path'" }
+    } finally {
+        [Console]::OutputEncoding = $originalEncoding
+        $env:PATH = $originalPath
+        Pop-Location
+    }
+}
+
 if (-not $SkipBuild) {
     Push-Location $root
     try {
@@ -41,9 +73,8 @@ if (-not (Test-Path $vswhere)) { throw 'vswhere.exe is required to locate the Vi
 $installation = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
 if (-not $installation) { throw 'No Visual Studio installation found for the runtime files.' }
 . (Join-Path $PSScriptRoot 'windows-runtime.ps1')
-Get-VcRuntimeFiles -RedistRoot (Join-Path $installation 'VC/Redist/MSVC') | ForEach-Object {
-    Copy-Item -LiteralPath $_ -Destination $stage
-}
+$redistributables = @(Get-VcRuntimeFiles -RedistRoot (Join-Path $installation 'VC/Redist/MSVC'))
+Copy-Item -LiteralPath $redistributables -Destination $stage
 
 $omp = Get-Content -Raw (Join-Path $root 'native/openmp/pins.txt') | ConvertFrom-StringData
 $openmp = Join-Path $root ".cache/native-deps/openmp-$($omp.version)-windows-x64-install"
@@ -53,13 +84,29 @@ $imports = & cmd.exe /d /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul && du
 if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the production OpenMP imports.' }
 Assert-LlvmOpenMPImports -Lines $imports
 
-foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'libomp.dll')) {
-    if (-not (Test-Path (Join-Path $stage $name))) { throw "Runtime file $name was not staged" }
+$onnxPinsPath = Join-Path $root 'native/onnxruntime/pins.txt'
+$onnx = Get-Content -Raw $onnxPinsPath | ConvertFrom-StringData
+$onnxPrefix = Join-Path $root ".cache/native-deps/onnxruntime-$($onnx.version)"
+$onnxDll = Join-Path $onnxPrefix 'onnxruntime.dll'
+if (-not (Test-Path -LiteralPath $onnxDll -PathType Leaf)) {
+    throw "Missing $onnxDll; run scripts/setup-windows.ps1 first."
 }
+Copy-Item -LiteralPath $onnxDll -Destination $stage
 
 # Notices travel with the package; NOTICE.md explains their scope.
 $notices = Join-Path $stage 'Licenses'
-New-Item -ItemType Directory -Force $notices | Out-Null
+$onnxNotices = Join-Path $notices 'ONNX-Runtime'
+$segFormerNotices = Join-Path $notices 'SegFormer'
+New-Item -ItemType Directory -Force $onnxNotices, $segFormerNotices | Out-Null
+$onnxNoticeNames = @('LICENSE', 'ThirdPartyNotices.txt')
+foreach ($name in $onnxNoticeNames) {
+    Copy-Item -LiteralPath (Join-Path $onnxPrefix $name) -Destination $onnxNotices
+}
+Copy-Item -LiteralPath $onnxPinsPath -Destination $onnxNotices
+$segFormerNoticeNames = @('README.md', 'KERAS-MODEL-CARD.md', 'MIT.txt')
+foreach ($name in $segFormerNoticeNames) {
+    Copy-Item -LiteralPath (Join-Path $root "assets/analysis/$name") -Destination $segFormerNotices
+}
 foreach ($path in @(
     'LICENSE',
     'NOTICE.md',
@@ -138,11 +185,7 @@ read-only and projects are plain files.
 Licensing and component notices: see Licenses/.
 "@ | Set-Content (Join-Path $stage 'README.txt') -Encoding UTF8
 
-# A package that cannot start is not a package: run the staged binary, not the build output.
-$smoke = & (Join-Path $stage 'antitone.exe') --version
-if ($LASTEXITCODE -ne 0 -or $smoke.Trim() -ne $version) {
-    throw "Staged binary failed its smoke test: '$smoke' (exit $LASTEXITCODE)"
-}
+Assert-PortableApplication -Directory $stage -Version $version
 
 if (Test-Path $archive) { Remove-Item -Force $archive }
 Compress-Archive -Path $stage -DestinationPath $archive -CompressionLevel Optimal
@@ -152,20 +195,16 @@ $relocated = Join-Path $dist ('relocated package ' + [guid]::NewGuid().ToString(
 try {
     Expand-Archive -LiteralPath $archive -DestinationPath $relocated
     $unpacked = Join-Path $relocated 'Antitone-windows-x64'
-    foreach ($name in @('antitone.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'libomp.dll')) {
+    $files = @('antitone.exe', 'libomp.dll', 'onnxruntime.dll', 'Licenses/ONNX-Runtime/pins.txt')
+    $files += @($redistributables | ForEach-Object { Split-Path -Leaf $_ })
+    $files += @($onnxNoticeNames | ForEach-Object { "Licenses/ONNX-Runtime/$_" })
+    $files += @($segFormerNoticeNames | ForEach-Object { "Licenses/SegFormer/$_" })
+    foreach ($name in $files) {
         $expected = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage $name)).Hash
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $unpacked $name)).Hash
         if ($expected -ne $actual) { throw "Archived file differs: $name" }
     }
-    Push-Location $unpacked
-    try {
-        $smoke = & '.\antitone.exe' --version
-        if ($LASTEXITCODE -ne 0 -or $smoke.Trim() -ne $version) {
-            throw "Relocated package failed its smoke test: '$smoke' (exit $LASTEXITCODE)"
-        }
-    } finally {
-        Pop-Location
-    }
+    Assert-PortableApplication -Directory $unpacked -Version $version
 } finally {
     if (Test-Path $relocated) { Remove-Item -Recurse -Force $relocated }
 }

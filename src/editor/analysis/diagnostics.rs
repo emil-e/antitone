@@ -191,18 +191,12 @@ fn diagnose_sample_rolls() {
                     .into_iter()
                     .zip(&before.sources)
                 {
-                    assert_eq!(
-                        after.adjustment_layers.as_ref().unwrap().layers[0]
-                            .adjustment
-                            .photo
-                            .wb,
-                        Balance::default()
-                    );
-                    after.adjustment_layers.as_mut().unwrap().layers[0]
-                        .adjustment
-                        .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
-                        .adjustment
-                        .photo;
+                    let layers = after.adjustment_layers.as_ref().unwrap();
+                    assert_eq!(layers.layers.len(), 1);
+                    let photo = layers.layers[0].adjustment.photo;
+                    assert_eq!(photo.wb, Balance::default());
+                    assert_eq!(photo.exposure, 0.);
+                    after.adjustment_layers = prior.adjustment_layers.clone();
                     assert_eq!(&after, prior);
                 }
             } else {

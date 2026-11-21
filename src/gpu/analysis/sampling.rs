@@ -157,17 +157,42 @@ impl<'a> CameraSampler<'a> {
         if indices.is_empty() {
             return Ok(Some(result));
         }
+        let source_positions = indices
+            .iter()
+            .map(|&i| self.input.position(i))
+            .collect::<Result<Vec<_>, _>>()?;
         let Some(pixels) = self.read_centres(indices, &mut cancelled)? else {
             return Ok(None);
         };
-        for pixel in pixels {
+        for (position, pixel) in source_positions.into_iter().zip(pixels) {
             if pixel.min_element() > self.floor {
+                result.positions.push(position);
                 result.pixels.push(pixel);
             } else {
                 result.rejected_floor += 1;
             }
         }
         Ok(Some(result))
+    }
+
+    pub(crate) fn preview_centres(
+        &self,
+        area: crate::geometry::SourceRegion,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<super::SemanticPreview>, Error> {
+        let view = self.input.window(area, 384)?;
+        let size = view.size();
+        let lo = self.input.position(view.index(0))?;
+        let hi = self.input.position(view.index(size[0] * size[1] - 1))?;
+        let indices = (0..size[0] * size[1]).map(|i| view.index(i)).collect();
+        Ok(self
+            .read_centres(indices, cancelled)?
+            .map(|camera| super::SemanticPreview {
+                size,
+                lo,
+                hi,
+                camera,
+            }))
     }
 
     fn read_centres(

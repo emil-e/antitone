@@ -33,6 +33,80 @@ impl<'a> ResponseModel<'a> {
     }
 }
 
+pub(crate) struct SemanticPreview {
+    pub size: [usize; 2],
+    pub lo: [u32; 2],
+    pub hi: [u32; 2],
+    camera: Vec<DVec3>,
+}
+
+impl SemanticPreview {
+    pub(crate) fn render(
+        &self,
+        renderer: &crate::renderer::GpuRenderer,
+        queue: &wgpu::Queue,
+        negative: NegativeInput,
+        post: glam::DMat3,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Vec<[u8; 3]>>, Error> {
+        if cancelled() {
+            return Ok(None);
+        }
+        use crate::{processing::Inversion, rendering::OutputTarget};
+        let inversion = Inversion::new(negative)?;
+        let points: Vec<_> = self
+            .camera
+            .iter()
+            .map(|&p| inversion.apply(p).map(|p| post * p.rgb))
+            .collect::<Result<_, _>>()?;
+        let [width, height] = self.size.map(|v| v as u32);
+        let domain = evaluation::Domain {
+            bounds: Some(evaluation::CellRegion::new([0, 0], [width, height])),
+            grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: evaluation::Meaning::Neutral,
+        };
+        let target = OutputTarget::Srgb;
+        let source = evaluation::source(Arc::new(CameraSamples {
+            domain,
+            points: points.into(),
+        }));
+        let display = renderer.drt(target).apply(source)?;
+        let ctx = renderer.evaluation();
+        let request = ctx.request(
+            display,
+            evaluation::Region {
+                bounds: domain.finite()?,
+                grid: domain.grid,
+            },
+            evaluation::Tiling { tile: [width, 64] },
+        )?;
+        let mut output = vec![[0; 3]; self.camera.len()];
+        let stop = RefCell::new(cancelled);
+        let read = ctx.read(
+            queue,
+            &renderer.submissions,
+            &request,
+            || (stop.borrow_mut())(),
+            |block, pixels| {
+                let block = block.source()?;
+                for (i, p) in pixels.iter().enumerate() {
+                    if p[3] < 0. || !p.iter().all(|v| v.is_finite()) {
+                        return Err(Error::NumericalOverflow);
+                    }
+                    let x = block.x as usize + i % block.width as usize;
+                    let y = block.y as usize + i / block.width as usize;
+                    for (c, &value) in p[..3].iter().enumerate() {
+                        output[y * width as usize + x][c] =
+                            (255. * target.encode(f64::from(value.clamp(0., 1.)))?).round() as u8;
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        Ok(read.map(|_| output))
+    }
+}
+
 struct CameraSamples {
     domain: evaluation::Domain,
     points: Arc<[DVec3]>,
@@ -54,7 +128,10 @@ impl evaluation::Source for CameraSamples {
                 let rgb = point.as_vec3();
                 // These vectors already include residual correction; the developed-source
                 // ceiling no longer describes them. Require their actual f32 representation.
-                if !rgb.is_finite() || point.min_element() < 0. {
+                if !rgb.is_finite()
+                    || (self.domain.meaning == evaluation::Meaning::Camera
+                        && point.min_element() < 0.)
+                {
                     return Err(Error::InvalidParameter(
                         "analysis corrected camera samples exceed the f32 domain",
                     ));

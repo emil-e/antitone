@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # Prepare the Windows toolchain this checkout expects: portable CMake, Ninja and the DirectX
-# Shader Compiler under .cache/tools, then LibRaw under .cache/native-deps.
+# Shader Compiler under .cache/tools, plus LibRaw and ONNX Runtime under .cache/native-deps.
 #
 # CMake and Ninja come from the vendor releases rather than a system install so that native
 # builds behave the same on every machine; build.rs finds them here when they are absent from
@@ -35,6 +35,34 @@ function Get-PinnedArchive {
         throw "$Name SHA-256 mismatch: got $actual, expected $Sha256"
     }
     return $archive
+}
+
+function Install-OnnxRuntime {
+    $pins = Get-Content -Raw (Join-Path $root 'native/onnxruntime/pins.txt') | ConvertFrom-StringData
+    $package = 'microsoft.ml.onnxruntime'
+    $name = "$package.$($pins.version).nupkg"
+    $archive = Get-PinnedArchive -Name $name `
+        -Url "https://api.nuget.org/v3-flatcontainer/$package/$($pins.version)/$name" `
+        -Sha256 $pins.nuget_sha256
+    $cache = Join-Path $root '.cache/native-deps'
+    $prefix = Join-Path $cache "onnxruntime-$($pins.version)"
+    if ((Test-Path (Join-Path $prefix 'onnxruntime.dll') -PathType Leaf) -and
+        (Test-Path (Join-Path $prefix 'LICENSE') -PathType Leaf) -and
+        (Test-Path (Join-Path $prefix 'ThirdPartyNotices.txt') -PathType Leaf)) { return }
+
+    # The CPU provider is built in; omit the shared provider loader and debug symbols.
+    $stage = Join-Path $cache ('.onnxruntime-install-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force $stage | Out-Null
+    try {
+        $library = 'runtimes/win-x64/native/onnxruntime.dll'
+        & tar.exe -xf $archive -C $stage $library LICENSE ThirdPartyNotices.txt
+        if ($LASTEXITCODE -ne 0) { throw "Could not extract $archive" }
+        New-Item -ItemType Directory -Force $prefix | Out-Null
+        Copy-Item -LiteralPath (Join-Path $stage 'LICENSE'), (Join-Path $stage 'ThirdPartyNotices.txt') -Destination $prefix -Force
+        Copy-Item -LiteralPath (Join-Path $stage $library) -Destination $prefix -Force
+    } finally {
+        Remove-Item -LiteralPath $stage -Recurse -Force
+    }
 }
 
 function Expand-ArchiveChecked {
@@ -82,6 +110,8 @@ if (-not $SkipDxc) {
         Copy-Item (Join-Path $tools 'dxc/bin/x64/dxil.dll') $binary -Force
     }
 }
+
+Install-OnnxRuntime
 
 if (-not $SkipLibRaw) {
     & (Join-Path $PSScriptRoot 'build-libraw.ps1') -Arch x64 -HostArch x64

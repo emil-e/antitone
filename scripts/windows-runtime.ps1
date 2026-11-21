@@ -27,7 +27,7 @@ function Get-VcRuntimeFiles {
     if (-not $redist) { throw 'No Visual C++ redistributable directory found.' }
     $runtimeRoot = Join-Path $redist.FullName 'x64'
     $sets = [ordered]@{
-        CRT = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+        CRT = @('msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
     }
     foreach ($kind in $sets.Keys) {
         $directory = Get-ChildItem -LiteralPath $runtimeRoot -Directory |

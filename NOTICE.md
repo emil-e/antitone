@@ -14,6 +14,8 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 - RawSpeed, revision [`804ae3bcc70c`](https://github.com/darktable-org/rawspeed/tree/804ae3bcc70c9362518dab8a039310d26516af1d): LGPL; original license and credits accompany packages. The embedded camera database is retained unmodified under CC BY-SA 3.0, with attribution to RawSpeed contributors and its original license declaration.
 - pugixml 1.15: MIT, copyright Arseny Kapoulkine; the original license accompanies packages.
 - LLVM OpenMP 22.1.8: the original LLVM OpenMP license accompanies the bundled runtime.
+- ONNX Runtime 1.23.2: MIT; the runtime's original license and third-party notices accompany packages.
+- SegFormer-B0 ADE20K: embedded ONNX conversion of the pinned KerasHub preset. The published weights notice and model provenance are in `assets/analysis/`.
 - IBM Plex fonts: SIL Open Font License 1.1, retained in `assets/fonts/OFL.txt`.
 - OpenColorIO-derived rendering algorithms: retained notice in `assets/ocio/LICENSE-OpenColorIO.txt`. The production executable does not dynamically link the OCIO reference library.
 - spektrafilm by Andrea Volpato, https://github.com/andreavolpato/spektrafilm, revision `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`: native algorithm ports are GPLv3; evaluated upstream colour-profile/LUT derivatives are CC BY-SA 4.0. Retained licenses, attribution and modifications are in `assets/spektrafilm/`. The top-level MIT license does not relicense these components.

@@ -325,14 +325,42 @@ class RelocatedBundle(unittest.TestCase):
             bundle = root / "Antitone.app"
             binary = bundle / "Contents/MacOS/antitone"
             runtime = bundle / "Contents/Frameworks/libomp.dylib"
+            onnx = runtime.with_name("libonnxruntime.dylib")
+            notices = bundle / "Contents/Resources/Licenses/ONNX-Runtime"
             binary.parent.mkdir(parents=True)
             runtime.parent.mkdir(parents=True)
+            notices.mkdir(parents=True)
+            for name in ("LICENSE", "ThirdPartyNotices.txt", "pins.txt"):
+                (notices / name).write_text("upstream notice fixture")
             (root / "runtime.c").write_text("int fixture_value(void) { return 7; }\n")
             (root / "main.c").write_text(
-                "#include <stdio.h>\n#include <string.h>\nint fixture_value(void);\n"
-                "int main(int argc, char **argv) { if (fixture_value() != 7) return 1; "
-                'if (argc == 2 && strcmp(argv[1], "--lightroom-protocol-version") == 0) puts("2"); '
-                'else puts("Antitone fixture"); return 0; }\n'
+                """#include <dlfcn.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int fixture_value(void);
+
+int main(int argc, char **argv) {
+    if (argc != 2 || fixture_value() != 7) return 1;
+    if (strcmp(argv[1], "--check-semantic-wb-runtime") == 0) {
+        char executable[PATH_MAX], candidate[PATH_MAX], loaded[PATH_MAX];
+        if (!realpath(argv[0], executable)) return 2;
+        *strrchr(executable, '/') = '\\0';
+        snprintf(candidate, sizeof(candidate), "%s/../Frameworks/libonnxruntime.dylib", executable);
+        if (!realpath(candidate, loaded)) return 3;
+        void *runtime = dlopen(loaded, RTLD_NOW | RTLD_LOCAL);
+        if (!runtime || !dlsym(runtime, "fixture_value")) return 4;
+        puts(loaded);
+    } else if (strcmp(argv[1], "--lightroom-protocol-version") == 0) {
+        puts("2");
+    } else {
+        puts("Antitone fixture");
+    }
+    return 0;
+}
+"""
             )
 
             def run(*args):
@@ -345,6 +373,15 @@ class RelocatedBundle(unittest.TestCase):
                 "-o",
                 runtime,
                 "-Wl,-install_name,@rpath/libomp.dylib",
+            )
+            run(
+                "clang",
+                "-dynamiclib",
+                root / "runtime.c",
+                "-o",
+                onnx,
+                "-Wl,-install_name,@rpath/libonnxruntime.dylib",
+                "-Wl,-headerpad_max_install_names",
             )
             run(
                 "clang",
@@ -364,12 +401,23 @@ class RelocatedBundle(unittest.TestCase):
                     },
                     file,
                 )
-            run("codesign", "--force", "--sign", "-", runtime)
-            run("codesign", "--force", "--sign", "-", bundle)
+            for path in (runtime, onnx, bundle):
+                run("codesign", "--force", "--sign", "-", path)
             self.assertEqual(packager.verify_bundle(bundle, "fixture"), 2)
+            notice = notices / "ThirdPartyNotices.txt"
+            notice.rename(root / notice.name)
+            with self.assertRaisesRegex(RuntimeError, "notice is missing: ThirdPartyNotices"):
+                packager.verify_bundle(bundle, "fixture")
+            (root / notice.name).rename(notice)
+            run("install_name_tool", "-add_rpath", str(root / "checkout"), onnx)
+            with self.assertRaisesRegex(RuntimeError, "search paths.*libonnxruntime"):
+                packager.verify_bundle(bundle, "fixture")
             run("install_name_tool", "-add_rpath", str(root / "checkout"), binary)
-            with self.assertRaisesRegex(RuntimeError, "search paths"):
+            with self.assertRaisesRegex(RuntimeError, "search paths.*MacOS/antitone"):
+                packager.verify_bundle(bundle, "fixture")
+            onnx.unlink()
+            with self.assertRaisesRegex(RuntimeError, "ONNX Runtime is missing"):
                 packager.verify_bundle(bundle, "fixture")
             runtime.unlink()
-            with self.assertRaisesRegex(RuntimeError, "missing"):
+            with self.assertRaisesRegex(RuntimeError, "OpenMP runtime is missing"):
                 packager.verify_bundle(bundle, "fixture")

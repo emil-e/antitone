@@ -37,7 +37,7 @@ jobs:
           path: |
             .cache/tools
             .cache/native-deps
-          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'native/onnxruntime/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
           restore-keys: |
             windows-native-
       - name: Cache Cargo downloads
@@ -87,7 +87,7 @@ jobs:
           path: |
             .cache/tools
             .cache/native-deps
-          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          key: windows-native-${{ hashFiles('native/libraw/**', 'native/rawspeed/**', 'native/openmp/**', 'native/onnxruntime/**', 'scripts/build-*.ps1', 'scripts/windows-native.ps1', 'scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
           restore-keys: |
             windows-native-
       - name: Restore the Cargo downloads
