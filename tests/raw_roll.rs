@@ -80,7 +80,11 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
     }
     let frames: Vec<_> = owned
         .iter()
-        .map(|(film, picture)| FrameSamples { film, picture })
+        .map(|(film, picture)| FrameSamples {
+            film,
+            picture,
+            camera_to_ap1: matrix.unwrap(),
+        })
         .collect();
     let negative = NegativeInput {
         calibration: Calibration {
@@ -91,15 +95,9 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
         gamma: DEFAULT_GAMMA,
         balance: Default::default(),
     };
-    let proposal = roll_analysis::estimate(
-        &frames,
-        CAMERA_INPUT_FLOOR,
-        matrix.unwrap(),
-        negative,
-        || false,
-    )
-    .unwrap()
-    .unwrap();
+    let proposal = roll_analysis::estimate(&frames, CAMERA_INPUT_FLOOR, negative, || false)
+        .unwrap()
+        .unwrap();
     let calibration = proposal.input.calibration().unwrap();
     assert!(
         (calibration.dmin - DVec3::splat(3000. / 4031.))
@@ -148,15 +146,9 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
     // a shared Roll exposure does not normalize away that density difference.
     assert!(luminances[1] > luminances[0]);
     assert!(
-        roll_analysis::estimate(
-            &frames,
-            CAMERA_INPUT_FLOOR,
-            matrix.unwrap(),
-            negative,
-            || true
-        )
-        .unwrap()
-        .is_none()
+        roll_analysis::estimate(&frames, CAMERA_INPUT_FLOOR, negative, || true)
+            .unwrap()
+            .is_none()
     );
     for (path, original) in paths.iter().zip(originals) {
         assert_eq!(fs::read(path).unwrap(), original);

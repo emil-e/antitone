@@ -34,11 +34,10 @@ fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_a
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "measurement-reference.dng",
             map.clone(),
-        )))
-        .unwrap();
+        )));
     let captured = editor.correction();
     let input = capture_input(&editor).unwrap();
-    editor.document.project.set_flat_field(None).unwrap();
+    editor.document.project.set_flat_field(None);
     let services = editor.source_services.clone().unwrap();
     drop(editor);
 

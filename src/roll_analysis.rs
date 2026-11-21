@@ -36,10 +36,11 @@ use model::SampleBatch;
 pub const MAX_SAMPLES_PER_FRAME: usize = 8192;
 const BALANCE_SAMPLES_PER_FRAME: usize = 2048;
 
-/// Original, eligible camera pixels in a common development/correction basis.
+/// Original, eligible camera pixels with their photograph's camera mapping.
 /// Film may be empty for an individual frame; picture statistics may not.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameSamples<'a> {
+    pub camera_to_ap1: DMat3,
     pub film: &'a [DVec3],
     pub picture: &'a [DVec3],
 }
@@ -106,19 +107,17 @@ fn centre_sample<T: Copy>(pixels: &[T], count: usize, i: usize) -> T {
 }
 
 /// Estimate an initial roll grade without changing caller state. Capture,
-/// material, geometry and development compatibility remain sampling obligations.
+/// material and geometry remain sampling obligations.
 /// Cancellation returns no proposal; every frame must supply picture statistics.
 pub fn estimate(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
-    camera_to_ap1: DMat3,
     current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
     estimate_with_model(
         frames,
         effective_floor,
-        camera_to_ap1,
         current,
         &mut model::ScalarReference,
         &mut cancelled,
@@ -172,7 +171,6 @@ fn calibrate(
 pub(crate) fn estimate_with_model(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
-    camera_to_ap1: DMat3,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -180,7 +178,10 @@ pub(crate) fn estimate_with_model(
     if cancelled() {
         return Ok(None);
     }
-    validate_camera_matrix(camera_to_ap1)?;
+    let matrices: Vec<_> = frames.iter().map(|f| f.camera_to_ap1).collect();
+    for &matrix in &matrices {
+        validate_camera_matrix(matrix)?;
+    }
     let InputSettings::Negative {
         response,
         gamma,
@@ -209,7 +210,7 @@ pub(crate) fn estimate_with_model(
     let picture_batch = SampleBatch::new(frames.iter().map(|frame| frame.picture));
     let mut eligible: Vec<Vec<DVec3>> = frames.iter().map(|_| Vec::new()).collect();
     if !picture_batch.read(model, initial, cancelled, |frame, sample, positive| {
-        let y = (AP1_TO_XYZ * (camera_to_ap1 * positive)).y;
+        let y = (AP1_TO_XYZ * (matrices[frame] * positive)).y;
         if !y.is_finite() {
             return Err(Error::NumericalOverflow);
         }
@@ -244,7 +245,7 @@ pub(crate) fn estimate_with_model(
             calibration,
             ..current
         },
-        camera_to_ap1,
+        &matrices,
         &selected,
         model,
         cancelled,
@@ -265,12 +266,12 @@ pub(crate) fn estimate_with_model(
     })? {
         return Ok(None);
     }
-    for (mean, group) in means.iter_mut().zip(&selected_batch.groups) {
+    for ((mean, group), matrix) in means.iter_mut().zip(&selected_batch.groups).zip(&matrices) {
         *mean /= group.len() as f64;
         if !mean.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        *mean = camera_to_ap1 * *mean;
+        *mean = *matrix * *mean;
     }
     let mut roll = RollSettings {
         wb: neutral_wb(sampling::mean(&means)?)?,
@@ -279,7 +280,7 @@ pub(crate) fn estimate_with_model(
     let Some((exposure, exposure_counts)) = meter(
         &picture_batch,
         negative,
-        camera_to_ap1,
+        &matrices,
         roll.wb,
         model,
         cancelled,
@@ -324,15 +325,15 @@ pub(crate) fn estimate_with_model(
 fn meter(
     picture: &SampleBatch,
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     wb: Balance,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<(f64, Vec<usize>)>, Error> {
-    let post = wb_matrix(wb)? * matrix;
+    let wb = wb_matrix(wb)?;
     let mut luminances = vec![Vec::new(); picture.groups.len()];
     if !picture.read(model, negative, cancelled, |frame, _, positive| {
-        let y = (AP1_TO_XYZ * (post * positive)).y;
+        let y = (AP1_TO_XYZ * (wb * matrices[frame] * positive)).y;
         if !y.is_finite() {
             return Err(Error::NumericalOverflow);
         }

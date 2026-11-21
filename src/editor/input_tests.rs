@@ -3,7 +3,7 @@ use super::*;
 mod interpretation;
 use crate::{
     application::test_support::with_application,
-    project::{CameraBasis, FlatFieldSettings, Save, ScanBasis, ScanSetup},
+    project::{FlatFieldSettings, Save},
 };
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
@@ -56,7 +56,7 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
             assert_eq!(editor.document.project.roll, before.roll);
             assert_eq!(editor.document.visit.current_source, Some(selected));
             assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(2.25));
-            assert!(editor.document.project.scan.is_none());
+            assert!(editor.document.project.flat_field.is_none());
             assert!(!editor.editing());
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
@@ -108,25 +108,17 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
 
 fn map_only_editor() -> Editor {
     let mut editor = Editor::state();
-    editor.document.project.scan = Some(ScanSetup {
-        basis: ScanBasis {
-            camera: CameraBasis {
-                camera_model: "map-only fixture".into(),
-                camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
-            },
-        },
-        flat_field: Some(FlatFieldSettings::new(
-            "reference.dng",
-            Arc::new(
-                crate::flat_field::FlatField::from_nodes(
-                    [0, 0, 16, 16],
-                    [2, 2],
-                    vec![DVec3::splat(1.1); 4],
-                )
-                .unwrap(),
-            ),
-        )),
-    });
+    editor.document.project.flat_field = Some(FlatFieldSettings::new(
+        "reference.dng",
+        Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                [0, 0, 16, 16],
+                [2, 2],
+                vec![DVec3::splat(1.1); 4],
+            )
+            .unwrap(),
+        ),
+    ));
     assert!(!editor.document.project.input.has_stage_settings());
     editor
 }
@@ -197,7 +189,7 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
     let mut document = Document::default();
     document.import(std::slice::from_ref(&path)).unwrap();
     document.project.input = InputSettings::Digital;
-    document.project.scan = None;
+    document.project.flat_field = None;
     document = document
         .save(&directory.path().join("intent.antitone"), Save::New)
         .unwrap();
@@ -390,14 +382,14 @@ fn input_accepts_while_old_native_work_is_held_and_only_the_new_wb_can_present()
 }
 
 #[test]
-fn missing_corrupt_and_incompatible_photos_fail_locally_after_a_successful_switch() {
+fn missing_and_corrupt_photos_fail_locally_while_mixed_camera_photos_load_after_switch() {
     let good = crate::raw::fixture::bayer_dng();
     let different = crate::raw::fixture::bayer_dng_with_camera(
         [1800, 2200, 2800],
         [1., 0., 0., 0., 0.9, 0., 0., 0., 1.1],
     );
     let directory = tempfile::tempdir().unwrap();
-    let paths: Vec<_> = ["good.dng", "missing.dng", "corrupt.dng", "incompatible.dng"]
+    let paths: Vec<_> = ["good.dng", "missing.dng", "corrupt.dng", "other-camera.dng"]
         .map(|name| directory.path().join(name))
         .into();
     for path in &paths[..3] {
@@ -432,7 +424,7 @@ fn missing_corrupt_and_incompatible_photos_fail_locally_after_a_successful_switc
                 .developed
                 .clone()
         });
-        for path in &paths[1..] {
+        for path in &paths[1..3] {
             app.enter(|editor, cx| editor.load(path.clone(), cx));
             app.run_until(Duration::from_secs(15), |editor| {
                 !editor.document.visit.source.pending()
@@ -458,6 +450,15 @@ fn missing_corrupt_and_incompatible_photos_fail_locally_after_a_successful_switc
                 );
             });
         }
+        app.enter(|editor, cx| editor.load(paths[3].clone(), cx));
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
+            assert_eq!(ready.developed.white_balance(), crate::project::UNITY_WB);
+            assert!(editor.document.project.input.is_negative());
+        });
         app.enter(|editor, cx| editor.load(paths[0].clone(), cx));
         app.run_until(Duration::from_secs(15), |editor| {
             !editor.document.visit.source.pending()

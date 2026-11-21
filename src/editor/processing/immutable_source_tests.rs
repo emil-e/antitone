@@ -66,7 +66,7 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
             glam::DVec3::new(1.2, 0.9, 1.1),
         ] {
             let field = if gain == glam::DVec3::ONE {
-                project.set_flat_field(None).unwrap();
+                project.set_flat_field(None);
                 None
             } else {
                 let map = Arc::new(
@@ -77,12 +77,10 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
                     )
                     .unwrap(),
                 );
-                project
-                    .set_flat_field(Some(crate::project::FlatFieldSettings::new(
-                        source.path.clone(),
-                        map.clone(),
-                    )))
-                    .unwrap();
+                project.set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                    source.path.clone(),
+                    map.clone(),
+                )));
                 let gpu = Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap());
                 fields.push(Arc::downgrade(&gpu));
                 Some(gpu)

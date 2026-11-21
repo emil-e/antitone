@@ -24,8 +24,7 @@ fn fitting_waits_for_its_captured_map_and_cancellation_preserves_another_reader(
     request
         .document
         .project
-        .set_flat_field(Some(settings.clone()))
-        .unwrap();
+        .set_flat_field(Some(settings.clone()));
     let (release, resume) = futures_channel::oneshot::channel();
     let started = Arc::new(AtomicBool::new(false));
     let signal = started.clone();

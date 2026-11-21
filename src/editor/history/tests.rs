@@ -771,7 +771,7 @@ fn restoration_is_immediate_without_services_and_does_not_change_when_facts_reso
         let mut state = Document::default();
         state.import(&[raw.path().into()]).unwrap();
         state.project.input = InputSettings::Digital;
-        state.project.scan = None;
+        state.project.flat_field = None;
         let id = state.project.order[0];
         let mut editor = crate::editor::tests::fixture();
         editor.document = state.into();
@@ -839,7 +839,7 @@ fn grading_history_retains_lazy_camera_rasters_without_snapshotting_initializati
     let mut state = Document::default();
     state.import(&[raw.path().into()]).unwrap();
     state.project.input = InputSettings::Digital;
-    state.project.scan = None;
+    state.project.flat_field = None;
     let id = state.project.order[0];
     let mut editor = crate::editor::tests::fixture();
     editor.document = state.into();
@@ -904,11 +904,11 @@ fn correction_resource_failure_does_not_reverse_restoration_or_advance_history_a
         .unwrap(),
     );
     let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-    state.project.set_flat_field(Some(field)).unwrap();
+    state.project.set_flat_field(Some(field));
     let mut editor = crate::editor::tests::fixture();
     editor.document = state.into();
     let before = editor.history_snapshot();
-    editor.document.project.set_flat_field(None).unwrap();
+    editor.document.project.set_flat_field(None);
     editor.record_edit(before.clone(), "Clear correction", None);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {

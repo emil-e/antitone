@@ -102,7 +102,7 @@ struct ProjectRecord {
     orientation: RollOrientation,
     output: Output,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    scan: Option<ScanSetup>,
+    flat_field: Option<FlatFieldSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     analysis_area: Option<[u32; 4]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -222,9 +222,6 @@ fn check_relations(project: &Project) -> Result<()> {
         require(entry.areas.ready(), "incomplete accepted analysis support")?;
     }
     require(project.next_source_id > 0, "invalid source ID allocator")?;
-    if let Some(scan) = &project.scan {
-        scan.basis.validate()?;
-    }
     Ok(())
 }
 

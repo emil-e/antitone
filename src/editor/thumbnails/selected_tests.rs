@@ -495,11 +495,8 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                 let path = directory.path().join("corrected.ARW");
                 let id = add_source(editor, path.clone());
                 let source = editor.document.state.project.source(id).unwrap().clone();
-                editor
-                    .document
-                    .state
-                    .project
-                    .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                editor.document.state.project.set_flat_field(Some(
+                    crate::project::FlatFieldSettings::new(
                         source.path.clone(),
                         Arc::new(
                             crate::flat_field::FlatField::from_nodes(
@@ -509,8 +506,8 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                             )
                             .unwrap(),
                         ),
-                    )))
-                    .unwrap();
+                    ),
+                ));
                 editor.document.correction =
                     Correction::prepare(&device, editor.document.project.active_flat_field(), None)
                         .unwrap()
@@ -526,7 +523,7 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                     .unwrap()
                     .proxy
                     .clone();
-                editor.document.state.project.set_flat_field(None).unwrap();
+                editor.document.state.project.set_flat_field(None);
                 editor.document.correction = None.into();
                 editor.validate_pending_preview();
                 assert!(

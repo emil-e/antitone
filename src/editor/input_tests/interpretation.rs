@@ -13,7 +13,7 @@ fn acquire(
 }
 
 #[test]
-fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_the_workspace() {
+fn mixed_import_preserves_negative_and_the_active_workspace() {
     let a = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
     let b = crate::raw::fixture::bayer_dng_with_camera(
         [1800, 2200, 2800],
@@ -33,18 +33,16 @@ fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_th
             editor.document.visit.adjustment_layers.show_coverage = true;
             editor.document.capture()
         });
-        assert!(before.scan_basis().is_some());
         app.enter(|editor, cx| editor.add_raws(vec![b.path().into()], cx));
         app.run_until(Duration::from_secs(15), |editor| {
             editor.document.importing.is_none() && !editor.document.visit.source.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.project.input, InputSettings::Digital);
+            assert!(editor.document.project.input.is_negative());
             assert_eq!(editor.document.project.order.len(), 2);
             assert_eq!(editor.document.visit.current_source, Some(selected));
             assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.75));
             assert!(editor.document.visit.adjustment_layers.show_coverage);
-            assert!(editor.document.capture().scan_basis().is_none());
             assert_eq!(
                 editor
                     .document
@@ -55,7 +53,7 @@ fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_th
                     .unwrap()
                     .developed
                     .white_balance(),
-                [2., 1., 3., 1.]
+                crate::project::UNITY_WB
             );
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
@@ -68,7 +66,6 @@ fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_th
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before.project);
-            assert_eq!(editor.document.capture().scan_basis(), before.scan_basis());
             assert_eq!(editor.document.visit.current_source, Some(selected));
             assert!(editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(
@@ -89,7 +86,7 @@ fn automatic_import_reinterpretation_uses_a_new_basis_scope_without_resetting_th
 }
 
 #[test]
-fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_photo() {
+fn undo_and_reopen_restore_calibration_while_every_camera_can_acquire() {
     let a = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
     let b = crate::raw::fixture::bayer_dng_with_camera(
         [1800, 2200, 2800],
@@ -122,14 +119,29 @@ fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_pho
         let negative_a = app
             .read(|editor| acquire(&editor.document, ids[0], &loader))
             .unwrap();
-        let basis = app.read(|editor| editor.document.capture().scan_basis().unwrap());
-        assert!(basis.require_source(&digital_b.record.development).is_err());
-        assert!(basis.require_source(&negative_a.record.development).is_ok());
+        assert_ne!(
+            digital_b.record.development.camera_to_ap1,
+            negative_a.record.development.camera_to_ap1
+        );
         app.update(|editor| {
             let mut edit = editor.edit_project("Calibration fixture").unwrap();
             edit.update(|project| {
                 project.set_dmin(Some([0.8; 3]));
                 project.set_dmax(Some([0.02; 3]));
+                if let InputSettings::Negative {
+                    gamma,
+                    response,
+                    balance,
+                    ..
+                } = &mut project.input
+                {
+                    *gamma = 0.9;
+                    *response = crate::processing::Response {
+                        toe: 3.,
+                        shoulder: 0.01,
+                    };
+                    balance.warmth = 0.1;
+                }
             });
             editor.commit_project(edit).unwrap();
         });
@@ -146,11 +158,7 @@ fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_pho
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, calibrated);
-            assert_eq!(editor.document.capture().scan_basis(), Some(basis.clone()));
-            assert!(
-                acquire(&editor.document, ids[1], &loader).is_err(),
-                "B must not establish a replacement basis under A's restored anchors"
-            );
+            assert!(acquire(&editor.document, ids[1], &loader).is_ok());
             assert!(acquire(&editor.document, ids[0], &loader).is_ok());
             let directory = tempfile::tempdir().unwrap();
             let saved = editor
@@ -160,8 +168,8 @@ fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_pho
                 .unwrap();
             let reopened: DocumentScope =
                 Document::open(saved.path.as_ref().unwrap()).unwrap().into();
-            assert_eq!(reopened.capture().scan_basis(), Some(basis));
-            assert!(acquire(&reopened, ids[1], &loader).is_err());
+            assert_eq!(reopened.project.input, calibrated.input);
+            assert!(acquire(&reopened, ids[1], &loader).is_ok());
             assert!(acquire(&reopened, ids[0], &loader).is_ok());
         });
     });
@@ -169,7 +177,7 @@ fn undo_restores_the_basis_that_belongs_to_calibration_not_the_next_consumed_pho
 }
 
 #[test]
-fn correction_reference_cannot_replace_an_established_lazy_negative_basis() {
+fn correction_reference_is_independent_of_imported_camera() {
     let raw = crate::raw::fixture::bayer_dng();
     let mut document = Document::default();
     document.project.input = InputSettings::Digital;
@@ -185,11 +193,10 @@ fn correction_reference_cannot_replace_an_established_lazy_negative_basis() {
             !editor.document.visit.source.pending()
         });
         let before = app.read(|editor| editor.document.capture());
-        assert!(before.project.scan.is_none());
-        assert!(before.scan_basis().is_some());
-        let wrong =
+        assert!(before.project.flat_field.is_none());
+        let reference =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/bare-light.dng");
-        app.enter(|editor, cx| editor.begin_flat_edit(wrong, None, cx));
+        app.enter(|editor, cx| editor.begin_flat_edit(reference, None, cx));
         app.run_until(Duration::from_secs(15), |editor| {
             editor
                 .document
@@ -201,16 +208,14 @@ fn correction_reference_cannot_replace_an_established_lazy_negative_basis() {
             editor.document.flat_correction.is_none()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.project, before.project);
-            assert_eq!(editor.document.capture().scan_basis(), before.scan_basis());
-            assert!(editor.document.project.flat_field().is_none());
             assert!(
-                editor.status.contains("scanning setup"),
+                editor.document.project.flat_field().is_some(),
                 "{}",
                 editor.status
             );
+            assert_eq!(editor.document.project.input, before.project.input);
+            assert_eq!(editor.document.project.sources, before.project.sources);
         });
-        app.update(|editor| editor.dialogs.answer_for_test("OK"));
         app.enter(|editor, cx| {
             editor.begin_flat_edit(
                 raw.path().into(),
@@ -236,10 +241,9 @@ fn correction_reference_cannot_replace_an_established_lazy_negative_basis() {
         app.read(|editor| {
             assert!(
                 editor.document.project.flat_field().is_some(),
-                "a compatible reference must still apply: {}",
+                "a second reference must still apply: {}",
                 editor.status
             );
-            assert_eq!(editor.document.capture().scan_basis(), before.scan_basis());
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
                 Some("Correction")

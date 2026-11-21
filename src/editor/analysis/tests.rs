@@ -3,11 +3,13 @@ use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::project::SourceDevelopment;
+use glam::DMat3;
 
 #[test]
 fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample_counts() {
     let native = crate::processing::CAMERA_INPUT_FLOOR;
     let frame = |floor| FrameMeasurements {
+        camera_to_ap1: DMat3::IDENTITY,
         floor,
         film: crate::scan::AnalysisSamples {
             pixels: vec![DVec3::splat(0.8); 2048],
@@ -33,6 +35,7 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
     let frames: Vec<_> = owned
         .iter()
         .map(|f| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &f.film.pixels,
             picture: &f.picture.pixels,
         })
@@ -40,7 +43,6 @@ fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample
     let proposal = roll_analysis::estimate(
         &frames,
         floor,
-        glam::DMat3::IDENTITY,
         crate::processing::NegativeInput::from(Calibration {
             dmin: DVec3::splat(0.8),
             dmax: DVec3::splat(0.02),
@@ -468,10 +470,6 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert_eq!(
         editor.document.state.project.development(),
         before.development()
-    );
-    assert_eq!(
-        editor.document.state.project.camera_basis(),
-        before.camera_basis()
     );
     assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.7));
     assert!(!editor.document.source);

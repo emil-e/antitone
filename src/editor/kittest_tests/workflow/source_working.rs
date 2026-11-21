@@ -502,10 +502,6 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
     tags.push((0x7032, 8, order.signed(&[2, 8192, 8192])));
     let file = sony::source(order, tags, false, false);
     editor_harness(|mut h, _| {
-        // The authored TIFF has sensor/lens data but no maker-note WB; declare fixed roll gains.
-        h.update(|editor| {
-            editor.document.state.project.scan = Some(scan_setup(file.path(), [1.; 4]));
-        });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && e.document.visit.working_view.support_ready()

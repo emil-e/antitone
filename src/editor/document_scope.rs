@@ -154,7 +154,7 @@ impl DocumentScope {
             .project_preview
             .snapshot()
             .or_else(|| self.project_preview.snapshot())
-            .map(|project| self.state.project.updated(project))
+            .map(Into::into)
             .or_else(|| {
                 self.document_preview
                     .snapshot()

@@ -15,39 +15,14 @@ mod authoring_tests;
 mod tests;
 
 /// An immutable model version shared by accepted state, readers and undo history.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::editor) struct ProjectVersion {
     project: Arc<Project>,
-    // Versions in one interpretation share its acquired basis; history retains that scope.
-    basis: Arc<std::sync::OnceLock<crate::project::ScanBasis>>,
-}
-
-impl PartialEq for ProjectVersion {
-    fn eq(&self, other: &Self) -> bool {
-        self.project == other.project
-    }
 }
 
 impl ProjectVersion {
     pub(in crate::editor) fn snapshot(&self) -> Arc<Project> {
         self.project.clone()
-    }
-
-    pub(in crate::editor) fn interpretation_basis(
-        &self,
-    ) -> Arc<std::sync::OnceLock<crate::project::ScanBasis>> {
-        self.basis.clone()
-    }
-
-    pub(in crate::editor) fn updated(&self, project: Arc<Project>) -> Self {
-        if self.input.is_negative() != project.input.is_negative() {
-            project.into()
-        } else {
-            Self {
-                project,
-                basis: self.basis.clone(),
-            }
-        }
     }
 }
 
@@ -77,16 +52,7 @@ impl From<Project> for ProjectVersion {
 
 impl From<Arc<Project>> for ProjectVersion {
     fn from(project: Arc<Project>) -> Self {
-        let basis = project.scan_basis().cloned().or_else(|| {
-            project
-                .development_metadata
-                .as_ref()
-                .and_then(|metadata| metadata.scan_basis.clone())
-        });
-        Self {
-            project,
-            basis: Arc::new(basis.map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from)),
-        }
+        Self { project }
     }
 }
 
@@ -294,7 +260,7 @@ impl Editor {
             return Ok(());
         }
         let (label, photo) = edit.description();
-        let project = self.document.state.project.updated(edit.into_snapshot());
+        let project = edit.into_snapshot().into();
         let before = std::mem::replace(&mut self.document.state.project, project);
         self.record_edit_in_group(before, label, photo, group);
         Ok(())

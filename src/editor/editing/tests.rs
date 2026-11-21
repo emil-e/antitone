@@ -30,7 +30,7 @@ fn document_edits_share_admission_and_publish_registered_source_metadata_with_hi
             .unwrap(),
         );
         let field = crate::project::FlatFieldSettings::new(record.path.clone(), map);
-        document.project.set_flat_field(Some(field)).unwrap();
+        document.project.set_flat_field(Some(field));
         reference
     });
     assert_eq!(editor.document.project, before);
@@ -255,7 +255,7 @@ fn rendering_controls_validate_their_own_texture_values_before_publishing() {
 
 fn editor() -> Editor {
     let mut editor = crate::editor::tests::fixture();
-    crate::editor::tests::with_camera_basis(&mut editor);
+    crate::editor::tests::with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.project.order.first().copied();
     assert!(
         editor.document.visit.current_source.is_some(),

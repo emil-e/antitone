@@ -47,8 +47,7 @@ fn failed_map_preserves_source_thumbnail_paint_but_still_fails_precision_acquisi
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "reference.dng",
             map,
-        )))
-        .unwrap();
+        )));
     let correction = editor.correction();
     let failure = pollster::block_on(correction.clone().acquire())
         .err()
@@ -123,8 +122,7 @@ fn camera_thumbnail_paint_requests_its_map_without_waiting_or_using_an_absent_co
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "reference.dng",
             map,
-        )))
-        .unwrap();
+        )));
     let services = editor.source_services.as_ref().unwrap().clone();
     editor.document.thumbnails = Thumbnails::with_disk(
         services.device.clone(),
@@ -227,8 +225,7 @@ fn positive_thumbnail_waits_for_the_captured_map_and_cancellation_keeps_another_
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "reference.dng",
             map.clone(),
-        )))
-        .unwrap();
+        )));
     let services = editor.source_services.as_ref().unwrap().clone();
     let thumbnails = Thumbnails::with_disk(
         services.device.clone(),
@@ -281,7 +278,7 @@ fn positive_thumbnail_waits_for_the_captured_map_and_cancellation_keeps_another_
         }
         app.run_until(Duration::from_secs(30), |_| started.load(Ordering::Acquire));
         app.read(|results| assert!(results.is_empty()));
-        editor.document.project.set_flat_field(None).unwrap();
+        editor.document.project.set_flat_field(None);
         assert!(editor.correction().map().is_none());
         cancelled.cancel();
         app.run_until(Duration::from_secs(30), |results| results.len() == 1);

@@ -96,7 +96,7 @@ fn open_keeps_recorded_development_and_map_when_the_reference_is_unavailable() {
         document.project.source(reference_id).unwrap().path.clone(),
         map.clone(),
     );
-    document.project.set_flat_field(Some(settings)).unwrap();
+    document.project.set_flat_field(Some(settings));
     document
         .project
         .remove_from_filmstrip(reference_id)
@@ -105,7 +105,6 @@ fn open_keeps_recorded_development_and_map_when_the_reference_is_unavailable() {
     let observed = &mut document.project.source_mut(photo_id).unwrap().development;
     observed.camera_to_ap1[0][0] *= 1.01;
     observed.decode.backend_version = "previous decoder".into();
-    document.project.reset_scan_basis();
     let recorded = document
         .project
         .source(photo_id)
@@ -175,7 +174,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                 );
                 let field =
                     FlatFieldSettings::new(document.project.source(id).unwrap().path.clone(), map);
-                document.project.set_flat_field(Some(field)).unwrap();
+                document.project.set_flat_field(Some(field));
             }
             let baseline = ReferenceExposure::Matched(StartingExposure {
                 ev: 0.5,

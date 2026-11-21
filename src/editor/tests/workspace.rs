@@ -271,7 +271,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ui-preferences.json");
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.document.project.roll.exposure = 1.23456789;
     *editor.document = editor
@@ -302,7 +302,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let (store, restored) = preferences::Store::open(path).unwrap();
     assert_eq!(restored, editor.preferences);
     let mut reopened = fixture();
-    with_camera_basis(&mut reopened);
+    with_registered_photo(&mut reopened);
     reopened.document.visit.current_source = reopened.document.project.order.first().copied();
     reopened.apply_preferences(restored);
     reopened.preference_store = Some(store);

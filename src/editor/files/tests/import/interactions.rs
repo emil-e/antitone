@@ -95,7 +95,7 @@ fn import_failure_success_and_duplicates_preserve_the_active_visit_and_private_t
 }
 
 #[test]
-fn import_that_actually_changes_interpretation_retires_the_dependent_draft() {
+fn mixed_camera_import_preserves_the_input_stage_visit_and_crop_draft() {
     let directory = tempfile::tempdir().unwrap();
     let first = copy_photo(directory.path(), "first.dng");
     let second = directory.path().join("other-camera.dng");
@@ -113,21 +113,27 @@ fn import_that_actually_changes_interpretation_retires_the_dependent_draft() {
     let mut editor = authored_fixture(&[first.to_str().unwrap()]);
     let selected = editor.document.visit.current_source;
     let view = editor.document.visit.view;
-    assert!(editor.document.project.input.is_negative());
+    let input = editor.document.project.input;
+    assert!(input.is_negative());
     editor.begin_crop();
-    assert!(editor.cropping());
+    let area = editor.selected_area().unwrap();
+    let crop = Crop::from_region(crate::raw::Rect {
+        x: area.x + 2,
+        y: area.y + 2,
+        width: area.width - 4,
+        height: area.height - 4,
+    });
+    editor.document.crop_edit_mut().unwrap().draft = crop;
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.add_raws(vec![second], cx));
         wait(app);
         app.read(|editor| {
             assert_eq!(editor.document.project.order.len(), 2);
-            assert_eq!(
-                editor.document.project.input,
-                crate::processing::InputSettings::Digital
-            );
+            assert_eq!(editor.document.project.input, input);
             assert_eq!(editor.document.visit.current_source, selected);
-            assert_ne!(editor.document.visit.view, view);
-            assert!(!editor.has_hosted_tool());
+            assert_eq!(editor.document.visit.view, view);
+            assert!(editor.cropping());
+            assert_eq!(editor.document.crop_edit().unwrap().draft, crop);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
                 Some("Import photos")

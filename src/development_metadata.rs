@@ -2,7 +2,7 @@
 use crate::{
     Error,
     processing::InputSettings,
-    project::{DevelopmentMode, Project, ScanBasis, Source, SourceDevelopment, SourceId},
+    project::{DevelopmentMode, Project, Source, SourceDevelopment, SourceId},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,8 +22,6 @@ pub struct Entry {
 #[serde(deny_unknown_fields)]
 pub struct Metadata {
     pub entries: Vec<Entry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scan_basis: Option<ScanBasis>,
 }
 
 impl Metadata {
@@ -51,9 +49,6 @@ impl Metadata {
                 ));
             }
         }
-        if let Some(basis) = &self.scan_basis {
-            basis.validate()?;
-        }
         Ok(())
     }
 
@@ -65,7 +60,6 @@ impl Metadata {
                 .filter(|entry| project.source(entry.source).is_ok())
                 .cloned()
                 .collect(),
-            scan_basis: self.scan_basis.clone(),
         }
     }
 }
@@ -369,7 +363,6 @@ impl Store {
                     })
                 })
                 .collect(),
-            scan_basis: None,
         }
     }
 }

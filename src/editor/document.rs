@@ -56,7 +56,7 @@ impl Default for Document {
 
 #[cfg(test)]
 impl Document {
-    /// Test fixtures predate per-source acquisition; the decode rides on the source record.
+    /// Register a fixture with its declared development.
     pub fn register_with_development(
         &mut self,
         mut source: Source,
@@ -164,14 +164,7 @@ impl Document {
     ) -> Result<crate::source::Input> {
         let path = self.source_path(id)?;
         let file = self.file_key(&path);
-        initialization.input(
-            &self.project,
-            id,
-            path,
-            file,
-            &self.development_metadata,
-            self.project.interpretation_basis(),
-        )
+        initialization.input(&self.project, id, path, file, &self.development_metadata)
     }
 
     pub(super) fn exposure_origin(&self, id: SourceId) -> Option<PathBuf> {
@@ -207,14 +200,9 @@ impl Document {
             metadata.entries.push(entry);
         }
         self.exposure_metadata = Arc::new(metadata.for_project(&self.project));
-        let mut developments = initialization
+        let developments = initialization
             .developments
             .snapshot(&self.project, |id| self.exposure_origin(id));
-        developments.scan_basis = if self.project.scan.is_none() {
-            self.scan_basis()
-        } else {
-            None
-        };
         self.development_metadata = Arc::new(developments);
     }
 
@@ -231,37 +219,6 @@ impl Document {
 
     pub fn dirty(&self) -> bool {
         self.project != self.saved
-    }
-
-    /// Measurement omits the roll flat-field; embedded camera correction remains source interpretation.
-    pub fn scan_basis(&self) -> Option<crate::project::ScanBasis> {
-        self.project
-            .scan_basis()
-            .cloned()
-            .or_else(|| self.project.interpretation_basis().get().cloned())
-    }
-
-    pub fn require_scan_source(
-        &self,
-        development: &crate::project::SourceDevelopment,
-    ) -> Result<()> {
-        if self.project.input.requires_scan_sources() {
-            if let Some(first) = self
-                .project
-                .order
-                .first()
-                .and_then(|id| self.project.source(*id).ok())
-                && first.development.camera_model != development.camera_model
-            {
-                return Err(Error::Project(
-                    "sources do not share one scanning setup; use Digital for mixed sources".into(),
-                ));
-            }
-            self.scan_basis()
-                .unwrap_or_else(|| crate::project::ScanBasis::from_development(development))
-                .require_source(development)?;
-        }
-        Ok(())
     }
 
     pub fn spatial_inputs(&self) -> Vec<crate::spatial_metadata::Input> {
@@ -371,24 +328,13 @@ impl Document {
     ) -> Result<super::viewer_ui::SourcePreviews> {
         let mut previews = super::viewer_ui::SourcePreviews::default();
         progress(0, paths.len());
-        let auto_digital = self.auto_digital_available();
         for (index, path) in paths.iter().enumerate() {
             if cancelled.is_cancelled() {
                 return Err(Error::Cancelled);
             }
             if self.find_source(path).is_none() {
                 let wb = self.project.acquisition_wb();
-                let (mut source, mut preview) = Self::inspect_source(path, wb)?;
-                if auto_digital
-                    && self.project.input.requires_scan_sources()
-                    && self.scan_source_incompatible(&source)
-                {
-                    let mut project = self.project.as_ref().clone();
-                    project.input = crate::processing::InputSettings::Digital;
-                    project.scan = None;
-                    self.project = self.project.updated(Arc::new(project));
-                    (source, preview) = Self::inspect_source(path, None)?;
-                }
+                let (source, preview) = Self::inspect_source(path, wb)?;
                 let id = self.register(source)?;
                 previews.insert(self.source_key(id)?, preview);
             }
@@ -400,24 +346,7 @@ impl Document {
         Ok(previews)
     }
 
-    fn auto_digital_available(&self) -> bool {
-        self.project.input.requires_scan_sources()
-            && self.project.sources.len() <= 1
-            && !self.project.input.has_stage_settings()
-            && self.project.flat_field().is_none()
-    }
-
-    fn scan_source_incompatible(&self, source: &Source) -> bool {
-        self.scan_basis()
-            .is_some_and(|basis| basis.require_source(&source.development).is_err())
-    }
-
     pub fn register(&mut self, source: Source) -> Result<SourceId> {
-        if self.project.input.requires_scan_sources()
-            && let Some(basis) = self.scan_basis()
-        {
-            basis.require_source(&source.development)?;
-        }
         let id = self.project.add_source(source)?;
         let path = self.source_path(id)?;
         self.source_files.insert(
@@ -465,9 +394,7 @@ impl Document {
         let exposure = self.exposure_metadata.for_project(&self.project);
         snapshot.exposure_metadata = (!exposure.entries.is_empty()).then_some(exposure);
         let development = self.development_metadata.for_project(&self.project);
-        snapshot.development_metadata = (!development.entries.is_empty()
-            || development.scan_basis.is_some())
-        .then_some(development);
+        snapshot.development_metadata = (!development.entries.is_empty()).then_some(development);
         #[cfg(test)]
         if let Some(observer) = &self.write_observer {
             snapshot.save_observed(&path, policy, observer.as_ref())?;

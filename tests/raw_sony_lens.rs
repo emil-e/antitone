@@ -469,7 +469,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     let field = FlatFieldSettings::new(project.source(id).unwrap().path.clone(), map.clone());
     scan.set_flat_field(Some(map.clone()));
     other.set_flat_field(Some(map));
-    project.set_flat_field(Some(field)).unwrap();
+    project.set_flat_field(Some(field));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sony.antitone");
     project.save(&path, Save::New).unwrap();
@@ -485,7 +485,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     different.source_development = development.into();
     assert!(different.require_scan(&scan).is_err());
     let mut old = reopened;
-    old.set_flat_field(None).unwrap();
+    old.set_flat_field(None);
     old.sources[0].development.decode.backend_version = "older LibRaw release".into();
     serde_json::to_value(&old).unwrap();
 }

@@ -61,8 +61,6 @@ pub(crate) fn libraw_green_scale(wb: [f64; 4]) -> Result<f64, Error> {
 /// interpretation controls differ per stage. UI reads this instead of matching variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputCapabilities {
-    /// The stage needs one shared scanning setup across its sources.
-    pub scan_sources: bool,
     /// Roll analysis (film-scale fitting) is meaningful.
     pub roll_analysis: bool,
     /// Film-gate auto-crop is meaningful.
@@ -327,11 +325,6 @@ impl InputSettings {
         }
     }
 
-    /// Whether this stage interprets a scan and therefore needs one shared scanning setup.
-    pub fn requires_scan_sources(&self) -> bool {
-        matches!(self, Self::Negative { .. })
-    }
-
     /// Whether the stage has everything it needs to produce a positive.
     pub fn ready(&self) -> bool {
         match self {
@@ -344,7 +337,6 @@ impl InputSettings {
     pub fn capabilities(&self) -> InputCapabilities {
         match self {
             Self::Negative { .. } => InputCapabilities {
-                scan_sources: true,
                 roll_analysis: true,
                 auto_crop: true,
                 flat_field: true,
@@ -354,7 +346,6 @@ impl InputSettings {
                 grain: false,
             },
             Self::Digital => InputCapabilities {
-                scan_sources: false,
                 roll_analysis: false,
                 auto_crop: false,
                 flat_field: false,
@@ -433,8 +424,7 @@ impl From<&InputSettings> for InputSettings {
 }
 
 impl Default for InputSettings {
-    /// The film-first product default. Digital remains available for mixed cameras or ordinary
-    /// photographs; an incompatible fresh scan import can select it without retaining a scan basis.
+    /// Start with film-negative interpretation and unmeasured RGB anchors.
     fn default() -> Self {
         Self::Negative {
             dmin: None,

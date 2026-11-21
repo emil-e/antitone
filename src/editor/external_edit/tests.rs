@@ -27,7 +27,7 @@ impl Destination for DestinationStub {
 
 fn document() -> Document {
     let mut editor = crate::editor::tests::fixture();
-    crate::editor::tests::with_camera_basis(&mut editor);
+    crate::editor::tests::with_registered_photo(&mut editor);
     editor.document.capture()
 }
 

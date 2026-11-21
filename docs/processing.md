@@ -22,7 +22,7 @@ developed camera RGB
 
 LibRaw interprets and develops non-DNG RAWs, using [RawSpeed for compatible unpacking](native-development.md#raw-unpacking) with its original decoder as fallback; the editor routes supported DNGs through Adobe's SDK. Both produce linear camera RGB, not sRGB or three isolated film dyes. Each saved source retains its own development identity and resolved WB baseline. Negative chooses unity WB, so the scanner's as-shot setting cannot change the inversion basis; Digital initially chooses each source's as-shot WB. Redevelopment reuses the accepted balance. The native developer still enforces its supported sensor domain.
 
-Negative uses one shared camera basis for its RGB calibration. Digital admits mixed cameras and per-source WB. Input intent is accepted independently of source availability. [Captured acquisition](../src/source/input.rs) resolves the requested interpretation's development and supplies its physical pixels, camera conversion and starting exposure together. Recipes retain that captured development; consumers must use its resolved facts rather than the source's registered baseline. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns persistence and stage switching.
+Negative shares RGB calibration across the roll; both stages use each photograph's own camera conversion. Input intent is accepted independently of source availability. [Captured acquisition](../src/source/input.rs) resolves the requested interpretation's development and supplies its physical pixels, camera conversion and starting exposure together. Recipes retain that captured development; consumers must use its resolved facts rather than the source's registered baseline. [Source interpretation](projects.md#source-interpretation-and-identity) owns persistence and stage switching.
 
 LibRaw supplies three-channel camera RGB from both CFA and non-CFA RAWs, including reduced-size Sony YCbCr. Standard Bayer sources use DHT's ratio-based reconstruction, reducing green-texture transfer into weak channels in unbalanced scans. The editor uses the [GPU formulation](../native/dht/README.md) when admitted, with LibRaw quality 11 as CPU fallback; native-only callers retain that fallback. X-Trans retains three-pass interpolation (quality 3); other CFA layouts use LibRaw's fallback, and already-interpolated sources bypass demosaicing. Requested WB and the camera basis remain unchanged. Admission requires three camera colour channels and usable interpretation metadata, rather than a CFA pattern.
 
@@ -32,7 +32,7 @@ Negative inverts before the camera-to-working-space matrix: a matrix mixes chann
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#compatibility-is-about-the-processing-basis) keeps recorded development choices; acquisition checks current decoder observations when the source is needed.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#source-interpretation-and-identity) keeps recorded development choices; acquisition checks current decoder observations when the source is needed.
 
 ### Early highlight handling
 
@@ -48,7 +48,7 @@ Sony RAW development automatically applies available embedded vignetting, distor
 
 The current binding reconstructs one conservative valid rectangle at unchanged pixel pitch from the active image geometry; distortion and red/blue CA scales combine at the radial knots before interpolation. Shading multiplies each original developed sample **before** bilinear reconstruction (`2^(0.5 - 2^(v/8192 - 1))` at the knots, interpolated then reciprocated) — this is the [darktable 5.6.2 v2](https://github.com/darktable-org/darktable/blob/release-5.6.2/src/iop/lens.cc) interpretation; [RawTherapee 5.12](https://github.com/RawTherapee/RawTherapee/blob/5.12/rtengine/lensmetadata.cc) instead interpolates reciprocal gains, agreeing at knots but not between them. Neither decoder inspection nor these public interpretations proves exact vendor output.
 
-Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant development buffer. Without optical correction, sources retain native integer storage unless early highlight handling produces changed float pixels. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) estimate residual illumination in those coordinates, and [projects](projects.md#compatibility-is-about-the-processing-basis) reuse accepted WB with the current decoder.
+Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant development buffer. Without optical correction, sources retain native integer storage unless early highlight handling produces changed float pixels. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) estimate residual illumination in those coordinates, and [projects](projects.md#source-interpretation-and-identity) reuse accepted WB with the current decoder.
 
 ## Digital starting brightness
 
@@ -200,7 +200,7 @@ Filtering before nonlinear grading does **not** commute with original-sample gra
 
 ## Important boundaries
 
-The current model is **8**. Negative inversion requires finite references satisfying `Dmin > Dmax > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **8**. Negative inversion requires finite references satisfying `Dmin > Dmax > 0` per camera channel. Both stages use each source's captured development and camera matrix; Digital has no calibration.
 
 ## Working on this area
 

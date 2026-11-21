@@ -20,8 +20,7 @@ fn save_as_keeps_the_reference_filename_and_adopts_the_written_baseline() {
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             reference.path.clone(),
             map,
-        )))
-        .unwrap();
+        )));
     let other = document.project.order[1];
     document.project.remove_from_filmstrip(other).unwrap();
     document

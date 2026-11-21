@@ -215,8 +215,7 @@ fn corrected_nonuniform_source_coverage_matches_individually_transformed_origina
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "pivot-reference.dng",
             map,
-        )))
-        .unwrap();
+        )));
     let captured = pollster::block_on(editor.correction().acquire())
         .unwrap()
         .unwrap();

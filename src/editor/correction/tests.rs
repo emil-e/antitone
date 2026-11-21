@@ -9,10 +9,7 @@ fn set_map(document: &mut Document, gain: f64) -> FlatFieldSettings {
             .unwrap(),
     );
     let settings = FlatFieldSettings::new("reference.dng", map);
-    document
-        .project
-        .set_flat_field(Some(settings.clone()))
-        .unwrap();
+    document.project.set_flat_field(Some(settings.clone()));
     settings
 }
 

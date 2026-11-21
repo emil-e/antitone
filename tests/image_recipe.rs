@@ -139,7 +139,7 @@ fn recipe_capture_uses_the_requested_photo_and_deleted_photos_leave_only_correct
         FlatField::from_nodes([12, 12, 864, 576], [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
     );
     let field = FlatFieldSettings::new(project.source(second).unwrap().path.clone(), map);
-    project.set_flat_field(Some(field.clone())).unwrap();
+    project.set_flat_field(Some(field.clone()));
     assert!(project.order.contains(&first) && project.order.contains(&second));
     let a = project.image_recipe(first).unwrap();
     let b = project.image_recipe(second).unwrap();

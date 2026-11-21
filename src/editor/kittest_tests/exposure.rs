@@ -133,7 +133,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
 }
 
 #[test]
-fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
+fn explicit_digital_switch_prepares_reused_negative_pixels_before_ready() {
     let first = crate::exposure_fixture::neutral_dng(1.3);
     let second = fixture("patches.dng");
     editor_harness(|mut h, _| {
@@ -155,6 +155,28 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         wait_for(&mut h, |editor| {
             !editor.interaction_blocked() && editor.document.visit.working_view.support_ready()
         });
+        h.read(|editor| {
+            assert!(editor.document.project.input.is_negative());
+            assert_eq!(editor.document.visit.current_source, selected);
+            let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
+            assert!(ready.reference.is_none());
+            assert!(Arc::ptr_eq(&native, &ready.developed));
+        });
+
+        stage(&mut h, "Roll");
+        let dropdown = h
+            .query_all_by_role(egui::accesskit::Role::ComboBox)
+            .find(|node| node.accesskit_node().value().as_deref() == Some("Negative"))
+            .expect("input-stage dropdown");
+        assert!(!dropdown.accesskit_node().is_disabled());
+        dropdown.click();
+        h.try_run_realtime().unwrap();
+        h.get_by_label("Digital").click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            !editor.document.visit.source.pending()
+                && editor.document.visit.working_view.support_ready()
+        });
         h.render().unwrap();
         h.read(|editor| {
             assert_eq!(
@@ -165,7 +187,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
             let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(
                 ready.record.development, development,
-                "the original unity/as-shot basis is unchanged"
+                "recorded development stays unchanged when both modes resolve the same WB"
             );
             assert!(
                 Arc::ptr_eq(&native, &ready.developed),

@@ -226,10 +226,6 @@ fn prepare_source_scheduled(
                 crate::source::input::Photograph {
                     record: source.clone(),
                     development: source.development.clone().into(),
-                    basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
-                        source,
-                    ))),
-                    expected_camera: Some(source.development.camera_model.clone()),
                 },
             )
         }
@@ -998,7 +994,7 @@ impl Editor {
         edit.update(|project| {
             project.input = target;
             if stage_changed {
-                project.scan = None;
+                project.flat_field = None;
             }
         });
         if let Err(error) = self.commit_project(edit) {

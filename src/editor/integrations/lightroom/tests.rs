@@ -136,7 +136,7 @@ fn opening_a_saved_roll_rejects_any_requested_source_outside_that_roll() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("roll.antitone");
     let mut editor = crate::editor::tests::fixture();
-    crate::editor::tests::with_camera_basis(&mut editor);
+    crate::editor::tests::with_registered_photo(&mut editor);
     let mut source = editor.document.project.sources[0].clone();
     let mut document = Document::default();
     for name in ["a.ARW", "b.ARW", "c.ARW"] {
@@ -184,7 +184,7 @@ fn locating_a_moved_project_preserves_relative_originals_and_saved_grading() {
     let moved = new_folder.join("renamed.antitone");
     let originals = [old_folder.join("a.ARW"), old_folder.join("b.ARW")];
     let mut editor = crate::editor::tests::fixture();
-    crate::editor::tests::with_camera_basis(&mut editor);
+    crate::editor::tests::with_registered_photo(&mut editor);
     let mut source = editor.document.project.sources[0].clone();
     let mut document = Document::default();
     document.path = Some(old.clone());
@@ -319,7 +319,7 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
 fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
     let directory = tempfile::tempdir().unwrap();
     let mut editor = crate::editor::tests::fixture();
-    crate::editor::tests::with_camera_basis(&mut editor);
+    crate::editor::tests::with_registered_photo(&mut editor);
     let mut source = editor.document.project.sources[0].clone();
     let mut document = Document::default();
     source.path = directory.path().join("a.ARW");

@@ -118,126 +118,129 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy::default());
     let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
-    // A legal continuous source can exceed its development ceiling after residual correction.
-    let base = DVec3::new(0.8, 0.4, 0.2) * 512.;
-    assert!(base.max_element() > crate::processing::MAX_SOURCE_GAIN);
-    assert!((base * 0.5).max_element() <= crate::processing::MAX_SOURCE_GAIN);
+    for matrices in [[matrix; 2], [matrix, matrix * 2.]] {
+        // A legal continuous source can exceed its development ceiling after residual correction.
+        let base = DVec3::new(0.8, 0.4, 0.2) * 512.;
+        assert!(base.max_element() > crate::processing::MAX_SOURCE_GAIN);
+        assert!((base * 0.5).max_element() <= crate::processing::MAX_SOURCE_GAIN);
 
-    let film = vec![base.as_vec3().as_dvec3(); 256];
-    let pictures: Vec<Vec<_>> = [(301, 0.05, 0.8), (401, 0.07, 0.7)]
-        .into_iter()
-        .map(|(count, low, high)| {
-            (0..count)
-                .map(|index| {
-                    let transmission = low + (high - low) * index as f64 / (count - 1) as f64;
-                    let channels = DVec3::new(
-                        transmission.powf(1.05),
-                        transmission.powf(0.97),
-                        transmission,
-                    );
+        let film = vec![base.as_vec3().as_dvec3(); 256];
+        let pictures: Vec<Vec<_>> = [(301, 0.05, 0.8), (401, 0.07, 0.7)]
+            .into_iter()
+            .map(|(count, low, high)| {
+                (0..count)
+                    .map(|index| {
+                        let transmission = low + (high - low) * index as f64 / (count - 1) as f64;
+                        let channels = DVec3::new(
+                            transmission.powf(1.05),
+                            transmission.powf(0.97),
+                            transmission,
+                        );
 
-                    (base * channels).as_vec3().as_dvec3()
-                })
-                .collect()
-        })
-        .collect();
-    let frames: Vec<_> = pictures
-        .iter()
-        .map(|picture| FrameSamples {
-            film: &film,
-            picture,
-        })
-        .collect();
-    let current = NegativeInput {
-        calibration: Calibration {
-            dmin: base,
-            dmax: base * 0.02,
-        },
-        gamma: 0.6,
-        response: Response::film(),
-        balance: Balance {
-            warmth: 0.3,
-            tint: -0.2,
-        },
-    };
-    let reference = estimate(
-        &frames,
-        crate::processing::CAMERA_INPUT_FLOOR,
-        matrix,
-        current,
-        || false,
-    )
-    .unwrap()
-    .unwrap();
-    let mut model = ResponseModel::new(&context, &queue);
-    let actual = estimate_with_model(
-        &frames,
-        crate::processing::CAMERA_INPUT_FLOOR,
-        matrix,
-        current,
-        &mut model,
-        &mut || false,
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(actual.input.calibration(), reference.input.calibration());
-    assert_eq!(actual.frames, reference.frames);
-    let actual_balance = actual.input.negative_input().unwrap().balance;
-    let reference_balance = reference.input.negative_input().unwrap().balance;
+                        (base * channels).as_vec3().as_dvec3()
+                    })
+                    .collect()
+            })
+            .collect();
+        let frames: Vec<_> = pictures
+            .iter()
+            .enumerate()
+            .map(|(index, picture)| FrameSamples {
+                camera_to_ap1: matrices[index],
+                film: &film,
+                picture,
+            })
+            .collect();
+        let current = NegativeInput {
+            calibration: Calibration {
+                dmin: base,
+                dmax: base * 0.02,
+            },
+            gamma: 0.6,
+            response: Response::film(),
+            balance: Balance {
+                warmth: 0.3,
+                tint: -0.2,
+            },
+        };
+        let reference = estimate(
+            &frames,
+            crate::processing::CAMERA_INPUT_FLOOR,
+            current,
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        let mut model = ResponseModel::new(&context, &queue);
+        let actual = estimate_with_model(
+            &frames,
+            crate::processing::CAMERA_INPUT_FLOOR,
+            current,
+            &mut model,
+            &mut || false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(actual.input.calibration(), reference.input.calibration());
+        assert_eq!(actual.frames, reference.frames);
+        let actual_balance = actual.input.negative_input().unwrap().balance;
+        let reference_balance = reference.input.negative_input().unwrap().balance;
 
-    assert!(
-        reference_balance.warmth.abs() + reference_balance.tint.abs() > 0.01,
-        "the population must require a nonidentity curve fit"
-    );
-    assert!(
-        (actual_balance.warmth - reference_balance.warmth).abs() < 2e-4,
-        "{actual_balance:?} != {reference_balance:?}"
-    );
-    assert!(
-        (actual_balance.tint - reference_balance.tint).abs() < 2e-4,
-        "{actual_balance:?} != {reference_balance:?}"
-    );
-    assert!((actual.roll.exposure - reference.roll.exposure).abs() < 2e-4);
-    assert!((actual.roll.wb.warmth - reference.roll.wb.warmth).abs() < 2e-4);
-    assert!((actual.roll.wb.tint - reference.roll.wb.tint).abs() < 2e-4);
-
-    let luminance =
-        (crate::color::AP1_TO_XYZ * crate::color::wb_matrix(actual.roll.wb).unwrap() * matrix)
-            .row(1);
-    let mut frame_medians = Vec::new();
-    for picture in &pictures {
-        let mut values = Vec::new();
         assert!(
-            model
-                .read(
-                    actual.input.negative_input().unwrap(),
-                    picture,
-                    &mut || false,
-                    &mut |_, positive| {
-                        let y = luminance.dot(positive);
-                        assert!(y > 1e-8, "all fixture samples must be exposure-eligible");
-                        values.push(y);
-                        Ok(())
-                    },
-                )
-                .unwrap()
+            reference_balance.warmth.abs() + reference_balance.tint.abs() > 0.01,
+            "the population must require a nonidentity curve fit"
         );
-        assert_eq!(values.len(), picture.len());
+        assert!(
+            (actual_balance.warmth - reference_balance.warmth).abs() < 2e-4,
+            "{actual_balance:?} != {reference_balance:?}"
+        );
+        assert!(
+            (actual_balance.tint - reference_balance.tint).abs() < 2e-4,
+            "{actual_balance:?} != {reference_balance:?}"
+        );
+        assert!((actual.roll.exposure - reference.roll.exposure).abs() < 2e-4);
+        assert!((actual.roll.wb.warmth - reference.roll.wb.warmth).abs() < 2e-4);
+        assert!((actual.roll.wb.tint - reference.roll.wb.tint).abs() < 2e-4);
+
+        let mut frame_medians = Vec::new();
+        for (picture, matrix) in pictures.iter().zip(matrices) {
+            let luminance = (crate::color::AP1_TO_XYZ
+                * crate::color::wb_matrix(actual.roll.wb).unwrap()
+                * matrix)
+                .row(1);
+            let mut values = Vec::new();
+            assert!(
+                model
+                    .read(
+                        actual.input.negative_input().unwrap(),
+                        picture,
+                        &mut || false,
+                        &mut |_, positive| {
+                            let y = luminance.dot(positive);
+                            assert!(y > 1e-8, "all fixture samples must be exposure-eligible");
+                            values.push(y);
+                            Ok(())
+                        },
+                    )
+                    .unwrap()
+            );
+            assert_eq!(values.len(), picture.len());
+            assert_eq!(
+                values.len() % 2,
+                1,
+                "fixture medians have a single middle sample"
+            );
+            values.sort_by(f64::total_cmp);
+            frame_medians.push(values[values.len() / 2]);
+        }
+        // Two differently sized frames have equal influence on the linear roll key.
+        let key = (frame_medians[0] + frame_medians[1]) * 0.5;
+        assert!((key * actual.roll.exposure.exp2() - 0.18).abs() < 1e-8);
         assert_eq!(
-            values.len() % 2,
-            1,
-            "fixture medians have a single middle sample"
+            actual.photos,
+            vec![crate::adjustment_layers::AdjustmentLayerSettings::default(); frames.len()]
         );
-        values.sort_by(f64::total_cmp);
-        frame_medians.push(values[values.len() / 2]);
     }
-    // Two differently sized frames have equal influence on the linear roll key.
-    let key = (frame_medians[0] + frame_medians[1]) * 0.5;
-    assert!((key * actual.roll.exposure.exp2() - 0.18).abs() < 1e-8);
-    assert_eq!(
-        actual.photos,
-        vec![crate::adjustment_layers::AdjustmentLayerSettings::default(); frames.len()]
-    );
 }
 
 #[test]

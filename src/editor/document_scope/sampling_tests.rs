@@ -9,7 +9,7 @@ fn cancelled_camera_acquisition_does_not_resolve_a_header_or_start_native_work()
     let mut document = Document::default();
     document.import(&[raw.path().into()]).unwrap();
     document.project.input = InputSettings::Digital;
-    document.project.scan = None;
+    document.project.flat_field = None;
     let id = document.project.order[0];
     let physical = document.source_input(id, &Default::default()).unwrap();
     assert!(physical.development().unwrap().resolved().is_err());

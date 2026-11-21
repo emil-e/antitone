@@ -694,7 +694,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
                 .unwrap(),
             );
             let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-            candidate.project.set_flat_field(Some(field)).unwrap();
+            candidate.project.set_flat_field(Some(field));
             e.start_correction(candidate, cx);
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
