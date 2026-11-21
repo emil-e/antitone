@@ -121,13 +121,13 @@ impl GpuProxy {
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
         spec: crate::gpu::view::request::SourceRequest,
         target: OutputTarget,
-    ) -> Result<Arc<crate::gpu::view::ViewImage>, Error> {
-        crate::gpu::view::ViewImage::processing_preview(
+    ) -> Result<crate::gpu::view::rendering::Request, Error> {
+        crate::gpu::view::rendering::Request::camera_proxy(
             self.0.renderer.clone(),
             kernels,
-            self.0.source.clone(),
-            request,
+            &self.0.source,
             field,
+            request,
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
                 crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             }))?,

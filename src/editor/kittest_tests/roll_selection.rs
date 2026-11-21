@@ -542,10 +542,11 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
                 e.document
                     .visit
                     .canvas
-                    .preview_rendered
-                    .as_ref()
+                    .preview
+                    .rendered()
                     .unwrap()
-                    .1
+                    .spec
+                    .frame()
                     .composition
                     .crop(),
                 crop

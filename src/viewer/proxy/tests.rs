@@ -42,9 +42,10 @@ fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_prox
     let spec = SourceRequest::inspection(frame).unwrap();
     let make = |target, parameters| {
         let capture = PhotographRequest::Fixture(AuthoredPhotograph::from(parameters));
-        let image = proxy
+        let request = proxy
             .preview(kernels.clone(), &capture, None, spec.clone(), target)
             .unwrap();
+        let image = request.ready().expect("small resident proxy").remove(0);
         RenderedView::from_image(&device, image, capture, target).unwrap()
     };
     let srgb = make(OutputTarget::Srgb, ProcessingParameters::source());
@@ -137,7 +138,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         "a late downstream error must not leave native work submitted"
     );
     let valid = AuthoredPhotograph::from(ProcessingParameters::source());
-    let source = proxy
+    let request = proxy
         .preview(
             kernels,
             &crate::gpu::photograph::request::PhotographRequest::Fixture(valid.clone()),
@@ -147,6 +148,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         )
         .unwrap();
     assert_eq!(count.load(Ordering::Relaxed), 0);
+    let source = request.ready().expect("small resident proxy").remove(0);
     assert!(source.commands.is_some());
     assert!(!*source.submitted.lock().unwrap());
     assert!(

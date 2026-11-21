@@ -51,7 +51,7 @@ fn proxy_then_rendering(repaired: bool) {
                 "paint temporary feedback"
             );
             assert!(
-                editor.active_canvas().preview_rendered.is_some(),
+                editor.active_canvas().preview.rendered().is_some(),
                 "use the available camera proxy even with repairs"
             );
             let working = &editor.document.visit.working_view;
@@ -73,7 +73,7 @@ fn proxy_then_rendering(repaired: bool) {
         drop(acquisition);
         wait_for(&mut h, |editor| {
             editor.document.visit.working_view.idle()
-                && editor.active_canvas().preview_rendered.is_none()
+                && editor.active_canvas().preview.demand().is_none()
                 && editor
                     .canvas_frame
                     .displayed

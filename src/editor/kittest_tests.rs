@@ -797,7 +797,7 @@ fn wait_for_with_timeout(
                 editor.dust_signature().map(|_| editor.dust_images().len()), editor.document.visit.canvas.original.refining(),
                 editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id,
                 editor.document.crop_edit().is_some_and(|edit| edit.layout.is_some()),
-                editor.document.visit.working_view.kernels.get().is_some(), editor.active_canvas().preview_rendered.is_some(), editor.document.source
+                editor.document.visit.working_view.kernels.get().is_some(), editor.active_canvas().preview.rendered().is_some(), editor.document.source
             )
         });
         if harness.read(&done) {

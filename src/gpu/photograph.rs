@@ -144,7 +144,7 @@ impl PhotographGraph {
         buffers.into_iter().cloned().collect()
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn has_correction(image: &Value, field: Option<&Arc<GpuFlatField>>) -> bool {
         let mut found = false;
         for node in image.ancestors() {

@@ -180,7 +180,9 @@ The editor uses several image representations for different jobs:
 | Cached pending preview | Temporary display while the selected RAW prepares |
 | Embedded camera preview | Filmstrip navigation placeholder and Digital brightness reference |
 
-A compatible camera proxy supplies temporary feedback while the requested rendering prepares, including when the proxy omits repairs. The completed rendering replaces it; navigation, grading and geometry editing remain available. Precision consumers capture their source and edit target, then acquire the required original data asynchronously; preview pixels never become measurement or export inputs. An embedded preview is different again — already camera-rendered, with its **Camera** badge making that distinction visible. Its colour-managed luminance can seed [Digital starting brightness](processing.md#digital-starting-brightness), but RAW pixels still supply inversion, correction, measurements and exports. Completed current-recipe thumbnails supersede the camera image.
+A compatible camera proxy supplies temporary feedback while the requested rendering prepares, even when it omits repairs. The photo and Flat canvases use the same [render request](../src/gpu/view/rendering.rs) as the working view: record when possible, otherwise produce on a worker. The canvas [owns the fallback](../src/editor/canvas_view.rs) and retires it when the preferred view is ready. Navigation, grading and geometry editing remain available. Precision consumers acquire original data asynchronously; preview pixels never become measurement or export inputs.
+
+An embedded preview is already camera-rendered and carries a **Camera** badge. Its colour-managed luminance can seed [Digital starting brightness](processing.md#digital-starting-brightness), but RAW pixels still supply inversion, correction, measurements and exports. Completed current-recipe thumbnails supersede the camera image.
 
 ## Select and remove roll photos
 

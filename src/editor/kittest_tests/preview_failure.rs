@@ -3,6 +3,87 @@ use super::*;
 const STALE: &str = "Preview not updated — showing previous image: not enough graphics memory";
 const UNAVAILABLE: &str = "Preview unavailable: not enough graphics memory";
 
+#[test]
+fn proxy_that_needs_production_paints_before_the_working_view_without_a_failure() {
+    use crate::gpu::{evaluation, photograph::authoring::with_suffix};
+
+    let file = crate::dng_fixture::Fixture {
+        side: 384,
+        ..Default::default()
+    }
+    .write();
+    editor_harness(|mut h, _| {
+        h.update(|e| e.document.project.input = InputSettings::Digital);
+        h.enter(|e, cx| e.add_raws(vec![file.path().to_owned()], cx));
+        wait_opened_photo(&mut h);
+        wait_for(&mut h, |e| e.document.visit.working_view.support_ready());
+
+        h.enter(|e, cx| {
+            e.active_canvas_mut().preview.clear();
+            let working = &mut e.document.visit.working_view;
+            working.clear();
+            // Hold the preferred view without pausing the shared GPU workers.
+            working.task = cx.spawn(|_| std::future::pending());
+        });
+
+        // Add a stage with multiple natural units to the real proxy graph.
+        with_suffix(
+            |image| {
+                let domain = image.domain();
+                if domain.bounds.is_some_and(|bounds| bounds.width > 256) {
+                    evaluation::reconstruct_tiled(image, domain)
+                } else {
+                    Ok(image)
+                }
+            },
+            || h.step(),
+        );
+        h.read(|e| {
+            let preview = &e.active_canvas().preview;
+            assert!(
+                preview.pending(),
+                "expected deferred proxy; proxy error={:?}, proxy ready={}, displayed={}, working error={:?}",
+                preview.error(),
+                preview.rendered().is_some(),
+                e.canvas_frame.displayed.is_some(),
+                e.document.visit.working_view.error,
+            );
+            assert!(e.canvas_frame.displayed.is_none());
+            assert!(e.document.visit.working_view.error.is_none());
+        });
+        assert!(h.query_by_label("Loading preview…").is_some());
+        assert!(h.query_by_label("Preview unavailable").is_none());
+
+        wait_for(&mut h, |e| e.canvas_frame.displayed.is_some());
+        h.render().unwrap();
+        h.read(|e| {
+            let proxy = e.active_canvas().preview.rendered().unwrap();
+            assert!(Arc::ptr_eq(
+                proxy,
+                &e.canvas_frame.displayed.as_ref().unwrap().view
+            ));
+            assert!(e.document.visit.working_view.displayed.is_none());
+            assert!(e.document.visit.working_view.error.is_none());
+        });
+
+        h.update(|e| e.document.visit.working_view.task = None);
+        wait_for(&mut h, |e| {
+            e.canvas_frame.displayed.as_ref().is_some_and(|painted| {
+                e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .is_some_and(|working| Arc::ptr_eq(working, &painted.view))
+            })
+        });
+        h.read(|e| {
+            assert!(e.active_canvas().preview.demand().is_none());
+            assert!(e.document.visit.working_view.error.is_none());
+        });
+    });
+}
+
 fn snapshot(h: &mut Harness<'_, Editor>, name: &str) {
     h.event(egui::Event::PointerGone);
     h.try_run_realtime().unwrap();
@@ -120,7 +201,7 @@ fn exercise(mut h: Harness<'_, Editor>, size: egui::Vec2, name: &str) {
     // Failure without usable pixels also stays passive; an ordinary edit starts new work.
     h.update(|e| {
         e.document.visit.working_view.clear();
-        e.active_canvas_mut().preview_rendered = None;
+        e.active_canvas_mut().preview.clear();
         e.document.visit.working_view.fail_next = Some(Error::GpuOutOfMemory(
             "Injected first-preview allocation failure".into(),
         ));
@@ -213,7 +294,7 @@ fn preview_failure_screenshots() {
         }
         h.update(|e| {
             e.document.visit.working_view.clear();
-            e.active_canvas_mut().preview_rendered = None;
+            e.active_canvas_mut().preview.clear();
             e.document.visit.working_view.fail_next = Some(Error::GpuOutOfMemory(
                 "Injected first-preview allocation failure".into(),
             ));

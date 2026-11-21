@@ -279,6 +279,21 @@ fn preview_frame(
     Ok(frame)
 }
 
+fn preview_mapping(image: egui::Rect, draw: egui::Rect) -> crate::geometry::TextureMapping {
+    use crate::geometry::TextureMapping;
+    if draw == image {
+        return TextureMapping::IDENTITY;
+    }
+    let extent = image.size();
+    let origin = (draw.min - image.min) / extent;
+    let max = (draw.max - image.min) / extent;
+    TextureMapping {
+        origin: [origin.x, origin.y],
+        x_axis: [max.x - origin.x, 0.],
+        y_axis: [0., max.y - origin.y],
+    }
+}
+
 impl Editor {
     pub(super) fn show_viewer(
         &mut self,
@@ -498,6 +513,7 @@ impl Editor {
         let capture = match self.canvas_calculation(image) {
             Ok(capture) => capture,
             Err(error) => {
+                self.active_canvas_mut().preview.clear();
                 let subject = if inspection {
                     "Source inspection"
                 } else {
@@ -565,7 +581,7 @@ impl Editor {
             None
         };
         let paint = if let Some(rendered) = tool.or(rendered) {
-            self.active_canvas_mut().preview_rendered = None;
+            self.active_canvas_mut().preview.clear();
             let mapping = if source_outside_frame {
                 geometry.uv(draw, composition.area())
             } else {
@@ -582,10 +598,26 @@ impl Editor {
                 ui.ctx().clone(),
             )
         } else {
-            self.preview_paint(&proxy, geometry, &capture, source_outside_frame, ui.ctx())
+            self.preview_paint(
+                &proxy,
+                geometry,
+                &capture,
+                source_outside_frame,
+                ui.ctx(),
+                cx,
+            )
         };
         let Some(paint) = paint else {
-            ui.label("Preview unavailable");
+            let working = &self.document.visit.working_view;
+            ui.label(
+                if self.active_canvas().preview.pending()
+                    || (working.updating && working.error.is_none())
+                {
+                    "Loading preview…"
+                } else {
+                    "Preview unavailable"
+                },
+            );
             return None;
         };
         self.canvas_frame.displayed =
@@ -641,80 +673,46 @@ impl Editor {
         capture: &crate::gpu::photograph::request::PhotographRequest,
         source_outside_frame: bool,
         context: &egui::Context,
+        cx: &UiContext<'_, Self>,
     ) -> Option<ImagePaint> {
-        let device = self.document.visit.working_view.device()?.clone();
-        let kernels = self.document.visit.working_view.kernels.get()?.clone();
-        let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
-        let composition = frame.composition;
-        let display_rect = if source_outside_frame {
-            geometry.screen_region(composition.area())
-        } else {
-            geometry.image
-        };
-        let draw = display_rect.intersect(geometry.canvas);
-        let mapping = if source_outside_frame {
-            geometry.uv(draw, composition.area())
-        } else if draw == display_rect {
-            crate::geometry::TextureMapping::IDENTITY
-        } else {
-            let extent = display_rect.size();
-            let origin = (draw.min - display_rect.min) / extent;
-            let max = (draw.max - display_rect.min) / extent;
-            crate::geometry::TextureMapping {
-                origin: [origin.x, origin.y],
-                x_axis: [max.x - origin.x, 0.],
-                y_axis: [0., max.y - origin.y],
-            }
-        };
-        let capture = capture.clone();
         let correction = self.correction();
         if correction.pending() {
+            self.active_canvas_mut().preview.clear();
             return None;
         }
-        if let Some((source, requested_frame, rendered)) = &self.active_canvas().preview_rendered
-            && source.same_source(proxy)
-            && rendered.capture == capture
-            && rendered.has_correction(correction.prepared().map(|correction| &correction.gpu))
-            && *requested_frame == frame
-            && rendered.target == self.document.target()
-        {
-            return self.rendered_paint(
-                rendered.clone(),
-                mapping,
-                self.submissions.clone(),
-                context.clone(),
-            );
-        }
-        if matches!(
-            self.document.visit.working_view.error,
-            Some(Error::GpuOutOfMemory(_))
-        ) {
-            return None;
-        }
-        let spec = capture.source_request(frame).ok()?;
-        let source = proxy
-            .preview(
-                kernels,
-                &capture,
-                correction
-                    .prepared()
-                    .map(|correction| correction.gpu.clone()),
-                spec,
-                self.document.target(),
-            )
-            .map_err(|error| self.document.visit.working_view.presentation_failed(error))
-            .ok()?;
-        let rendered = crate::gpu::view::RenderedView::from_image(
-            &device,
-            source,
-            capture,
-            self.document.target(),
-        )
-        .map_err(|error| self.document.visit.working_view.presentation_failed(error))
-        .ok()?;
-        let source = proxy.clone();
-        self.active_canvas_mut().preview_rendered = Some((source, frame, rendered.clone()));
-        self.rendered_paint(rendered, mapping, self.submissions.clone(), context.clone())
+        let working = &self.document.visit.working_view;
+        let queue = working.queue()?.clone();
+        let kernels = working
+            .kernels
+            .get()
+            .filter(|_| !matches!(&working.error, Some(Error::GpuOutOfMemory(_))))
+            .cloned();
+        let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
+        let demand = canvas_view::PreviewDemand {
+            proxy: proxy.clone(),
+            frame,
+            capture: capture.clone(),
+            field: correction
+                .prepared()
+                .map(|correction| correction.gpu.clone()),
+            target: self.document.target(),
+        };
+        let submissions = self.submissions.clone();
+        let rendered = self.active_canvas_mut().preview.render(
+            demand,
+            kernels,
+            (&queue, &submissions),
+            context,
+            cx,
+        )?;
+        let mapping = if source_outside_frame {
+            let area = frame.composition.area();
+            let draw = geometry.screen_region(area).intersect(geometry.canvas);
+            geometry.uv(draw, area)
+        } else {
+            preview_mapping(geometry.image, geometry.image.intersect(geometry.canvas))
+        };
+        self.rendered_paint(rendered, mapping, submissions, context.clone())
     }
 
     pub(super) fn viewer_canvas(
@@ -794,7 +792,7 @@ impl Editor {
 pub(super) struct SourceView {
     pub ready: Option<Ready>,
     original: original_view::OriginalView,
-    preview: Option<canvas_view::Preview>,
+    preview: canvas_view::Preview,
     #[cfg(test)]
     pub paint_observer: Option<Arc<SelectionTiming>>,
 }
@@ -844,12 +842,6 @@ impl SourceView {
                 return false;
             }
         };
-        let Some(device) = services
-            .map(|services| services.device.clone())
-            .or_else(|| editor.document.visit.working_view.device().cloned())
-        else {
-            return false;
-        };
         let ppp = canvas.ui.ctx().pixels_per_point();
         let composition = layout.composition;
         let view = ViewRequest {
@@ -888,9 +880,41 @@ impl SourceView {
                 return false;
             }
         };
-        let paint = if let Some(rendered) = original {
-            self.preview = None;
+        let visible = if let Some(rendered) = original {
+            self.preview.clear();
             let mapping = rendered.mapping(layout.frame_raster(ppp));
+            Some((rendered, mapping))
+        } else {
+            let frame = match preview_frame(composition, ready.proxy.size(), false) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    editor.status = error.to_string();
+                    return false;
+                }
+            };
+            let working = &editor.document.visit.working_view;
+            let demand = canvas_view::PreviewDemand {
+                proxy: ready.proxy.clone(),
+                frame,
+                capture,
+                field: None,
+                target: editor.document.target(),
+            };
+            let queue = services
+                .map(|services| &services.queue)
+                .or_else(|| working.queue());
+            queue.and_then(|queue| {
+                let rendered = self.preview.render(
+                    demand,
+                    working.kernels.get().cloned(),
+                    (queue, &editor.submissions),
+                    canvas.ui.ctx(),
+                    cx,
+                )?;
+                Some((rendered, preview_mapping(layout.image, draw)))
+            })
+        };
+        let paint = visible.and_then(|(rendered, mapping)| {
             ImagePaint::rendered(
                 presentation,
                 rendered,
@@ -900,68 +924,13 @@ impl SourceView {
             )
             .map_err(|error| editor.status = error.to_string())
             .ok()
-        } else {
-            let frame = match preview_frame(composition, ready.proxy.size(), false) {
-                Ok(frame) => frame,
-                Err(error) => {
-                    editor.status = error.to_string();
-                    return false;
-                }
-            };
-            let reused = self
-                .preview
-                .as_ref()
-                .filter(|(proxy, previous, rendered)| {
-                    proxy.same_source(&ready.proxy)
-                        && *previous == frame
-                        && rendered.capture == capture
-                        && rendered.has_correction(None)
-                        && rendered.target == editor.document.target()
-                })
-                .map(|entry| entry.2.clone());
-            let rendered = reused.or_else(|| {
-                let kernels = editor.document.visit.working_view.kernels.get()?.clone();
-                let spec = crate::gpu::view::request::SourceRequest::for_frame(frame).ok()?;
-                let source = ready
-                    .proxy
-                    .preview(kernels, &capture, None, spec, editor.document.target())
-                    .ok()?;
-                let rendered = crate::gpu::view::RenderedView::from_image(
-                    &device,
-                    source,
-                    capture,
-                    editor.document.target(),
-                )
-                .ok()?;
-                self.preview = Some((ready.proxy.clone(), frame, rendered.clone()));
-                Some(rendered)
-            });
-            rendered.and_then(|rendered| {
-                let mapping = if draw == layout.image {
-                    crate::geometry::TextureMapping::IDENTITY
-                } else {
-                    let extent = layout.image.size();
-                    let origin = (draw.min - layout.image.min) / extent;
-                    let max = (draw.max - layout.image.min) / extent;
-                    crate::geometry::TextureMapping {
-                        origin: [origin.x, origin.y],
-                        x_axis: [max.x - origin.x, 0.],
-                        y_axis: [0., max.y - origin.y],
-                    }
-                };
-                ImagePaint::rendered(
-                    presentation,
-                    rendered,
-                    mapping,
-                    editor.submissions.clone(),
-                    canvas.ui.ctx().clone(),
-                )
-                .map_err(|error| editor.status = error.to_string())
-                .ok()
-            })
-        };
+        });
         let Some(paint) = paint else {
-            canvas.ui.label("Preview unavailable");
+            canvas.ui.label(if self.preview.pending() {
+                "Loading preview…"
+            } else {
+                "Preview unavailable"
+            });
             return false;
         };
         editor.canvas_frame.displayed =
