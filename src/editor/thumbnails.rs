@@ -119,7 +119,6 @@ struct ImageKey {
     target: OutputTarget,
     field: Option<FieldKey>,
     recipe: Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String>,
-    projection: Option<Composition>,
 }
 
 struct Product {
@@ -204,7 +203,6 @@ impl ImageKey {
         self.source.same_pixels(&other.source)
             && self.field == other.field
             && self.target == other.target
-            && self.projection == other.projection
             && matches!((&self.recipe, &other.recipe), (Ok(Some(a)), Ok(Some(b)))
                 if a.composition == b.composition)
     }
@@ -749,25 +747,6 @@ impl Thumbnails {
         state
     }
 
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn projection_ready(
-        &self,
-        document: &Document,
-        source: SourceId,
-        target: OutputTarget,
-        projection: Composition,
-    ) -> bool {
-        self.cache.entries.iter().any(|(key, value)| {
-            key.source.id == source
-                && key.target == target
-                && key.projection == Some(projection)
-                && key.current_recipe(document)
-                && value.as_ref().is_ok_and(|product| {
-                    product.positive.is_some() && matches!(product.look_result(), Some(Ok(())))
-                })
-        })
-    }
-
     #[cfg(test)]
     pub(super) fn ready_count(&self, document: &Document, target: OutputTarget) -> usize {
         self.cache
@@ -776,7 +755,6 @@ impl Thumbnails {
             .filter(|(key, value)| {
                 value.is_ok()
                     && key.target == target
-                    && key.projection.is_none()
                     && key.current_recipe(document)
                     && key
                         .recipe
@@ -934,28 +912,12 @@ fn make_image(
 }
 
 impl Editor {
-    fn thumbnail_key(
-        &self,
-        source: &Source,
-        path: &std::path::Path,
-        projected: bool,
-    ) -> Option<ImageKey> {
+    fn thumbnail_key(&self, source: &Source, path: &std::path::Path) -> Option<ImageKey> {
         let recipe = self.thumbnail_recipe(source.id);
-        let projection = if projected {
-            let composition = self.thumbnail_composition(source);
-            recipe
-                .as_ref()
-                .ok()
-                .and_then(Option::as_ref)
-                .and_then(|recipe| (recipe.composition != composition).then_some(composition))
-        } else {
-            None
-        };
         Some(ImageKey {
             source: SourceKey::new(source, self.document.file_key(path))
                 .with_development(self.document.development_for(source, self.input())),
             recipe,
-            projection,
             target: self.document.target(),
             field: self.correction().map().cloned().map(FieldKey),
         })
@@ -1192,7 +1154,7 @@ impl Editor {
                         ui.is_enabled(),
                     );
                     let image_rect = card.image_rect;
-                    let key = self.thumbnail_key(source, &path, true);
+                    let key = self.thumbnail_key(source, &path);
                     if let Some(key) = &key {
                         protected.push(key.clone());
                     }
@@ -1276,15 +1238,6 @@ impl Editor {
                                     frame_point(draw_max),
                                     composition.area(),
                                 );
-                                let failure = match parameters.as_ref() {
-                                    Some(input) => {
-                                        input.luts().id().and_then(|id| image.look_failure(id))
-                                    }
-                                    None => image.look_result().and_then(Result::err),
-                                };
-                                if let Some(failure) = failure {
-                                    error = Some(failure.to_string());
-                                }
                                 if !awaiting_correction {
                                     let field = match parameters.as_ref() {
                                         Some(request)
@@ -1297,18 +1250,12 @@ impl Editor {
                                         None => Ok(None),
                                     };
                                     match field.and_then(|field| {
-                                        let (_, queue, _) =
-                                            self.document.thumbnails.gpu.as_ref().ok_or_else(
-                                                || Error::Gpu("Thumbnail GPU unavailable".into()),
-                                            )?;
                                         processing::image_paint(
-                                            queue.clone(),
                                             self.presentation.as_ref().map_err(Clone::clone)?,
                                             image.image.clone(),
                                             parameters,
                                             field,
                                             mapping,
-                                            ui.ctx(),
                                         )
                                     }) {
                                         Ok(paint) => {
@@ -1697,7 +1644,7 @@ impl Editor {
         for id in &visible {
             if let Ok(source) = self.document.state.project.source(*id)
                 && let Ok(path) = self.document.source_path(*id)
-                && let Some(key) = self.thumbnail_key(source, &path, true)
+                && let Some(key) = self.thumbnail_key(source, &path)
             {
                 protected.push(key);
             }
@@ -1710,7 +1657,7 @@ impl Editor {
                 .source(key.source.id)
                 .ok()
                 .zip(self.document.source_path(key.source.id).ok())
-                .and_then(|(source, path)| self.thumbnail_key(source, &path, visible));
+                .and_then(|(source, path)| self.thumbnail_key(source, &path));
             if expected.as_ref() != Some(key)
                 || (!visible
                     && (!eager
@@ -1768,7 +1715,7 @@ impl Editor {
                 .source_path(id)
                 .expect("thumbnail demand locator");
             let visible = visible.contains(&id);
-            let Some(key) = self.thumbnail_key(source, &path, visible) else {
+            let Some(key) = self.thumbnail_key(source, &path) else {
                 continue;
             };
             if self.document.thumbnails.cache.contains(&key) {
@@ -1974,36 +1921,11 @@ impl Worker {
             RenderedView::from_image(&self.device, source, capture, job.key.target)?
         };
         metrics.camera_reused = previous.is_some();
-        let source = view.product().expect("photographic card product");
         view.ensure_submitted(
             &self.device,
             &self.queue,
             self.repaint.get().unwrap_or(&egui::Context::default()),
         );
-        if !recipe.luts.is_empty() {
-            // Cards retain a full-source raster; admit only their declared composed footprint.
-            let composition = job.key.projection.unwrap_or(recipe.composition);
-            let mapping = composition.texture_mapping(
-                crate::geometry::FramePoint([0.; 2]),
-                crate::geometry::FramePoint(composition.size().map(f64::from)),
-                source.spec.frame().composition.area(),
-            );
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            let check = source.renderer.looks.check_projection(
-                &self.device,
-                &mut encoder,
-                &view.image.linear,
-                mapping,
-            )?;
-            view.image.set_look_check(Some(check));
-            self.queue.submit([encoder.finish()]);
-            let repaint = self.repaint.clone();
-            view.image.begin_look_check_tracked(&self.queue, move || {
-                if let Some(context) = repaint.get() {
-                    context.request_repaint();
-                }
-            });
-        }
         while view.in_flight() {
             self.device
                 .poll(wgpu::PollType::wait_indefinitely())
@@ -2012,9 +1934,6 @@ impl Worker {
                 return Ok(None);
             }
         }
-        view.image
-            .look_result()
-            .expect("completed thumbnail look check")?;
         metrics.image_seconds = tick.elapsed().as_secs_f64();
         Ok(self.active(job).then(|| {
             Arc::new(Product {

@@ -401,26 +401,6 @@ impl Editor {
             .displayed
             .as_ref()
             .map_or(self.document.target(), |image| image.view.target);
-        if let Some(error) = self
-            .canvas_frame
-            .displayed
-            .as_ref()
-            .and_then(|image| image.view.image.look_result())
-            .and_then(Result::err)
-        {
-            if let Some(gpu) = &self.scopes.gpu {
-                gpu.invalidate();
-            }
-            scope_notice(
-                &slot.painter,
-                slot.trace_well,
-                "Look rendering failed".into(),
-                egui::Color32::LIGHT_RED,
-                egui::Align2::CENTER_CENTER,
-            );
-            slot.response.on_hover_text(error.to_string());
-            return;
-        }
         let Some(input) = self.scope_request() else {
             if let Some(gpu) = &self.scopes.gpu {
                 gpu.invalidate();

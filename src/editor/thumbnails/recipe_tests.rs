@@ -309,7 +309,6 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     let looked = complete(&mut thumbnails, &document, key.clone()).unwrap();
     let view = &looked.positive.as_ref().unwrap();
     assert_eq!(view.processing().look_id(), Some(lut.id()));
-    assert!(matches!(looked.look_result(), Some(Ok(()))));
     assert!(
         crate::gpu::photograph::PhotographGraph::shares_resident_camera(
             &neutral.definition,
@@ -326,43 +325,6 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     assert!(view.same_source_as(plain.positive.as_ref().unwrap()));
     assert!(looked.byte_len() > plain.byte_len());
     assert!(key.estimated_product_bytes().unwrap() >= key.retained_bytes() + looked.byte_len());
-    let mut draft = key.clone();
-    draft.projection = Some(
-        Composition::with_crop(
-            document
-                .project
-                .source(id)
-                .unwrap()
-                .development
-                .active_area
-                .into(),
-            document.project.orientation,
-            document.project.source(id).unwrap().orientation,
-            Some(crate::crop::Crop {
-                center: [64., 64.],
-                size: [64, 64],
-                angle: 0.2,
-            }),
-        )
-        .unwrap(),
-    );
-    assert_ne!(draft, key);
-    let framed = complete(&mut thumbnails, &document, draft).unwrap();
-    assert!(
-        crate::gpu::photograph::PhotographGraph::shares_resident_camera(
-            &neutral.definition,
-            &framed
-                .positive
-                .as_ref()
-                .unwrap()
-                .product()
-                .unwrap()
-                .definition
-        )
-    );
-    #[cfg(feature = "ui-tests")]
-    assert!(view.same_source_as(framed.positive.as_ref().unwrap()));
-    assert!(matches!(framed.look_result(), Some(Ok(()))));
     document.project.output.lut = None;
     assert!(!key.current_recipe(&document));
     let restored = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
@@ -641,20 +603,6 @@ fn previous_card_presentation_requires_matching_source_framing_and_target() {
     });
     let cropped = tests::key(&document, id);
     assert!(!cropped.same_presentation(&uncropped));
-    let mut projected = uncropped.clone();
-    projected.projection = Some(
-        cropped
-            .recipe
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .composition,
-    );
-    assert!(
-        !projected.same_presentation(&uncropped),
-        "transient tool framing must not reuse a card validated for another footprint"
-    );
 }
 
 #[test]

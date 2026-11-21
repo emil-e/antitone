@@ -107,12 +107,11 @@ impl Request {
                 demand.target,
             )?;
             crate::refinement::refine_definition(
-                &renderer,
+                renderer.evaluation(),
                 &services.device,
                 &services.queue,
                 original,
                 (demand.target, demand.view.expect("requested original view")),
-                demand.capture.look_id().is_some(),
                 || stop.is_cancelled(),
             )
         })

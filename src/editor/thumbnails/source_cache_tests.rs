@@ -182,7 +182,6 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             target: OutputTarget::DisplayP3,
             field: None,
             recipe: Ok(None),
-            projection: None,
         };
         let scan = Scan::open(&path, wb(&document)).unwrap();
         let seed = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
@@ -251,7 +250,6 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
             target: OutputTarget::DisplayP3,
             field: None,
             recipe: Ok(None),
-            projection: None,
         };
         // Exercise the same serial worker and publication path used by filmstrip demand.
         let job = tests::service_job(&thumbnails, image_key, path, source.clone(), None, true);
@@ -319,7 +317,6 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             target: OutputTarget::Srgb,
             field: None,
             recipe: Ok(None),
-            projection: None,
         };
         let job = tests::service_job(
             &thumbnails,
@@ -454,7 +451,6 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
                 target: OutputTarget::Srgb,
                 field: None,
                 recipe: Ok(None),
-                projection: None,
             }
         };
         let job = tests::service_job(

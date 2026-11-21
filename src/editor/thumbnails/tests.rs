@@ -169,7 +169,6 @@ pub(super) fn fixture() -> Document {
 
 pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
     ImageKey {
-        projection: None,
         recipe: if document.project.input.ready() {
             document
                 .image_recipe(id)

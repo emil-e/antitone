@@ -652,59 +652,53 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
 
 #[test]
 fn completing_preparation_preserves_a_notice_reported_while_it_was_running() {
-    for rendering in [false, true] {
-        let (mut editor, scheduler) = editor();
-        let selected = asset(0.7);
+    let (mut editor, scheduler) = editor();
+    let selected = asset(0.7);
 
-        let before = editor.document.project.clone();
+    let before = editor.document.project.clone();
 
-        let (prepared, ready) = std::sync::mpsc::channel();
-        let (release, resume) = std::sync::mpsc::channel();
-        let resume = Mutex::new(resume);
-        editor.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, _stop| {
-            prepared.send(valid).unwrap();
-            resume
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(15))
-                .unwrap();
-        }));
-        with_application(editor, |app| {
-            app.enter(|editor, cx| editor.select_look(Source::Loaded(selected.clone()), cx));
-            app.pump();
-            assert!(ready.recv_timeout(Duration::from_secs(15)).unwrap());
-            app.update(|editor| {
-                if rendering {
-                    editor.look_render_failed("previous rendering error".into());
-                } else {
-                    editor.look_failed("previous preparation error".into());
-                }
-            });
-            let message = app.read(|editor| editor.dialogs.message().unwrap());
-            app.read(|editor| {
-                assert!(editor.document.lut.pending.is_some());
-                assert_eq!(editor.dialogs.message().unwrap().details, message.details);
-                assert_eq!(editor.document.project, before);
-            });
-            release.send(()).unwrap();
-            app.run_until(Duration::from_secs(15), |editor| {
-                editor.document.lut.pending.is_none()
-            });
-            app.read(|editor| {
-                assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
-                assert!(editor.dialogs.is_open());
-                assert_eq!(editor.dialogs.message().unwrap().details, message.details);
-                assert_eq!(
-                    editor.history_label(crate::editor::history::Direction::Undo),
-                    Some("LUT")
-                );
-            });
-            app.update(|editor| editor.dialogs.answer_for_test("OK"));
-            app.read(|editor| {
-                assert!(!editor.dialogs.is_open());
-                assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
-            });
+    let (prepared, ready) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let resume = Mutex::new(resume);
+    editor.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, _stop| {
+        prepared.send(valid).unwrap();
+        resume
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(15))
+            .unwrap();
+    }));
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.select_look(Source::Loaded(selected.clone()), cx));
+        app.pump();
+        assert!(ready.recv_timeout(Duration::from_secs(15)).unwrap());
+        app.update(|editor| {
+            editor.look_failed("previous preparation error".into());
         });
-        scheduler.close_and_wait().unwrap();
-    }
+        let message = app.read(|editor| editor.dialogs.message().unwrap());
+        app.read(|editor| {
+            assert!(editor.document.lut.pending.is_some());
+            assert_eq!(editor.dialogs.message().unwrap().details, message.details);
+            assert_eq!(editor.document.project, before);
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            editor.document.lut.pending.is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
+            assert!(editor.dialogs.is_open());
+            assert_eq!(editor.dialogs.message().unwrap().details, message.details);
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                Some("LUT")
+            );
+        });
+        app.update(|editor| editor.dialogs.answer_for_test("OK"));
+        app.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.document.project.output.lut, Some(selected.clone()));
+        });
+    });
+    scheduler.close_and_wait().unwrap();
 }

@@ -140,7 +140,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
                 };
                 assert_eq!(
                     p[3], flags,
-                    "coverage/clipping union and any contributing look failure are categorical"
+                    "coverage/clipping union and any contributing rejection are categorical"
                 );
             }
         }

@@ -5,7 +5,7 @@ use crate::gpu::evaluation::{
 use std::sync::Arc;
 
 #[cfg(test)]
-mod look_tests;
+mod status_tests;
 
 pub(crate) use crate::acquisition::windows;
 

@@ -230,7 +230,8 @@ impl GpuImage {
             processing.renderer.evaluation.clone(),
         )?;
         prepared.encode_result(device, encoder, &processing.working)?;
-        let prepared_binding = processing.renderer.render_binding(
+        let prepared_binding = crate::gpu::recorded_image::Texture::new(
+            processing.renderer.evaluation(),
             device,
             crate::gpu::evaluation::SuppliedImage::from_buffer(
                 root.clone(),
@@ -240,10 +241,8 @@ impl GpuImage {
             root,
             &self.linear,
         )?;
-        let check = prepared_binding.encode(device, encoder)?;
-        *processing.aces_group.lock().unwrap() = Some(prepared_binding);
-        self.look_projections.lock().unwrap().clear();
-        *self.look_check.lock().unwrap() = check;
+        prepared_binding.encode(device, encoder)?;
+        *processing.recording.lock().unwrap() = Some(prepared_binding);
         Ok(())
     }
 }

@@ -6,7 +6,7 @@ use crate::gpu::view::request::SourceRequest;
 #[test]
 fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
     pollster::block_on(async {
-        let (device, queue, renderer, _kernels) = context().await;
+        let (device, _queue, renderer, _kernels) = context().await;
         let image = Arc::new(
             GpuImage::new_shared(
                 &renderer,
@@ -29,7 +29,6 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         .unwrap();
         assert!(matches!(
             crate::viewer::ImagePaint::with_processing(
-                queue.clone(),
                 &presentation,
                 image.clone(),
                 Some(packed.into()),
@@ -42,7 +41,6 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         let inspection = AuthoredPhotograph::from(ProcessingParameters::source());
         assert!(
             crate::viewer::ImagePaint::with_processing(
-                queue.clone(),
                 &presentation,
                 image,
                 Some(inspection),

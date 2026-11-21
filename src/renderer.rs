@@ -69,42 +69,6 @@ impl RendererCache {
     }
 }
 
-pub(crate) struct RenderBinding {
-    source: crate::gpu::evaluation::SuppliedImage,
-    looks: Vec<Arc<lut3d::Lut>>,
-    recorded: crate::gpu::evaluation::Recorded,
-    destination: wgpu::Texture,
-    validation: Option<Arc<crate::gpu::lut3d::Validation>>,
-}
-
-impl RenderBinding {
-    pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
-        crate::looks::LutChain::ordered_id(self.looks.iter().map(|lut| lut.id()))
-    }
-
-    pub(crate) fn retained_bytes(&self) -> u64 {
-        self.looks.iter().map(|lut| lut.byte_len()).sum::<u64>() + self.recorded.byte_len()
-    }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn look_resources(&self) -> Vec<Arc<lut3d::Lut>> {
-        self.looks.clone()
-    }
-
-    pub fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> Result<Option<Arc<crate::gpu::lut3d::Check>>, Error> {
-        self.recorded
-            .encode_work(device, encoder, &[self.source.pixels()])?;
-        Ok(self
-            .validation
-            .as_ref()
-            .map(|validation| validation.check_rendered(device, encoder, &self.destination)))
-    }
-}
-
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
@@ -141,7 +105,7 @@ impl GpuRenderer {
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
-        let looks = lut3d::Looks::new(device).await?;
+        let looks = lut3d::Looks::new(device);
         let drt = drt::Targets::new(device, queue).await?;
         let renderer = Arc::new(Self {
             drt,
@@ -164,51 +128,5 @@ impl GpuRenderer {
         #[cfg(feature = "ui")]
         crate::gpu::photograph::PhotographGraph::prewarm_resident(device, &renderer)?;
         Ok(renderer)
-    }
-
-    pub(crate) fn render_binding(
-        &self,
-        device: &wgpu::Device,
-        source: crate::gpu::evaluation::SuppliedImage,
-        image: crate::gpu::evaluation::Value,
-        destination: &wgpu::Texture,
-    ) -> Result<RenderBinding, Error> {
-        use crate::gpu::evaluation::{ImageFormat, Region, Tiling};
-        self.evaluation.require_device(device)?;
-        let domain = source.definition().domain();
-        let region = source.layout().region;
-        if source.layout().format != ImageFormat::Rgba32Float {
-            return Err(Error::InvalidParameter("invalid rendered source storage"));
-        }
-        if image.domain().meaning != crate::gpu::evaluation::Meaning::Display {
-            return Err(Error::InvalidParameter(
-                "target rendering requires a display endpoint",
-            ));
-        }
-        let looks = lut3d::applied_luts(&image);
-        let validation = (!looks.is_empty()).then(|| self.looks.validation());
-        let evaluation = self.evaluation.request(
-            image,
-            Region {
-                bounds: region,
-                grid: domain.grid,
-            },
-            Tiling {
-                tile: [region.width, region.height],
-            },
-        )?;
-        let recorded = self.evaluation.record_to_texture(
-            evaluation,
-            self.evaluation.materializations(),
-            vec![source.clone()],
-            destination,
-        )?;
-        Ok(RenderBinding {
-            source,
-            looks,
-            recorded,
-            destination: destination.clone(),
-            validation,
-        })
     }
 }

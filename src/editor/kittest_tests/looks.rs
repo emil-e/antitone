@@ -15,9 +15,9 @@ pub(super) fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
     )
 }
 
-mod errors;
 mod ownership;
 mod photochemical;
+mod picker_view;
 fn tiff_codes(path: &std::path::Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let tiff::decoder::DecodingResult::U16(codes) = decoder.read_image().unwrap() else {
@@ -67,7 +67,6 @@ fn positive_ready(editor: &Editor) -> bool {
                 view.capture.recipe().map(Arc::as_ref) == Some(&expected)
                     && view.target == editor.document.target()
                     && !view.in_flight()
-                    && matches!(view.image.look_result(), Some(Ok(())))
             })
 }
 fn fixture_editor<R>(test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>) -> R) -> R {
@@ -364,7 +363,6 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
             assert_eq!(asset.origin(), &selection.origin());
             assert_eq!(asset.name(), selection.name());
             assert_eq!(asset.lut().size(), DEFAULT_GRID);
-            harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
             harness.read(|editor| assert_eq!(editor.document.project.roll, before.roll));
             harness.read(|editor| {
                 assert_eq!(
@@ -456,7 +454,6 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
                     .as_ref()
                     .is_some_and(|view| view.processing().look_id().is_none() && !view.in_flight())
         });
-        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -979,7 +976,6 @@ fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
                 .id()
         });
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 (editor.document.project.roll, editor.photo_settings()),
@@ -1000,7 +996,6 @@ fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
                 accepted
             )
         });
-        assert!(harness.query_by_label("Look rendering failed").is_none());
         harness.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         harness.step();
         paint_until(&mut harness, positive_ready);
@@ -1017,7 +1012,6 @@ fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
                 Some(accepted)
             );
         });
-        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -1037,7 +1031,6 @@ fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
         paint_until(&mut harness, |editor| {
             editor.test_pick().is_none() && positive_ready(editor)
         });
-        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 (editor.document.project.roll, editor.photo_settings()),
@@ -1060,7 +1053,6 @@ fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
         });
         choose(&mut harness, "None");
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
     });
 }

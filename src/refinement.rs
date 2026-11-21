@@ -60,23 +60,21 @@ pub(crate) fn refine_cancellable(
         &input.definition(),
     )?;
     refine_definition(
-        renderer,
+        renderer.evaluation(),
         device,
         queue,
         root,
         (target, view),
-        !input.luts().is_empty(),
         cancelled,
     )
 }
 
 pub(crate) fn refine_definition(
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    evaluation: &crate::gpu::evaluation::Context,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     original: crate::gpu::evaluation::Value,
     (target, view): (OutputTarget, ViewRequest),
-    check_look: bool,
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Arc<GpuImage>>, Error> {
     if cancelled() {
@@ -89,18 +87,16 @@ pub(crate) fn refine_definition(
         view.output[1],
         target,
     ))?;
-    let Some(completed) = crate::gpu::execution::regional::execute(
-        renderer,
+    let Some(()) = crate::gpu::execution::regional::execute(
+        evaluation,
         device,
         queue,
         root,
-        check_look,
         &output.linear,
         cancelled,
     )?
     else {
         return Ok(None);
     };
-    output.set_look_check(completed.look_check);
     Ok(Some(Arc::new(output)))
 }

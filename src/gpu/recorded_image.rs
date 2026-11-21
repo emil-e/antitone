@@ -113,3 +113,68 @@ impl Prepared {
             .encode_result(device, encoder, destination)
     }
 }
+
+/// Prepared recording from a supplied image into a resident display attachment.
+#[cfg(feature = "render")]
+pub(crate) struct Texture {
+    source: evaluation::SuppliedImage,
+    endpoint: evaluation::Value,
+    recorded: evaluation::Recorded,
+}
+
+#[cfg(feature = "render")]
+impl Texture {
+    pub(crate) fn new(
+        context: &evaluation::Context,
+        device: &wgpu::Device,
+        source: evaluation::SuppliedImage,
+        endpoint: evaluation::Value,
+        destination: &wgpu::Texture,
+    ) -> Result<Self, Error> {
+        context.require_device(device)?;
+        let layout = source.layout();
+        if layout.format != evaluation::ImageFormat::Rgba32Float {
+            return Err(Error::InvalidParameter("invalid rendered source storage"));
+        }
+        let region = layout.region;
+        let request = context.request(
+            endpoint.clone(),
+            evaluation::Region {
+                bounds: region,
+                grid: layout.domain.grid,
+            },
+            evaluation::Tiling {
+                tile: [region.width, region.height],
+            },
+        )?;
+        let recorded = context.record_to_texture(
+            request,
+            context.materializations(),
+            vec![source.clone()],
+            destination,
+        )?;
+        Ok(Self {
+            source,
+            endpoint,
+            recorded,
+        })
+    }
+
+    pub(crate) fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), Error> {
+        self.recorded
+            .encode_work(device, encoder, &[self.source.pixels()])?;
+        Ok(())
+    }
+
+    pub(crate) fn byte_len(&self) -> u64 {
+        self.recorded.byte_len()
+    }
+
+    pub(crate) fn endpoint(&self) -> &evaluation::Value {
+        &self.endpoint
+    }
+}

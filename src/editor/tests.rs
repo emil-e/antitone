@@ -21,8 +21,6 @@ pub(super) enum FailureCase {
     Save,
     Export,
     Look,
-    #[cfg(feature = "ui-tests")]
-    LookRendering,
 }
 
 impl FailureCase {
@@ -34,8 +32,6 @@ impl FailureCase {
             Self::Save => "Could not save project",
             Self::Export => "Could not export image",
             Self::Look => "Could not prepare look",
-            #[cfg(feature = "ui-tests")]
-            Self::LookRendering => "Could not render look",
         }
     }
 }
@@ -55,8 +51,6 @@ impl Editor {
             FailureCase::Save => self.save_failed(details),
             FailureCase::Export => self.export_failed(details),
             FailureCase::Look => self.look_failed(details),
-            #[cfg(feature = "ui-tests")]
-            FailureCase::LookRendering => self.look_render_failed(details),
         }
     }
 }

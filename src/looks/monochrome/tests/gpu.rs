@@ -70,7 +70,7 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
             kernel.encode(&mut encoder, &dispatch);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
             let submission = queue.submit([encoder.finish()]);
-            dispatch.check.begin(|| {});
+
             let (send, receive) = mpsc::channel();
             readback.map_async(wgpu::MapMode::Read, .., move |result| {
                 send.send(result).unwrap()
@@ -85,7 +85,7 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
                 .recv_timeout(Duration::from_secs(30))
                 .unwrap()
                 .unwrap();
-            dispatch.check.result().unwrap().unwrap();
+
             let scene = {
                 let mapped = readback.get_mapped_range(..).unwrap();
                 bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec()

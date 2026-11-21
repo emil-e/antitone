@@ -167,7 +167,7 @@ fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest
             for id in &visible {
                 let source = editor.document.state.project.source(*id).unwrap();
                 let path = editor.document.source_path(*id).unwrap();
-                let wanted = editor.thumbnail_key(source, &path, true).unwrap();
+                let wanted = editor.thumbnail_key(source, &path).unwrap();
                 assert!(
                     editor
                         .document

@@ -2,8 +2,6 @@
 
 use crate::Error;
 use crate::gpu::evaluation;
-use crate::renderer::GpuRenderer;
-use std::sync::Arc;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "regional_tests.rs"]
@@ -67,19 +65,14 @@ pub(crate) fn definition(
     evaluation::reconstruct(root, domain)
 }
 
-pub(crate) struct Completed {
-    pub look_check: Option<Arc<crate::gpu::lut3d::Check>>,
-}
-
 pub(crate) fn execute(
-    renderer: &GpuRenderer,
+    context: &evaluation::Context,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     root: evaluation::Value,
-    check_look: bool,
     output: &wgpu::Texture,
     cancelled: impl Fn() -> bool,
-) -> Result<Option<Completed>, Error> {
+) -> Result<Option<()>, Error> {
     if cancelled() {
         return Ok(None);
     }
@@ -126,7 +119,7 @@ pub(crate) fn execute(
         usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let scope = renderer.evaluation.materializations();
+    let scope = context.materializations();
     for y in (0..size[1]).step_by(tile_size[1] as usize) {
         for x in (0..size[0]).step_by(tile_size[0] as usize) {
             if cancelled() {
@@ -151,7 +144,7 @@ pub(crate) fn execute(
                 [region.width, region.height],
             )
             .validate()?;
-            let request = renderer.evaluation.request(
+            let request = context.request(
                 root.clone(),
                 evaluation::Region {
                     bounds: cells,
@@ -161,7 +154,7 @@ pub(crate) fn execute(
             )?;
             let worker = evaluation::Production {
                 worker: evaluation::Worker {
-                    context: &renderer.evaluation,
+                    context,
                     queue,
                     scope: &scope,
                     working: &evaluation::RunWorkingSet::default(),
@@ -186,7 +179,7 @@ pub(crate) fn execute(
             }
             let mut encoder = device.create_command_encoder(&Default::default());
             evaluation::acquire::present_sized(
-                &renderer.evaluation,
+                context,
                 &mut encoder,
                 &pixels,
                 [region.width, region.height],
@@ -206,11 +199,7 @@ pub(crate) fn execute(
                     depth_or_array_layers: 1,
                 },
             );
-            if renderer
-                .evaluation
-                .submit(queue, encoder, &cancelled)?
-                .is_none()
-            {
+            if context.submit(queue, encoder, &cancelled)?.is_none() {
                 return Ok(None);
             }
         }
@@ -218,29 +207,9 @@ pub(crate) fn execute(
     if cancelled() {
         return Ok(None);
     }
-    let look_check = if check_look {
-        let mut encoder = device.create_command_encoder(&Default::default());
-        let check = renderer.looks.check_image(device, &mut encoder, output);
-        if renderer
-            .evaluation
-            .submit_with(queue, encoder, &cancelled, || check.begin(|| {}))?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        check
-            .result()
-            .ok_or_else(|| Error::Gpu("look validation did not complete".into()))??;
-        Some(check)
-    } else {
-        None
-    };
-    if cancelled() {
-        return Ok(None);
-    }
     log::debug!(
         output_width=size[0],output_height=size[1],
         seconds=started.elapsed().as_secs_f64();"settled_preview"
     );
-    Ok(Some(Completed { look_check }))
+    Ok(Some(()))
 }

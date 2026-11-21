@@ -678,7 +678,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
 }
 
 #[test]
-fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_accepted_recipe() {
+fn selected_look_cards_show_draft_framing_without_changing_the_accepted_recipe() {
     setup(|mut h, _directory| {
         h.update(|editor| {
             editor.document.state.project.output.lut = Some(Arc::new(
@@ -697,6 +697,14 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
         save_existing_project(&mut h);
         let before = h.read(|editor| editor.document.state.project.clone());
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
+        let cards_ready = |editor: &Editor| {
+            editor
+                .document
+                .thumbnails
+                .ready_count(&editor.document, editor.document.target())
+                == 3
+        };
+        wait_for(&mut h, cards_ready);
         stage(&mut h, "Roll");
         click_action(&mut h, "Auto-crop roll");
         overlay::wait_context(&mut h);
@@ -712,13 +720,14 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
         });
         assert_ne!(projection, before.image_recipe(source).unwrap().composition);
         wait_for(&mut h, |editor| {
-            editor.document.thumbnails.projection_ready(
-                &editor.document,
-                source,
-                editor.document.target(),
-                projection,
-            )
+            editor
+                .document
+                .thumbnails
+                .preview()
+                .compositions
+                .contains(&(source, projection))
         });
+        h.read(|editor| assert!(cards_ready(editor)));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
         assert!(

@@ -6,6 +6,7 @@ mod tests;
 
 #[derive(Clone)]
 pub(crate) struct SuppliedImage {
+    #[cfg(test)]
     pub(super) definition: value::Value,
     output: Output,
     pub(super) layout: ImageLayout,
@@ -51,6 +52,7 @@ impl SuppliedImage {
         }
         super::materialized::validate(definition.domain(), layout, &image)?;
         Ok(Self {
+            #[cfg(test)]
             definition,
             output,
             layout,
@@ -58,6 +60,7 @@ impl SuppliedImage {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn definition(&self) -> &value::Value {
         &self.definition
     }

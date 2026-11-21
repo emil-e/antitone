@@ -612,7 +612,6 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             FailureCase::Save,
             FailureCase::Export,
             FailureCase::Look,
-            FailureCase::LookRendering,
         ] {
             match kind {
                 FailureCase::FlatReference => harness.enter(|editor, cx| {
@@ -648,12 +647,6 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     editor.select_look(
                         look::Source::Imported(directory.path().join("missing-look.cube")),
                         cx,
-                    )
-                }),
-                FailureCase::LookRendering => harness.update(|editor| {
-                    editor.report_failure(
-                        FailureCase::LookRendering,
-                        "The selected look encountered a nonfinite scene-linear value.".into(),
                     )
                 }),
                 FailureCase::Save => harness.enter(|editor, cx| {
@@ -692,7 +685,6 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 FailureCase::Save => "save",
                 FailureCase::Export => "export",
                 FailureCase::Look => "look",
-                FailureCase::LookRendering => "look-rendering",
             };
             let png = harness.render().unwrap();
             if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {

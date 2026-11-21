@@ -18,24 +18,19 @@ pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
 mod film_tests;
 #[cfg(test)]
-mod look_tests;
-#[cfg(test)]
 pub(crate) mod readback;
 
 struct ImageProcessing {
     renderer: Arc<GpuRenderer>,
     source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
-    aces_group: std::sync::Mutex<Option<crate::renderer::RenderBinding>>,
+    recording: std::sync::Mutex<Option<crate::gpu::recorded_image::Texture>>,
     camera: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
     last_calculation: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
 }
 
 pub struct GpuImage {
     device_limits: wgpu::Limits,
-    look_check: std::sync::Mutex<Option<Arc<crate::gpu::lut3d::Check>>>,
-    look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::lut3d::Check>)>>,
-    paint_mapping: std::sync::Mutex<Option<TextureMapping>>,
     processing: Option<ImageProcessing>,
     pub linear: wgpu::Texture,
     target: OutputTarget,
@@ -173,7 +168,7 @@ impl GpuImage {
                     renderer,
                     source,
                     working,
-                    aces_group: std::sync::Mutex::new(None),
+                    recording: std::sync::Mutex::new(None),
                     camera: std::sync::Mutex::new(None),
                     last_calculation: std::sync::Mutex::new(None),
                 })
@@ -184,9 +179,6 @@ impl GpuImage {
         }
         Ok(Self {
             device_limits: device.limits(),
-            look_check: std::sync::Mutex::new(None),
-            look_projections: std::sync::Mutex::new(Vec::new()),
-            paint_mapping: std::sync::Mutex::new(None),
             processing,
             linear,
             target,
@@ -199,11 +191,13 @@ impl GpuImage {
             (
                 p.source.byte_len(),
                 p.working.size()
-                    + p.aces_group
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .map_or(0, |binding| binding.retained_bytes()),
+                    + p.recording.lock().unwrap().as_ref().map_or(0, |binding| {
+                        binding.byte_len()
+                            + crate::gpu::lut3d::applied_luts(binding.endpoint())
+                                .iter()
+                                .map(|lut| lut.byte_len())
+                                .sum::<u64>()
+                    }),
             )
         })
     }
@@ -214,11 +208,13 @@ impl GpuImage {
             .as_ref()
             .map_or_else(Vec::new, |processing| {
                 processing
-                    .aces_group
+                    .recording
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .map_or_else(Vec::new, |binding| binding.look_resources())
+                    .map_or_else(Vec::new, |binding| {
+                        crate::gpu::lut3d::applied_luts(binding.endpoint())
+                    })
             })
     }
 
@@ -272,157 +268,6 @@ impl GpuImage {
         self.encode_calculation(device, encoder, &root, input.luts())
     }
 
-    pub(crate) fn set_look_check(&self, check: Option<Arc<crate::gpu::lut3d::Check>>) {
-        *self.look_check.lock().unwrap() = check;
-    }
-
-    pub fn begin_look_check(&self, ready: impl FnOnce() + Send + 'static) {
-        if let Some(check) = self.look_check.lock().unwrap().as_ref() {
-            check.begin(ready);
-        }
-    }
-
-    pub(crate) fn begin_look_check_tracked(
-        &self,
-        submissions: &crate::gpu::submission::Queue,
-        ready: impl FnOnce() + Send + 'static,
-    ) {
-        let pending = submissions.track();
-        self.begin_look_check(move || {
-            ready();
-            drop(pending);
-        });
-    }
-
-    pub fn look_result(&self) -> Option<Result<(), Error>> {
-        self.look_check
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map_or(Some(Ok(())), |check| check.result())
-    }
-
-    pub(crate) fn look_result_for(&self, mapping: TextureMapping) -> Option<Result<(), Error>> {
-        if self.processing.is_none() || self.look_check.lock().unwrap().is_none() {
-            return self.look_result();
-        }
-        self.look_projections
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|(region, _)| *region == mapping)
-            .and_then(|(_, check)| check.result())
-    }
-
-    pub(crate) fn look_failure(&self, id: crate::looks::LookId) -> Option<Error> {
-        if let Some(processing) = &self.processing
-            && processing
-                .aces_group
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|binding| binding.look_id())
-                != Some(id)
-        {
-            return None;
-        }
-        if self.processing.is_none() {
-            return self.look_result().and_then(Result::err);
-        }
-        self.look_result_for((*self.paint_mapping.lock().unwrap())?)
-            .and_then(Result::err)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn prepare_rendering(
-        &self,
-        device: &wgpu::Device,
-        queue: &crate::gpu::submission::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        input: &AuthoredPhotograph,
-        mapping: TextureMapping,
-        context: Option<egui::Context>,
-    ) -> Result<(), Error> {
-        let root = self.legacy_calculation(input)?;
-        self.prepare_rendering_calculation(
-            device,
-            queue,
-            encoder,
-            (&root, input.luts()),
-            mapping,
-            context,
-        )
-    }
-
-    pub fn prepare_rendering_calculation(
-        &self,
-        device: &wgpu::Device,
-        queue: &crate::gpu::submission::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
-        mapping: TextureMapping,
-        context: Option<egui::Context>,
-    ) -> Result<(), Error> {
-        if luts.is_empty() {
-            self.prepare_calculation(device, encoder, root, luts)?;
-            return Ok(());
-        }
-        self.prepare_looked(device, queue, (root, luts), mapping, context)
-    }
-
-    fn prepare_looked(
-        &self,
-        device: &wgpu::Device,
-        queue: &crate::gpu::submission::Queue,
-        (root, luts): (&crate::gpu::evaluation::Value, &crate::looks::LutChain),
-        mapping: TextureMapping,
-        context: Option<egui::Context>,
-    ) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_ref()
-            .ok_or_else(|| Error::Gpu("rendered image has no processing source".into()))?;
-        let mut encoder = device.create_command_encoder(&Default::default());
-        if self.prepare_calculation(device, &mut encoder, root, luts)? {
-            queue.submit([encoder.finish()]);
-        }
-        // Source proxies include film margins and other undrawn pixels. Admit only the
-        // consumer's composed footprint; failed texels remain marked in the shared image.
-        let mut projections = self.look_projections.lock().unwrap();
-        if let Some(index) = projections
-            .iter()
-            .position(|(region, _)| *region == mapping)
-        {
-            let current = projections.remove(index);
-            projections.push(current);
-        } else {
-            let mut encoder = device.create_command_encoder(&Default::default());
-            let check = processing.renderer.looks.check_projection(
-                device,
-                &mut encoder,
-                &self.linear,
-                mapping,
-            )?;
-            queue.submit([encoder.finish()]);
-            let pending = queue.track();
-            check.begin(move || {
-                drop(pending);
-                if let Some(context) = context {
-                    context.request_repaint();
-                }
-            });
-            if projections.len() == 4 {
-                projections.remove(0);
-            }
-            projections.push((mapping, check));
-        }
-        drop(projections);
-        device
-            .poll(wgpu::PollType::Poll)
-            .map_err(|e| Error::Gpu(e.to_string()))?;
-        Ok(())
-    }
-
     fn size(&self) -> [u32; 2] {
         [self.linear.width(), self.linear.height()]
     }
@@ -441,12 +286,14 @@ impl GpuImage {
 
 pub struct ImagePaint {
     #[cfg(feature = "editor")]
-    rendered: Option<(Arc<crate::gpu::view::RenderedView>, egui::Context)>,
-    queue: crate::gpu::submission::Queue,
+    rendered: Option<(
+        Arc<crate::gpu::view::RenderedView>,
+        crate::gpu::submission::Queue,
+        egui::Context,
+    )>,
     image: Arc<GpuImage>,
     calculation: Option<crate::gpu::evaluation::Value>,
     luts: crate::looks::LutChain,
-    context: Option<egui::Context>,
     draw: Draw,
 }
 
@@ -491,15 +338,12 @@ impl ImagePaint {
             image: view.image.clone(),
             calculation: None,
             luts: Default::default(),
-            context: None,
             draw,
-            queue,
-            rendered: Some((view, context)),
+            rendered: Some((view, queue, context)),
         }
     }
 
     pub fn with_calculation(
-        queue: crate::gpu::submission::Queue,
         presentation: &Presentation,
         image: Arc<GpuImage>,
         calculation: Option<crate::gpu::evaluation::Value>,
@@ -518,18 +362,15 @@ impl ImagePaint {
         Ok(Self {
             #[cfg(feature = "editor")]
             rendered: None,
-            queue,
             image,
             calculation,
             luts,
-            context: None,
             draw,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn with_processing(
-        queue: crate::gpu::submission::Queue,
         presentation: &Presentation,
         image: Arc<GpuImage>,
         processing: Option<AuthoredPhotograph>,
@@ -543,7 +384,7 @@ impl ImagePaint {
             .as_ref()
             .map(|input| input.luts().clone())
             .unwrap_or_default();
-        Self::with_calculation(queue, presentation, image, calculation, luts, uv)
+        Self::with_calculation(presentation, image, calculation, luts, uv)
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -553,7 +394,7 @@ impl ImagePaint {
 
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn view_frame(&self) -> Option<crate::frame_raster::FrameRaster> {
-        self.rendered.as_ref().map(|(view, _)| view.spec.frame())
+        self.rendered.as_ref().map(|(view, _, _)| view.spec.frame())
     }
 
     #[cfg(feature = "editor")]
@@ -562,34 +403,20 @@ impl ImagePaint {
     ) -> Option<(Arc<crate::gpu::view::RenderedView>, TextureMapping)> {
         self.rendered
             .as_ref()
-            .map(|(view, _)| (view.clone(), self.draw.mapping()))
-    }
-
-    pub fn with_context(mut self, context: egui::Context) -> Self {
-        self.context = Some(context);
-        self
+            .map(|(view, _, _)| (view.clone(), self.draw.mapping()))
     }
 }
 
 impl ImagePaint {
     #[doc(hidden)]
     pub fn prepare_frame(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        let mapping = self.draw.mapping();
-        *self.image.paint_mapping.lock().unwrap() = Some(mapping);
         #[cfg(feature = "editor")]
-        if let Some((view, context)) = &self.rendered {
-            view.ensure_submitted(device, &self.queue, context);
+        if let Some((view, queue, context)) = &self.rendered {
+            view.ensure_submitted(device, queue, context);
         }
         if let Some(root) = &self.calculation {
             self.image
-                .prepare_rendering_calculation(
-                    device,
-                    &self.queue,
-                    encoder,
-                    (root, &self.luts),
-                    mapping,
-                    self.context.clone(),
-                )
+                .prepare_calculation(device, encoder, root, &self.luts)
                 .expect("validated rendering resources");
         }
     }
@@ -614,12 +441,6 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         pass: &mut wgpu::RenderPass<'static>,
         _resources: &egui_wgpu::CallbackResources,
     ) {
-        if matches!(
-            self.image.look_result_for(self.draw.mapping()),
-            Some(Err(_))
-        ) {
-            return;
-        }
         self.draw.paint(pass);
     }
 }
