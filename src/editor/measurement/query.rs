@@ -9,7 +9,6 @@ use crate::gpu::evaluation::Tiling;
 use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::photograph::PhotographGraph;
-use crate::processing::NegativeInput;
 use crate::renderer::GpuRenderer;
 use crate::scan::Scan;
 use glam::DVec3;
@@ -117,13 +116,6 @@ impl<'a> Samples<'a> {
             }
             Ok(())
         })
-    }
-
-    pub(in crate::editor) fn camera_response(
-        &self,
-        negative: NegativeInput,
-    ) -> Result<crate::gpu::evaluation::Value, Error> {
-        crate::gpu::photograph::camera_response::normalized(self.camera_light()?, negative)
     }
 
     pub(in crate::editor) fn pipeline<'r>(

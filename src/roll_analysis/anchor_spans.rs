@@ -2,7 +2,7 @@
 use super::*;
 use crate::{color::opponent_coordinates, processing::log_ratio};
 
-fn balance_from_anchors(calibration: Calibration) -> Option<Balance> {
+pub(crate) fn balance_from_anchors(calibration: Calibration) -> Option<Balance> {
     let spans = DVec3::from_array(std::array::from_fn(|c| {
         log_ratio(calibration.dmin[c], calibration.dmax[c])
     }));

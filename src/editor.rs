@@ -1166,9 +1166,11 @@ impl Editor {
                                 mut response,
                                 mut gamma,
                                 mut balance,
-                                ..
+                                dmin,
+                                dmax,
                             } = requested_input.unwrap_or(grade.input)
                             {
+                                let calibrated = dmin.is_some() && dmax.is_some();
                                 let inversion_changed = gamma != crate::processing::DEFAULT_GAMMA
                                     || balance != Balance::default();
                                 let (_, reset) = ui::section_with_secondary_tool(
@@ -1186,10 +1188,17 @@ impl Editor {
                                         ),
                                         changed: inversion_changed,
                                         reset: Some(inversion_changed && editable),
-                                        tool: Some(ui::balance_pick_tool(
-                                            can_pick,
-                                            "Pick neutral for gamma balance",
-                                        )),
+                                        tool: Some(ui::SectionTool {
+                                            help: if calibrated {
+                                                "Set gamma balance and Roll WB from one neutral patch."
+                                            } else {
+                                                "Measure Dmin and Dmax first."
+                                            },
+                                            ..ui::balance_pick_tool(
+                                                can_pick && calibrated,
+                                                calibration::GAMMA_PICK_LABEL,
+                                            )
+                                        }),
                                         default_open: Some(true),
                                     },
                                     self.gamma_pivot_tool(can_pick),

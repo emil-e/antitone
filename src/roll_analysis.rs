@@ -24,7 +24,7 @@ mod median_wb;
 pub(crate) use median_wb::semantic_refit;
 
 #[cfg(feature = "editor")]
-pub(crate) use anchor_spans::estimate_anchor_spans;
+pub(crate) use anchor_spans::{balance_from_anchors, estimate_anchor_spans};
 pub use gi::{SpatialFrameSamples, SpatialSamples, estimate_spatial};
 
 /// Current spatial evidence resolution, independent of output/rendering resolution.
