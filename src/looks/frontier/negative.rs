@@ -1,28 +1,102 @@
-//! Fixed-exposure colour-negative readout and black-anchored reproduction-code calibration.
-use super::{Variant, matrix, require};
+//! Nominal colour-negative formation and mean-preserving spectral scanner readout.
+use super::{
+    Variant, failure,
+    readout::{self, Banks, Readout},
+    require,
+};
 use crate::{Error, looks::spektrafilm};
 use glam::DVec3;
+use serde::Deserialize;
 use std::sync::{OnceLock, atomic::AtomicBool};
+
+pub(super) const DEFINITION: &[u8] = include_bytes!("../../../assets/frontier/negative.json");
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Definition {
+    #[serde(rename = "codes_per_OD")]
+    codes_per_od: f64,
+    neutral_rows: Banks<DVec3>,
+}
+impl Definition {
+    fn get() -> Result<&'static Self, Error> {
+        static VALUE: OnceLock<Result<Definition, Error>> = OnceLock::new();
+        VALUE
+            .get_or_init(|| {
+                let d: Self = serde_json::from_slice(DEFINITION).map_err(failure)?;
+                require(
+                    d.codes_per_od.is_finite()
+                        && d.codes_per_od > 0.
+                        && Variant::all().all(|v| {
+                            let rows = d.neutral_rows.get(v);
+                            rows.is_finite() && rows.min_element() > 0.
+                        }),
+                    "invalid stock Frontier readout slopes",
+                )?;
+                Ok(d)
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+}
 
 struct BandSample {
     dyes: DVec3,
     weight: DVec3,
 }
 
-pub(super) struct Entry {
+struct Scanner {
     formation: spektrafilm::Formation,
     base: DVec3,
     bands: Vec<BandSample>,
-    balance: DVec3,
-    origin: f64,
 }
 
+pub(super) struct Entry {
+    scanner: Scanner,
+    readout: &'static Readout,
+    definition: &'static Definition,
+    neutral: DVec3,
+    grey: DVec3,
+    balance: DVec3,
+}
 impl Entry {
     pub(super) fn new(
         stock: spektrafilm::Negative,
         variant: Variant,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        let readout = Readout::get(variant)?;
+        let definition = Definition::get()?;
+        let scanner = Scanner::new(stock, cancel)?;
+        let grey = scanner.optical_density(DVec3::splat(readout.scene_grey));
+        require(
+            grey.is_finite() && grey.min_element() > 0.,
+            "invalid negative scanner grey reference",
+        )?;
+        let balance = DVec3::splat(grey.element_sum() / 3.) / grey;
+        Ok(Self {
+            scanner,
+            readout,
+            definition,
+            grey,
+            balance,
+            neutral: *definition.neutral_rows.get(variant),
+        })
+    }
+
+    fn raw_codes(&self, optical_density: DVec3) -> DVec3 {
+        let centred = (optical_density - self.grey) * self.balance;
+        self.readout.grey_codes
+            + self.definition.codes_per_od * (self.neutral * centred) * self.readout.gains
+    }
+
+    pub(super) fn coordinates(&self, rgb: DVec3) -> Result<DVec3, Error> {
+        readout::coordinates(self.raw_codes(self.scanner.optical_density(rgb)))
+    }
+}
+
+impl Scanner {
+    fn new(stock: spektrafilm::Negative, cancel: &AtomicBool) -> Result<Self, Error> {
         let formation = spektrafilm::Formation::new(stock, cancel)?;
         let base = formation.density(DVec3::ZERO);
         let sensor = sensor()?;
@@ -40,21 +114,11 @@ impl Entry {
         for sample in &mut bands {
             sample.weight /= norm;
         }
-        let mut entry = Self {
+        Ok(Self {
             formation,
             base,
             bands,
-            balance: DVec3::ONE,
-            origin: variant.code_offset(),
-        };
-        let gray = entry.optical_density(DVec3::splat(0.18));
-        require(
-            gray.is_finite() && gray.min_element() > 0.,
-            "invalid negative scanner grey reference",
-        )?;
-        // Define the neutral density axis without equalizing stocks' mean grey OD.
-        entry.balance = DVec3::splat(gray.element_sum() / 3.) / gray;
-        Ok(entry)
+        })
     }
 
     fn attenuation(&self, density: DVec3) -> DVec3 {
@@ -77,40 +141,6 @@ impl Entry {
 
     fn optical_density(&self, rgb: DVec3) -> DVec3 {
         self.attenuation(self.formation.density(rgb)) / std::f64::consts::LN_10
-    }
-
-    fn raw_codes(&self, optical_density: DVec3) -> DVec3 {
-        // One A-calibrated density-space characterization; B changes only its source origin.
-        let colour = matrix([
-            [
-                0.9749188050172526,
-                0.03164970403459537,
-                -0.006568509051847915,
-            ],
-            [
-                -0.10026808253832398,
-                1.0523759610528092,
-                0.04789212148551488,
-            ],
-            [0.14823225898420794, 0.016360899739573016, 0.835406841276219],
-        ]) * (optical_density * self.balance);
-        DVec3::splat(self.origin)
-            + 515. * colour * DVec3::new(1.0389265051082284, 1., 1.0318751992283606)
-    }
-
-    pub(super) fn coordinates(&self, rgb: DVec3) -> Result<DVec3, Error> {
-        let codes = self.raw_codes(self.optical_density(rgb));
-        require(codes.is_finite(), "nonfinite negative scanner readout")?;
-        // Numeric code-domain continuation, separate from the stock characteristic.
-        Ok(codes.map(|code| {
-            if code < 0. {
-                0.
-            } else if code > 1015. {
-                1023. - 64. / (code - 1007.)
-            } else {
-                code
-            }
-        }))
     }
 }
 

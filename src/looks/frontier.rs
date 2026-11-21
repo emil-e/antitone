@@ -1,7 +1,7 @@
 //! Frontier source model and provenance, resolved to the common LUT during preparation.
 use super::{LookAsset, LookOrigin, authoring as baking, failure, require, spektrafilm};
 use crate::{Error, photographic};
-use glam::{DMat3, DVec3};
+use glam::DVec3;
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
@@ -10,14 +10,11 @@ use std::sync::{
 #[cfg(feature = "ocio-reference")]
 pub mod authoring;
 mod density;
-mod formation;
 mod negative;
+mod positive;
+mod readout;
 #[cfg(test)]
 mod tests;
-
-fn matrix(rows: [[f64; 3]; 3]) -> DMat3 {
-    DMat3::from_cols_array_2d(&rows).transpose()
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
@@ -34,14 +31,6 @@ impl Variant {
             Self::B => "Frontier B",
         }
     }
-    pub(super) fn code_offset(self) -> f64 {
-        // Supplied negative-mode recentering: A450, B512.
-        let origin = match self {
-            Self::A => 450.,
-            Self::B => 512.,
-        };
-        origin - 450.
-    }
     fn id(self) -> &'static str {
         match self {
             Self::A => "frontier_a",
@@ -49,6 +38,7 @@ impl Variant {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
     pub negative: Option<spektrafilm::Negative>,
@@ -58,62 +48,60 @@ impl Selection {
     pub fn name(self) -> String {
         self.negative.map_or_else(
             || self.variant.name().into(),
-            |negative| format!("{} · {}", negative.name(), self.variant.name()),
+            |stock| format!("{} · {}", stock.name(), self.variant.name()),
         )
     }
-    fn response_source(self) -> density::Source {
-        match self.negative {
-            Some(_) => density::Source::Negative(self.variant),
-            None => density::Source::Native(self.variant),
-        }
-    }
     pub fn origin(self) -> LookOrigin {
-        static GENERATOR: OnceLock<String> = OnceLock::new();
-        let generator = GENERATOR.get_or_init(|| {
-            let mut h = blake3::Hasher::new();
+        static COMMON: OnceLock<String> = OnceLock::new();
+        let common = COMMON.get_or_init(|| {
+            let mut hash = blake3::Hasher::new();
             for source in [
                 include_bytes!("frontier.rs").as_slice(),
-                include_bytes!("frontier/formation.rs").as_slice(),
-                include_bytes!("characteristic.rs").as_slice(),
-                super::characteristic::DEFINITION,
+                include_bytes!("frontier/readout.rs").as_slice(),
+                readout::DEFINITION,
                 include_bytes!("frontier/density.rs").as_slice(),
                 include_bytes!("authoring.rs").as_slice(),
                 include_bytes!("sampling.rs").as_slice(),
             ] {
-                h.update(source);
+                hash.update(source);
             }
-            h.finalize().to_hex().to_string()
+            hash.finalize().to_hex().to_string()
         });
-        let revision = self.response_source().revision();
-        let generator = self.negative.map_or_else(
-            || generator.clone(),
-            |stock| {
-                let mut hash = blake3::Hasher::new();
-                hash.update(generator.as_bytes());
-                hash.update(spektrafilm::negative_fingerprint(stock).as_bytes());
-                hash.update(include_bytes!("frontier/negative.rs"));
-                hash.update(include_bytes!("../../assets/frontier/sensor.json"));
-                hash.finalize().to_hex().to_string()
-            },
-        );
-        let attribution = if self.negative.is_some() {
-            format!(
-                "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. Fixed-exposure colour negative, SP3000-inspired spectral readout, shared zero-origin density calibration and authored rendering gamma; source-mode B origin. Not factory scanner or physical-print calibration. {}",
-                spektrafilm::ATTRIBUTION
-            )
-        } else {
-            concat!(
-                "Smoothed density/AP1 response derived from Fujifilm Frontier350/370 parameter data. ",
-                "Antitone forward density toe; A calibrated against Fuji TypeII, shared relative formation with source-mode code origins. ",
-                "Not a factory scanner or physical-print calibration."
-            ).into()
+        let mut hash = blake3::Hasher::new();
+        hash.update(common.as_bytes());
+        let input = match self.negative {
+            Some(stock) => {
+                for source in [
+                    include_bytes!("frontier/negative.rs").as_slice(),
+                    negative::DEFINITION,
+                    include_bytes!("../../assets/frontier/sensor.json").as_slice(),
+                    spektrafilm::negative_fingerprint(stock).as_bytes(),
+                ] {
+                    hash.update(source);
+                }
+                "Nominal colour-negative formation, spectral scanner OD and diagonal neutral readout"
+            }
+            None => {
+                for source in [
+                    include_bytes!("frontier/positive.rs").as_slice(),
+                    positive::DEFINITION,
+                    include_bytes!("characteristic.rs").as_slice(),
+                    super::characteristic::DEFINITION,
+                ] {
+                    hash.update(source);
+                }
+                "Already-positive AP1, fixed linear Rec.709/D65 basis and neutral-calibrated soft-log readout"
+            }
         };
         LookOrigin::Renderer {
             renderer: self.variant.id().into(),
             negative: self.negative.map(|stock| stock.id().into()),
-            revision: revision.into(),
-            generator,
-            attribution,
+            revision: density::revision(self.variant).into(),
+            generator: hash.finalize().to_hex().to_string(),
+            attribution: format!(
+                "Smoothed AP1 response derived from Fujifilm Frontier350/370 parameter data. {input}; native A/B response with shared grey anchors. Artistic rendering calibration, not a measured scanner or physical-print profile. {}",
+                spektrafilm::ATTRIBUTION
+            ),
         }
     }
     pub fn from_origin(origin: &LookOrigin) -> Option<Self> {
@@ -137,7 +125,7 @@ impl Selection {
 }
 
 enum Input {
-    Positive(formation::Entry),
+    Positive(positive::Entry),
     Negative(negative::Entry),
 }
 
@@ -153,22 +141,22 @@ impl Model {
             return Err(failure("look preparation cancelled"));
         }
         let input = match selection.negative {
+            None => Input::Positive(positive::Entry::new(selection.variant)?),
             Some(stock) => Input::Negative(negative::Entry::new(stock, selection.variant, cancel)?),
-            None => Input::Positive(formation::Entry::calibrated(selection.variant)),
         };
         Ok(Self {
             selection,
             input,
-            response: selection.response_source().load()?,
+            response: density::load(selection.variant)?,
         })
     }
     pub fn ap1(&self, rgb: DVec3) -> Result<DVec3, Error> {
         require(rgb.is_finite(), "nonfinite Frontier input")?;
-        let coordinates = match &self.input {
+        let codes = match &self.input {
             Input::Positive(entry) => entry.coordinates(rgb)?,
             Input::Negative(entry) => entry.coordinates(rgb)?,
         };
-        let output = self.response.sample(coordinates);
+        let output = self.response.sample(codes);
         require(output.is_finite(), "nonfinite Frontier AP1 output")?;
         Ok(output)
     }
@@ -181,20 +169,4 @@ impl Model {
             &|rgb| Ok(self.ap1(rgb)?.map(photographic::encode)),
         )
     }
-}
-
-fn gamut(mut value: DVec3) -> DVec3 {
-    let a = value.max_element();
-    if a != 0. {
-        for c in 0..3 {
-            let distance = (a - value[c]) / a.abs();
-            if distance > 0.9 {
-                let t = 0.9999 - 0.9;
-                let inverse = t / (distance - 0.9);
-                let compressed = 0.9 + t / (1. + inverse.powf(1.2)).powf(1. / 1.2);
-                value[c] = a - a.abs() * compressed;
-            }
-        }
-    }
-    value
 }
