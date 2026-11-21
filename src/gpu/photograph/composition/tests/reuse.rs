@@ -80,15 +80,6 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
         read(&renderer, &queue, looked_output)
     );
 
-    let before_looks = PhotographRequest::BeforeLooks(looked_recipe.clone());
-    assert!(PhotographRequest::BeforeLooks(plain_recipe) != before_looks);
-    let bypassed = renderer
-        .looks
-        .apply(looked.processed, before_looks.luts())
-        .unwrap();
-    let bypassed = materialize(&renderer, &queue, &scope, bypassed, bounds);
-    assert!(Arc::ptr_eq(&first.image, &bypassed.image));
-
     // Control: upstream changes must not inherit the downstream-only reuse above.
     project.roll.exposure = 1.;
     let changed_recipe = project.image_recipe(id).unwrap();

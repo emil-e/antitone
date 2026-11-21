@@ -236,7 +236,13 @@ fn numeric_field(
             if let Some(unit) = row.unit {
                 field = field.suffix(egui::RichText::new(format!(" {unit}")).small().weak());
             }
-            ui.add_sized([PARAMETER_NUMERIC_WIDTH, height], field)
+            // Precise text may expand; anchor it inward instead of widening the inspector.
+            ui.allocate_ui_with_layout(
+                egui::vec2(PARAMETER_NUMERIC_WIDTH, height),
+                egui::Layout::right_to_left(egui::Align::Center).with_main_justify(true),
+                |ui| ui.add(field),
+            )
+            .inner
         })
         .inner;
     let cancelled = numeric_cancelled(ui, &numeric);

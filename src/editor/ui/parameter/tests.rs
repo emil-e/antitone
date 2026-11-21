@@ -114,6 +114,69 @@ fn configured_rows_frame(
 }
 
 #[test]
+fn precise_numeric_text_keeps_the_value_column_and_track_anchored() {
+    for width in [270., 315.] {
+        let context = egui::Context::default();
+        let row = percent_row();
+        let mut value = 0.5;
+        let (slider, numeric, _) = frame(
+            &context,
+            &mut value,
+            &row,
+            width,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        for pressed in [true, false] {
+            frame(
+                &context,
+                &mut value,
+                &row,
+                width,
+                true,
+                pointer(numeric.rect.center(), pressed),
+                egui::Modifiers::NONE,
+            );
+        }
+        let (editing_slider, editing_numeric, _) = frame(
+            &context,
+            &mut value,
+            &row,
+            width,
+            true,
+            vec![egui::Event::Text("0.123456789012345".into())],
+            egui::Modifiers::NONE,
+        );
+        assert!(editing_numeric.has_focus());
+        assert_eq!(value, 0.5, "unfinished input remains private");
+        assert_eq!(editing_numeric.rect.right(), numeric.rect.right());
+        assert_eq!(editing_slider.rect, slider.rect);
+        frame(
+            &context,
+            &mut value,
+            &row,
+            width,
+            true,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+        let (accepted_slider, accepted_numeric, _) = frame(
+            &context,
+            &mut value,
+            &row,
+            width,
+            true,
+            vec![],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(value, 0.123456789012345);
+        assert_eq!(accepted_numeric.rect.right(), numeric.rect.right());
+        assert_eq!(accepted_slider.rect, slider.rect);
+    }
+}
+
+#[test]
 fn configured_rows_keep_same_named_edits_independent_across_label_changes() {
     let context = egui::Context::default();
     let initial = [12.123456789, 18.];

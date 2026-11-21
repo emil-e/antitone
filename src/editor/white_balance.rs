@@ -2,7 +2,7 @@ use super::{
     Balance, Editor, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
     measurement,
-    picking::{self, Display, View},
+    picking::{self, Display},
     ui,
 };
 use crate::{
@@ -21,10 +21,10 @@ mod query;
 #[cfg(test)]
 mod tests;
 
-pub(super) const ROLL: Display = Display::sample("Roll WB neutral", View::Working);
+pub(super) const ROLL: Display = Display::sample("Roll WB neutral");
 pub(super) const LAYER: Display = Display {
     lock_layer_selection: true,
-    ..Display::sample("WB neutral", View::Working)
+    ..Display::sample("WB neutral")
 };
 
 /// Section composition belongs to white balance; value widgets only edit local values.

@@ -395,7 +395,7 @@ impl Editor {
     }
 
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
-        let inspecting = navigating && self.input().ready() && !self.has_hosted_tool();
+        let inspecting = navigating && self.input().ready();
         let correction_ready = !self.correction().pending() && self.correction().error().is_none();
         let can_toggle = correction_ready || !self.document.source;
         ui.add_enabled_ui(inspecting && can_toggle, |ui| {

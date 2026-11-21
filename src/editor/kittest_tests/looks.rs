@@ -2,7 +2,7 @@ use super::*;
 use crate::looks::authoring::DEFAULT_GRID;
 use crate::looks::spektrafilm::{Negative, Paper, Selection};
 
-fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
+pub(super) fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
     Arc::new(
         crate::looks::LookAsset::new(
             format!("Constant {value}"),
@@ -951,7 +951,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
 }
 
 #[test]
-fn narrow_import_preserves_grade_controls_and_calibration_bypasses_it() {
+fn narrow_import_preserves_grade_controls_and_picker_keeps_the_accepted_look() {
     fixture_editor(|mut harness, _| {
         let baseline =
             harness.read(|editor| (editor.document.project.roll, editor.photo_settings()));
@@ -1003,21 +1003,19 @@ fn narrow_import_preserves_grade_controls_and_calibration_bypasses_it() {
         assert!(harness.query_by_label("Look rendering failed").is_none());
         harness.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         harness.step();
-        paint_until(&mut harness, |editor| {
-            assert!(
-                !editor.document.visit.canvas.original.failed(),
-                "{}",
-                editor.status
+        paint_until(&mut harness, positive_ready);
+        harness.read(|editor| {
+            assert_eq!(
+                editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .capture
+                    .look_id(),
+                Some(accepted)
             );
-            editor
-                .document
-                .visit
-                .canvas
-                .original
-                .wanted
-                .as_ref()
-                .is_some_and(|demand| demand.capture.look_id().is_none())
-                && editor.document.visit.canvas.original.settled().is_some()
         });
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {

@@ -14,7 +14,7 @@ Invalid output samples are excluded and visibly counted, not repaired into ordin
 
 The plots measure the **visible image, approximately**, in the selected output target. Pan/zoom isolates the visible region — a face, for example — while Fit covers the displayed composition. Waveform x follows left-to-right position within that visible region, never the letterbox or canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
 
-Scopes follow the image beneath tool artwork. Auto-crop shows the full oriented scan; manual Crop can show source content beyond its draft frame. Source/native pickers and reference views supply their displayed source image. Navigation composites include the same coarse underlay and detailed patch as the canvas. These viewing choices leave Analyze's sampling populations unchanged.
+Scopes follow the image beneath tool artwork. Auto-crop shows the full oriented scan; manual Crop can show source content beyond its draft frame. Measurement pickers leave the displayed image unchanged; reference views supply their own source image. Navigation composites include the same coarse underlay and detailed patch as the canvas. These viewing choices leave Analyze's sampling populations unchanged.
 
 Reduction remains independently bounded to a 1024-pixel edge, so sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black. Navigation and resizing update the analysis when visible coverage changes. During grading or navigation, the previous coherent trace holds until a compatible replacement is ready. Without a displayed image, the plot stays blank and scope work is suspended.
 

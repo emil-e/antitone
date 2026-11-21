@@ -589,7 +589,6 @@ impl Editor {
         });
         self.commit_project(draft)?;
         self.document.visit.canvas.viewport.fit();
-        self.invalidate_original();
         Ok(())
     }
 

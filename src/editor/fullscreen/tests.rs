@@ -273,7 +273,6 @@ fn fullscreen_navigation_uses_the_same_crop_view_without_touching_normal_navigat
             height: 300,
         }));
     editor.document.visit.canvas.last_layout = None;
-    editor.invalidate_original();
     frame(&mut editor, &context, Some(false), vec![]);
     let draft = editor.document.crop_edit().unwrap().draft;
     let crop_view = editor.with_tool_viewport(|viewport| *viewport);

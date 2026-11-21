@@ -457,7 +457,6 @@ impl Editor {
             self.document.visit.current_source,
         );
         self.document.visit.canvas.last_layout = None;
-        self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
         self.document.export.form = None;
         #[cfg(test)]

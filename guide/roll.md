@@ -39,8 +39,9 @@ The names come from film density, but what you pick are measurements in the imag
   the film). It becomes the dark end.
 
 Use **Pick Dmin (film base)** and **Pick Dmax**, then click a suitable area in the image.
-The values are measured per colour channel, and the two picks need not be the same kind
-of material.
+Pickers keep your current view; use **View source** if you want to inspect the negative.
+The values come from original samples per colour channel, and the two picks need not be
+the same kind of material.
 
 If you used Analyze, these are measured for you; the status line shows "Dmin + Dmax
 measured". Re-pick Dmin by hand if the film base is dirty or unusual — Analyze's status

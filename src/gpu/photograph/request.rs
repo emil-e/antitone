@@ -19,7 +19,7 @@ static NO_LUTS: LutChain = LutChain {
 #[derive(Clone, PartialEq)]
 pub(crate) enum PhotographRequest {
     Recipe(Arc<ImageRecipe>),
-    BeforeLooks(Arc<ImageRecipe>),
+
     Inspection(InspectionView),
     #[cfg(test)]
     Fixture(AuthoredPhotograph),
@@ -34,14 +34,14 @@ impl PhotographRequest {
 
     pub fn recipe(&self) -> Option<&Arc<ImageRecipe>> {
         match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => Some(recipe),
+            Self::Recipe(recipe) => Some(recipe),
             _ => None,
         }
     }
 
     pub fn is_inspection(&self) -> bool {
         match self {
-            Self::Recipe(_) | Self::BeforeLooks(_) => false,
+            Self::Recipe(_) => false,
             Self::Inspection(_) => true,
             #[cfg(test)]
             Self::Fixture(input) => !input.is_positive(),
@@ -51,7 +51,7 @@ impl PhotographRequest {
     pub fn luts(&self) -> &LutChain {
         match self {
             Self::Recipe(recipe) => &recipe.luts,
-            Self::BeforeLooks(_) | Self::Inspection(_) => &NO_LUTS,
+            Self::Inspection(_) => &NO_LUTS,
             #[cfg(test)]
             Self::Fixture(input) => input.luts(),
         }
@@ -112,7 +112,7 @@ impl PhotographRequest {
             return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
         }
         let photograph = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 recipe.neutral.require_scan(scan)?;
                 if !crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?
                     .matches_native(scan)?
@@ -152,7 +152,7 @@ impl PhotographRequest {
 
     pub fn validate(&self, limits: &wgpu::Limits) -> Result<(), Error> {
         match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 let program = self.input_transform()?;
                 super::admission::prepare(
                     limits,
@@ -177,9 +177,7 @@ impl PhotographRequest {
         plan: crate::acquisition::Plan,
     ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
         let definition = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
-                RecipeGraph::view_definition(limits, recipe)?
-            }
+            Self::Recipe(recipe) => RecipeGraph::view_definition(limits, recipe)?,
             Self::Inspection(_) => Assembly::default(),
             #[cfg(test)]
             Self::Fixture(input) => {
@@ -197,9 +195,7 @@ impl PhotographRequest {
     ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
         use crate::gpu::view::request::SourceRequest;
         let request = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
-                SourceRequest::for_recipe(frame, recipe)?
-            }
+            Self::Recipe(recipe) => SourceRequest::for_recipe(frame, recipe)?,
             Self::Inspection(_) => SourceRequest::for_frame(frame)?,
             #[cfg(test)]
             Self::Fixture(input) if input.is_positive() => {
@@ -213,7 +209,7 @@ impl PhotographRequest {
 
     pub fn input_transform(&self) -> Result<crate::gpu::interpretation::InputTransform, Error> {
         match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
             }
             Self::Inspection(_) => Err(Error::InvalidParameter(
@@ -239,9 +235,7 @@ impl PhotographRequest {
     ) -> Result<super::NeutralInput, Error> {
         use crate::gpu::interpretation::SourceInterpretation;
         let repairs = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) if quality.includes_repairs() => {
-                recipe.repairs.clone()
-            }
+            Self::Recipe(recipe) if quality.includes_repairs() => recipe.repairs.clone(),
             #[cfg(test)]
             Self::Fixture(input) => input.repairs.clone(),
             _ => Vec::new(),
@@ -252,7 +246,7 @@ impl PhotographRequest {
             _ => Vec::new(),
         };
         let interpretation = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 if recipe.neutral.correction.as_ref() != field.as_ref().map(|field| field.field()) {
                     return Err(Error::Gpu(
                         "recipe and GPU flat-field resources differ".into(),
@@ -452,7 +446,7 @@ impl PhotographRequest {
         neutral: crate::gpu::evaluation::Value,
     ) -> Result<(crate::gpu::evaluation::Value, crate::acquisition::Plan), Error> {
         match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 super::PhotographGraph::filtered_recipe(limits, spec, neutral, recipe)
             }
             Self::Inspection(view) => {
@@ -500,9 +494,7 @@ impl PhotographRequest {
     #[cfg(test)]
     pub fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         let input = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
-                AuthoredPhotograph::from_recipe(limits, recipe)?
-            }
+            Self::Recipe(recipe) => AuthoredPhotograph::from_recipe(limits, recipe)?,
             Self::Inspection(view) => AuthoredPhotograph::from(view.parameters()?),
             #[cfg(test)]
             Self::Fixture(input) => input.clone(),
@@ -519,7 +511,7 @@ impl PhotographRequest {
     ) -> Result<Value, Error> {
         let limits = renderer.evaluation().device().limits();
         let image = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 let raster = RecipeGraph::sampled_raster(source, recipe, layout)?;
                 RecipeGraph::sampled_camera(
                     PhotographGraph::resident_codes(source, raster)?,
@@ -630,7 +622,7 @@ impl PhotographRequest {
     ) -> Result<(Value, SourceRequest), Error> {
         let limits = renderer.evaluation().device().limits();
         let (image, plan) = match self {
-            Self::Recipe(recipe) | Self::BeforeLooks(recipe) => {
+            Self::Recipe(recipe) => {
                 let (graph, plan) =
                     PhotographGraph::preview(&limits, scan, field, recipe, spec.frame(), None)?;
                 (graph.processed, plan)

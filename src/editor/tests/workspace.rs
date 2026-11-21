@@ -316,7 +316,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     assert_eq!(reopened.source_exposure, 0.);
     reopened.tab = 1;
     let photo = controls_frame(&mut reopened, &fresh, 315., vec![]);
-    assert!(!photo.iter().any(|(s, _)| s == "Warmth" || s == "EV"));
+    assert!(!photo.iter().any(|(s, _)| s == "Warmth" || s.trim() == "EV"));
     assert!(!photo.iter().any(|(s, _)| s == "Gamma & balance"));
 }
 
@@ -420,7 +420,7 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
             }
             for name in names {
                 assert!(
-                    seen.contains(name),
+                    seen.iter().any(|label| label.trim() == name),
                     "unreachable {name}: tab={tab} width={width} seen={seen:?}"
                 );
             }

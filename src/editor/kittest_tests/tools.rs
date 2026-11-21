@@ -136,7 +136,7 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
 }
 
 #[test]
-fn precision_tools_paint_completed_originals_in_native_and_straightened_frames() {
+fn pickers_paint_the_normal_source_and_positive_in_straightened_frames() {
     for angle in [0., 0.1] {
         editor_harness(|mut h, capture| {
             h.enter(|e, cx| e.add_raws(vec![fixture("patches.dng")], cx));
@@ -146,7 +146,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.update(|e| {
                 e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
                 e.set_dmax(Some(DVec3::splat(128. / 4031.)));
-                e.document.source = false;
+                e.document.source = angle == 0.;
                 // Cancel the documented +1 EV source-display baseline for the scalar oracle.
                 e.source_exposure = -1.;
                 e.photo_orientation_mut().turn_clockwise();
@@ -157,8 +157,8 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     angle,
                 });
 
-                // Make the coarse proxy deliberately distinguishable from real originals.
-                // The original service still reads the unchanged authored RAW.
+                // Distinguish the coarse proxy from the unchanged authored RAW that
+                // normal physical-view acquisition must render, including while picking.
                 let services = e.source_services.as_ref().unwrap();
                 let ready = e.document.visit.canvas.ready.as_mut().unwrap();
                 let renderer = services
@@ -191,15 +191,15 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             wait_for(&mut h, |e| e.test_pick().is_some());
             h.read(|e| assert_eq!(e.test_pick(), Some(kind.display())));
-            wait_for(&mut h, |e| {
-                e.document.visit.canvas.original.settled().is_some()
-            });
+            workflow::wait_settled(&mut h);
             h.event(egui::Event::PointerGone);
             h.step();
             h.render().unwrap();
             let (layout, target, matrix, pipeline) = h.read(|e| {
-                let (view, _) = e.document.visit.canvas.original.settled().unwrap();
-                assert_eq!(view.frame.is_some(), angle != 0.);
+                assert!(Arc::ptr_eq(
+                    &e.canvas_frame.displayed.as_ref().unwrap().view,
+                    e.document.visit.working_view.displayed.as_ref().unwrap(),
+                ));
                 let matrix = e
                     .document
                     .visit
@@ -267,8 +267,8 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             h.read(|e| {
                 assert!(
-                    e.document.visit.canvas.original.settled().is_none(),
-                    "departed tool must not retain its image"
+                    e.document.visit.working_view.displayed.is_some(),
+                    "ending a picker keeps the normal image"
                 )
             });
         });
@@ -320,6 +320,19 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 ),
             ] {
                 stage(&mut harness, tab);
+                if kind == PickerCase::Dmin {
+                    harness.update(|editor| {
+                        let area = editor.selected_area().unwrap();
+                        editor.accept_crop(Crop::from_region(area)).unwrap();
+                    });
+                    if !harness.read(|editor| editor.document.source) {
+                        harness.get_by_label("View source").click();
+                        harness.step();
+                    }
+                } else if harness.read(|editor| editor.document.source) {
+                    harness.get_by_label("View source").click();
+                    harness.step();
+                }
                 let before = harness.read(|editor| editor.document.state.project.clone());
                 harness.get_by_label(label).scroll_to_me();
                 harness.try_run_realtime().unwrap();

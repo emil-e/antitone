@@ -13,25 +13,17 @@ mod operation_tests;
 mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum View {
-    Working,
-    Source,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Display {
     pub label: &'static str,
-    pub view: View,
     pub area: bool,
     pub lock_layer_selection: bool,
     pub help: Option<&'static str>,
 }
 
 impl Display {
-    pub const fn sample(label: &'static str, view: View) -> Self {
+    pub const fn sample(label: &'static str) -> Self {
         Self {
             label,
-            view,
             area: false,
             lock_layer_selection: false,
             help: None,
@@ -91,12 +83,10 @@ impl State {
     }
 }
 
-fn install(
-    editor: &mut Editor,
-    state: Rc<RefCell<Interaction>>,
-    previous: Option<(crate::viewport::CanvasLayout, f32)>,
-) {
-    let tool = PickTool::new(editor, state.clone(), previous);
+fn install(editor: &mut Editor, state: Rc<RefCell<Interaction>>) {
+    let tool = PickTool {
+        state: state.clone(),
+    };
     editor
         .document
         .set_hosted_tool(tool::Placement::Photo, Box::new(tool));
@@ -105,12 +95,10 @@ fn install(
 
 #[cfg(test)]
 pub(super) fn preview(editor: &mut Editor, display: Display) {
-    let previous = editor.document.visit.canvas.last_layout;
     if editor.prepare_tool() {
         install(
             editor,
             Rc::new(RefCell::new(Interaction::new(display, None))),
-            previous,
         );
     }
 }
@@ -123,55 +111,9 @@ impl Editor {
 
 pub(super) struct PickTool {
     state: Rc<RefCell<Interaction>>,
-
-    viewport: Viewport,
-    orientation: (RollOrientation, PhotoOrientation),
-    crop: Option<Crop>,
-    initial_view: Option<Viewport>,
 }
 
 impl PickTool {
-    fn new(
-        editor: &Editor,
-        state: Rc<RefCell<Interaction>>,
-        previous: Option<(CanvasLayout, f32)>,
-    ) -> Self {
-        let temporary_view = state.borrow().display.view != View::Working;
-
-        let mut tool = Self {
-            state,
-            crop: editor.photo_crop(),
-            initial_view: temporary_view.then_some(editor.document.visit.canvas.viewport),
-            viewport: editor.document.visit.canvas.viewport,
-            orientation: (
-                editor.document.project.orientation,
-                editor.photo_orientation(),
-            ),
-        };
-        if let Some((previous, ppp)) = previous {
-            let area = editor
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .map_or(previous.composition.area(), |ready| ready.area);
-            tool.initialise_view(area, previous.canvas, ppp);
-        }
-        tool
-    }
-
-    fn initialise_view(&mut self, area: Rect, canvas: egui::Rect, ppp: f32) {
-        let Some(mut normal) = self.initial_view.take() else {
-            return;
-        };
-        let basis = Composition::with_crop(area, self.orientation.0, self.orientation.1, self.crop)
-            .expect("accepted working composition");
-        let previous = normal.layout_composition(canvas, basis, ppp);
-        let next = tool::Tool::composition(self, basis);
-        self.viewport.reframe(previous, next, ppp);
-    }
-
     fn select(&mut self, ui: &egui::Ui, response: &egui::Response, layout: CanvasLayout) {
         let mut state = self.state.borrow_mut();
         if response.clicked_by(egui::PointerButton::Primary)
@@ -222,44 +164,22 @@ impl tool::Tool for PickTool {
         }
     }
 
-    fn composition(&self, normal: Composition) -> Composition {
-        match self.state.borrow().display.view {
-            View::Working => normal,
-            View::Source => Composition::new(normal.area(), self.orientation.0, self.orientation.1)
-                .expect("selected source composition"),
-        }
-    }
-
-    fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if self.state.borrow().display.view == View::Working {
-            &mut editor.document.visit.canvas.viewport
-        } else {
-            &mut self.viewport
-        }
-    }
-
     fn canvas(
         &mut self,
         viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
     ) -> Option<CanvasLayout> {
-        let source = self.state.borrow().display.view != View::Working;
         viewer.show(
             self,
             editor,
             cx,
-            move |editor, ui, navigating| {
-                if source {
-                    editor.source_controls(ui, navigating);
-                }
-            },
+            Editor::photograph_controls,
             |tool, surface, editor, cx| {
                 let mut canvas = surface.selected()?;
                 let composition = tool.composition(canvas.composition);
                 let rect = canvas.response.rect;
                 let ppp = canvas.ui.ctx().pixels_per_point();
-                tool.initialise_view(composition.area(), rect, ppp);
                 let relayout =
                     |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
                 let mut response = canvas.response.clone();
@@ -291,12 +211,7 @@ impl tool::Tool for PickTool {
                 {
                     tool.state.borrow_mut().drag = None;
                 }
-                canvas.paint_sample(
-                    editor,
-                    layout,
-                    tool.state.borrow().display.view != View::Working,
-                    cx,
-                );
+                canvas.paint_image(editor, layout, false, cx);
                 if let Some(region) = tool.state.borrow().region {
                     paint_selection(canvas.ui, layout, region);
                 }
@@ -397,8 +312,7 @@ pub(super) async fn pick_with<T: 'static>(
         if !editor.tool_start_available() || editor.has_hosted_tool() {
             return false;
         }
-        let previous = editor.document.visit.canvas.last_layout;
-        install(editor, state, previous);
+        install(editor, state);
         true
     })?;
     if !installed {

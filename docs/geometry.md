@@ -55,7 +55,7 @@ Point-sampled proxies evaluate local masks at the chosen native pixel; averaged 
 
 ## Drafts do not change accepted composition
 
-Crop editing has a temporary frame and viewport. Apply accepts the proposed composition; Cancel restores the accepted composition and starting view. Save and Export consume only accepted state. Dmin/Dmax sampling temporarily reveals uncropped oriented source, and a flat-field reference uses untransformed source; those are viewing arrangements, not changes to the working Photo's crop. [Editor state](editor.md#accepted-state-and-drafts) explains ownership.
+Crop editing has a temporary frame and viewport. Apply accepts the proposed composition; Cancel restores the accepted composition and starting view. Save and Export consume only accepted state. Measurement pickers retain the current composition and navigation, mapping their selections back to original-source coverage. A flat-field reference uses its independent untransformed source. [Editor state](editor.md#accepted-state-and-drafts) explains ownership.
 
 ## Working on this area
 

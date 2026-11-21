@@ -609,15 +609,30 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                                     callback.rect,
                                     shape.clip_rect
                                 );
+                                let image = editor.canvas_frame.layout.unwrap().0.image;
                                 assert!(
-                                    (callback.rect.aspect_ratio()
-                                        - area.width as f32 / area.height as f32)
+                                    (image.aspect_ratio() - area.width as f32 / area.height as f32)
                                         .abs()
-                                        < 1e-4,
-                                    "Fit did not restore aspect: frame={frame} display=reference={reference} zoom={:?} image={:?}",
-                                    editor.document.visit.canvas.viewport.zoom,
-                                    callback.rect
+                                        < 1e-4
                                 );
+                                if reference {
+                                    assert!(
+                                        (callback.rect.aspect_ratio() - image.aspect_ratio()).abs()
+                                            < 1e-4
+                                    );
+                                } else {
+                                    // Physical-view paint covers whole display cells at the fitted image edges.
+                                    for (actual, geometric) in [
+                                        (callback.rect.width(), image.width()),
+                                        (callback.rect.height(), image.height()),
+                                    ] {
+                                        assert!(
+                                            (actual - geometric).abs() <= 2. / ppp,
+                                            "Fit exceeds one display cell per edge: frame={frame} actual={:?} image={image:?}",
+                                            callback.rect
+                                        );
+                                    }
+                                }
                             }
                             egui::Shape::Rect(rect)
                                 if rect.stroke.color == egui::Color32::WHITE
@@ -774,7 +789,7 @@ fn incompatible_reference_preserves_view_preferences_and_survives_cancelling_ano
             editor.document.source = source_view;
             let mut expected = editor.document.state.project.clone();
             editor.preview_picker(kind);
-            assert!(editor.canvas_inspection());
+            assert_eq!(editor.canvas_inspection(), source_view);
             editor.set_test_pick_region(Some(patch()));
             match kind {
                 PickerCase::Dmin => {
@@ -795,7 +810,7 @@ fn incompatible_reference_preserves_view_preferences_and_survives_cancelling_ano
             assert_eq!(editor.document.state.project, expected);
 
             editor.preview_picker(kind);
-            assert!(editor.canvas_inspection());
+            assert_eq!(editor.canvas_inspection(), source_view);
             editor.finish_pick(&crate::application::UiContext::render_only());
             assert_eq!(editor.document.source, source_view);
             assert_eq!(editor.document.state.project, expected);
@@ -804,7 +819,7 @@ fn incompatible_reference_preserves_view_preferences_and_survives_cancelling_ano
 }
 
 #[test]
-fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explicit_inspection() {
+fn completing_calibration_preserves_the_current_view_in_either_pick_order() {
     for order in [
         [PickerCase::Dmin, PickerCase::Dmax],
         [PickerCase::Dmax, PickerCase::Dmin],
@@ -820,7 +835,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
             let settings = (editor.document.project.roll, editor.photo_settings());
             for (index, kind) in order.into_iter().enumerate() {
                 editor.preview_picker(kind);
-                assert!(editor.canvas_inspection());
+                assert_eq!(editor.canvas_inspection(), initial_source.unwrap_or(true));
                 editor.set_test_pick_region(Some(patch()));
                 let value = DVec3::splat(if kind == PickerCase::Dmin { 0.2 } else { 0.005 });
                 (match kind {
@@ -830,7 +845,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                 })
                 .unwrap();
                 editor.finish_pick(&crate::application::UiContext::render_only());
-                let expected = initial_source.unwrap_or(index == 0);
+                let expected = initial_source.unwrap_or(true);
                 assert_eq!(
                     editor.document.source, expected,
                     "{order:?}, initial={initial_source:?}, index={index}"
@@ -887,7 +902,7 @@ fn cancelling_initial_reference_preserves_source_view_but_a_completed_pick_is_re
             _ => unreachable!("reference proposal"),
         }
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert!(!editor.document.source);
+        assert!(editor.document.source);
         assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
         assert_eq!(editor.document.state.project, expected);
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -1871,16 +1886,11 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let viewport = editor.document.visit.canvas.viewport;
     let anchor = layout.source_point(canvas.center());
     editor.preview_picker(PickerCase::Dmin);
-    let full = Composition::new(
-        area,
-        editor.document.project.orientation,
-        editor.photo_orientation(),
-    )
-    .unwrap();
-    let uncropped =
-        editor.with_tool_viewport(|viewport| viewport.layout_composition(canvas, full, 2.));
-    assert_eq!(uncropped.scale, layout.scale);
-    assert!((uncropped.source_point(canvas.center()) - anchor).length() < 0.002);
+    assert_eq!(editor.canvas_composition(area), composition);
+    let selected =
+        editor.with_tool_viewport(|viewport| viewport.layout_composition(canvas, composition, 2.));
+    assert_eq!(selected.scale, layout.scale);
+    assert!((selected.source_point(canvas.center()) - anchor).length() < 0.002);
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     editor.document.visit.canvas.last_layout = Some((layout, 2.));
@@ -1904,7 +1914,7 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
 }
 
 #[test]
-fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() {
+fn cropped_pickers_preserve_the_current_image_and_source_anchor() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     *editor.photo_crop_mut() = Some(Crop::from_region(Rect {
@@ -1951,27 +1961,14 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
     ] {
         editor.document.visit.canvas.last_layout = Some((original, 2.));
         editor.preview_picker(kind);
-        let measuring = if matches!(kind, PickerCase::Dmin | PickerCase::Dmax) {
-            Composition::new(
-                area,
-                editor.document.project.orientation,
-                editor.photo_orientation(),
-            )
-            .unwrap()
-        } else {
-            composition
-        };
+        let measuring = editor.canvas_composition(area);
+        assert_eq!(measuring, composition);
         let layout = editor
             .with_tool_viewport(|viewport| viewport.layout_composition(canvas, measuring, 2.));
         assert_eq!(layout.scale, original.scale);
         assert!((layout.source_point(canvas.center()) - source_anchor).length() < 0.002);
-        if matches!(kind, PickerCase::Gamma | PickerCase::Wb) {
-            assert_eq!(layout.image, original.image);
-            assert!(!editor.canvas_inspection());
-        } else {
-            assert!(editor.canvas_inspection());
-            assert_eq!(layout.area, area);
-        }
+        assert_eq!(layout.image, original.image);
+        assert!(!editor.canvas_inspection());
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(
@@ -2023,7 +2020,7 @@ fn cropped_export_snapshot_survives_later_crop_and_orientation_edits() {
 }
 
 #[test]
-fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
+fn reference_pick_preserves_orientation_and_keeps_manual_navigation() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -2064,6 +2061,8 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             editor.preview_picker(PickerCase::Dmin);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
             editor.with_tool_viewport(|viewport| viewport.zoom = Some(0.25));
+            let navigated = editor.document.visit.canvas.viewport;
+            assert_eq!(navigated.zoom, Some(0.25));
             editor.finish_pick(cx);
             assert!(!editor.document.visit.source.pending());
             assert_eq!(editor.document.visit.current_source, source_id);
@@ -2071,7 +2070,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.project.orientation, roll_orientation);
             assert_eq!(editor.photo_orientation(), photo_orientation);
-            assert_eq!(editor.document.visit.canvas.viewport, viewport);
+            assert_eq!(editor.document.visit.canvas.viewport, navigated);
         });
     });
 }
@@ -3012,7 +3011,7 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     );
     click_section_header(&mut editor, &context, "Exposure");
     let roll = controls_frame(&mut editor, &context, 315., vec![]);
-    assert!(roll.iter().any(|(label, _)| label == "EV"));
+    assert!(roll.iter().any(|(label, _)| label.trim() == "EV"));
     editor.tab = 1;
     click_section_header(&mut editor, &context, "Exposure");
     let photo = controls_frame(&mut editor, &context, 315., vec![]);
@@ -3025,7 +3024,7 @@ fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     assert!(
         controls_frame(&mut editor, &context, 315., vec![])
             .iter()
-            .any(|(label, _)| label == "EV")
+            .any(|(label, _)| label.trim() == "EV")
     );
     assert_eq!(editor.document.state.project, before);
     assert_eq!(editor.document.dirty(), dirty);

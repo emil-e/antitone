@@ -619,7 +619,6 @@ fn deep_stack_reorder_and_reenable_preserve_selection_allocator_and_viewport() {
                 )
                 .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
             let before = editor.document.state.project.clone();
-            let revision = editor.document.visit.canvas.original.continuation();
             let viewport = editor.document.visit.canvas.viewport;
             editor.apply_adjustment_layer_action(
                 if reorder {
@@ -658,10 +657,6 @@ fn deep_stack_reorder_and_reenable_preserve_selection_allocator_and_viewport() {
                         .enabled
                 );
             }
-            assert_ne!(
-                editor.document.visit.canvas.original.continuation(),
-                revision
-            );
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
             let current = editor
                 .positive_processing(

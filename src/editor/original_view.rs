@@ -181,23 +181,10 @@ impl OriginalView {
         self.task = None;
         self.progress = Arc::new(Mutex::new(Progress::Waiting));
     }
-    pub fn invalidate(&mut self) {
+    fn invalidate(&mut self) {
         self.retire_pending();
         self.wanted = None;
         self.rendered = None;
-    }
-    pub fn discard(&mut self) {
-        if self.wanted.is_some() || self.settled().is_some() || self.refining() {
-            self.invalidate();
-        } else {
-            self.cancel_pending();
-        }
-    }
-    pub fn cancel_pending(&mut self) {
-        self.task = None;
-        if self.refining() {
-            self.retire_pending();
-        }
     }
     pub fn observe(&mut self, demand: Demand) {
         if self.wanted.as_deref() != Some(&demand) {
@@ -207,7 +194,11 @@ impl OriginalView {
         }
     }
     pub fn leave(&mut self) {
-        self.discard();
+        if self.wanted.is_some() || self.settled().is_some() || self.refining() {
+            self.invalidate();
+        } else {
+            self.task = None;
+        }
     }
     #[cfg(test)]
     pub fn idle(&self) -> bool {
@@ -311,20 +302,10 @@ impl Editor {
         self.active_canvas_mut().original.rendered()
     }
 
-    pub(super) fn invalidate_original(&mut self) {
-        self.document.visit.canvas.original.invalidate();
-    }
-    pub(super) fn cancel_original_pending(&mut self) {
-        self.document.visit.canvas.original.cancel_pending();
-    }
-    pub(super) fn leave_original(&mut self) {
-        self.active_canvas_mut().original.leave();
-    }
-
     pub(super) fn observe_original(&mut self, demand: Option<Demand>) {
         match demand {
             Some(demand) => self.active_canvas_mut().original.observe(demand),
-            None => self.leave_original(),
+            None => self.active_canvas_mut().original.leave(),
         }
     }
 

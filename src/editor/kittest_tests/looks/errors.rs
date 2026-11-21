@@ -85,6 +85,72 @@ fn reject_displayed(
 }
 
 #[test]
+fn measurement_pickers_do_not_bypass_a_failed_look_or_reframe_the_photo() {
+    fixture_editor_gpu(|mut h, _, device, queue| {
+        let asset = constant_asset(0.4);
+        let rejection = rejected_sample(&device, &queue, &asset);
+        let label = asset.name().to_owned();
+        let id = asset.id();
+        h.update(|editor| editor.look.loaded.push(asset));
+        choose(&mut h, &label);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
+        reject_displayed(&mut h, &rejection, id);
+        for (size, width) in [
+            (egui::vec2(1100., 800.), 315.),
+            (egui::vec2(800., 600.), 270.),
+        ] {
+            set_layout(&mut h, size, width);
+            for kind in [
+                PickerCase::Dmin,
+                PickerCase::Dmax,
+                PickerCase::Gamma,
+                PickerCase::GammaPivot,
+                PickerCase::RollWb,
+                PickerCase::Wb,
+            ] {
+                stage(
+                    &mut h,
+                    if kind == PickerCase::Wb {
+                        "Photo"
+                    } else {
+                        "Roll"
+                    },
+                );
+                reject_displayed(&mut h, &rejection, id);
+                let (failed, composition, viewport, revision) = h.read(|editor| {
+                    (
+                        editor.canvas_frame.displayed.as_ref().unwrap().view.clone(),
+                        editor.active_canvas().last_layout.unwrap().0.composition,
+                        editor.document.visit.canvas.viewport,
+                        editor.document.visit.working_view.revision(),
+                    )
+                });
+                picking::open(&mut h, kind);
+                h.render().unwrap();
+                h.read(|editor| {
+                    assert_eq!(editor.test_pick(), Some(kind.display()));
+                    assert!(!editor.document.source);
+                    assert!(editor.look_rendering_error().is_some());
+                    assert!(Arc::ptr_eq(
+                        &editor.canvas_frame.displayed.as_ref().unwrap().view,
+                        &failed
+                    ));
+                    assert_eq!(editor.document.visit.working_view.revision(), revision);
+                    assert_eq!(
+                        editor.active_canvas().last_layout.unwrap().0.composition,
+                        composition
+                    );
+                    assert_eq!(editor.document.visit.canvas.viewport, viewport);
+                });
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+                    .click();
+                h.step();
+            }
+        }
+    });
+}
+
+#[test]
 fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_tool() {
     fixture_editor_gpu(|mut h, _, device, queue| {
         let asset = constant_asset(0.4);

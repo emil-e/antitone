@@ -76,6 +76,10 @@ fn controls_and_layers_remain_authorable_until_calibration_can_render() {
                 crate::editor::calibration::set_dmax(editor, input.calibration().unwrap().dmax)
                     .unwrap();
             });
+            if h.read(|editor| editor.document.source) {
+                h.get_by_label("View source").click();
+                h.step();
+            }
             workflow::wait_settled(&mut h);
             h.read(|editor| {
                 assert_eq!(editor.document.project.roll.exposure, roll_exposure);

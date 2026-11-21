@@ -26,7 +26,8 @@ a macOS fullscreen Space.
 
 ## Inspecting the source
 
-- **View source** flips between your graded positive and the developed source.
+- **View source** flips between your graded positive and the developed source, including
+  while using a measurement picker. Pickers keep your current view and navigation.
   Negative's positive view requires Dmin/Dmax calibration.
 - **Source inspection** adjusts viewing brightness and, for negatives, **Viewing WB**:
   Daylight by default, or As shot. Canvas and source-preview thumbnails share these

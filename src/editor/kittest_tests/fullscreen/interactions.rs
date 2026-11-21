@@ -42,7 +42,7 @@ fn floating_cancel_retires_only_crop_and_keeps_accepted_state() {
 }
 
 #[test]
-fn positive_pickers_keep_the_same_original_sample_product_and_remain_interactive_fullscreen() {
+fn pickers_keep_source_preference_and_remain_interactive_fullscreen() {
     for kind in [PickerCase::Gamma, PickerCase::GammaPivot, PickerCase::Wb] {
         super::super::tools::calibrated_harness(|mut h| {
             h.update(|editor| {
@@ -61,14 +61,12 @@ fn positive_pickers_keep_the_same_original_sample_product_and_remain_interactive
                 editor.document.source = true;
             });
             picking::open(&mut h, kind);
-            wait_for(&mut h, |editor| {
-                editor.active_canvas().original.settled().is_some()
-            });
+            workflow::wait_settled(&mut h);
             let before = h.read(|editor| {
-                assert!(!editor.canvas_inspection());
+                assert!(editor.canvas_inspection());
                 assert!(editor.document.source);
                 let painted = editor.canvas_frame.displayed.as_ref().unwrap();
-                assert!(!painted.view.capture.is_inspection());
+                assert!(painted.view.capture.is_inspection());
                 (
                     editor.canvas_frame.layout.unwrap().0.composition,
                     painted.view.clone(),
@@ -79,13 +77,13 @@ fn positive_pickers_keep_the_same_original_sample_product_and_remain_interactive
             h.step();
             h.render().unwrap();
             h.read(|editor| {
-                assert!(!editor.canvas_inspection());
+                assert!(editor.canvas_inspection());
                 assert!(editor.document.source);
                 assert_eq!(editor.canvas_frame.layout.unwrap().0.composition, before.0);
-                assert!(Arc::ptr_eq(
-                    &editor.canvas_frame.displayed.as_ref().unwrap().view,
-                    &before.1
-                ));
+                assert!(
+                    editor.canvas_frame.displayed.as_ref().unwrap().view.capture
+                        == before.1.capture
+                );
             });
             let point = h.read(|editor| {
                 editor
@@ -164,7 +162,7 @@ fn crop_handles_and_floating_actions_edit_the_same_draft_fullscreen() {
 }
 
 #[test]
-fn source_picker_keeps_its_uncropped_composition_anchor_and_selection_fullscreen() {
+fn dmin_picker_keeps_cropped_positive_composition_anchor_and_selection_fullscreen() {
     super::super::tools::calibrated_harness(|mut h| {
         h.update(|editor| {
             let crop = Crop::from_region(Rect {
@@ -184,9 +182,17 @@ fn source_picker_keeps_its_uncropped_composition_anchor_and_selection_fullscreen
         picking::open(&mut h, PickerCase::Dmin);
         native(&mut h, false);
         let before = h.read(|editor| editor.canvas_frame.layout.unwrap().0);
-        assert_eq!(before.composition.crop(), Crop::from_region(before.area));
+        assert_eq!(
+            before.composition.crop(),
+            h.read(|editor| editor.photo_crop().unwrap())
+        );
         h.update(|editor| {
-            editor.with_tool_viewport(|viewport| viewport.zoom = Some(4.));
+            let (layout, density) = editor.canvas_frame.layout.unwrap();
+            let size = layout.composition.size();
+            let scale = (layout.canvas.width() / size[0] as f32)
+                .max(layout.canvas.height() / size[1] as f32)
+                * 1.5;
+            editor.with_tool_viewport(|viewport| viewport.zoom = Some(scale * density));
         });
         h.step();
         h.update(|editor| {
@@ -197,6 +203,8 @@ fn source_picker_keeps_its_uncropped_composition_anchor_and_selection_fullscreen
         });
         h.step();
         let before = h.read(|editor| editor.canvas_frame.layout.unwrap().0);
+        assert!(before.image.width() > before.canvas.width());
+        assert!(before.image.height() > before.canvas.height());
         let anchor = before.source_point(before.canvas.center());
         assert!(
             anchor.distance(before.source_point(before.image.center())) > 1.,
@@ -211,24 +219,33 @@ fn source_picker_keeps_its_uncropped_composition_anchor_and_selection_fullscreen
         assert_eq!(after.scale, before.scale);
         assert!(after.source_point(after.canvas.center()).distance(anchor) < 1e-3);
         h.read(|editor| {
-            assert!(editor.canvas_inspection());
+            assert!(!editor.canvas_inspection());
             assert!(
                 !editor.document.source,
                 "fullscreen must not change the normal view preference"
             );
         });
-        let point = after.screen_point(egui::pos2(32., 32.));
+        let point = after.screen_point(egui::pos2(128., 96.));
+        assert!(after.canvas.contains(point) && after.image.contains(point));
         masks::pointer(&mut h, point, true);
         masks::pointer(&mut h, point, false);
         let selected = h.read(|editor| editor.test_pick_region().unwrap());
-        assert_eq!(
-            selected.exact_rectangle(after.area),
-            Some(Rect {
-                x: 16,
-                y: 16,
-                width: 32,
-                height: 32
-            })
+        assert!(selected.exact_rectangle(after.area).is_none());
+        let screen = after.screen_coverage(selected);
+        assert!(screen.center().distance(point) < 1e-3);
+        assert!((screen.width() - 32. * after.scale).abs() < 1e-3);
+        assert!((screen.height() - 32. * after.scale).abs() < 1e-3);
+        let bounds = selected.bounds(after.area).unwrap();
+        assert!(bounds.width * bounds.height > 32 * 32);
+        assert!(
+            (selected
+                .pixels(after.area)
+                .unwrap()
+                .map(|(_, weight)| weight)
+                .sum::<f64>()
+                - 1024.)
+                .abs()
+                < 1e-8
         );
         key(&mut h, egui::Key::Escape);
         h.update(|editor| editor.fullscreen_changed(false));

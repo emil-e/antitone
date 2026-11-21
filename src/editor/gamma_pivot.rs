@@ -1,7 +1,7 @@
 use super::ui::ControlResponse;
 use super::{
     Editor, InputSettings, UiContext, measurement,
-    picking::{self, Display, View},
+    picking::{self, Display},
 };
 use crate::{Error, color::Balance, processing::NegativeInput};
 use std::sync::Arc;
@@ -12,7 +12,7 @@ mod tests;
 
 pub(super) const DISPLAY: Display = Display {
     area: true,
-    ..Display::sample("Gamma colour pivot", View::Working)
+    ..Display::sample("Gamma colour pivot")
 };
 
 struct Anchor {

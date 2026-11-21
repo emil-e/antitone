@@ -441,7 +441,7 @@ fn leaving_a_purpose_releases_input_before_worker_dispatch() {
     with_application(e, |app| {
         let source = app.enter(|e, access| demand(e, 0., access));
         app.pump();
-        app.update(Editor::leave_original);
+        app.update(|editor| editor.observe_original(None));
         app.pump();
         assert!(source.upgrade().is_none());
         app.read(|e| {

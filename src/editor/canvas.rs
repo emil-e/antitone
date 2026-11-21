@@ -10,6 +10,7 @@ mod tests;
 pub(super) struct Frame {
     pub layout: Option<(CanvasLayout, f32)>,
     pub displayed: Option<canvas_view::Displayed>,
+    original_requested: bool,
 }
 
 pub(super) struct Viewer<'a> {
@@ -146,18 +147,16 @@ impl Surface<'_> {
 pub(super) enum ImageMode {
     Photograph,
     Crop,
-    PositiveSample,
     SourceSample,
 }
 
 impl ImageMode {
     pub fn is_sample(self) -> bool {
-        matches!(self, Self::PositiveSample | Self::SourceSample)
+        self == Self::SourceSample
     }
     pub fn inspection(self, normal: bool) -> bool {
         match self {
             Self::Photograph | Self::Crop => normal,
-            Self::PositiveSample => false,
             Self::SourceSample => true,
         }
     }
@@ -212,19 +211,13 @@ impl Canvas<'_> {
         self.paint(editor, layout, image, cx)
     }
 
-    pub fn paint_sample(
+    pub fn paint_source_sample(
         &mut self,
         editor: &mut Editor,
         layout: CanvasLayout,
-        source: bool,
         cx: &UiContext<'_, Editor>,
     ) -> bool {
-        let image = if source {
-            ImageMode::SourceSample
-        } else {
-            ImageMode::PositiveSample
-        };
-        self.paint(editor, layout, image, cx)
+        self.paint(editor, layout, ImageMode::SourceSample, cx)
     }
 
     fn paint(
@@ -301,6 +294,7 @@ impl Editor {
         menu_zoom: Option<f32>,
         cx: &UiContext<'_, Self>,
     ) {
+        self.canvas_frame.original_requested = false;
         if self.has_hosted_tool() {
             let mut viewer = Viewer {
                 ui,
@@ -329,6 +323,9 @@ impl Editor {
             ui::viewer_surface(ui, fullscreen, |ui| {
                 self.viewer_canvas(ui, bar.zoom.or(menu_zoom), cx)
             });
+        }
+        if !self.canvas_frame.original_requested {
+            self.observe_original(None);
         }
     }
 
@@ -453,11 +450,7 @@ impl Editor {
             self.document.project_snapshot().roll,
             self.photo_settings(),
         )?);
-        let capture = if image.is_sample() {
-            PhotographRequest::BeforeLooks(recipe)
-        } else {
-            PhotographRequest::Recipe(recipe)
-        };
+        let capture = PhotographRequest::Recipe(recipe);
         let limits = self
             .document
             .visit
@@ -530,15 +523,18 @@ impl Editor {
         };
         let target = self.document.target();
         let precision = !source_outside_frame && !pending && image.is_sample();
-        self.observe_original(self.source_context().filter(|_| precision).map(|source| {
-            original_view::Demand {
-                capture: capture.clone(),
-                target: self.document.target(),
-                view,
-                composition,
-                source,
-            }
-        }));
+        let demand =
+            self.source_context()
+                .filter(|_| precision)
+                .map(|source| original_view::Demand {
+                    capture: capture.clone(),
+                    target,
+                    view,
+                    composition,
+                    source,
+                });
+        self.canvas_frame.original_requested = demand.is_some();
+        self.observe_original(demand);
         let rendered = match self.working_view(physical_frame, &capture, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {

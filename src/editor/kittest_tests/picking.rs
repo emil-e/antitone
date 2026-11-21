@@ -1,5 +1,6 @@
 use super::*;
 
+mod continuity;
 mod rendering;
 use crate::editor::history::Direction;
 
@@ -25,6 +26,10 @@ pub(super) fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
 #[test]
 fn incompatible_reference_fails_only_the_positive_view_and_can_be_repicked() {
     fn pick_at(h: &mut Harness<'_, Editor>, point: egui::Pos2) {
+        if !h.read(|editor| editor.document.source) {
+            h.get_by_label("View source").click();
+            h.step();
+        }
         open(h, PickerCase::Dmin);
         let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let first = layout.screen_point(point - egui::vec2(8., 8.));
@@ -50,6 +55,8 @@ fn incompatible_reference_fails_only_the_positive_view_and_can_be_repicked() {
             .click();
         h.step();
         wait_interaction(h);
+        h.get_by_label("View source").click();
+        h.step();
     }
 
     workflow::calibrated_workflow(|mut h, _, _directory| {
@@ -143,7 +150,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                         editor.document.source, source_preference,
                         "mode does not commandeer the normal source preference"
                     );
-                    assert_eq!(editor.canvas_inspection(), !source_preference);
+                    assert_eq!(editor.canvas_inspection(), source_preference);
                 });
                 let apply = h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply");
                 assert!(apply.accesskit_node().is_disabled());
@@ -204,7 +211,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
 }
 
 #[test]
-fn apply_restores_the_normal_view_and_measurement_uses_only_cancellable_activity() {
+fn apply_keeps_the_current_view_and_measurement_uses_only_cancellable_activity() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         for (size, width, layout) in [
             (egui::vec2(1100., 800.), 315., "normal"),

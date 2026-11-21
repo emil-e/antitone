@@ -427,7 +427,6 @@ impl Editor {
                 self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
                 self.document.source = false;
                 self.document.visit.working_view.clear();
-                self.invalidate_original();
                 self.status = format!(
                     "Analyzed {} frames. Adjust normally; re-pick Dmin if needed.",
                     outcome.frames
@@ -622,7 +621,7 @@ impl tool::Tool for AnalyzeTool {
                 {
                     tool.drag = None;
                 }
-                canvas.paint_sample(editor, layout, true, cx);
+                canvas.paint_source_sample(editor, layout, cx);
                 tool.paint_review_areas(editor, canvas.ui, layout, layout.canvas);
                 Some(layout)
             },
@@ -1649,7 +1648,6 @@ impl AnalyzeTool {
             self.operation.activity = Some(activity.reporter());
         }
         self.operation.phase = Phase::Fitting;
-        editor.cancel_original_pending();
         activity.progress(0, total);
         editor.status = "Analyzing roll…".into();
         Some(FitInput {

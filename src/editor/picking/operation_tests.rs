@@ -76,7 +76,7 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
         let sampled = called.clone();
         let task = launch(
             app,
-            Display::sample("Custom camera statistics", View::Source),
+            Display::sample("Custom camera statistics"),
             move |region, _| {
                 sampled.store(true, Ordering::Relaxed);
                 let bounds = region.exact_rectangle(image.area).unwrap();
@@ -117,7 +117,7 @@ fn the_executor_drives_the_owned_caller_without_polling_its_join_handle() {
         let sampled = called.clone();
         let task = launch(
             app,
-            Display::sample("Independent measurement", View::Source),
+            Display::sample("Independent measurement"),
             move |_, _| {
                 sampled.store(true, Ordering::Relaxed);
                 Ok(42)
@@ -139,8 +139,8 @@ fn one_caller_can_await_two_pickers_in_sequence_without_an_intervening_yield() {
         let task = app
             .access()
             .spawn(move |cx| async move {
-                let first = pick(&cx, Display::sample("First reading", View::Source)).await?;
-                let second = pick(&cx, Display::sample("Second reading", View::Working)).await?;
+                let first = pick(&cx, Display::sample("First reading")).await?;
+                let second = pick(&cx, Display::sample("Second reading")).await?;
                 Some((first, second))
             })
             .unwrap();
@@ -169,7 +169,7 @@ fn one_caller_can_await_two_pickers_in_sequence_without_an_intervening_yield() {
 }
 
 #[test]
-fn apply_returns_coverage_and_restores_the_view_without_starting_an_activity() {
+fn apply_returns_coverage_and_keeps_the_view_without_starting_an_activity() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
         let before = app.read(|editor| {
@@ -179,7 +179,7 @@ fn apply_returns_coverage_and_restores_the_view_without_starting_an_activity() {
             )
         });
         let cx = app.access();
-        let mut selection = Box::pin(pick(&cx, Display::sample("Region only", View::Source)));
+        let mut selection = Box::pin(pick(&cx, Display::sample("Region only")));
         assert!(
             futures_lite::future::block_on(futures_lite::future::poll_once(&mut selection))
                 .is_none()
@@ -207,7 +207,7 @@ fn an_unpolled_picker_is_lazy_and_abandoning_it_does_not_register_ui() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
         let cx = app.access();
-        let reading = pick(&cx, Display::sample("Never opened", View::Source));
+        let reading = pick(&cx, Display::sample("Never opened"));
         app.read(|editor| assert!(!editor.picking()));
         app.update(|_| drop(reading));
         app.pump();
@@ -220,7 +220,7 @@ fn dropping_a_registered_picker_inside_a_model_borrow_defers_its_ui_cleanup() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
         let cx = app.access();
-        let mut reading = Box::pin(pick(&cx, Display::sample("Dropped reading", View::Source)));
+        let mut reading = Box::pin(pick(&cx, Display::sample("Dropped reading")));
         assert!(
             futures_lite::future::block_on(futures_lite::future::poll_once(&mut reading)).is_none()
         );
@@ -236,7 +236,7 @@ fn abandoned_registration_cleanup_cannot_withdraw_a_successor() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
         let cx = app.access();
-        let mut reading = Box::pin(pick(&cx, Display::sample("Old reading", View::Source)));
+        let mut reading = Box::pin(pick(&cx, Display::sample("Old reading")));
         assert!(
             futures_lite::future::block_on(futures_lite::future::poll_once(&mut reading)).is_none()
         );
@@ -253,11 +253,7 @@ fn abandoned_registration_cleanup_cannot_withdraw_a_successor() {
 fn a_late_first_poll_does_not_replace_a_newer_tool() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let task = launch(
-            app,
-            Display::sample("Late reading", View::Source),
-            |_, _| Ok(42),
-        );
+        let task = launch(app, Display::sample("Late reading"), |_, _| Ok(42));
         app.update(Editor::begin_crop);
         app.run_until(LIMIT, |_| task.is_finished());
         assert_eq!(pollster::block_on(task), None);
@@ -269,11 +265,7 @@ fn a_late_first_poll_does_not_replace_a_newer_tool() {
 fn a_late_first_poll_refuses_reserved_input_without_replaying_after_release() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let task = launch(
-            app,
-            Display::sample("Late reading", View::Source),
-            |_, _| Ok(42),
-        );
+        let task = launch(app, Display::sample("Late reading"), |_, _| Ok(42));
         let block = app.update(|editor| editor.workspace_input.block());
         app.run_until(LIMIT, |_| task.is_finished());
         assert_eq!(pollster::block_on(task), None);
@@ -282,11 +274,7 @@ fn a_late_first_poll_refuses_reserved_input_without_replaying_after_release() {
         drop(block);
         app.pump();
         app.read(|editor| assert!(!editor.picking(), "a refused picker is not replayed"));
-        let retry = launch(
-            app,
-            Display::sample("Fresh reading", View::Source),
-            |_, _| Ok(42),
-        );
+        let retry = launch(app, Display::sample("Fresh reading"), |_, _| Ok(42));
         app.pump();
         app.read(|editor| assert!(editor.picking()));
         app.enter(|editor, cx| editor.finish_pick(cx));
@@ -304,7 +292,7 @@ fn replacing_an_unpolled_action_drops_the_callers_continuation() {
         app.enter(|editor, cx| {
             editor
                 .start_interaction(cx, move |cx| async move {
-                    let _ = pick(&cx, Display::sample("Retired action", View::Source)).await;
+                    let _ = pick(&cx, Display::sample("Retired action")).await;
                     resumed.set(true);
                 })
                 .unwrap();
@@ -322,14 +310,10 @@ fn cancellation_before_submission_returns_no_value_without_running_measurement()
     let called = Arc::new(AtomicBool::new(false));
     with_application(editor, |app| {
         let sampled = called.clone();
-        let task = launch(
-            app,
-            Display::sample("Cancelled selection", View::Source),
-            move |_, _| {
-                sampled.store(true, Ordering::Relaxed);
-                Ok(42)
-            },
-        );
+        let task = launch(app, Display::sample("Cancelled selection"), move |_, _| {
+            sampled.store(true, Ordering::Relaxed);
+            Ok(42)
+        });
         app.pump();
         app.enter(|editor, cx| editor.finish_pick(cx));
         app.run_until(LIMIT, |_| task.is_finished());
@@ -344,14 +328,10 @@ fn cancellation_after_submission_but_before_dispatch_does_not_admit_measurement(
     let called = Arc::new(AtomicBool::new(false));
     with_application(editor, |app| {
         let sampled = called.clone();
-        let task = launch(
-            app,
-            Display::sample("Withdrawn submission", View::Source),
-            move |_, _| {
-                sampled.store(true, Ordering::Relaxed);
-                Ok(42)
-            },
-        );
+        let task = launch(app, Display::sample("Withdrawn submission"), move |_, _| {
+            sampled.store(true, Ordering::Relaxed);
+            Ok(42)
+        });
         app.pump();
         submit(app);
         app.update(|_| drop(task));
@@ -379,8 +359,7 @@ fn retirement_withdraws_running_work_without_releasing_its_physical_inputs() {
             let task = app
                 .access()
                 .spawn(move |cx| async move {
-                    let region =
-                        pick(&cx, Display::sample("Held measurement", View::Source)).await?;
+                    let region = pick(&cx, Display::sample("Held measurement")).await?;
                     let value = measurement::run(&cx, "Held measurement", async move {
                         measurement::query(&worker_cx, move |_| image.reference_coverage(region))
                             .await
@@ -435,14 +414,10 @@ fn errors_and_worker_panics_return_no_value_without_stranding_the_ui() {
     for panic in [false, true] {
         let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
         with_application(editor, |app| {
-            let task = launch(
-                app,
-                Display::sample("Failed measurement", View::Source),
-                move |_, _| {
-                    assert!(!panic, "injected worker panic");
-                    Err::<u32, _>(Error::UnusableSample("test measurement rejected"))
-                },
-            );
+            let task = launch(app, Display::sample("Failed measurement"), move |_, _| {
+                assert!(!panic, "injected worker panic");
+                Err::<u32, _>(Error::UnusableSample("test measurement rejected"))
+            });
             app.pump();
             submit(app);
             app.run_until(LIMIT, |editor| task.is_finished() && !editor.picking());
@@ -468,11 +443,7 @@ fn errors_and_worker_panics_return_no_value_without_stranding_the_ui() {
 fn photo_retirement_cancels_the_picker_but_not_an_independently_owned_caller() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let task = launch(
-            app,
-            Display::sample("Visit reading", View::Source),
-            |_, _| Ok(42),
-        );
+        let task = launch(app, Display::sample("Visit reading"), |_, _| Ok(42));
         app.pump();
         app.update(|editor| editor.replace_photo_scope(editor.id));
         app.run_until(LIMIT, |_| task.is_finished());
@@ -494,9 +465,7 @@ fn a_callers_continuation_outlives_the_picker_and_can_install_its_own_successor(
         app.enter(|editor, cx| {
             editor
                 .start_interaction(cx, move |cx| async move {
-                    let Some(region) =
-                        pick(&cx, Display::sample("Caller reading", View::Working)).await
-                    else {
+                    let Some(region) = pick(&cx, Display::sample("Caller reading")).await else {
                         return;
                     };
                     let value = measurement::run(&cx, "Caller reading", async move {
