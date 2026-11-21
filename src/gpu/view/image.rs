@@ -5,8 +5,6 @@ use crate::geometry::Composition;
 use crate::gpu::evaluation::{self as e, BufferImage, Recorded, RecordedImage, Value};
 use crate::gpu::source::SourceGeometry;
 
-// Active evaluation storage is independent of optional generated-image retention.
-
 pub struct ViewImage {
     pub spec: SourceRequest,
     pub renderer: Arc<crate::renderer::GpuRenderer>,
@@ -75,20 +73,6 @@ impl ViewImage {
             (queue, submissions),
             cancelled,
         )
-    }
-
-    pub fn processing_preview(
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        source: Arc<ProcessingSource>,
-        capture: &PhotographRequest,
-        field: Option<Arc<GpuFlatField>>,
-        spec: SourceRequest,
-        target: OutputTarget,
-    ) -> Result<Arc<Self>, Error> {
-        let spec = Self::proxy_request(&source, spec)?;
-        let (root, spec) = capture.sampled_output(&renderer, &source, field, spec, target)?;
-        Self::record(renderer, kernels, spec, root)
     }
 
     pub(super) fn proxy_request(
@@ -165,21 +149,7 @@ impl ViewImage {
         e::SuppliedImage::from_buffer(self.definition.clone(), self.region, self.pixels.clone())
     }
 
-    pub(crate) fn record(
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        spec: SourceRequest,
-        definition: Value,
-    ) -> Result<Arc<Self>, Error> {
-        let work = renderer
-            .evaluation()
-            .prepare_image(Self::evaluation(renderer.evaluation(), definition.clone())?)?;
-        let image = work.record(renderer.evaluation())?;
-        let region = definition.domain().finite()?;
-        Self::from_recorded(renderer, kernels, spec, definition, region, image)
-    }
-
-    /// Existing workers fulfil missing production inline; painting only calls `record`.
+    /// Existing workers can fulfil missing production without queueing another worker.
     pub(crate) fn on_worker(
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,

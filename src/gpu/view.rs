@@ -69,6 +69,7 @@ pub struct RenderedView {
 }
 
 impl RenderedView {
+    #[cfg(test)]
     pub fn has_correction(&self, field: Option<&Arc<GpuFlatField>>) -> bool {
         self.product.as_ref().is_some_and(|graded| {
             crate::gpu::photograph::PhotographGraph::has_correction(&graded.definition, field)

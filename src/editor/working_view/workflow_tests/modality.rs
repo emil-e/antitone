@@ -64,7 +64,7 @@ fn positive_view_requests_and_presents_rendering_while_save_is_pending() {
             assert!(Arc::ptr_eq(displayed, painted));
             assert!(displayed.capture == requested.capture);
             assert_eq!(displayed.spec.frame(), requested.frame);
-            assert!(editor.active_canvas().preview_rendered.is_none());
+            assert!(editor.active_canvas().preview.demand().is_none());
         });
         drop(release);
         app.run_until(Duration::from_secs(15), |editor| {

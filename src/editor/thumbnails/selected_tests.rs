@@ -4,17 +4,17 @@ use crate::project::Development;
 use crate::viewer::readback::image_pixels;
 
 fn preview_image(editor: &Editor, input: &AuthoredPhotograph) -> Arc<GpuImage> {
-    let (_, frame, view) = editor
+    let view = editor
         .document
         .visit
         .canvas
-        .preview_rendered
-        .as_ref()
+        .preview
+        .rendered()
         .expect("shared provisional renderer");
     assert_eq!(view.processing(), input.clone());
     assert_eq!(view.target, editor.document.target());
     assert_eq!(
-        frame.composition,
+        view.spec.frame().composition,
         editor
             .document
             .visit

@@ -174,6 +174,24 @@ impl Request {
         }
     }
 
+    pub(crate) fn camera_proxy(
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        source: &Arc<ProcessingSource>,
+        field: Option<Arc<GpuFlatField>>,
+        capture: &PhotographRequest,
+        spec: SourceRequest,
+        target: OutputTarget,
+    ) -> Result<Self, Error> {
+        let spec = ViewImage::proxy_request(source, spec)?;
+        let (definition, spec) = capture.sampled_output(&renderer, source, field, spec, target)?;
+        Self::new(Preparation::new(
+            renderer,
+            kernels,
+            vec![ImageRequest::new(definition, spec)?],
+        )?)
+    }
+
     pub(crate) fn photograph(
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,

@@ -25,13 +25,7 @@ fn pending_preview_pixels_follow_turn_and_flip_buttons_before_source_completion(
             assert!(editor.document.visit.source.pending());
             assert!(editor.document.visit.canvas.ready.is_none());
             let displayed = &editor.canvas_frame.displayed.as_ref().unwrap().view;
-            let (_, _, preview) = editor
-                .document
-                .visit
-                .canvas
-                .preview_rendered
-                .as_ref()
-                .unwrap();
+            let preview = editor.document.visit.canvas.preview.rendered().unwrap();
             assert!(Arc::ptr_eq(displayed, preview));
             let image = &preview.image;
             (

@@ -17,28 +17,23 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             .clone();
         let layout = editor.document.visit.canvas.last_layout.unwrap().0;
         let context = egui::Context::default();
+        let cx = UiContext::render_only();
         let capture =
             PhotographRequest::Inspection(InspectionView::new(glam::DMat3::IDENTITY, 0.).unwrap());
         editor
-            .preview_paint(&proxy, layout, &capture, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
-        let original = editor
-            .active_canvas()
-            .preview_rendered
-            .as_ref()
-            .unwrap()
-            .2
-            .clone();
+        let original = editor.active_canvas().preview.rendered().unwrap().clone();
         original.ensure_submitted(&device, &queue, &editor.submissions, &context);
         let original_pixels =
             crate::viewer::readback::image_pixels(&device, &queue, &original.image);
         editor
-            .preview_paint(&proxy, layout, &capture, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
         assert!(
             Arc::ptr_eq(
                 &original,
-                &editor.active_canvas().preview_rendered.as_ref().unwrap().2
+                editor.active_canvas().preview.rendered().unwrap()
             ),
             "unchanged inspection must reuse the current rendered value"
         );
@@ -67,15 +62,9 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
                 .unwrap()
                 .into();
         editor
-            .preview_paint(&proxy, layout, &capture, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
-        let corrected = editor
-            .active_canvas()
-            .preview_rendered
-            .as_ref()
-            .unwrap()
-            .2
-            .clone();
+        let corrected = editor.active_canvas().preview.rendered().unwrap().clone();
         assert!(!Arc::ptr_eq(&original, &corrected));
         corrected.ensure_submitted(&device, &queue, &editor.submissions, &context);
         let corrected_pixels =
@@ -94,25 +83,19 @@ fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_proje
             "the prior rendered value remains valid for its held consumer"
         );
         editor
-            .preview_paint(&proxy, layout, &capture, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
         assert!(Arc::ptr_eq(
             &corrected,
-            &editor.active_canvas().preview_rendered.as_ref().unwrap().2
+            editor.active_canvas().preview.rendered().unwrap()
         ));
 
         editor.document.state.project.set_flat_field(None).unwrap();
         editor.document.correction = None.into();
         editor
-            .preview_paint(&proxy, layout, &capture, false, &context)
+            .preview_paint(&proxy, layout, &capture, false, &context, &cx)
             .unwrap();
-        let cleared = editor
-            .active_canvas()
-            .preview_rendered
-            .as_ref()
-            .unwrap()
-            .2
-            .clone();
+        let cleared = editor.active_canvas().preview.rendered().unwrap().clone();
         cleared.ensure_submitted(&device, &queue, &editor.submissions, &context);
         assert_eq!(
             original_pixels,

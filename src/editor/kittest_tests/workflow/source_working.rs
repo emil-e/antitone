@@ -436,20 +436,17 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                     && editor.document.visit.working_view.displayed.is_none()
             );
             let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
-            let preview = editor
-                .document
-                .visit
-                .canvas
-                .preview_rendered
-                .as_ref()
-                .expect("available proxy preview");
+            let preview = &editor.document.visit.canvas.preview;
+            let rendered = preview.rendered().expect("available proxy preview");
             assert!(
-                Arc::ptr_eq(&scope, &preview.2),
+                Arc::ptr_eq(&scope, rendered),
                 "scopes follow the painted fallback even while acquisition is parked"
             );
             assert!(
                 preview
-                    .0
+                    .demand()
+                    .unwrap()
+                    .proxy
                     .same_source(&editor.document.visit.canvas.ready.as_ref().unwrap().proxy),
                 "preview consumes the selected photo's actual camera value"
             );
@@ -471,7 +468,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         });
         harness.render().unwrap();
         harness.read(|editor| {
-            assert!(editor.document.visit.canvas.preview_rendered.is_none());
+            assert!(editor.document.visit.canvas.preview.demand().is_none());
             let displayed = editor
                 .document
                 .visit

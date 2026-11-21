@@ -160,7 +160,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                     .expect("selected camera preview is cached"),
             );
             e.document.visit.working_view.clear();
-            e.document.visit.canvas.preview_rendered = None;
+            e.document.visit.canvas.preview.clear();
             let timing = Arc::new(SelectionTiming::new(e.id, Instant::now()));
             e.document.visit.canvas.selection_timing = Some(timing.clone());
             timing
@@ -169,14 +169,13 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         h.read(|e| {
             assert!(e.document.visit.pending_preview.is_some());
             assert!(e.document.visit.working_view.displayed.is_none());
-            let preview = &e
+            let preview = e
                 .document
                 .visit
                 .canvas
-                .preview_rendered
-                .as_ref()
-                .expect("usable placeholder")
-                .2;
+                .preview
+                .rendered()
+                .expect("usable placeholder");
             assert_eq!(preview.capture.recipe().unwrap().repairs.len(), 1);
             assert!(e.document.visit.working_view.completed_capture().is_none());
             assert_eq!(

@@ -263,7 +263,6 @@ impl WorkingView {
         self.gpu.as_ref().map(|(device, _)| device)
     }
 
-    #[cfg(test)]
     pub(super) fn queue(&self) -> Option<&wgpu::Queue> {
         self.gpu.as_ref().map(|(_, queue)| queue)
     }
@@ -811,7 +810,15 @@ pub(super) async fn acquire_images(
 
 impl Editor {
     pub(super) fn preview_failure_status(&self) -> Option<(ui::ContextualStatus, &Error)> {
-        let error = self.document.visit.working_view.error.as_ref()?;
+        let working = &self.document.visit.working_view;
+        let error = working.error.as_ref().or_else(|| {
+            // An optional fallback failure does not fail the primary view still being produced.
+            if working.updating {
+                None
+            } else {
+                self.active_canvas().preview.error()
+            }
+        })?;
         let preview = if self.canvas_frame.displayed.is_some() {
             "Preview not updated — showing previous image"
         } else {

@@ -741,10 +741,12 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switch
                 .expect("working view")
         });
         assert_eq!(first.image.processing_byte_len(), (0, 0));
-        harness.read(|editor| assert!(
-        editor.document.visit.canvas.preview_rendered.is_none(),
-        "scopes must not recreate unused provisional storage after accepted working presentation"
-    ));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.preview.demand().is_none(),
+                "scopes must not recreate unused provisional storage after accepted working presentation"
+            );
+        });
         stage(&mut harness, "Photo");
         for (label, value) in [
             ("Exposure", "1.1"),
@@ -768,7 +770,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switch
                     "{label} must not reacquire or demote source detail"
                 );
                 assert!(current.spec == first.spec);
-                assert!(editor.document.visit.canvas.preview_rendered.is_none());
+                assert!(editor.document.visit.canvas.preview.demand().is_none());
                 assert_eq!(
                     &current.processing(),
                     editor
@@ -825,7 +827,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switch
                         .unwrap()
                 );
                 assert!(
-                    editor.document.visit.canvas.preview_rendered.is_none(),
+                    editor.document.visit.canvas.preview.demand().is_none(),
                     "dragging/scopes must not allocate a second presentation path"
                 );
                 exposures.push(editor.photo_settings().exposure);
