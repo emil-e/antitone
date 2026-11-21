@@ -1,11 +1,14 @@
 use super::{
     ControlResponse, INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH,
-    PARAMETER_SLIDER_HEIGHT, PARAMETER_UNIT_WIDTH, icons,
+    PARAMETER_SLIDER_HEIGHT, icons,
+    inspector::name_label,
     interaction::{control_active, control_started},
     numeric_cancelled,
 };
 use egui::{Response, Ui};
 use std::ops::RangeInclusive;
+
+const PARAMETER_COLUMN_GAP: f32 = 8.;
 
 /// An inspector value row. Identity is independent of the displayed name.
 /// Features supply value semantics; spacing and gestures belong to the component.
@@ -116,9 +119,8 @@ struct FineDrag {
     fine: bool,
 }
 
-/// The fixed name column shared by every parameter row, so tracks line up across sections.
 fn parameter_name(ui: &mut Ui, row: &ParameterRow<'_>) -> Response {
-    let label = super::name_label(ui, row.label);
+    let label = name_label(ui, row.label);
     if let Some(help) = row.help {
         label.clone().on_hover_text(help);
     }
@@ -223,16 +225,18 @@ fn numeric_field(
     let decimals = row.decimals;
     let numeric = ui
         .push_id("numeric", |ui| {
-            ui.add_sized(
-                [PARAMETER_NUMERIC_WIDTH, height],
-                egui::DragValue::new(value)
-                    .speed(row.speed.unwrap_or(row.step))
-                    .range(row.range.clone())
-                    .clamp_existing_to_range(false)
-                    .min_decimals(2.min(decimals))
-                    .max_decimals(decimals)
-                    .update_while_editing(false),
-            )
+            ui.spacing_mut().button_padding.x = 2.;
+            let mut field = egui::DragValue::new(value)
+                .speed(row.speed.unwrap_or(row.step))
+                .range(row.range.clone())
+                .clamp_existing_to_range(false)
+                .min_decimals(2.min(decimals))
+                .max_decimals(decimals)
+                .update_while_editing(false);
+            if let Some(unit) = row.unit {
+                field = field.suffix(egui::RichText::new(format!(" {unit}")).small().weak());
+            }
+            ui.add_sized([PARAMETER_NUMERIC_WIDTH, height], field)
         })
         .inner;
     let cancelled = numeric_cancelled(ui, &numeric);
@@ -254,47 +258,30 @@ fn parameter_row(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64) -> Parame
     ui.push_id(row.id, |ui| {
         let previous = *value;
         let mut reset = false;
-        let unit = row.unit;
         let (slider, numeric, label, cancelled, slider_value, numeric_value) =
             icons::row_at(ui, INSPECTOR_ROW_HEIGHT, |ui| {
+                ui.spacing_mut().item_spacing.x = PARAMETER_COLUMN_GAP;
                 let label = parameter_name(ui, row);
                 reset = row.default_value.is_some() && name_reset_gesture(ui, &label);
-                let reserved = PARAMETER_NUMERIC_WIDTH
-                    + 3. * ui.spacing().item_spacing.x
-                    + PARAMETER_UNIT_WIDTH;
-                let width = (ui.available_width() - reserved).max(48.);
+
+                let reserved = PARAMETER_COLUMN_GAP + PARAMETER_NUMERIC_WIDTH;
+                let width = (ui.available_width() - reserved).max(1.);
                 let mut slider_value = previous;
                 let slider = ui
                     .push_id("track", |ui| track(ui, row, &mut slider_value, width))
                     .inner;
+
                 let mut numeric_value = previous;
-                let (numeric, cancelled) = ui
-                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_sized(
-                            [PARAMETER_UNIT_WIDTH, INSPECTOR_ROW_HEIGHT - 2.],
-                            egui::Label::new(unit.unwrap_or("")),
-                        );
-                        let (numeric, cancelled) = ui
-                            .push_id("number", |ui| {
-                                numeric_field(
-                                    ui,
-                                    row,
-                                    &mut numeric_value,
-                                    INSPECTOR_ROW_HEIGHT - 2.,
-                                )
-                            })
-                            .inner;
-                        if row.default_value.is_some() {
-                            numeric.clone().context_menu(|ui| {
-                                if ui.button("Reset to default").clicked() {
-                                    reset = true;
-                                    ui.close();
-                                }
-                            });
+                let (numeric, cancelled) =
+                    numeric_field(ui, row, &mut numeric_value, INSPECTOR_ROW_HEIGHT - 2.);
+                if row.default_value.is_some() {
+                    numeric.clone().context_menu(|ui| {
+                        if ui.button("Reset to default").clicked() {
+                            reset = true;
+                            ui.close();
                         }
-                        (numeric, cancelled)
-                    })
-                    .inner;
+                    });
+                }
                 (
                     slider,
                     numeric,

@@ -24,10 +24,10 @@ pub(super) use icons::Icon;
 mod inspector;
 pub(super) use inspector::{
     INSPECTOR_ROW_HEIGHT, INSPECTOR_SECTION_GAP, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH,
-    PARAMETER_SLIDER_HEIGHT, PARAMETER_UNIT_WIDTH, SectionHeader, SectionTool, collect_expansion,
-    draggable_icon_row, inspector_dropdown, inspector_row, inspector_spacing,
-    labelled_inspector_dropdown, labelled_row, labelled_row_at, name_label, restore_expansion,
-    section, section_disclosure, section_with_secondary_tool, stage_tabs,
+    PARAMETER_SLIDER_HEIGHT, SectionHeader, SectionTool, collect_expansion, draggable_icon_row,
+    inspector_dropdown, inspector_row, inspector_spacing, labelled_inspector_dropdown,
+    labelled_row, labelled_row_at, restore_expansion, section, section_disclosure,
+    section_with_secondary_tool, stage_tabs,
 };
 
 mod interaction;

@@ -466,40 +466,54 @@ fn bounded_rows_preserve_precision_clamp_edits_and_reset_only_when_enabled() {
 }
 
 #[test]
-fn parameter_rows_share_one_track_start() {
-    let context = egui::Context::default();
-    let mut contrast = 1.;
-    let mut pivot = 0.18;
-    let mut exposure = 0.;
-    let mut margin = 1.;
-    let mut rects = None;
-    let mut output = context.run_ui(
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(315., 240.),
-            )),
-            ..Default::default()
-        },
-        |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let a = identity_row().show(ui, &mut contrast).slider;
-                let b = ParameterRow::new("pivot", "Pivot", 0.01..=1.0)
-                    .logarithmic(true)
-                    .show(ui, &mut pivot)
-                    .slider;
-                let c = wide_row().show(ui, &mut exposure).slider;
-                let d = percent_row().show(ui, &mut margin).slider;
-                rects = Some((a, b, c, d));
-            });
-        },
-    );
-    output.textures_delta.clear();
-    let (contrast, pivot, exposure, margin) = rects.unwrap();
-    // Unit labels shorten the track at its right end, but every track starts in the same column.
-    assert_eq!(contrast.rect.left(), pivot.rect.left());
-    assert_eq!(pivot.rect.left(), exposure.rect.left());
-    assert_eq!(exposure.rect.left(), margin.rect.left());
+fn parameter_grid_aligns_tracks_and_values_with_or_without_units() {
+    for scale in [1., 2.] {
+        let context = egui::Context::default();
+        context.set_pixels_per_point(scale);
+        crate::editor::ui::configure_fonts(&context);
+        context.enable_accesskit();
+        let mut layout = None;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(270., 240.),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let right = ui.available_rect_before_wrap().right();
+                let mut contrast = 1.;
+                let mut exposure = -crate::processing::MAX_EXPOSURE;
+                let mut margin = crate::auto_crop::MAX_MARGIN_PERCENT;
+                let contrast = identity_row().show(ui, &mut contrast);
+                let exposure = wide_row().show(ui, &mut exposure);
+                let margin = percent_row().show(ui, &mut margin);
+                layout = Some((right, contrast, [(exposure, "EV"), (margin, "%")]));
+            },
+        );
+        output.textures_delta.clear();
+
+        let (right, contrast, with_units) = layout.unwrap();
+        let label_gap = contrast.slider.rect.left() - contrast.label.rect.right();
+        let value_gap = contrast.numeric.rect.left() - contrast.slider.rect.right();
+        assert!((label_gap - 8.).abs() < 0.5, "label gap: {label_gap}");
+        assert!((value_gap - 8.).abs() < 0.5, "value gap: {value_gap}");
+        assert!((contrast.numeric.rect.right() - right).abs() < 0.5);
+
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        for (row, unit) in with_units {
+            assert_eq!(row.slider.rect.x_range(), contrast.slider.rect.x_range());
+            assert_eq!(row.numeric.rect.x_range(), contrast.numeric.rect.x_range());
+            assert!(
+                nodes.iter().any(|(_, node)| {
+                    node.role() == egui::accesskit::Role::SpinButton
+                        && node.value().is_some_and(|value| value.ends_with(unit))
+                }),
+                "the value should include its unit"
+            );
+        }
+    }
 }
 
 #[test]

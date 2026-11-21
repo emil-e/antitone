@@ -163,7 +163,39 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
                 };
             });
             let input = harness.read(|editor| editor.document.project.input);
+            set_layout(&mut harness, egui::vec2(800., 600.), 270.);
             stage(&mut harness, "Roll");
+            harness.get_by_label("White balance wheel").scroll_to_me();
+            harness.try_run_realtime().unwrap();
+
+            let wheel = harness.get_by_label("White balance wheel").rect();
+            let tracks = ["Warmth", "Tint"].map(|label| {
+                use egui::accesskit::Role;
+                let number = harness
+                    .get_all_by_role_and_label(Role::SpinButton, label)
+                    .map(|node| node.rect())
+                    .find(|rect| wheel.y_range().contains(rect.center().y))
+                    .expect("balance value beside wheel");
+                let track = harness
+                    .get_all_by_role_and_label(Role::Slider, label)
+                    .map(|node| node.rect())
+                    .find(|rect| rect.y_range().contains(number.center().y))
+                    .expect("balance track on the same row as its value");
+                assert!(track.right() <= number.left() && number.right() <= wheel.left());
+                assert!(track.width() >= 40., "balance track is cramped: {track:?}");
+                track
+            });
+            assert_eq!(tracks[0].x_range(), tracks[1].x_range());
+            if !digital {
+                use egui::accesskit::Role;
+                let gamma_track = harness.get_by_role_and_label(Role::Slider, "Gamma").rect();
+                let gamma_value = harness
+                    .get_by_role_and_label(Role::SpinButton, "Gamma")
+                    .rect();
+                assert_eq!(tracks[0].left(), gamma_track.left());
+                assert!((wheel.right() - gamma_value.right()).abs() <= 1.);
+            }
+
             reset_shared_balance_component(&mut harness, "Warmth", 0.2);
             harness.read(|editor| {
                 assert_eq!(
