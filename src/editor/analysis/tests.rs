@@ -366,22 +366,31 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         output: [32, 24],
         frame: None,
     };
+    let original_demand = super::super::original_view::Demand {
+        capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+            editor
+                .positive_recipe(
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
+                )
+                .unwrap(),
+        )),
+        target,
+        view: Some(view),
+        composition,
+        source: source::Context {
+            source: super::super::tests::developed_fixture(),
+            reference: None,
+            correction: Default::default(),
+        },
+    };
     editor
         .document
         .visit
         .canvas
         .original
-        .observe(super::super::original_view::Demand::fixture(
-            input.clone(),
-            target,
-            Some(view),
-            composition,
-            source::Context {
-                source: super::super::tests::developed_fixture(),
-                reference: None,
-                correction: Default::default(),
-            },
-        ));
+        .observe(original_demand.clone());
     let original_revision = editor.document.visit.canvas.original.continuation();
     editor.document.visit.canvas.original.start_fixture(view);
     let request = capture_request(&editor);
@@ -466,10 +475,30 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(!editor.document.source);
     assert!(editor.document.visit.working_view.revision().is_none());
     assert!(editor.document.visit.working_view.displayed.is_none());
-    assert!(
-        editor.document.visit.canvas.original.wanted.is_none()
-            && editor.document.visit.canvas.original.settled().is_none()
+    assert_eq!(
+        editor.document.visit.canvas.original.continuation(),
+        original_revision
     );
+    let original_demand = super::super::original_view::Demand {
+        capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+            editor
+                .positive_recipe(
+                    editor.document.project.input,
+                    editor.document.project.roll,
+                    editor.photo_settings(),
+                )
+                .unwrap(),
+        )),
+        ..original_demand
+    };
+    editor
+        .document
+        .visit
+        .canvas
+        .original
+        .observe(original_demand);
+    assert!(editor.document.visit.canvas.original.wanted.is_some());
+    assert!(editor.document.visit.canvas.original.settled().is_none());
     assert_ne!(
         editor.document.visit.canvas.original.continuation(),
         original_revision

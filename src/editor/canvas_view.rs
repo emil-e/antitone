@@ -208,12 +208,6 @@ impl super::Editor {
     }
 
     pub(super) fn canvas_inspection(&self) -> bool {
-        self.document
-            .visit
-            .picker
-            .display()
-            .map_or(self.document.source, |display| {
-                display.view != super::picking::View::Working
-            })
+        self.document.source
     }
 }

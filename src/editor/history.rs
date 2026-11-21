@@ -276,7 +276,6 @@ impl Editor {
                     .position(|candidate| *candidate == id)
             })
             .unwrap_or(0);
-        self.invalidate_original();
         if !same_visit && let Some(input) = next {
             self.start_source_acquisition(input.path().to_owned(), cx);
         }

@@ -15,7 +15,7 @@ fn reference_rendering_progresses_while_modal_input_is_reserved() {
                 .unwrap()
                 .view
                 .test_original_mut()
-                .invalidate();
+                .leave();
             editor.set_test_busy(true);
         });
         h.step();

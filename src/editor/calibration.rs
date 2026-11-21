@@ -1,6 +1,6 @@
 use super::{
     Balance, DVec3, Editor, InputSettings, UiContext, measurement,
-    picking::{self, Display, View},
+    picking::{self, Display},
     ui,
 };
 
@@ -9,9 +9,9 @@ mod query;
 #[cfg(test)]
 mod tests;
 
-pub(super) const DMIN: Display = Display::sample("Dmin", View::Source);
-pub(super) const DMAX: Display = Display::sample("Dmax", View::Source);
-pub(super) const GAMMA: Display = Display::sample("Gamma neutral", View::Working);
+pub(super) const DMIN: Display = Display::sample("Dmin");
+pub(super) const DMAX: Display = Display::sample("Dmax");
+pub(super) const GAMMA: Display = Display::sample("Gamma neutral");
 
 pub(super) fn reference_control(
     ui: &mut egui::Ui,
@@ -236,13 +236,9 @@ fn change_input(
         .map_err(|error| error.to_string())?;
     let mut candidate = editor.document.project.input;
     change(&mut candidate)?;
-    let became_ready = !editor.document.project.input.ready() && candidate.ready();
     draft.update(|project| project.input = candidate);
     editor
         .commit_project(draft)
         .map_err(|error| error.to_string())?;
-    if became_ready {
-        editor.document.source = false;
-    }
     Ok(())
 }

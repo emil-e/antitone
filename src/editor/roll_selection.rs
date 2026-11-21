@@ -207,7 +207,6 @@ impl Editor {
                 cx,
             );
         } else {
-            self.invalidate_original();
             self.document.visit.working_view.clear();
             self.id = self.request_id();
             self.replace_photo_scope(self.id);

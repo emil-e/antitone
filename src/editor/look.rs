@@ -303,7 +303,6 @@ impl Editor {
                             editor.look_failed(error.to_string());
                         } else {
                             editor.remember_imported_look();
-                            editor.invalidate_original();
                         }
                     }
                     Ok(None) => editor.status = format!("{} preparation cancelled", slot.label()),
@@ -336,8 +335,6 @@ impl Editor {
             })();
             if let Err(error) = result {
                 self.look_failed(error.to_string());
-            } else {
-                self.invalidate_original();
             }
         }
     }

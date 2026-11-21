@@ -104,14 +104,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
 
         h.enter(|editor, cx| editor.begin_test_picker(PickerCase::Wb, cx));
         h.step();
-        wait_for(&mut h, |editor| {
-            assert!(
-                !editor.document.visit.canvas.original.failed(),
-                "{}",
-                editor.status
-            );
-            editor.document.visit.canvas.original.settled().is_some()
-        });
+        workflow::wait_settled(&mut h);
         h.event(egui::Event::PointerGone);
         h.step();
         h.render().unwrap();

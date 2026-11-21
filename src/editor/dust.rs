@@ -568,10 +568,6 @@ impl Editor {
         }
     }
 
-    fn invalidate_settled(&mut self) {
-        self.invalidate_original();
-    }
-
     pub(super) fn begin_dust_cleanup(&mut self) {
         if !self.document.project.input.ready() || !self.tool_start_available() {
             return;
@@ -761,7 +757,6 @@ impl tool::Tool for DustTool {
                 if reset {
                     editor.reset_dust_repairs(source);
                     editor.status = "Dust repairs reset".into();
-                    editor.invalidate_settled();
                 }
             },
         );
@@ -1126,7 +1121,6 @@ impl DustTool {
         self.cancel_dust_mask();
         editor.status = "Finding a donor…".into();
         self.find_dust_donor(editor, source, previous, support, cx);
-        editor.invalidate_settled();
     }
 
     fn dust_source_position(
@@ -1307,7 +1301,6 @@ impl DustTool {
                 .borrow_mut()
                 .cancel_target(source, id);
             editor.status = "Dust repair deleted".into();
-            editor.invalidate_settled();
         }
     }
 
@@ -1480,7 +1473,6 @@ impl DustTool {
         ];
         if draft.offset != offset {
             draft.offset = offset;
-            editor.invalidate_settled();
         }
     }
 
@@ -1537,7 +1529,6 @@ impl DustTool {
                 editor.status = format!("Dust source rejected: {error}");
             }
         }
-        editor.invalidate_settled();
     }
 
     fn paint_dust(&self, editor: &Editor, ui: &egui::Ui, geometry: crate::viewport::CanvasLayout) {
@@ -2033,7 +2024,6 @@ impl Editor {
         }
         log::info!(repair = repair.0, repairs = self.dust_repairs(source).unwrap().repairs().len(), seconds = stroke.released.elapsed().as_secs_f64(); "dust_donor_accepted");
         self.status = "Donor selected".into();
-        self.invalidate_settled();
         Ok(repair)
     }
 }

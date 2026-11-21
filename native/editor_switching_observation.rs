@@ -380,7 +380,6 @@ fn workload(
             Ok(())
         })();
         app.update(|editor| {
-            editor.document.visit.canvas.original.invalidate();
             editor.document.visit.working_view.clear();
             editor.source_epoch.fetch_add(1, Ordering::Relaxed);
             editor.document = super::document::Document::default().into();

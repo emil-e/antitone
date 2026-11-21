@@ -342,7 +342,6 @@ impl Editor {
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.canvas_frame = Default::default();
         self.remember_imported_look();
-        self.invalidate_original();
         self.status = "Project ready".into();
     }
 
@@ -1005,7 +1004,6 @@ impl Editor {
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.reinterpret_photo(self.id);
-        self.invalidate_original();
         if let Some(id) = self.document.visit.current_source
             && let Ok(path) = self.document.source_path(id)
         {

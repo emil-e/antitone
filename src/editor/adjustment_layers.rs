@@ -213,7 +213,6 @@ impl Editor {
             .current_source
             .ok_or(Error::InvalidParameter("no selected source"))?;
         let source = self.document.state.project.source(id)?;
-        let before = source.grade_snapshot()?;
         let mut candidate = source.clone();
         self.overlay_adjustment_layer_settings(&mut candidate, self.photo_settings());
         edit(
@@ -221,18 +220,14 @@ impl Editor {
                 .adjustment_layers
                 .get_or_insert_with(Default::default),
         )?;
-        let after = candidate.grade_snapshot()?;
+        candidate.grade_snapshot()?;
         draft.update(|project| {
             project
                 .source_mut(id)
                 .expect("current edit source")
                 .adjustment_layers = candidate.adjustment_layers;
         });
-        self.commit_project(draft)?;
-        if before != after {
-            self.invalidate_original();
-        }
-        Ok(())
+        self.commit_project(draft)
     }
 
     pub(super) fn adjustment_layer_order_input(

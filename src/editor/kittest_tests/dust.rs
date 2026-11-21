@@ -510,10 +510,37 @@ fn fullscreen_adds_dust_repairs_and_keeps_them_after_exit_and_done() {
         ready(&mut h, 1);
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let first = h.read(|editor| editor.dust_repairs(source).unwrap().repairs()[0].clone());
-        assert!(h.get_by_label("View source").accesskit_node().is_disabled());
-        h.get_by_label("View source").click();
-        h.step();
-        h.read(|editor| assert!(!editor.document.source && editor.dusting()));
+        let (project, history, viewport) = h.read(|editor| {
+            (
+                editor.document.state.project.clone(),
+                editor.history_label(Direction::Undo).map(str::to_owned),
+                editor.document.visit.canvas.viewport,
+            )
+        });
+        for source_view in [true, false] {
+            assert!(!h.get_by_label("View source").accesskit_node().is_disabled());
+            h.get_by_label("View source").click();
+            h.step();
+            wait_for(&mut h, |editor| {
+                editor.document.visit.working_view.idle()
+                    && editor
+                        .canvas_frame
+                        .displayed
+                        .as_ref()
+                        .is_some_and(|painted| painted.view.capture.is_inspection() == source_view)
+            });
+            h.read(|editor| {
+                assert_eq!(editor.document.source, source_view);
+                assert!(editor.dusting());
+                assert_eq!(editor.document.state.project, project);
+                assert_eq!(editor.history_label(Direction::Undo), history.as_deref());
+                assert_eq!(editor.document.visit.canvas.viewport, viewport);
+                let repairs = editor.dust_repairs(source).unwrap().repairs();
+                assert_eq!(repairs.len(), 1);
+                assert_eq!(repairs[0], first);
+            });
+        }
+        ready(&mut h, 1);
         key(&mut h, egui::Key::F);
         h.read(|editor| assert!(editor.fullscreen.is_some()));
         let brush = h.read(|editor| editor.document.visit.dust.brush_size);

@@ -72,6 +72,10 @@ pub(super) fn calibrated_workflow<R>(
                     name
                 )
             });
+            if !harness.read(|editor| editor.document.source) {
+                harness.get_by_label("View source").click();
+                harness.step();
+            }
             harness.get_by_label(action).scroll_to_me();
             harness.try_run_realtime().unwrap();
             harness.get_by_label(action).click();
@@ -129,6 +133,9 @@ pub(super) fn calibrated_workflow<R>(
             );
         }
         harness.read(|editor| assert!(editor.calibration().is_some()));
+        harness.get_by_label("View source").click();
+        harness.step();
+        harness.read(|editor| assert!(!editor.document.source));
         harness.get_by_label("working-photo.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.document.visit.source.pending());
@@ -147,10 +154,7 @@ pub(super) fn calibrated_workflow<R>(
                 "working-photo.dng"
             )
         });
-        if harness.read(|editor| editor.document.source) {
-            harness.get_by_label("View source").click();
-            harness.step();
-        }
+        harness.read(|editor| assert!(!editor.document.source));
         enter_numeric(&mut harness, "Gamma", "0.75");
         harness.read(|editor| assert_eq!(editor.gamma(), 0.75));
         stage(&mut harness, "Photo");

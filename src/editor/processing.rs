@@ -178,11 +178,7 @@ pub(super) fn image_paint(
 ) -> Result<ImagePaint, Error> {
     use crate::gpu::photograph::request::PhotographRequest;
     let (root, luts) = match capture {
-        Some(
-            capture @ (PhotographRequest::Recipe(_)
-            | PhotographRequest::BeforeLooks(_)
-            | PhotographRequest::Inspection(_)),
-        ) => (
+        Some(capture @ (PhotographRequest::Recipe(_) | PhotographRequest::Inspection(_))) => (
             Some(image.capture_calculation(&capture, field)?),
             capture.luts().clone(),
         ),
