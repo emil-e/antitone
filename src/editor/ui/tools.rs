@@ -1,5 +1,5 @@
 use super::{
-    CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, INSPECTOR_SECTION_GAP, TextAction, feedback,
+    CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, TextAction, feedback,
     icons::{self, Icon},
     instrument_label,
 };
@@ -18,15 +18,21 @@ pub(in crate::editor) struct ToolShelf;
 
 impl ToolShelf {
     pub(in crate::editor) fn show<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> R {
-        ui.push_id("tool-shelf", |ui| {
-            // A little air between the stage tabs and their tools; the first section's own
-            // separator supplies the separation below.
-            ui.add_space(INSPECTOR_SECTION_GAP);
-            ui.spacing_mut().item_spacing.x = 4.;
-            ui.spacing_mut().interact_size.y = INSPECTOR_ROW_HEIGHT;
-            icons::row_at(ui, INSPECTOR_ROW_HEIGHT, contents).inner
-        })
-        .inner
+        let width = ui.available_rect_before_wrap().x_range();
+        let shelf = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(4, 0))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 4.;
+                ui.spacing_mut().interact_size.y = INSPECTOR_ROW_HEIGHT;
+                icons::row_at(ui, INSPECTOR_ROW_HEIGHT, contents).inner
+            });
+        let seam_gap = ui.spacing().item_spacing.y + super::inspector::STAGE_RULE_INSET;
+        ui.painter().hline(
+            width,
+            shelf.response.rect.bottom() + seam_gap,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        );
+        shelf.inner
     }
 }
 
@@ -38,6 +44,7 @@ pub(in crate::editor) struct ToolButton<'a> {
     enabled: bool,
     active: Option<bool>,
     changed: bool,
+    emphasized: bool,
 }
 
 impl<'a> ToolButton<'a> {
@@ -49,6 +56,7 @@ impl<'a> ToolButton<'a> {
             enabled: true,
             active: None,
             changed: false,
+            emphasized: false,
         }
     }
 
@@ -69,7 +77,14 @@ impl<'a> ToolButton<'a> {
         self
     }
 
+    pub(in crate::editor) fn emphasized(mut self) -> Self {
+        self.emphasized = true;
+        self
+    }
+
     pub(in crate::editor) fn show(self, ui: &mut Ui) -> Response {
+        let backdrop = (self.emphasized && self.active != Some(true))
+            .then(|| ui.painter().add(egui::Shape::Noop));
         // Shelves inherit the inspector row height so the row they were given actually fits.
         let response = ui
             .scope(|ui| {
@@ -94,6 +109,16 @@ impl<'a> ToolButton<'a> {
                 )
             })
             .inner;
+        if let Some(backdrop) = backdrop
+            && response.enabled()
+            && !response.hovered()
+            && !response.has_focus()
+        {
+            ui.painter().set(
+                backdrop,
+                egui::Shape::rect_filled(response.rect, 4., ui.visuals().selection.bg_fill),
+            );
+        }
         if self.active == Some(true) {
             ui.painter().rect_stroke(
                 response.rect.shrink(1.),

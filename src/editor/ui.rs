@@ -23,11 +23,11 @@ pub(super) use icons::Icon;
 
 mod inspector;
 pub(super) use inspector::{
-    INSPECTOR_ROW_HEIGHT, INSPECTOR_SECTION_GAP, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH,
-    PARAMETER_SLIDER_HEIGHT, SectionHeader, SectionTool, collect_expansion, draggable_icon_row,
+    INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH, PARAMETER_SLIDER_HEIGHT,
+    SectionHeader, SectionLead, SectionTool, collect_expansion, draggable_icon_row, input_selector,
     inspector_dropdown, inspector_row, inspector_spacing, labelled_inspector_dropdown,
     labelled_row, labelled_row_at, restore_expansion, section, section_disclosure,
-    section_with_secondary_tool, stage_tabs,
+    section_with_lead, section_with_secondary_tool, stage_tabs,
 };
 
 mod interaction;
@@ -38,6 +38,9 @@ pub(super) use parameter::ParameterRow;
 
 mod progress;
 pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
+
+mod segments;
+pub(super) use segments::{SegmentLayout, Segments};
 
 mod theme;
 pub(super) use theme::{

@@ -175,18 +175,32 @@ fn assert_icon_before_title(output: &FullOutput, title: &egui::accesskit::Node) 
 #[test]
 fn stage_tool_shelf_distinguishes_commands_active_tools_and_changed_state() {
     let context = Context::default();
-    let ((turn, crop, dust), output) = frame(&context, 315., true, vec![], |ui| {
-        ToolShelf::show(ui, |ui| {
-            let turn = ToolButton::command(Icon::TurnLeft, "Turn left", "Turn the photo.").show(ui);
-            ui.separator();
-            let crop =
-                ToolButton::tool(Icon::Crop, "Crop & straighten", "Edit crop.", true).show(ui);
-            let dust = ToolButton::tool(Icon::Dust, "Dust repair", "Remove dust.", false)
-                .changed(true)
-                .show(ui);
-            (turn, crop, dust)
-        })
-    });
+    let ((turn, crop, dust, analyze, emphasis), output) =
+        frame(&context, 315., true, vec![], |ui| {
+            let emphasis = ui.visuals().selection.bg_fill;
+            ToolShelf::show(ui, |ui| {
+                let turn =
+                    ToolButton::command(Icon::TurnLeft, "Turn left", "Turn the photo.").show(ui);
+                ui.separator();
+                let crop =
+                    ToolButton::tool(Icon::Crop, "Crop & straighten", "Edit crop.", true).show(ui);
+                let dust = ToolButton::tool(Icon::Dust, "Dust repair", "Remove dust.", false)
+                    .changed(true)
+                    .show(ui);
+                let analyze =
+                    ToolButton::tool(Icon::Analyze, "Analyze", "Analyze the roll.", false)
+                        .emphasized()
+                        .show(ui);
+                (turn, crop, dust, analyze, emphasis)
+            })
+        });
+    assert!(
+        output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Rect(rect) if rect.fill == emphasis && rect.rect == analyze.rect
+        )),
+        "Analyze must retain a visual cue when it is idle"
+    );
     assert!(turn.enabled());
     assert!(crop.enabled());
     assert!(dust.enabled());

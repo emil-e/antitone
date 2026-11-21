@@ -20,6 +20,17 @@ fn batch_owns_its_global_drawer_allows_grading_and_is_replaced_by_crop_at_both_l
 
             click_action(&mut h, "Auto-crop roll");
             overlay::wait_context(&mut h);
+            let margin = h
+                .get_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
+                .rect();
+            let input =
+                h.get_by_role_and_label(egui::accesskit::Role::RadioButton, "Film negative");
+            assert!(input.rect().top() >= margin.bottom());
+            assert!(input.accesskit_node().is_disabled());
+            if std::env::var_os("ANTITONE_UI_CAPTURE").is_some() {
+                let shot = h.render().unwrap();
+                save_capture(&shot, &format!("roll-crop-{width}-offscreen"));
+            }
             let before = h.read(|editor| editor.document.state.project.clone());
             h.read(|editor| {
                 assert!(
@@ -65,6 +76,10 @@ fn batch_owns_its_global_drawer_allows_grading_and_is_replaced_by_crop_at_both_l
             });
 
             h.read(|editor| assert!(editor.cropping()));
+            if std::env::var_os("ANTITONE_UI_CAPTURE").is_some() {
+                let shot = h.render().unwrap();
+                save_capture(&shot, &format!("photo-crop-{width}-offscreen"));
+            }
             h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                 .scroll_to_me();
             h.try_run_realtime().unwrap();

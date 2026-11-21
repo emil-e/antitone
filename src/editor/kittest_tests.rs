@@ -1250,6 +1250,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             ("narrow", egui::vec2(800., 600.), 270.),
         ] {
             set_layout(&mut harness, size, width);
+            let mut roll_first_control = None;
             for (index, stage, heading, absent) in [
                 (0, "Roll", "Reset scan orientation", "Crop & straighten"),
                 (1, "Photo", "Crop & straighten", "Target"),
@@ -1279,6 +1280,74 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                     .rect();
                 assert!(header.top() >= tabs.bottom());
                 assert!(header.left() >= size.x - width && header.right() <= size.x);
+                use egui::accesskit::Role;
+                let first_control_top = if stage == "Roll" {
+                    let crop = harness
+                        .get_by_role_and_label(Role::Button, "Auto-crop roll")
+                        .rect();
+                    let analyze = harness
+                        .get_by_role_and_label(Role::Button, "Analyze")
+                        .rect();
+                    let film = harness
+                        .get_by_role_and_label(Role::RadioButton, "Film negative")
+                        .rect();
+                    let digital = harness
+                        .get_by_role_and_label(Role::RadioButton, "Digital")
+                        .rect();
+                    assert!(header.y_range().contains(analyze.center().y));
+                    assert!(analyze.left() >= crop.right() && analyze.right() <= size.x);
+                    assert!(film.top() >= header.bottom() && film.top() >= analyze.bottom());
+                    assert!(film.right() <= digital.left() && digital.right() <= size.x);
+                    roll_first_control = Some(film.center().y - tabs.bottom());
+                    film.top()
+                } else if stage == "Photo" {
+                    let layers = harness.get_by_label("Layers: Global").rect();
+                    let photo_first_control = layers.center().y - tabs.bottom();
+                    let roll_first_control =
+                        roll_first_control.expect("Roll layout measured first");
+                    assert!(
+                        (photo_first_control - roll_first_control).abs() <= 1.,
+                        "{layout}: Layers is centered {photo_first_control} pt below the tabs, input selector at {roll_first_control} pt"
+                    );
+                    layers.top()
+                } else {
+                    harness
+                        .query_by_role_and_label(Role::Button, "Film texture")
+                        .unwrap_or_else(|| harness.get_by_role_and_label(Role::Button, "LUT"))
+                        .rect()
+                        .top()
+                };
+                let mut rules: Vec<_> = harness
+                    .output()
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        let egui::Shape::LineSegment { points: [a, b], .. } = shape.shape else {
+                            return None;
+                        };
+                        (a.y == b.y
+                            && b.x - a.x >= width * 0.8
+                            && a.x >= size.x - width
+                            && a.y >= tabs.bottom() - 2.
+                            && a.y < first_control_top)
+                            .then_some(a.y)
+                    })
+                    .collect();
+                rules.sort_by(f32::total_cmp);
+                if index < 2 {
+                    assert_eq!(rules.len(), 2, "{layout}/{stage}: toolbar rules {rules:?}");
+                    assert!(
+                        ((rules[0] + rules[1]) * 0.5 - header.center().y).abs() <= 1.,
+                        "{layout}/{stage}: toolbar centered at {}, between {rules:?}",
+                        header.center().y
+                    );
+                } else {
+                    assert_eq!(
+                        rules.len(),
+                        1,
+                        "{layout}/{stage}: expected only the tabs rule, got {rules:?}"
+                    );
+                }
                 assert!(harness.query_by_label(absent).is_none());
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));
                 harness.read(|editor| assert_eq!(editor.document.visit.current_source, source));

@@ -1073,91 +1073,71 @@ impl Editor {
             .show(ui, |ui| {
                 if self.document.hosted_tool.occupied() {
                     self.hosted_drawer(ui, cx);
-                } else if self.tab == 1 {
+                } else if self.tab == 1 && self.document.visit.hosted_tool.occupied() {
                     ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.hosted_drawer(ui, cx));
                 }
                 if self.tab == 0 {
-                    let displayed_input = grade.input;
-                    let input = displayed_input;
+                    let input = grade.input;
                     ui.push_id("roll", |ui| {
-                        let capabilities = input.capabilities();
-                        ui.horizontal(|ui| {
-                            ui.label("Input stage");
-                            ui.add_enabled_ui(!self.tool_interacting(), |ui| {
-                                egui::ComboBox::from_id_salt("input-stage")
-                                    .selected_text(if input.is_negative() {
-                                        "Negative"
-                                    } else {
-                                        "Digital"
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        if input.is_negative() {
-                                            let _ = ui.selectable_label(true, "Negative");
-                                        } else if ui.selectable_label(false, "Negative").clicked() {
-                                            stage_target = Some(self.negative_input());
-                                        }
-                                        if ui
-                                            .selectable_label(!input.is_negative(), "Digital")
-                                            .clicked()
-                                            && input.is_negative()
-                                        {
-                                            stage_target = Some(InputSettings::Digital);
-                                        }
-                                    })
-                                    .response
-                                    .on_hover_text(
-                                        "How this roll's sources become a positive before grading.",
-                                    )
+                        let negative = input.is_negative();
+                        let input_enabled = !self.tool_interacting();
+                        let next = ui::input_selector(ui, negative, input_enabled);
+                        if next != negative {
+                            stage_target = Some(if next {
+                                self.negative_input()
+                            } else {
+                                InputSettings::Digital
                             });
-                        });
-                        if capabilities.flat_field {
-                            self.flat_controls(ui, cx);
                         }
-                        if let InputSettings::Negative { dmin, dmax, .. } = input {
-                            let calibration_summary = match (dmin.is_some(), dmax.is_some()) {
-                                (true, true) => "Dmin + Dmax measured",
-                                (false, false) => "Dmin + Dmax not measured",
-                                (false, true) => "Dmin not measured",
-                                (true, false) => "Dmax not measured",
-                            };
-                            ui::section(
-                                ui,
-                                "roll-calibration",
-                                "Calibration",
-                                SectionHeader {
-                                    summary: calibration_summary,
-                                    changed: false,
-                                    reset: None,
-                                    tool: None,
-                                    default_open: Some(true),
-                                },
-                                |ui| {
-                                    if calibration::reference_control(
-                                        ui,
-                                        "dmin",
-                                        "Dmin (film base)",
-                                        dmin,
-                                        can_pick,
-                                        "Measure an unexposed area of film base.",
-                                    ) {
-                                        start_pick =
-                                            Some(|cx| Box::pin(calibration::pick_dmin(cx)));
-                                    }
-                                    if calibration::reference_control(
-                                        ui,
-                                        "dmax",
-                                        "Dmax",
-                                        dmax,
-                                        can_pick,
-                                        "Measure the densest film reference.",
-                                    ) {
-                                        start_pick =
-                                            Some(|cx| Box::pin(calibration::pick_dmax(cx)));
-                                    }
-                                },
-                            );
-                        }
-                        ui.scope(|ui| {
+
+                        if negative {
+                            if input.capabilities().flat_field {
+                                self.flat_controls(ui, cx);
+                            }
+                            if let InputSettings::Negative { dmin, dmax, .. } = input {
+                                let calibration_summary = match (dmin.is_some(), dmax.is_some()) {
+                                    (true, true) => "Dmin + Dmax measured",
+                                    (false, false) => "Dmin + Dmax not measured",
+                                    (false, true) => "Dmin not measured",
+                                    (true, false) => "Dmax not measured",
+                                };
+                                ui::section(
+                                    ui,
+                                    "roll-calibration",
+                                    "Calibration",
+                                    SectionHeader {
+                                        summary: calibration_summary,
+                                        changed: false,
+                                        reset: None,
+                                        tool: None,
+                                        default_open: Some(true),
+                                    },
+                                    |ui| {
+                                        if calibration::reference_control(
+                                            ui,
+                                            "dmin",
+                                            "Dmin (film base)",
+                                            dmin,
+                                            can_pick,
+                                            "Measure an unexposed area of film base.",
+                                        ) {
+                                            start_pick =
+                                                Some(|cx| Box::pin(calibration::pick_dmin(cx)));
+                                        }
+                                        if calibration::reference_control(
+                                            ui,
+                                            "dmax",
+                                            "Dmax",
+                                            dmax,
+                                            can_pick,
+                                            "Measure the densest film reference.",
+                                        ) {
+                                            start_pick =
+                                                Some(|cx| Box::pin(calibration::pick_dmax(cx)));
+                                        }
+                                    },
+                                );
+                            }
                             if let InputSettings::Negative {
                                 mut response,
                                 mut gamma,
@@ -1347,6 +1327,9 @@ impl Editor {
                                     );
                                 }
                             }
+                        }
+
+                        ui.scope(|ui| {
                             let mut wb = grade.roll.wb;
                             let (responses, pick) = white_balance::controls(
                                 ui,
@@ -1414,10 +1397,11 @@ impl Editor {
                         start_pick = Some(|cx| Box::pin(white_balance::pick_layer(cx)));
                     }
                 } else {
-                    if grade.input.capabilities().grain {
+                    let show_texture = grade.input.capabilities().grain;
+                    if show_texture {
                         let allowed = !self.interaction_blocked();
                         ui.add_enabled_ui(allowed, |ui| {
-                            ui::section(
+                            ui::section_with_lead(
                                 ui,
                                 "film-texture",
                                 "Film texture",
@@ -1428,6 +1412,7 @@ impl Editor {
                                     tool: None,
                                     default_open: Some(true),
                                 },
+                                ui::SectionLead::First,
                                 |ui| {
                                     ui.indent("film-controls", |ui| {
                                         self.grain_preset_controls(ui);
@@ -1438,7 +1423,12 @@ impl Editor {
                             );
                         });
                     }
-                    self.look_controls(ui, cx);
+                    let lut_lead = if show_texture {
+                        ui::SectionLead::Following
+                    } else {
+                        ui::SectionLead::First
+                    };
+                    self.look_controls(ui, cx, lut_lead);
                     ui.add_enabled_ui(!self.interaction_blocked(), |ui| {
                         let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
                         let (_, action) = ui::section(

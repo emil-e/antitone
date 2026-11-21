@@ -64,16 +64,11 @@ fn control_state(h: &mut Harness<'_, Editor>, tool_active: bool) {
                     });
                 }
             }
-            let input_stage = h
-                .query_all_by_role(Role::ComboBox)
-                .find(|node| node.accesskit_node().value().as_deref() == Some("Negative"))
-                .expect("Negative input-stage dropdown");
-            input_stage.scroll_to_me();
+            h.get_by_role_and_label(Role::RadioButton, "Digital")
+                .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert_eq!(
-                h.query_all_by_role(Role::ComboBox)
-                    .find(|node| node.accesskit_node().value().as_deref() == Some("Negative"))
-                    .expect("Negative input-stage dropdown")
+                h.get_by_role_and_label(Role::RadioButton, "Digital")
                     .accesskit_node()
                     .is_disabled(),
                 tool_active,

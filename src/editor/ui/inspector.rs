@@ -11,6 +11,7 @@ pub(in crate::editor) const INSPECTOR_HEADER_HEIGHT: f32 = 24.;
 pub(in crate::editor) const INSPECTOR_ITEM_GAP: f32 = 4.;
 pub(in crate::editor) const INSPECTOR_SECTION_GAP: f32 = 5.;
 pub(in crate::editor) const INSPECTOR_BODY_GAP: f32 = 3.;
+pub(super) const STAGE_RULE_INSET: f32 = 1.;
 pub(in crate::editor) const PARAMETER_SLIDER_HEIGHT: f32 = 20.;
 pub(in crate::editor) const PARAMETER_NUMERIC_WIDTH: f32 = 58.;
 /// Shared name column, including parameter rows alongside companion controls.
@@ -190,6 +191,13 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
         .collect();
     let breathing_room =
         (bar.width() - 24. - texts.iter().map(|text| text.size().x).sum::<f32>()) / 3.;
+    let current = *selected;
+    let seam = bar.bottom() - STAGE_RULE_INSET;
+    ui.painter().hline(
+        bar.x_range(),
+        seam,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
     let mut left = bar.left();
     for (index, ((label, help), text)) in tabs.into_iter().zip(texts).enumerate() {
         let rect = egui::Rect::from_min_size(
@@ -215,9 +223,11 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
         if response.clicked() {
             *selected = index;
         }
-        let active = *selected == index;
+        let active = current == index;
         let visuals = ui.style().interact(&response);
-        if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
+        if response.has_focus()
+            || (!active && (response.hovered() || response.is_pointer_button_down_on()))
+        {
             ui.painter().rect(
                 rect,
                 4.,
@@ -227,7 +237,7 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
             );
         }
         let color = if active {
-            ui.visuals().strong_text_color()
+            ui.visuals().selection.stroke.color
         } else {
             visuals.fg_stroke.color
         };
@@ -249,13 +259,34 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
             node.set_selected(active);
         });
         if active {
-            ui.painter().line_segment(
-                [rect.left_bottom(), rect.right_bottom()],
-                egui::Stroke::new(2., ui.visuals().selection.stroke.color),
+            ui.painter().hline(
+                rect.x_range(),
+                seam,
+                egui::Stroke::new(1.5, ui.visuals().selection.stroke.color),
             );
         }
         response.on_hover_text(help);
     }
+}
+
+/// Requests an input interpretation; the selected segment reflects the accepted value.
+pub(in crate::editor) fn input_selector(ui: &mut Ui, negative: bool, enabled: bool) -> bool {
+    let mut next = negative;
+    SectionLead::First.space(ui);
+    ui.add_enabled_ui(enabled, |ui| {
+        icons::row(ui, |ui| {
+            super::Segments {
+                choices: &[
+                    (true, Icon::FilmFrame, "Film negative"),
+                    (false, Icon::Sensor, "Digital"),
+                ],
+                height: INSPECTOR_ROW_HEIGHT,
+                layout: super::SegmentLayout::Fill,
+            }
+            .show(ui, &mut next);
+        });
+    });
+    next
 }
 
 /// A full-width selection/drag row with independent tool and enable columns.
@@ -409,6 +440,21 @@ pub struct SectionAction {
     pub secondary_tool: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(in crate::editor) enum SectionLead {
+    First,
+    Following,
+}
+
+impl SectionLead {
+    fn space(self, ui: &mut Ui) {
+        ui.add_space(INSPECTOR_SECTION_GAP);
+        if matches!(self, Self::Following) {
+            ui.separator();
+        }
+    }
+}
+
 pub fn section<R>(
     ui: &mut Ui,
     id: &str,
@@ -416,12 +462,23 @@ pub fn section<R>(
     header: SectionHeader<'_>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> (Option<R>, SectionAction) {
+    section_with_lead(ui, id, title, header, SectionLead::Following, contents)
+}
+
+pub(in crate::editor) fn section_with_lead<R>(
+    ui: &mut Ui,
+    id: &str,
+    title: &str,
+    header: SectionHeader<'_>,
+    lead: SectionLead,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> (Option<R>, SectionAction) {
     section_impl(
         ui,
         id,
         title,
         header,
-        SectionPresentation::Inspector,
+        SectionPresentation::Inspector(lead),
         None,
         contents,
     )
@@ -441,7 +498,7 @@ pub fn section_with_secondary_tool<R>(
         id,
         title,
         header,
-        SectionPresentation::Inspector,
+        SectionPresentation::Inspector(SectionLead::Following),
         Some(secondary),
         contents,
     )
@@ -593,7 +650,7 @@ const DIALOG_DISCLOSURE_HEIGHT: f32 = 22.;
 
 #[derive(Clone, Copy)]
 enum SectionPresentation {
-    Inspector,
+    Inspector(SectionLead),
     Dialog,
 }
 
@@ -613,11 +670,10 @@ fn section_impl<R>(
         tool,
         default_open,
     } = header;
-    let inspector = matches!(presentation, SectionPresentation::Inspector);
+    let inspector = matches!(presentation, SectionPresentation::Inspector(_));
     ui.push_id(id, |ui| {
-        if inspector {
-            ui.add_space(INSPECTOR_SECTION_GAP);
-            ui.separator();
+        if let SectionPresentation::Inspector(lead) = presentation {
+            lead.space(ui);
         }
         let state_id = ui.make_persistent_id("expanded");
         let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(

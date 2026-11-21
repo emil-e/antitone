@@ -444,7 +444,7 @@ impl tool::Tool for AutoCropTool {
         });
         tool::Presentation {
             identity: ui::ToolIdentity {
-                icon: ui::icons::Icon::Crop,
+                icon: ui::icons::Icon::BatchCrop,
                 title: "Auto-crop",
             },
             primary: Some(tool::Primary {
@@ -652,7 +652,7 @@ impl Draft {
         let mut margin = editor.auto_crop_margin;
         let editable = self.editable(editor);
         ui::ToolIdentity {
-            icon: ui::icons::Icon::Crop,
+            icon: ui::icons::Icon::BatchCrop,
             title: "Auto-crop",
         }
         .inspector(

@@ -241,8 +241,13 @@ impl Editor {
         self.look_request_allowed()
     }
 
-    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.imported_lut_controls(ui, cx);
+    pub(super) fn look_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+        lead: ui::SectionLead,
+    ) {
+        self.imported_lut_controls(ui, cx, lead);
         self.film_and_paper_controls(ui, cx);
     }
 
