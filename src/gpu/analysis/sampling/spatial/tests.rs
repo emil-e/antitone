@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
 fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
         side: 1024,
         ramp: true,
@@ -15,7 +15,7 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
     let area = SourceRegion::from([scan.area.x + 12, scan.area.y + 20, 901, 641]);
     assert!(scan.area.contains_region(area));
     let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
@@ -39,7 +39,7 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
 
 #[test]
 fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_exposure() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
@@ -65,7 +65,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
         },
     ));
     let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let inside = |f: SourceRegion| area.contains_region(f) && f.x >= a.x + 20;
     let raster = sampler.spatial(area, inside, || false).unwrap().unwrap();
@@ -122,7 +122,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
 
 #[test]
 fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let a = scan.area;
@@ -140,7 +140,7 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
         .unwrap(),
     )));
     let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
@@ -164,13 +164,13 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
 
 #[test]
 fn uncorrected_spatial_capture_accepts_native_white_and_releases_the_original_lease() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
     let scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
     let area = SourceRegion::from([scan.area.x + 8, scan.area.y + 8, 48, 48]);
     let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()

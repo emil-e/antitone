@@ -2,7 +2,6 @@
 use super::*;
 use crate::{
     gpu::{flat::GpuFlatField, source::ProcessingSource},
-    renderer::GpuRenderer,
     scan::{AnalysisInput, AnalysisSamples},
 };
 
@@ -15,6 +14,13 @@ mod spatial;
 mod tests;
 
 const BUDGET: evaluation::Tiling = evaluation::Tiling { tile: [1, 8192] };
+
+pub(crate) struct PreviewSamples {
+    pub size: [usize; 2],
+    pub lo: [u32; 2],
+    pub hi: [u32; 2],
+    pub camera: Vec<DVec3>,
+}
 
 pub(crate) struct CameraSampler<'a> {
     input: Arc<AnalysisInput>,
@@ -49,38 +55,30 @@ impl evaluation::Source for CameraSites {
 impl<'a> CameraSampler<'a> {
     #[cfg(test)]
     pub(crate) fn new(
-        device: &'a wgpu::Device,
-        renderer: &'a GpuRenderer,
+        context: &'a evaluation::Context,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
         scan: &Scan,
     ) -> Result<Self, Error> {
         let input = AnalysisInput::capture(scan, || false)?
             .ok_or(Error::UnusableSample("camera capture cancelled"))?;
-        Self::retained(
-            device,
-            renderer,
-            gpu,
-            Arc::new(input),
-            scan.flat_field().cloned(),
-        )
+        Self::retained(context, gpu, Arc::new(input), scan.flat_field().cloned())
     }
 
     #[cfg(test)]
     pub(crate) fn retained(
-        device: &'a wgpu::Device,
-        renderer: &'a GpuRenderer,
+        context: &'a evaluation::Context,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
         input: Arc<AnalysisInput>,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
         let field = field
-            .map(|f| GpuFlatField::new(device, f).map(Arc::new))
+            .map(|f| GpuFlatField::new(context.device(), f).map(Arc::new))
             .transpose()?;
-        Self::captured(renderer, gpu, input, field)
+        Self::captured(context, gpu, input, field)
     }
 
     pub(crate) fn captured(
-        renderer: &'a GpuRenderer,
+        context: &'a evaluation::Context,
         gpu: (&'a wgpu::Queue, &'a SubmissionGate),
         input: Arc<AnalysisInput>,
         field: Option<Arc<GpuFlatField>>,
@@ -92,7 +90,7 @@ impl<'a> CameraSampler<'a> {
         Ok(Self {
             input,
             floor,
-            context: renderer.evaluation(),
+            context,
             queue: gpu.0,
             submissions: gpu.1,
             field,
@@ -179,7 +177,7 @@ impl<'a> CameraSampler<'a> {
         &self,
         area: crate::geometry::SourceRegion,
         cancelled: &mut impl FnMut() -> bool,
-    ) -> Result<Option<super::SemanticPreview>, Error> {
+    ) -> Result<Option<PreviewSamples>, Error> {
         let view = self.input.window(area, 384)?;
         let size = view.size();
         let lo = self.input.position(view.index(0))?;
@@ -187,7 +185,7 @@ impl<'a> CameraSampler<'a> {
         let indices = (0..size[0] * size[1]).map(|i| view.index(i)).collect();
         Ok(self
             .read_centres(indices, cancelled)?
-            .map(|camera| super::SemanticPreview {
+            .map(|camera| PreviewSamples {
                 size,
                 lo,
                 hi,

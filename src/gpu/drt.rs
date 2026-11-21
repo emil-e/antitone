@@ -31,6 +31,7 @@ impl Targets {
     }
 }
 
+#[derive(Clone)]
 pub struct Target {
     target: OutputTarget,
     math: Arc<str>,
@@ -44,6 +45,11 @@ pub struct Target {
 }
 
 impl Target {
+    #[cfg(feature = "editor")]
+    pub(crate) fn output_target(&self) -> OutputTarget {
+        self.target
+    }
+
     pub fn apply(&self, input: Value) -> Result<Value, Error> {
         let domain = input.domain();
         if !matches!(

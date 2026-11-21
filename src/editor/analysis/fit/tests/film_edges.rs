@@ -176,7 +176,10 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 frame.picture.pixels.len()
             );
         }
-        let outcome = state.finish(|| false).unwrap().unwrap();
+        let outcome = state
+            .finish(&services.classifier_drt(), || false)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             outcome.frames, 2,
             "the edge source remains a contributing photograph"
@@ -319,7 +322,10 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
             }
         }
     }
-    let outcome = state.finish(|| false).unwrap().unwrap();
+    let outcome = state
+        .finish(&services.classifier_drt(), || false)
+        .unwrap()
+        .unwrap();
     assert_eq!(outcome.frames, 2);
     assert!(
         outcome
@@ -448,7 +454,10 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         assert_eq!(state.owned[index].picture.pixels.len(), 590);
         assert_eq!(state.owned[index].film.pixels.len(), 910);
     }
-    let error = state.finish(|| false).err().unwrap();
+    let error = state
+        .finish(&services.classifier_drt(), || false)
+        .err()
+        .unwrap();
     assert!(
         error
             .to_string()

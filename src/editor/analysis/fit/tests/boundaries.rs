@@ -142,7 +142,7 @@ fn proposed_domain_checks_use_the_captured_matrix_instead_of_the_registered_conv
     serde_json::to_value(&candidate.project).unwrap();
     let last = *candidate.project.order.last().unwrap();
     super::super::super::super::processing::validate_source_with_matrix(
-        Some(&fit.device),
+        Some(fit.evaluation.device()),
         candidate.project.input,
         candidate.project.roll,
         candidate.project.source(last).unwrap(),
