@@ -171,15 +171,11 @@ This drives real import/correction with a shared sampling area, bypassing per-ph
 ## Responsive image scopes
 
 ```sh
-cargo test --locked --offline --features ui-tests --lib \
-  scope_plot_scale_and_target_widgets_produce_valid_completed_reductions \
-
-cargo test --locked --offline --features ui-tests --lib \
-  compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities \
-
+cargo test --locked --offline --features ui-tests --lib kittest_tests::workflow::scope_
+cargo test --locked --offline --features ui-tests --lib kittest_tests::workflow::compact_scope_
 ```
 
-The compact-header check covers normal/narrow 1×/2× layouts, disclosure and menu keyboard access, collapsed scheduling and unchanged project state; with `ANTITONE_UI_CAPTURE` it writes inspection captures. The authored test exercises [scope modes/amplification](scopes.md), real widgets and completed GPU reductions in both targets. Viewer and scopes must consume the same accepted working result.
+The [scope](scopes.md) checks cover selector and settings keyboard access, normal and narrow layouts at 1×/2×, collapsed scheduling, zoom buttons and wheel routing, and completed GPU reductions in both targets. Set `ANTITONE_UI_CAPTURE` to save offscreen captures.
 
 ## Investigating responsiveness
 

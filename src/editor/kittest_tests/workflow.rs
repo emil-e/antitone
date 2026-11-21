@@ -957,17 +957,33 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switch
     });
 }
 
-fn open_scope_settings(harness: &mut Harness<'_, Editor>) {
+fn open_waveform_settings(harness: &mut Harness<'_, Editor>) {
+    harness.get_by_label("Waveform settings").click();
     harness.step();
-    let current = harness.read(|editor| editor.scopes.menu_label());
+    harness.step();
+}
+
+fn select_scope(harness: &mut Harness<'_, Editor>, plot: crate::scopes::Plot) {
+    use crate::scopes::Plot;
+    let name = if plot == Plot::Vector {
+        "Vectorscope"
+    } else {
+        "Waveform"
+    };
     harness
-        .get_by(|node| {
-            node.role() == egui::accesskit::Role::ComboBox
-                && node.value().as_deref() == Some(current.as_str())
-        })
+        .get_by_role_and_label(egui::accesskit::Role::RadioButton, name)
         .click();
     harness.step();
     harness.step();
+    if plot != Plot::Vector {
+        open_waveform_settings(harness);
+        harness
+            .get_by_label(if plot == Plot::Luma { "Luma" } else { "RGB" })
+            .click();
+        harness.step();
+        harness.step();
+    }
+    harness.read(|editor| assert_eq!(editor.scopes.settings(editor.document.target()).plot, plot));
 }
 
 #[test]
@@ -1001,28 +1017,50 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
             ] {
                 set_layout(&mut harness, size, width);
                 wait_settled(&mut harness);
-                for (plot, label) in [
-                    (crate::scopes::Plot::Vector, "Vectorscope"),
-                    (crate::scopes::Plot::Rgb, "RGB waveform"),
-                    (crate::scopes::Plot::Luma, "Luma waveform"),
+                for plot in [
+                    crate::scopes::Plot::Vector,
+                    crate::scopes::Plot::Rgb,
+                    crate::scopes::Plot::Luma,
                 ] {
-                    open_scope_settings(&mut harness);
-                    harness.get_by_label(label).click();
-                    harness.step();
-                    harness.step();
-                    let current = harness.read(|editor| editor.scopes.menu_label());
+                    select_scope(&mut harness, plot);
                     let header = harness.get_by_label("Scopes");
                     assert_eq!(header.accesskit_node().data().is_expanded(), Some(true));
                     let heading = header.rect();
-                    let menu = harness
-                        .get_by(|node| {
-                            node.role() == egui::accesskit::Role::ComboBox
-                                && node.value().as_deref() == Some(current.as_str())
+                    let vector = harness.get_by_label("Vectorscope");
+                    let waveform = harness.get_by_label("Waveform");
+                    let is_vector = plot == crate::scopes::Plot::Vector;
+                    assert_eq!(
+                        vector.accesskit_node().toggled(),
+                        Some(if is_vector {
+                            egui::accesskit::Toggled::True
+                        } else {
+                            egui::accesskit::Toggled::False
                         })
-                        .rect();
+                    );
+                    assert_eq!(
+                        waveform.accesskit_node().toggled(),
+                        Some(if is_vector {
+                            egui::accesskit::Toggled::False
+                        } else {
+                            egui::accesskit::Toggled::True
+                        })
+                    );
+                    let selector = vector.rect().union(waveform.rect());
                     assert!(heading.left() >= size.x - width);
-                    assert!(!heading.intersects(menu));
-                    assert!(menu.right() <= size.x);
+                    assert!(!heading.intersects(selector));
+                    assert!(selector.right() <= size.x);
+                    if is_vector {
+                        assert!(harness.query_by_label("Waveform settings").is_none());
+                    } else {
+                        let settings = harness
+                            .get_by_role_and_label(
+                                egui::accesskit::Role::Button,
+                                "Waveform settings",
+                            )
+                            .rect();
+                        assert!(heading.right() <= settings.left());
+                        assert!(settings.right() < selector.left());
+                    }
                     harness.event(egui::Event::PointerGone);
                     harness.step();
                     harness.render().unwrap();
@@ -1043,7 +1081,7 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                         .find_map(|shape| match &shape.shape {
                             egui::Shape::Callback(callback)
                                 if callback.rect.left() >= heading.left()
-                                    && callback.rect.right() <= menu.right()
+                                    && callback.rect.right() <= size.x
                                     && callback.rect.top() > heading.bottom() =>
                             {
                                 Some((callback.rect, shape.clip_rect))
@@ -1084,37 +1122,28 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                     assert!(stage.top() >= plot_rect.bottom());
                     if plot == crate::scopes::Plot::Vector {
                         assert!((trace.width() - trace.height()).abs() < 0.01);
+                        for label in ["Zoom in on vectorscope", "Zoom out on vectorscope"] {
+                            let button = harness.get_by_label(label).rect();
+                            assert!(plot_rect.contains_rect(button));
+                            assert!(!trace.intersects(button));
+                        }
+                    } else {
+                        assert!(harness.query_by_label("Zoom in on vectorscope").is_none());
                     }
                     save_capture(&png, &format!("scopes-compact-{layout}-{scale}x-{plot:?}"));
                 }
-                open_scope_settings(&mut harness);
-                harness.get_by_label("Vectorscope").click();
-                harness.step();
-                open_scope_settings(&mut harness);
-                for label in [
-                    "Vectorscope",
-                    "RGB waveform",
-                    "Luma waveform",
-                    "1×",
-                    "2×",
-                    "4×",
-                    "8×",
-                ] {
+                open_waveform_settings(&mut harness);
+                for label in ["RGB", "Luma"] {
                     let rect = harness.get_by_label(label).rect();
                     assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
                 }
                 let png = harness.render().unwrap();
-                save_capture(&png, &format!("scopes-menu-{layout}-{scale}x"));
+                save_capture(&png, &format!("scopes-settings-{layout}-{scale}x"));
                 key(&mut harness, egui::Key::Escape);
+                assert!(harness.query_by_label("Luma").is_none());
+                select_scope(&mut harness, crate::scopes::Plot::Vector);
                 let expanded = harness.get_by_label("Scopes").rect();
-                let current = harness.read(|editor| editor.scopes.menu_label());
-                let menu_right = harness
-                    .get_by(|node| {
-                        node.role() == egui::accesskit::Role::ComboBox
-                            && node.value().as_deref() == Some(current.as_str())
-                    })
-                    .rect()
-                    .right();
+                let waveform = harness.get_by_label("Waveform").rect();
                 harness.get_by_label("Scopes").focus();
                 harness.step();
                 key(&mut harness, egui::Key::Space);
@@ -1130,7 +1159,8 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                 );
                 let collapsed = harness.get_by_label("Scopes").rect();
                 assert_eq!(collapsed.left(), expanded.left());
-                assert!((collapsed.right() - menu_right).abs() <= 1. / scale);
+                assert!(collapsed.contains_rect(waveform));
+                assert!(harness.query_by_label("Vectorscope").is_none());
                 assert!(collapsed.width() > expanded.width());
                 let expand_at = collapsed.right_center() - egui::vec2(12., 0.);
                 harness.hover_at(expand_at);
@@ -1162,22 +1192,102 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                 harness.read(|editor| assert!(editor.scopes.visible));
                 harness.read(|editor| assert!(editor.preferences.scopes_visible));
                 key(&mut harness, egui::Key::Tab);
-                let current = harness.read(|editor| editor.scopes.menu_label());
-                assert!(
-                    harness
-                        .get_by(|node| {
-                            node.role() == egui::accesskit::Role::ComboBox
-                                && node.value().as_deref() == Some(current.as_str())
-                        })
-                        .is_focused()
-                );
+                assert!(harness.get_by_label("Vectorscope").is_focused());
+                key(&mut harness, egui::Key::Tab);
+                assert!(harness.get_by_label("Waveform").is_focused());
                 key(&mut harness, egui::Key::Space);
-                assert!(harness.query_by_label("Magnification").is_some());
+                harness.step();
+                harness.read(|editor| {
+                    assert_eq!(
+                        editor.scopes.settings(editor.document.target()).plot,
+                        crate::scopes::Plot::Luma
+                    );
+                });
+                harness.get_by_label("Waveform settings").focus();
+                harness.step();
+                key(&mut harness, egui::Key::Space);
+                assert!(harness.query_by_label("Luma").is_some());
                 key(&mut harness, egui::Key::Escape);
+                assert!(harness.query_by_label("Luma").is_none());
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));
                 harness.read(|editor| assert_eq!(editor.document.visit.current_source, source));
             }
         }
+    });
+}
+
+#[test]
+fn scope_wheel_zooms_only_the_vectorscope_and_leaves_the_viewer_alone() {
+    use crate::scopes::Plot;
+
+    fn scroll(harness: &mut Harness<'_, Editor>, unit: egui::MouseWheelUnit, y: f32) {
+        harness.event(egui::Event::MouseWheel {
+            unit,
+            delta: egui::vec2(0., y),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.step();
+    }
+
+    tools::calibrated_harness(|mut harness| {
+        wait_settled(&mut harness);
+        let before = harness.read(|editor| editor.scope_request().unwrap());
+        let zoom_point = harness
+            .get_by_label("Zoom in on vectorscope")
+            .rect()
+            .center()
+            - egui::vec2(60., 0.);
+        let header = harness.get_by_label("Scopes").rect().center();
+        let read_gain = |harness: &Harness<'_, Editor>| {
+            harness.read(|editor| {
+                editor
+                    .scopes
+                    .settings(editor.document.target())
+                    .amplification
+            })
+        };
+        use egui::MouseWheelUnit::{Line, Point};
+        harness.hover_at(header);
+        harness.step();
+        scroll(&mut harness, Line, 1.);
+        assert_eq!(read_gain(&harness), 1);
+
+        harness.hover_at(zoom_point);
+        harness.step();
+        scroll(&mut harness, Point, 16.);
+        assert_eq!(read_gain(&harness), 1);
+        scroll(&mut harness, Point, 16.);
+        assert_eq!(read_gain(&harness), 2);
+        scroll(&mut harness, Line, 1.);
+        assert_eq!(read_gain(&harness), 4);
+        scroll(&mut harness, Line, -1.);
+        assert_eq!(read_gain(&harness), 2);
+        for _ in 0..5 {
+            harness.step();
+        }
+        assert_eq!(
+            read_gain(&harness),
+            2,
+            "smoothing must not add extra zoom steps"
+        );
+
+        select_scope(&mut harness, Plot::Rgb);
+        harness.hover_at(zoom_point);
+        harness.step();
+        scroll(&mut harness, Line, 1.);
+        select_scope(&mut harness, Plot::Vector);
+        assert_eq!(
+            read_gain(&harness),
+            2,
+            "waveform scroll must not affect vector zoom"
+        );
+        harness.read(|editor| {
+            let after = editor.scope_request().unwrap();
+            assert!(Arc::ptr_eq(&before.view, &after.view));
+            assert_eq!(before.frame, after.frame);
+            assert_eq!(before.mapping, after.mapping);
+        });
     });
 }
 
@@ -1194,33 +1304,17 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
                 crate::scopes::Plot::Luma,
                 crate::scopes::Plot::Vector,
             ] {
-                open_scope_settings(&mut harness);
-                harness
-                    .get_by_label(match plot {
-                        crate::scopes::Plot::Vector => "Vectorscope",
-                        crate::scopes::Plot::Rgb => "RGB waveform",
-                        crate::scopes::Plot::Luma => "Luma waveform",
-                    })
-                    .click();
-                harness.step();
-                if plot != crate::scopes::Plot::Vector {
-                    harness.read(|editor| assert!(!editor.scopes.vector));
-                    harness.read(|editor| assert_eq!(editor.scopes.waveform, plot));
-                } else {
-                    harness.read(|editor| assert!(editor.scopes.vector));
-                }
-                for amplification in if plot == crate::scopes::Plot::Vector {
-                    &[1, 2, 4, 8][..]
-                } else {
-                    &[1][..]
-                } {
-                    if plot == crate::scopes::Plot::Vector {
-                        open_scope_settings(&mut harness);
-                        harness.get_by_label(&format!("{amplification}×")).click();
+                select_scope(&mut harness, plot);
+                let vector = plot == crate::scopes::Plot::Vector;
+                for amplification in if vector { &[1, 2, 4, 8][..] } else { &[1][..] } {
+                    if vector && *amplification > 1 {
+                        harness.get_by_label("Zoom in on vectorscope").click();
                         harness.step();
-                        harness
-                            .read(|editor| assert_eq!(editor.scopes.amplification, *amplification));
+                        harness.step();
                     }
+                    harness.read(|editor| {
+                        assert_eq!(editor.scopes.settings(target).amplification, *amplification);
+                    });
                     harness.render().unwrap();
                     wait_for(&mut harness, |e| {
                         let input = e.scope_request().unwrap();
@@ -1242,6 +1336,33 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
                     harness.read(|editor| assert_eq!(editor.document.state.project, project));
                 }
                 let png = harness.render().unwrap();
+                if vector {
+                    assert!(
+                        harness
+                            .get_by_label("Zoom in on vectorscope")
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                    harness.get_by_label("Zoom out on vectorscope").click();
+                    harness.step();
+                    harness
+                        .read(|editor| assert_eq!(editor.scopes.settings(target).amplification, 4));
+                    // Leave the transient zoom at the base step for the next target.
+                    for _ in 0..2 {
+                        harness.get_by_label("Zoom out on vectorscope").click();
+                        harness.step();
+                        harness.step();
+                    }
+                    harness.read(|editor| {
+                        assert_eq!(editor.scopes.settings(target).amplification, 1);
+                    });
+                    assert!(
+                        harness
+                            .get_by_label("Zoom out on vectorscope")
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                }
                 save_capture(
                     &png,
                     &format!(

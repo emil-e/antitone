@@ -608,7 +608,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                         editor.photo_settings(),
                     )
                     .unwrap();
-                assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
+                assert!(editor.scope_request().is_none());
                 editor.document.visit.canvas.last_layout = Some((
                     editor.document.visit.canvas.viewport.layout(
                         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
@@ -617,9 +617,8 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                     ),
                     1.,
                 ));
-                assert_eq!(
-                    editor.scope_request().err(),
-                    Some("Waiting for view"),
+                assert!(
+                    editor.scope_request().is_none(),
                     "readiness and a synthetic layout are not a displayed image"
                 );
             });

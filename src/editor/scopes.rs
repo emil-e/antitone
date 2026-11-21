@@ -1,6 +1,5 @@
 use super::*;
 #[cfg(test)]
-#[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{
     frame_raster::FrameRaster,
@@ -11,11 +10,26 @@ use crate::{
 /// Share of the column width given to the scope plot; the rest stays with the stage controls.
 pub(super) const DEFAULT_HEIGHT_RATIO: f32 = 0.6;
 
+const MAX_ZOOM_STEP: usize = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScopeKind {
+    Vector,
+    Waveform,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Waveform {
+    Rgb,
+    Luma,
+}
+
 pub(super) struct Scopes {
     pub(super) visible: bool,
-    pub(super) vector: bool,
-    pub(super) waveform: Plot,
-    pub(super) amplification: u32,
+    kind: ScopeKind,
+    waveform: Waveform,
+    zoom_step: usize,
+    wheel_remainder: f32,
     pub(super) height_ratio: f32,
     pub(super) gpu: Option<Arc<GpuScopes>>,
     error: Option<String>,
@@ -25,9 +39,10 @@ impl Default for Scopes {
     fn default() -> Self {
         Self {
             visible: true,
-            vector: true,
-            waveform: Plot::Rgb,
-            amplification: 1,
+            kind: ScopeKind::Vector,
+            waveform: Waveform::Rgb,
+            zoom_step: 0,
+            wheel_remainder: 0.,
             height_ratio: DEFAULT_HEIGHT_RATIO,
             gpu: None,
             error: None,
@@ -38,21 +53,12 @@ impl Default for Scopes {
 pub(super) struct Slot {
     painter: egui::Painter,
     plot: egui::Rect,
+    trace_well: egui::Rect,
     response: egui::Response,
     settings: Settings,
 }
 
 impl Scopes {
-    pub(super) fn menu_label(&self) -> String {
-        if self.vector {
-            format!("Vectorscope · {}×", self.amplification)
-        } else if self.waveform == Plot::Luma {
-            "Luma waveform".into()
-        } else {
-            "RGB waveform".into()
-        }
-    }
-
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let mut state = Self::default();
         match pollster::block_on(GpuScopes::new(device)) {
@@ -62,70 +68,188 @@ impl Scopes {
         state
     }
 
+    pub(super) fn settings(&self, target: OutputTarget) -> Settings {
+        let plot = match (self.kind, self.waveform) {
+            (ScopeKind::Vector, _) => Plot::Vector,
+            (ScopeKind::Waveform, Waveform::Rgb) => Plot::Rgb,
+            (ScopeKind::Waveform, Waveform::Luma) => Plot::Luma,
+        };
+        Settings {
+            target,
+            plot,
+            amplification: if plot == Plot::Vector { self.gain() } else { 1 },
+        }
+    }
+
+    fn gain(&self) -> u32 {
+        1 << self.zoom_step
+    }
+
+    fn header(&mut self, ui: &mut egui::Ui) {
+        use ui::{INSPECTOR_ROW_HEIGHT, icons};
+
+        let row_height = INSPECTOR_ROW_HEIGHT;
+        let selector = icons::IconSegments {
+            choices: &[
+                (ScopeKind::Vector, icons::Icon::Vectorscope, "Vectorscope"),
+                (ScopeKind::Waveform, icons::Icon::Waveform, "Waveform"),
+            ],
+            height: row_height,
+        };
+        icons::row_at(ui, row_height, |ui| {
+            let was_visible = self.visible;
+            let gap = ui.spacing().item_spacing.x;
+            let tools_width = row_height + selector.width(ui) + 3. * gap;
+            let heading_width = if was_visible {
+                (ui.available_width() - tools_width).max(1.)
+            } else {
+                ui.available_width()
+            };
+            ui::section_disclosure(ui, "Scopes", &mut self.visible, heading_width);
+            if was_visible != self.visible {
+                ui.ctx().request_repaint();
+            }
+            if !was_visible || !self.visible {
+                return;
+            }
+
+            if self.kind == ScopeKind::Waveform {
+                let button = icons::button_at(
+                    ui,
+                    icons::Icon::Inspection,
+                    true,
+                    "Waveform settings",
+                    "Choose RGB or luma.",
+                    row_height,
+                );
+                egui::Popup::from_toggle_button_response(&button)
+                    .layout(egui::Layout::top_down(egui::Align::Min))
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        for (mode, label) in [(Waveform::Rgb, "RGB"), (Waveform::Luma, "Luma")] {
+                            if ui
+                                .selectable_value(&mut self.waveform, mode, label)
+                                .clicked()
+                            {
+                                ui.close();
+                            }
+                        }
+                    });
+            } else {
+                // The selector stays put when the waveform-only action appears.
+                ui.allocate_space(egui::Vec2::splat(row_height));
+            }
+
+            ui.add_space(gap);
+            selector.show(ui, &mut self.kind);
+        });
+    }
+
+    fn zoom_by(&mut self, steps: isize) {
+        self.zoom_step = self
+            .zoom_step
+            .saturating_add_signed(steps)
+            .min(MAX_ZOOM_STEP);
+    }
+
+    fn wheel_zoom(&mut self, ui: &egui::Ui, plot: egui::Rect) {
+        if self.kind != ScopeKind::Vector || !ui.is_enabled() || !ui.rect_contains_pointer(plot) {
+            self.wheel_remainder = 0.;
+            return;
+        }
+
+        ui.input(|input| {
+            for event in &input.raw.events {
+                let egui::Event::MouseWheel {
+                    unit,
+                    delta,
+                    phase,
+                    modifiers,
+                } = event
+                else {
+                    continue;
+                };
+                if !modifiers.is_none() || delta.x.abs() > delta.y.abs() {
+                    continue;
+                }
+                if *phase == egui::TouchPhase::Start {
+                    self.wheel_remainder = 0.;
+                }
+                // A wheel line is one step. Accumulate high-resolution point input
+                // instead of zooming a full step for every trackpad event.
+                let steps = match unit {
+                    egui::MouseWheelUnit::Point => delta.y / 32.,
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta.y,
+                } + self.wheel_remainder;
+                self.zoom_by(steps as isize);
+                self.wheel_remainder =
+                    if matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel)
+                        || (self.zoom_step == 0 && steps < 0.)
+                        || (self.zoom_step == MAX_ZOOM_STEP && steps > 0.)
+                    {
+                        0.
+                    } else {
+                        steps.fract()
+                    };
+            }
+        });
+    }
+
+    fn zoom_rail(&mut self, ui: &mut egui::Ui, plot: egui::Rect) -> egui::Rect {
+        use ui::{INSPECTOR_ROW_HEIGHT, icons};
+
+        let size = INSPECTOR_ROW_HEIGHT;
+        let inset = 3.;
+        let rail = egui::Rect::from_min_max(
+            egui::pos2(plot.right() - size - inset, plot.top() + inset),
+            plot.right_bottom() - egui::Vec2::splat(inset),
+        );
+        let mut rail_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("vector-zoom")
+                .max_rect(rail)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        rail_ui.set_clip_rect(ui.clip_rect().intersect(plot));
+        rail_ui.spacing_mut().item_spacing.y = 0.;
+
+        let zoom_in = icons::button_at(
+            &mut rail_ui,
+            icons::Icon::ZoomIn,
+            self.zoom_step < MAX_ZOOM_STEP,
+            "Zoom in on vectorscope",
+            "Zoom in on vectorscope",
+            size,
+        )
+        .clicked();
+        rail_ui.label(ui::instrument_readout(&format!("{}×", self.gain()), 11.));
+        let zoom_out = icons::button_at(
+            &mut rail_ui,
+            icons::Icon::ZoomOut,
+            self.zoom_step > 0,
+            "Zoom out on vectorscope",
+            "Zoom out on vectorscope",
+            size,
+        )
+        .clicked();
+        if zoom_in || zoom_out {
+            self.zoom_by(if zoom_in { 1 } else { -1 });
+            self.wheel_remainder = 0.;
+            ui.ctx().request_repaint();
+        }
+
+        egui::Rect::from_min_max(plot.min, egui::pos2(rail.left() - inset, plot.bottom()))
+    }
+
     fn panel(
         &mut self,
         ui: &mut egui::Ui,
         target: OutputTarget,
         reserved_height: f32,
     ) -> Option<Slot> {
-        ui::icons::row_at(ui, super::ui::INSPECTOR_ROW_HEIGHT, |ui| {
-            let width = ui.available_width();
-            // Reserve a stable menu width so switching plots never moves the disclosure.
-            let menu_width = 156.;
-            let was_visible = self.visible;
-            let heading_width = if was_visible {
-                (width - menu_width - ui.spacing().item_spacing.x).max(1.)
-            } else {
-                width
-            };
-            ui::section_disclosure(ui, "Scopes", &mut self.visible, heading_width);
-            if was_visible != self.visible {
-                ui.ctx().request_repaint();
-            }
-            // Expansion used the full-width heading this frame; show its menu on the next layout.
-            if was_visible && self.visible {
-                egui::ComboBox::from_id_salt("scope-settings")
-                    .selected_text(self.menu_label())
-                    .width(menu_width)
-                    .show_ui(ui, |ui| {
-                        let mut plot = if self.vector {
-                            Plot::Vector
-                        } else {
-                            self.waveform
-                        };
-                        for (value, label) in [
-                            (Plot::Vector, "Vectorscope"),
-                            (Plot::Rgb, "RGB waveform"),
-                            (Plot::Luma, "Luma waveform"),
-                        ] {
-                            if ui.selectable_value(&mut plot, value, label).clicked() {
-                                self.vector = plot == Plot::Vector;
-                                if !self.vector {
-                                    self.waveform = plot;
-                                }
-                                ui.close();
-                            }
-                        }
-                        if self.vector {
-                            ui.separator();
-                            ui.weak("Magnification");
-                            for gain in [1, 2, 4, 8] {
-                                if ui
-                                    .selectable_value(
-                                        &mut self.amplification,
-                                        gain,
-                                        format!("{gain}×"),
-                                    )
-                                    .clicked()
-                                {
-                                    ui.close();
-                                }
-                            }
-                        }
-                    });
-            }
-        });
+        self.header(ui);
         if !self.visible {
+            self.wheel_remainder = 0.;
             return None;
         }
         let width = ui.available_width();
@@ -136,6 +260,15 @@ impl Scopes {
         let (plot, response) =
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let plot_response = response;
+        ui.painter()
+            .rect_filled(plot, 3., egui::Color32::from_gray(6));
+        self.wheel_zoom(ui, plot);
+        let trace_well = if self.kind == ScopeKind::Vector {
+            self.zoom_rail(ui, plot)
+        } else {
+            plot
+        };
+
         let (divider, response) =
             ui.allocate_exact_size(egui::vec2(width, 6.), egui::Sense::click_and_drag());
         let response = response
@@ -168,16 +301,9 @@ impl Scopes {
         Some(Slot {
             painter: ui.painter().with_clip_rect(ui.clip_rect()),
             plot,
+            trace_well,
             response: plot_response,
-            settings: Settings {
-                target,
-                plot: if self.vector {
-                    Plot::Vector
-                } else {
-                    self.waveform
-                },
-                amplification: if self.vector { self.amplification } else { 1 },
-            },
+            settings: self.settings(target),
         })
     }
 }
@@ -222,18 +348,14 @@ impl ScopeInput {
 }
 
 impl Editor {
-    pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
-        let displayed = self
-            .canvas_frame
-            .displayed
-            .as_ref()
-            .ok_or("Waiting for view")?;
+    pub(super) fn scope_request(&self) -> Option<ScopeInput> {
+        let displayed = self.canvas_frame.displayed.as_ref()?;
         let mut frame = displayed.view.spec.frame();
         let scale = (f64::from(displayed.size[0].max(displayed.size[1])) / 1024.).max(1.);
         frame.output = displayed
             .size
             .map(|v| (f64::from(v) / scale).ceil().max(1.) as u32);
-        Ok(ScopeInput {
+        Some(ScopeInput {
             view: displayed.view.clone(),
             frame,
             mapping: displayed.mapping,
@@ -252,7 +374,7 @@ impl Editor {
     pub(super) fn scope_input(
         &self,
     ) -> Result<(Arc<GpuImage>, AuthoredPhotograph, FrameRaster), &'static str> {
-        let ScopeInput { view, frame, .. } = self.scope_request()?;
+        let ScopeInput { view, frame, .. } = self.scope_request().ok_or("No displayed image")?;
         let device = self
             .document
             .visit
@@ -279,8 +401,6 @@ impl Editor {
             .displayed
             .as_ref()
             .map_or(self.document.target(), |image| image.view.target);
-        slot.painter
-            .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
         if let Some(error) = self
             .canvas_frame
             .displayed
@@ -293,7 +413,7 @@ impl Editor {
             }
             scope_notice(
                 &slot.painter,
-                slot.plot,
+                slot.trace_well,
                 "Look rendering failed".into(),
                 egui::Color32::LIGHT_RED,
                 egui::Align2::CENTER_CENTER,
@@ -301,41 +421,32 @@ impl Editor {
             slot.response.on_hover_text(error.to_string());
             return;
         }
-        let input = self.scope_request();
-        let input = match input {
-            Ok(input) => input,
-            Err(reason) => {
-                if let Some(gpu) = &self.scopes.gpu {
-                    gpu.invalidate();
-                }
-                scope_notice(
-                    &slot.painter,
-                    slot.plot,
-                    reason.into(),
-                    egui::Color32::GRAY,
-                    egui::Align2::CENTER_CENTER,
-                );
-                return;
+        let Some(input) = self.scope_request() else {
+            if let Some(gpu) = &self.scopes.gpu {
+                gpu.invalidate();
             }
+            return;
         };
         let Some(gpu) = &self.scopes.gpu else {
-            let error = self.scopes.error.as_deref().unwrap_or("Scopes unavailable");
-            if scope_notice(
+            scope_notice(
                 &slot.painter,
-                slot.plot,
-                error.into(),
+                slot.trace_well,
+                "Scopes unavailable".into(),
                 egui::Color32::LIGHT_RED,
                 egui::Align2::CENTER_CENTER,
-            ) {
+            );
+            if let Some(error) = &self.scopes.error {
                 slot.response.on_hover_text(error);
             }
             return;
         };
-        let mut trace = slot.plot.shrink(2.);
+        let mut trace = slot.trace_well.shrink(2.);
         if slot.settings.plot == Plot::Vector {
+            let side = trace.height().min(trace.width());
+            let center_x = slot.plot.center().x.min(trace.right() - side * 0.5);
             trace = egui::Rect::from_center_size(
-                trace.center(),
-                egui::Vec2::splat(trace.height().min(trace.width())),
+                egui::pos2(center_x, trace.center().y),
+                egui::Vec2::splat(side),
             );
         } else {
             trace.min.x += 24.;
@@ -361,7 +472,7 @@ impl Editor {
         if let Some((text, color)) = scope_feedback(status)
             && scope_notice(
                 &slot.painter,
-                slot.plot,
+                slot.trace_well,
                 text.clone(),
                 color,
                 egui::Align2::LEFT_BOTTOM,
@@ -402,15 +513,8 @@ fn scope_feedback(
 ) -> Option<(String, egui::Color32)> {
     match status {
         Some(Ok(counts)) if counts.invalid > 0 => Some((
-            format!("Invalid rendered samples: {}", counts.invalid),
+            format!("Invalid samples: {}", counts.invalid),
             egui::Color32::LIGHT_RED,
-        )),
-        Some(Ok(counts)) if counts.outside > 0 => Some((
-            format!(
-                "Outside plot: {:.1}%",
-                100. * counts.outside as f64 / counts.valid.max(1) as f64
-            ),
-            egui::Color32::GRAY,
         )),
         Some(Err(error)) => Some((error, egui::Color32::LIGHT_RED)),
         Some(Ok(_)) | None => None,

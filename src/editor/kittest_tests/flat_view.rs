@@ -81,7 +81,7 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
         harness.read(|editor| {
             assert!(!editor.has_hosted_tool());
             assert!(editor.canvas_frame.displayed.is_none());
-            assert!(editor.scope_request().is_err());
+            assert!(editor.scope_request().is_none());
             assert_eq!(editor.document.project, before);
         });
     });

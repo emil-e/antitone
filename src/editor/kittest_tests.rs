@@ -1070,17 +1070,9 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
 }
 
 fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
-    let current = if harness.read(|editor| editor.document.target() == OutputTarget::DisplayP3) {
-        "Display P3"
-    } else {
-        "sRGB"
-    };
-    harness
-        .get_by(|node| {
-            node.role() == egui::accesskit::Role::ComboBox
-                && node.value().as_deref() == Some(current)
-        })
-        .click();
+    let role = egui::accesskit::Role::ComboBox;
+    scroll_to_control(harness, role, "Target");
+    harness.get_by_role_and_label(role, "Target").click();
     harness.step();
     harness.step();
     harness

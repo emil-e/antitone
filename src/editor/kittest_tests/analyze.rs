@@ -39,7 +39,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             && editor.document.visit.canvas.original.wanted.is_some()
             && editor
                 .scope_request()
-                .is_ok_and(|input| input.view.capture.is_inspection())
+                .is_some_and(|input| input.view.capture.is_inspection())
     });
     harness.read(|editor| {
         let source =

@@ -12,6 +12,8 @@ pub(in crate::editor) enum Icon {
     ExitFullscreen,
     ZoomOut,
     ZoomIn,
+    Vectorscope,
+    Waveform,
     Source,
     Inspection,
     Help,
@@ -163,6 +165,25 @@ impl Icon {
                 if matches!(self, Self::ZoomIn) {
                     line(&[[8., 3.], [8., 13.]]);
                 }
+            }
+            Self::Vectorscope => {
+                ui.painter().circle_stroke(point(8., 8.), 5.5, stroke);
+                line(&[[8., 0.5], [8., 4.5]]);
+                line(&[[8., 11.5], [8., 15.5]]);
+                line(&[[0.5, 8.], [4.5, 8.]]);
+                line(&[[11.5, 8.], [15.5, 8.]]);
+                ui.painter().circle_filled(point(8., 8.), 1., stroke.color);
+            }
+            Self::Waveform => {
+                line(&[
+                    [1., 9.],
+                    [3., 9.],
+                    [5.5, 3.],
+                    [9., 13.],
+                    [11.5, 6.],
+                    [13., 9.],
+                    [15., 9.],
+                ]);
             }
             Self::Source => {
                 line(&[
@@ -472,6 +493,75 @@ pub(in crate::editor) fn button_at(
         .inner
     })
     .inner
+}
+
+/// A compact one-of control. Keep related actions outside the shared frame.
+pub(in crate::editor) struct IconSegments<'a, T> {
+    pub choices: &'a [(T, Icon, &'a str)],
+    pub height: f32,
+}
+
+impl<T: Copy + PartialEq> IconSegments<'_, T> {
+    fn frame(ui: &Ui) -> egui::Frame {
+        let chrome = ui.visuals().widgets.noninteractive;
+        egui::Frame::new()
+            .fill(chrome.bg_fill)
+            .stroke(chrome.bg_stroke)
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+            .inner_margin(1)
+    }
+
+    pub fn width(&self, ui: &Ui) -> f32 {
+        self.choices.len() as f32 * self.height + Self::frame(ui).total_margin().sum().x
+    }
+
+    pub fn show(&self, ui: &mut Ui, current: &mut T) -> Response {
+        let frame = Self::frame(ui);
+        let size = egui::vec2(self.height, self.height - frame.total_margin().sum().y);
+        let previous = *current;
+
+        let content_size = egui::vec2(self.choices.len() as f32 * size.x, size.y);
+        let mut response = frame
+            .show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    content_size,
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.;
+                        for &(value, icon, name) in self.choices {
+                            let selected = previous == value;
+                            let response = ui
+                                .add(egui::Button::selectable(selected, "").min_size(size))
+                                .on_hover_text(name);
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::RadioButton,
+                                    response.enabled(),
+                                    selected,
+                                    name,
+                                )
+                            });
+                            let visuals = ui.style().interact_selectable(&response, selected);
+                            icon.paint(
+                                ui,
+                                response.rect,
+                                Stroke::new(1.5, visuals.fg_stroke.color),
+                            );
+
+                            if response.clicked() {
+                                *current = value;
+                            }
+                        }
+                    },
+                );
+            })
+            .response;
+        if *current != previous {
+            response.mark_changed();
+            ui.ctx().request_repaint();
+        }
+        response
+    }
 }
 
 pub(in crate::editor) fn toggle(

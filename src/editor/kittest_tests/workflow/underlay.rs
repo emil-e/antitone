@@ -129,15 +129,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                     view,
                     e.document.visit.working_view.displayed.as_ref().unwrap()
                 ));
-                let settings = crate::scopes::Settings {
-                    target: e.document.target(),
-                    plot: if e.scopes.vector {
-                        crate::scopes::Plot::Vector
-                    } else {
-                        e.scopes.waveform
-                    },
-                    amplification: e.scopes.amplification,
-                };
+                let settings = e.scopes.settings(e.document.target());
                 let Some(counts) = input.status(e.scopes.gpu.as_ref().unwrap(), settings) else {
                     return false;
                 };

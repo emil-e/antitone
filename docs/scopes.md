@@ -16,11 +16,11 @@ The plots measure the **visible image, approximately**, in the selected output t
 
 Scopes follow the image beneath tool artwork. Auto-crop shows the full oriented scan; manual Crop can show source content beyond its draft frame. Source/native pickers and reference views supply their displayed source image. Navigation composites include the same coarse underlay and detailed patch as the canvas. These viewing choices leave Analyze's sampling populations unchanged.
 
-Reduction remains independently bounded to a 1024-pixel edge, so sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black. Navigation/resize updates analysis when visible coverage changes; without a displayed canvas image the plots show **Waiting for view**. During grade, pan/zoom or resize, hold the previous coherent trace until a compatible replacement is ready. A pass without a painted photograph suspends scopes.
+Reduction remains independently bounded to a 1024-pixel edge, so sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black. Navigation and resizing update the analysis when visible coverage changes. During grading or navigation, the previous coherent trace holds until a compatible replacement is ready. Without a displayed image, the plot stays blank and scope work is suspended.
 
 ## Magnification changes the plot, not the grade
 
-Vectorscope amplification narrows the displayed chroma range around neutral. The implementation re-bins cached rendered samples; it does not rerender the photograph or enlarge an old plot bitmap. Samples outside the plot remain counted rather than being pinned to its rim.
+The vectorscope's zoom buttons and vertical wheel input step from 1× to 8×. Zoom narrows the chroma range around neutral by re-binning cached rendered samples. Samples beyond the enlarged plot's range are omitted from the trace and still counted in reduction diagnostics.
 
 Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; magnification can move them outside the plot. The unlabelled dashed ray is a conventional skin-tone hue heuristic, not a target every complexion should meet or an automatic correction. Complexion, light and grading can legitimately move skin away from it.
 
@@ -28,7 +28,7 @@ Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; magni
 
 Only one reduction/diagnostic readback is outstanding. Latest-result status requires exact processing content and visible-frame identity, so an old completion cannot become current: a different source, calculation, displayed framing, target or vector scale must not inherit incompatible old bins; suspension clears them. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit.
 
-The Scopes disclosure collapses the plot and suspends its work. A single header menu selects the plot type and vectorscope magnification. Plot controls do not change photographic processing: visibility and plot sizing are application preferences, while selection, magnification and GPU diagnostics are transient.
+The Scopes disclosure collapses the plot and suspends its work. The header switches between the vectorscope and waveform; the waveform's settings choose RGB or luma. Visibility and plot size are application preferences; plot selection, waveform mode and zoom are transient.
 
 ## Working on this area
 

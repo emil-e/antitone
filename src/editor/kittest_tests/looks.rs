@@ -389,15 +389,7 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
                         return false;
                     }
                     let input = editor.scope_request().unwrap();
-                    let settings = crate::scopes::Settings {
-                        target: editor.document.target(),
-                        plot: if editor.scopes.vector {
-                            crate::scopes::Plot::Vector
-                        } else {
-                            editor.scopes.waveform
-                        },
-                        amplification: editor.scopes.amplification,
-                    };
+                    let settings = editor.scopes.settings(editor.document.target());
                     input
                         .status(editor.scopes.gpu.as_ref().unwrap(), settings)
                         .is_some_and(|counts| counts.is_ok())
@@ -597,8 +589,6 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                 .unwrap()
         });
         harness.update(|editor| editor.document.set_target(OutputTarget::Srgb));
-        harness.update(|editor| editor.scopes.vector = true);
-        harness.update(|editor| editor.scopes.amplification = 1);
         let settings = crate::scopes::Settings {
             target: OutputTarget::Srgb,
             plot: crate::scopes::Plot::Vector,
@@ -614,7 +604,6 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                     == 2
                 && editor
                     .scope_request()
-                    .ok()
                     .and_then(|input| input.status(editor.scopes.gpu.as_ref().unwrap(), settings))
                     .is_some_and(|result| {
                         result.is_ok_and(|counts| counts.valid > 0 && counts.invalid == 0)

@@ -41,10 +41,11 @@ a macOS fullscreen Space.
 
 ## Scopes
 
-**View → Show Scopes** (or the Scopes disclosure above the tabs) opens measurement
-scopes: **Vectorscope**, **RGB waveform** and **Luma waveform**, with magnification up to
-8×. They measure the rendered output of the current Target — what you see is what the
-TIFF will contain. Scopes are for judging colour and exposure; they never change the
-image.
+Open the **Scopes** disclosure above the stage tabs or choose **View → Show Scopes**.
+Use the header icons to switch between **Vectorscope** and **Waveform**. Waveform settings
+switch between **RGB** and **Luma**. On the vectorscope, use **+ / −** or scroll over the
+plot to zoom from 1× to 8×.
+
+The scopes measure the visible part of the image in the current output Target.
 
 ![The viewer help popover listing navigation and shortcuts](../assets/docs/viewer-bar.png)
