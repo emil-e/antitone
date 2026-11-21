@@ -8,13 +8,13 @@ fn anchor_spans_set_proportional_channel_gammas_without_moving_the_anchors() {
     let film = [base; 2048];
     let picture = [dense; 1024];
     let frames = [FrameSamples {
+        camera_to_ap1: DMat3::IDENTITY,
         film: &film,
         picture: &picture,
     }];
     let result = estimate_anchor_spans(
         &frames,
         1e-4,
-        DMat3::IDENTITY,
         NegativeInput::from(Calibration {
             dmin: base,
             dmax: dense,
@@ -45,6 +45,7 @@ fn unrepresentable_anchor_spans_keep_the_incoming_balance_without_clamping() {
     let film = [base; 2048];
     let picture = [dense; 1024];
     let frames = [FrameSamples {
+        camera_to_ap1: DMat3::IDENTITY,
         film: &film,
         picture: &picture,
     }];
@@ -59,7 +60,6 @@ fn unrepresentable_anchor_spans_keep_the_incoming_balance_without_clamping() {
     let result = estimate_anchor_spans(
         &frames,
         1e-4,
-        DMat3::IDENTITY,
         input.into(),
         &mut model::ScalarReference,
         &mut || false,

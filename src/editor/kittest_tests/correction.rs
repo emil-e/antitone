@@ -36,7 +36,7 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
                 .unwrap(),
             );
             let settings = crate::project::FlatFieldSettings::new(reference.path.clone(), map);
-            document.project.set_flat_field(Some(settings)).unwrap();
+            document.project.set_flat_field(Some(settings));
             document
                 .save(
                     &directory.path().join("unavailable-correction.antitone"),
@@ -182,7 +182,7 @@ fn reopened_photographic_overflow_keeps_the_map_and_recovers_when_correction_is_
                 .unwrap(),
             );
             let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-            document.project.set_flat_field(Some(settings)).unwrap();
+            document.project.set_flat_field(Some(settings));
             document
                 .save(
                     &directory.path().join("overflowing-photo.antitone"),
@@ -952,7 +952,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert!(editor.correction().prepared().is_none()));
         let mut cleared = saved.clone();
-        cleared.set_flat_field(None).unwrap();
+        cleared.set_flat_field(None);
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         open_project(
             &mut harness,
@@ -1041,7 +1041,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             let mut expected = cleared.clone();
             let reapplied = editor.document.state.project.flat_field().cloned().unwrap();
             assert_eq!(reapplied.reference_name, settings.reference_name);
-            expected.set_flat_field(Some(reapplied)).unwrap();
+            expected.set_flat_field(Some(reapplied));
             serde_json::to_value(&expected).unwrap();
             assert_eq!(editor.document.state.project, expected);
         });

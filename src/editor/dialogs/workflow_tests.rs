@@ -189,8 +189,7 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
                 .set_flat_field(Some(crate::project::FlatFieldSettings::new(
                     "unsupported-map-coordinates.dng",
                     map,
-                )))
-                .unwrap();
+                )));
             serde_json::to_value(&rejected.project).unwrap();
             editor.start_correction(rejected, cx);
             assert!(editor.interaction_blocked() && editor.document.flat_correction.is_some());
@@ -223,7 +222,7 @@ fn successful_correction_does_not_dismiss_its_unread_failure() {
                 .unwrap(),
             );
             let field = crate::project::FlatFieldSettings::new(photo.path.clone(), map);
-            candidate.project.set_flat_field(Some(field)).unwrap();
+            candidate.project.set_flat_field(Some(field));
             editor.start_correction(candidate, cx);
         });
         app.run_until(std::time::Duration::from_secs(10), |editor| {

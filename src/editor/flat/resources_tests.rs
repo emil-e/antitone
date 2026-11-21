@@ -18,11 +18,7 @@ fn fixture() -> Editor {
         .unwrap(),
     );
     let settings = FlatFieldSettings::new(source.path.clone(), map);
-    editor
-        .document
-        .project
-        .set_flat_field(Some(settings))
-        .unwrap();
+    editor.document.project.set_flat_field(Some(settings));
     for id in editor.document.project.order.clone() {
         let source = editor.document.project.source_mut(id).unwrap();
         source.crop = Some(crate::crop::Crop {

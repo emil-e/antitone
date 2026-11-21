@@ -37,10 +37,7 @@ impl Editor {
                 .expect("accepted correction")
                 .enabled = enabled;
         } else {
-            candidate
-                .project
-                .set_flat_field(None)
-                .expect("clearing correction");
+            candidate.project.set_flat_field(None);
         }
         self.start_correction(candidate, cx);
     }
@@ -362,7 +359,7 @@ impl tool::Tool for FlatTool {
                         reference: reference.reference.clone(),
                         correction: Default::default(),
                     },
-                    record: reference.record.clone(),
+                    reference: reference.record.path.clone(),
                 };
                 editor.end_tool();
                 editor.document.flat_correction = cx.spawn(move |cx| async move {
@@ -508,7 +505,7 @@ pub(super) struct CorrectionInput {
     pub region: Rect,
     pub document: Document,
     pub source: source::Context,
-    pub record: Source,
+    pub reference: PathBuf,
 }
 
 impl CorrectionInput {
@@ -524,22 +521,14 @@ impl CorrectionInput {
             }
             let mut scan = self.source.scan()?;
             let map = Arc::new(scan.estimate_flat_field(self.region)?);
-            self.document
-                .require_scan_source(&self.record.development)?;
-            if self.document.project.scan.is_none() {
-                self.document.project.scan = Some(crate::project::ScanSetup {
-                    basis: crate::project::ScanBasis::from_development(&self.record.development),
-                    flat_field: None,
-                });
-            }
             let enabled = self
                 .document
                 .project
                 .flat_field()
                 .is_none_or(|field| field.enabled);
-            let mut settings = crate::project::FlatFieldSettings::new(self.record.path, map);
+            let mut settings = crate::project::FlatFieldSettings::new(self.reference, map);
             settings.enabled = enabled;
-            self.document.project.set_flat_field(Some(settings))?;
+            self.document.project.set_flat_field(Some(settings));
             Ok(self.document)
         })
         .await

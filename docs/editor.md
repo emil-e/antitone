@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative's scan setup; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns Film texture, LUT, Film & paper and the preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative calibration and optional flat-field correction; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns Film texture, LUT, Film & paper and the preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark and project identity without making the wordmark an interactive control. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -34,9 +34,9 @@ Crop continuously centers the frame during handle resizing, retaining screen-spa
 
 ### Input-stage changes
 
-The Roll input selector owns one scoped project edit, including any awaited confirmation before discarding Negative settings or accepted correction. Acceptance records the interpretation once without acquiring RAW headers, pixels or GPU readiness. Missing or incompatible photographs report failures when consumed; they do not undo the selected stage. [Projects](projects.md#compatibility-is-about-the-processing-basis) describes the saved development facts and compatibility checks.
+The Roll input selector owns one scoped project edit, including any awaited confirmation before discarding Negative settings or accepted correction. Acceptance records the interpretation once without acquiring RAW headers, pixels or GPU readiness. Missing, corrupt or changed photographs report failures when consumed; they do not undo the selected stage. [Projects](projects.md#source-interpretation-and-identity) describes saved per-source developments and identity checks.
 
-Project versions retain their interpretation's acquired scan basis across Undo/Redo; accepting a new stage starts a fresh scope. The photo visit retains its selected source, viewport and layer workspace across reinterpretation. Captured-input owners — tools, pickers, source loading and view products — retire together, so earlier results cannot present as the new interpretation. Their physical work and compatible keyed cache entries can finish independently. Consumers request resources through [captured source inputs](../src/source/input.rs), which own lazy resolution and preparation rather than requiring each feature to reconstruct that protocol.
+Undo/Redo restores accepted interpretation settings and correction. The photo visit retains its selected source, viewport and layer workspace across reinterpretation. Captured-input owners — tools, pickers, source loading and view products — retire together, so earlier results cannot present as the new interpretation. Their physical work and compatible keyed cache entries can finish independently. Consumers request resources through [captured source inputs](../src/source/input.rs), which own lazy resolution and preparation rather than requiring each feature to reconstruct that protocol.
 
 ### Gamma colour pivot
 
@@ -191,13 +191,13 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 - Plain click makes that photo active, retaining or replacing the selection; arrow navigation uses the same rule.
 - Cmd-click toggles membership without changing the active photo; Shift-click selects the contiguous range from the last plain-click anchor; Shift–Cmd–A reduces the selection to the active photo.
 
-Browsing replaces the visit only when the active photo changes. Selecting the active photo preserves its interaction and acquisition, including when source loading is pending or has failed. Adding scans to an existing roll preserves the active visit unless import changes input interpretation.
+Browsing replaces the visit only when the active photo changes. Selecting the active photo preserves its interaction and acquisition, including when source loading is pending or has failed. Adding scans to an existing roll preserves the active visit and selected input interpretation.
 
 **Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old index in the shortened roll rather than the next surviving identity. Cancel preserves surviving drafts; confirmation retires the removed photo's work through its visit. Document-wide reviews retain their owners and validate current targets on Apply.
 
 ## Responsiveness and optional caches
 
-Optional reuse of immutable full-resolution developments, uncorrected proxies and decoded camera references shares a byte-bounded CPU store; [retention settings](#retention-settings-and-pressure) control its limit in whole MiB, including zero. [Async acquisition](architecture.md#source-acquisition-and-retention) separates consumer leases from cache ownership. A compatible source hit avoids development, while correction, grade and crop remain independent consumer state. File identity is captured at Import/Open for persisted-cache validity, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
+Optional reuse of immutable full-resolution developments, uncorrected proxies and decoded camera references shares a byte-bounded CPU store; [retention settings](#retention-settings-and-pressure) control its limit in whole MiB, including zero. [Async acquisition](architecture.md#source-acquisition-and-retention) separates consumer leases from cache ownership. A compatible source hit avoids development, while correction, grade and crop remain independent consumer state. File identity is captured at Import/Open for persisted-cache validity, [not photographic identity](projects.md#source-interpretation-and-identity).
 
 ### Scheduling and readiness
 

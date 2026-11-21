@@ -105,7 +105,6 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
             mode: crate::project::DevelopmentMode::AsShot,
             development: fixture.project.source(id).unwrap().development.clone(),
         }],
-        ..Default::default()
     });
     let mut document: crate::editor::document_scope::DocumentScope = fixture.into();
     document.project.set_dmin(Some([0.8; 3]));

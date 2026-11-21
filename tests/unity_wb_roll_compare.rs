@@ -84,25 +84,25 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
 
     let unity_frames: Vec<_> = (0..project.order.len())
         .map(|i| FrameSamples {
+            camera_to_ap1: matrix,
             film: &unity_samples.0[i],
             picture: &unity_samples.1[i],
         })
         .collect();
     let as_shot_frames: Vec<_> = (0..project.order.len())
         .map(|i| FrameSamples {
+            camera_to_ap1: matrix,
             film: &as_shot_samples.0[i],
             picture: &as_shot_samples.1[i],
         })
         .collect();
     let current = Project::default().input;
-    let unity = estimate(&unity_frames, unity_samples.2, matrix, current, || false)
+    let unity = estimate(&unity_frames, unity_samples.2, current, || false)
         .unwrap()
         .unwrap();
-    let as_shot = estimate(&as_shot_frames, as_shot_samples.2, matrix, current, || {
-        false
-    })
-    .unwrap()
-    .unwrap();
+    let as_shot = estimate(&as_shot_frames, as_shot_samples.2, current, || false)
+        .unwrap()
+        .unwrap();
     let un = unity.input.negative_input().unwrap();
     let an = as_shot.input.negative_input().unwrap();
     println!(

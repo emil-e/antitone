@@ -18,7 +18,7 @@ fn sampled() -> (Fit, tempfile::TempDir, source_loading::SourceLoader) {
     fit.geometry().unwrap();
     for index in 0..fit.cameras.len() {
         assert!(
-            fit.sample_input(index, fit.cameras[index].clone(), || false)
+            fit.sample_input(index, fit.cameras[index].pixels.clone(), || false)
                 .unwrap()
         );
     }
@@ -63,12 +63,12 @@ fn direct_fitting_checks_its_picture_bounds_without_a_project_wide_gate() {
     let mut fit = resources.fit(request, None).unwrap();
     fit.geometry().unwrap();
     assert!(
-        fit.sample_input(0, fit.cameras[0].clone(), || false)
+        fit.sample_input(0, fit.cameras[0].pixels.clone(), || false)
             .unwrap()
     );
     fit.picture = Some(rect([96, 96, 640, 640]));
     let error = fit
-        .sample_input(0, fit.cameras[0].clone(), || false)
+        .sample_input(0, fit.cameras[0].pixels.clone(), || false)
         .unwrap_err();
     assert!(
         error.to_string().contains("analysis area is outside"),
@@ -131,8 +131,8 @@ fn proposed_domain_checks_use_the_captured_matrix_instead_of_the_registered_conv
     let before = fit.request.document.project.clone();
     assert!(fit.propose(proposal(&fit), || false).unwrap().is_some());
     // The acquired f64 transform is independent, but cannot be represented by GPU constants.
-    fit.matrix = glam::DMat3::IDENTITY * 1e39;
-    assert!(fit.matrix.is_finite());
+    fit.cameras[1].camera_to_ap1 = glam::DMat3::IDENTITY * 1e39;
+    assert!(fit.cameras[1].camera_to_ap1.is_finite());
     assert!(!(1e39_f64 as f32).is_finite());
     let mut proposed = proposal(&fit);
     proposed.roll.exposure = 16.;

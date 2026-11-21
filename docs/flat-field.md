@@ -18,9 +18,9 @@ Use **Set up…** in Roll's **Flat-field correction** section to select a refere
 
 Setup uses untransformed source with automatic embedded lens development. Adjust the suggested rectangle to exclude the holder and other unsuitable content, while retaining the image-centre patch used to establish the target.
 
-The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target and smooths the resulting field, validating positive finite means and representable gains. Capture the reference without clipping: saturation erases the illumination differences needed for correction. Lighting, aperture, focus and positioning must match the scanning setup. Developed values above one after embedded shading are valid headroom, not evidence of capture clipping.
+The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target and smooths the resulting field, validating positive finite means and representable gains. Capture the reference without clipping: saturation erases the illumination differences needed for correction. For useful correction, match the reference's lighting, aperture, focus and positioning to the photographs being corrected. Developed values above one after embedded shading are valid headroom, not evidence of capture clipping.
 
-The [reference tool](../src/editor/flat.rs) owns preparation, selection and viewing; Cancel or replacement discards it. Apply captures the prepared uncorrected source and rectangle, then closes the reference view immediately. A [correction task](../src/editor/flat.rs) owns a document edit while it estimates the map and prepares its GPU copy before accepting the values and recording history. Map preparation depends on the map and GPU limits. Photographic consumers check their own source compatibility, geometry and numerical execution when using it. Enable, disable and Reset use the same acceptance path. Selected-photo loading and reusable camera inputs remain with their existing visit. Failure preserves the previous correction and working photo, with [acknowledged feedback](editor.md#dialogs-return-answers-to-their-workflows). The reference filename is descriptive provenance.
+The [reference tool](../src/editor/flat.rs) owns preparation, selection and viewing; Cancel or replacement discards it. Apply captures the prepared uncorrected source and rectangle, then closes the reference view immediately. A [correction task](../src/editor/flat.rs) owns a document edit while it estimates the map and prepares its GPU copy before accepting the values and recording history. Map preparation depends on the map and GPU limits. Photographic consumers check their captured source identity, geometry and numerical execution when using it. Enable, disable and Reset use the same acceptance path. Selected-photo loading and reusable camera inputs remain with their existing visit. Failure preserves the previous correction and working photo, with [acknowledged feedback](editor.md#dialogs-return-answers-to-their-workflows). The reference filename is descriptive provenance.
 
 ## Apply gains before inversion
 
@@ -34,11 +34,11 @@ Amplification increases quantization error along with the signal. Measurement us
 
 ## Save the accepted result
 
-Projects save the map, enable state and reference filename as descriptive provenance.
+The project's optional `flat_field` saves the map, enable state and reference filename as descriptive provenance.
 
 Correction owns shared GPU preparation of the accepted numeric map. Processing requests retain the correction current when captured and await its working copy when needed; later edits or document replacement leave their inputs unchanged. Open and Undo/Redo restore accepted values independently of preparation. Failures appear here and the viewer falls back to source inspection; Save retains the enabled map.
 
-Importing or removing the reference as a photo is independent of correction. Input-stage changes clear accepted correction with the stage-specific scan setup; Digital does not apply it. Changing, enabling or resetting correction preserves composition and inspection mode. [Projects](projects.md#compatibility-is-about-the-processing-basis) owns switching and compatibility.
+Importing or removing the reference as a photo is independent of correction. Input-stage changes clear accepted correction after any required confirmation; Digital does not apply it. Changing, enabling or resetting correction preserves composition and inspection mode. [Projects](projects.md#source-interpretation-and-identity) owns stage switching and source identity.
 
 ## Working on this area
 

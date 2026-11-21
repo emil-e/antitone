@@ -244,7 +244,7 @@ fn source_viewing_metadata_is_rebuilt_lazily_after_open_and_save_as() {
 }
 
 #[test]
-fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
+fn mixed_as_shot_wb_preserves_negative_and_unity_development() {
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
             .unwrap();
@@ -260,7 +260,6 @@ fn mixed_as_shot_wb_does_not_select_digital_or_change_the_negative_basis() {
     assert!(document.project.sources.iter().all(|source| {
         acquired_scan(&document, source.id).white_balance == crate::project::UNITY_WB
     }));
-    assert!(document.project.require_scan_sources().is_ok());
 }
 
 #[test]
@@ -345,10 +344,7 @@ fn input_switch_clears_correction_without_removing_independent_photos() {
         .unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(reference, map);
-    document
-        .project
-        .set_flat_field(Some(settings.clone()))
-        .unwrap();
+    document.project.set_flat_field(Some(settings.clone()));
     let photos = document.project.sources.clone();
     let mut editor = crate::editor::Editor::state();
     editor.document = document.into();
@@ -419,9 +415,6 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         let mut bad = opened;
         bad.project.sources[0].development.dimensions[0] += 1;
         bad.project.sources[0].development.camera_to_ap1[0][0] *= 1.01;
-        if input.is_negative() {
-            bad.project.reset_scan_basis();
-        }
         serde_json::to_value(&bad.project).unwrap();
         let bad_path = directory.path().join(format!("{index}-bad.antitone"));
         bad.project.save(&bad_path, Save::New).unwrap();
@@ -667,8 +660,7 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             reference.path.clone(),
             map,
-        )))
-        .unwrap();
+        )));
     let ordered = document.project.order[0];
     document.project.remove_from_filmstrip(ordered).unwrap();
     document
@@ -709,10 +701,7 @@ fn correction_provenance_can_be_imported_and_removed_as_an_independent_photo() {
         crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(reference.clone(), map);
-    document
-        .project
-        .set_flat_field(Some(settings.clone()))
-        .unwrap();
+    document.project.set_flat_field(Some(settings.clone()));
     let destination = directory.path().join("reference.antitone");
     document.save(&destination, Save::New).unwrap();
     let mut reopened = Document::open(&destination).unwrap();
@@ -736,7 +725,7 @@ fn correction_provenance_can_be_imported_and_removed_as_an_independent_photo() {
     reopened.import(std::slice::from_ref(&reference)).unwrap();
     let reimported = reopened.find_source(&reference).unwrap();
     assert_ne!(reimported, id);
-    reopened.project.set_flat_field(None).unwrap();
+    reopened.project.set_flat_field(None);
     assert!(reopened.project.source(reimported).is_ok());
 }
 
@@ -765,13 +754,6 @@ fn oriented_imports_seed_the_photo_composition_setting() {
     ] {
         let file = sony_fixture::source_oriented(Order::Little, vec![], false, false, tag);
         let mut document = Document::default();
-        // The authored TIFF has no maker-note WB; declare fixed roll gains as kittests do.
-        document.project.scan = Some(crate::project::ScanSetup {
-            basis: crate::project::ScanBasis::from_development(
-                &read_source(file.path(), Some([1.; 4])).unwrap().development,
-            ),
-            flat_field: None,
-        });
         let path = file.path().to_path_buf();
         document.import(std::slice::from_ref(&path)).unwrap();
         let id = document.project.order[0];
@@ -784,7 +766,7 @@ fn oriented_imports_seed_the_photo_composition_setting() {
 }
 
 #[test]
-fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_wb() {
+fn mixed_import_preserves_negative_and_unity_developments_independently_of_batching() {
     let directory = tempfile::tempdir().unwrap();
     let original =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
@@ -826,18 +808,15 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
     ] {
         let mut document = Document::default();
         document.import(&paths).unwrap();
-        assert_eq!(
-            document.project.input,
-            crate::processing::InputSettings::Digital
-        );
+        assert!(document.project.input.is_negative());
         assert_eq!(document.project.order.len(), 3);
         let second_id = document.find_source(&second).unwrap();
         assert_eq!(
             acquired_scan(&document, second_id).white_balance,
-            expected_wb
+            crate::project::UNITY_WB
         );
     }
-    // Auto fallback also redevelops a source that already existed before the batch.
+    // Import in a separate batch preserves the existing source development.
     let mut existing = Document::default();
     existing.import(std::slice::from_ref(&first)).unwrap();
     assert!(existing.project.input.is_negative());
@@ -848,21 +827,19 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
     existing
         .import(std::slice::from_ref(&other_camera))
         .unwrap();
-    assert_eq!(
-        existing.project.input,
-        crate::processing::InputSettings::Digital
-    );
+    assert!(existing.project.input.is_negative());
     for source in &existing.project.sources {
         assert_eq!(
             source.development,
-            read_source(&source.path, None).unwrap().development,
+            read_source(&source.path, Some(crate::project::UNITY_WB))
+                .unwrap()
+                .development,
             "{}",
             source.path.display()
         );
     }
 
-    // Re-importing a removed source and then encountering an incompatible source in the same
-    // batch registers a fresh record and redevelops it for Digital.
+    // Re-importing a removed source registers a fresh record.
     let mut readded = Document::default();
     readded.import(std::slice::from_ref(&first)).unwrap();
     let first_id = readded.project.order[0];
@@ -873,110 +850,100 @@ fn mixed_import_fallback_uses_batch_entry_and_restores_each_new_sources_as_shot_
         .unwrap();
     let readded_id = readded.find_source(&first).unwrap();
     assert_ne!(readded_id, first_id);
-    assert_eq!(
-        readded.project.input,
-        crate::processing::InputSettings::Digital
-    );
+    assert!(readded.project.input.is_negative());
     for source in &readded.project.sources {
         assert_eq!(
             source.development,
-            read_source(&source.path, None).unwrap().development,
+            read_source(&source.path, Some(crate::project::UNITY_WB))
+                .unwrap()
+                .development,
             "{}",
             source.path.display()
         );
     }
 
-    // A later batch must not reinterpret an already-established multi-source roll.
+    // The same sources imported in later batches retain the same input stage.
     let mut established = Document::default();
     established.import(&[first, second]).unwrap();
     assert!(established.project.input.is_negative());
-    assert!(established.import(&[other_camera]).is_err());
+    established.import(&[other_camera]).unwrap();
     assert!(established.project.input.is_negative());
 }
 
 #[test]
-fn automatic_import_fallback_does_not_discard_partial_or_nondefault_stage_settings() {
-    for case in 0..5 {
-        let mut document = Document::default();
-        assert!(document.auto_digital_available());
-        let crate::processing::InputSettings::Negative {
-            dmin,
-            dmax,
-            gamma,
-            balance,
-            response,
-            ..
-        } = &mut document.project.input
-        else {
-            unreachable!()
-        };
-        match case {
-            0 => *dmin = Some(glam::DVec3::splat(0.8)),
-            1 => *dmax = Some(glam::DVec3::splat(0.02)),
-            2 => *gamma = 0.9,
-            3 => balance.warmth = 0.1,
-            4 => {
-                *response = crate::processing::Response {
-                    toe: 3.,
-                    shoulder: 0.,
-                }
-            }
-            _ => unreachable!(),
-        }
-        assert!(
-            !document.auto_digital_available(),
-            "stage edit {case} must require an explicit switch"
-        );
-    }
-}
-
-#[test]
-fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
-    fn source(
-        path: &std::path::Path,
-        camera: &str,
-        matrix: [[f64; 3]; 3],
-    ) -> crate::project::Source {
-        std::fs::write(path, b"scan fixture").unwrap();
-        crate::project::Source {
-            development_mode: crate::project::DevelopmentMode::Unity,
-            id: crate::project::SourceId(0),
-            path: path.into(),
-            development: crate::project::SourceDevelopment {
-                decode: Development::new("test-backend".into(), [1.; 4]),
-                dimensions: [900, 600],
-                active_area: [0, 0, 900, 600],
-                camera_model: camera.into(),
-                camera_to_ap1: matrix,
-            },
-            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
-                AdjustmentLayerSettings::default(),
-            )),
-            repairs: Default::default(),
-            orientation: Default::default(),
-            crop: None,
-        }
-    }
-
-    let directory = tempfile::tempdir().unwrap();
-    let mut document = Document::default();
-    document
-        .project
-        .add_source(source(
-            &directory.path().join("a.ARW"),
-            "camera-a",
-            [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
-        ))
-        .unwrap();
-    assert!(document.auto_digital_available());
-    let incompatible = source(
-        &directory.path().join("b.ARW"),
-        "camera-b",
-        [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+fn mixed_matrix_import_preserves_authored_settings_in_each_batch_order() {
+    let a = crate::raw::fixture::bayer_dng();
+    let b = crate::raw::fixture::bayer_dng_with_camera(
+        [1800, 2200, 2800],
+        [1., 0., 0., 0., 0.9, 0., 0., 0., 1.1],
     );
-    assert!(document.scan_source_incompatible(&incompatible));
-
-    document.project.set_dmin(Some([0.8; 3]));
-    document.project.set_dmax(Some([0.02; 3]));
-    assert!(!document.auto_digital_available());
+    for split in [false, true] {
+        for case in 0..6 {
+            let mut document = Document::default();
+            let crate::processing::InputSettings::Negative {
+                dmin,
+                dmax,
+                gamma,
+                balance,
+                response,
+                ..
+            } = &mut document.project.input
+            else {
+                unreachable!()
+            };
+            match case {
+                0 => *dmin = Some(glam::DVec3::splat(0.8)),
+                1 => *dmax = Some(glam::DVec3::splat(0.02)),
+                2 => *gamma = 0.9,
+                3 => balance.warmth = 0.1,
+                4 => {
+                    *response = crate::processing::Response {
+                        toe: 3.,
+                        shoulder: 0.,
+                    }
+                }
+                5 => {
+                    let map = std::sync::Arc::new(
+                        crate::flat_field::FlatField::from_nodes(
+                            [0, 0, 64, 64],
+                            [2, 2],
+                            vec![glam::DVec3::splat(1.1); 4],
+                        )
+                        .unwrap(),
+                    );
+                    document
+                        .project
+                        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+                            "light.dng",
+                            map,
+                        )));
+                }
+                _ => unreachable!(),
+            }
+            let input = document.project.input;
+            let correction = document.project.flat_field.clone();
+            if split {
+                document.import(&[b.path().into()]).unwrap();
+                document.import(&[a.path().into()]).unwrap();
+            } else {
+                document
+                    .import(&[a.path().into(), b.path().into()])
+                    .unwrap();
+            }
+            assert_eq!(document.project.input, input);
+            assert_eq!(document.project.flat_field, correction);
+            assert_ne!(
+                document.project.sources[0].development.camera_to_ap1,
+                document.project.sources[1].development.camera_to_ap1
+            );
+            for source in &document.project.sources {
+                assert_eq!(
+                    source.development,
+                    read_source(&source.path, Some(crate::project::UNITY_WB))
+                        .unwrap()
+                        .development
+                );
+            }
+        }
+    }
 }

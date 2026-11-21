@@ -165,7 +165,7 @@ pub fn stage_tabs(ui: &mut Ui, selected: &mut usize) {
     let tabs = [
         (
             "Roll",
-            "Shared scanning setup, calibration and negative inversion.",
+            "Input interpretation, calibration and shared photographic grade.",
         ),
         (
             "Photo",

@@ -28,7 +28,7 @@ fn document_replacement_retires_unpolled_correction_resources_without_a_late_err
     for replace in [false, true] {
         let mut editor = Editor::state();
         let id = editor.document.register(record("photo.ARW")).unwrap();
-        editor.document.project.reset_scan_basis();
+
         let source = editor.document.project.source(id).unwrap();
         let map = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -39,11 +39,7 @@ fn document_replacement_retires_unpolled_correction_resources_without_a_late_err
             .unwrap(),
         );
         let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-        editor
-            .document
-            .project
-            .set_flat_field(Some(settings))
-            .unwrap();
+        editor.document.project.set_flat_field(Some(settings));
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 let _ = editor.correction();
@@ -109,10 +105,7 @@ fn correction_provenance_does_not_register_or_retain_photos() {
             .unwrap(),
     );
     let settings = FlatFieldSettings::new("light.ARW", map);
-    document
-        .project
-        .set_flat_field(Some(settings.clone()))
-        .unwrap();
+    document.project.set_flat_field(Some(settings.clone()));
     assert_eq!(document.project.sources, sources);
     assert_eq!(document.project.order, vec![photo]);
     document.project.remove_from_filmstrip(photo).unwrap();

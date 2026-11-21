@@ -284,7 +284,7 @@ fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
             .unwrap(),
         );
         let field = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-        editor.document.project.set_flat_field(Some(field)).unwrap();
+        editor.document.project.set_flat_field(Some(field));
         editor.document.correction =
             Correction::prepare(&device, editor.document.project.active_flat_field(), None)
                 .unwrap()
@@ -313,7 +313,7 @@ fn correction_leaves_inversion_parameters_and_captured_layer_stacks_unchanged() 
             .unwrap(),
         );
         let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field.clone());
-        candidate.project.set_flat_field(Some(settings)).unwrap();
+        candidate.project.set_flat_field(Some(settings));
         editor.document.correction =
             Correction::prepare(&device, candidate.project.active_flat_field(), None)
                 .unwrap()

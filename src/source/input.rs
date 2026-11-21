@@ -6,7 +6,7 @@ use crate::{
     exposure_reference::ReferenceExposure,
     photo_preparation::PreparedSource,
     processing::InputSettings,
-    project::{DevelopmentMode, ScanBasis, Source},
+    project::{DevelopmentMode, Source},
     scan::CameraPixels,
 };
 use std::{
@@ -27,8 +27,6 @@ enum Definition {
 pub(crate) struct Photograph {
     pub record: Source,
     pub development: Development,
-    pub basis: Arc<OnceLock<ScanBasis>>,
-    pub expected_camera: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -216,19 +214,6 @@ impl Input {
         match &self.definition {
             Definition::Photo(photo) => {
                 let development = photo.development.acquire().await?;
-                if self.input.requires_scan_sources() {
-                    if photo
-                        .expected_camera
-                        .as_ref()
-                        .is_some_and(|camera| *camera != development.camera_model)
-                    {
-                        return Err(Error::Project("sources do not share one scanning setup; use Digital for mixed sources".into()));
-                    }
-                    photo
-                        .basis
-                        .get_or_init(|| ScanBasis::from_development(&development))
-                        .require_source(&development)?;
-                }
                 Ok(SourceKey::for_load(
                     &self.path,
                     self.file.clone(),

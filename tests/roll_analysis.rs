@@ -34,12 +34,9 @@ fn default_current() -> NegativeInput {
 
 fn proposal(
     frames: &[FrameSamples<'_>],
-    matrix: DMat3,
     current: NegativeInput,
 ) -> antitone::roll_analysis::Proposal {
-    estimate(frames, FLOOR, matrix, current, || false)
-        .unwrap()
-        .unwrap()
+    estimate(frames, FLOOR, current, || false).unwrap().unwrap()
 }
 
 fn negative(p: &antitone::roll_analysis::Proposal) -> NegativeInput {
@@ -64,10 +61,10 @@ fn per_channel_development_scale_preserves_the_analyzed_positive_look() {
     let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
     let unity = proposal(
         &[FrameSamples {
+            camera_to_ap1: matrix,
             film: &film_unity,
             picture: &source_unity,
         }],
-        matrix,
         default_current(),
     );
     let scaled_current = NegativeInput {
@@ -79,10 +76,10 @@ fn per_channel_development_scale_preserves_the_analyzed_positive_look() {
     };
     let scaled = proposal(
         &[FrameSamples {
+            camera_to_ap1: matrix,
             film: &film_scaled,
             picture: &source_scaled,
         }],
-        matrix,
         scaled_current,
     );
 
@@ -135,15 +132,16 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     let p = proposal(
         &[
             FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &film,
                 picture: &a,
             },
             FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &[],
                 picture: &b,
             },
         ],
-        DMat3::IDENTITY,
         current,
     );
     close(calibration(&p).dmin, BASE);
@@ -167,13 +165,13 @@ fn shared_roll_exposure_preserves_dark_and_bright_frame_placement() {
     let frames: Vec<_> = pictures
         .iter()
         .map(|picture| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &film,
             picture,
         })
         .collect();
     let p = proposal(
         &frames,
-        DMat3::IDENTITY,
         current(
             1.,
             Response {
@@ -219,10 +217,10 @@ fn frame_luminance_median_handles_skewed_and_even_populations() {
             .collect();
         let p = proposal(
             &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &film,
                 picture: &picture,
             }],
-            DMat3::IDENTITY,
             current(
                 1.,
                 Response {
@@ -247,13 +245,13 @@ fn roll_key_weights_frames_equally_and_averages_even_medians_in_linear_luminance
     let frames: Vec<_> = pictures
         .iter()
         .map(|picture| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &film,
             picture,
         })
         .collect();
     let p = proposal(
         &frames,
-        DMat3::IDENTITY,
         current(
             1.,
             Response {
@@ -282,10 +280,10 @@ fn dmax_channels_select_separate_lower_quantiles_not_one_joint_pixel() {
         .collect();
     let p = proposal(
         &[FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &film,
             picture: &source,
         }],
-        DMat3::IDENTITY,
         default_current(),
     );
     close(calibration(&p).dmax, BASE * 0.05375);
@@ -309,15 +307,16 @@ fn repeated_samples_do_not_increase_a_frames_endpoint_or_curve_influence() {
         proposal(
             &[
                 FrameSamples {
+                    camera_to_ap1: matrix,
                     film: &film,
                     picture: &a,
                 },
                 FrameSamples {
+                    camera_to_ap1: matrix,
                     film: &[],
                     picture: second,
                 },
             ],
-            matrix,
             default_current(),
         )
     };
@@ -340,10 +339,10 @@ fn shared_wb_neutralizes_the_roll_mean_without_fitting_channel_curves_to_gray() 
     let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
     let p = proposal(
         &[FrameSamples {
+            camera_to_ap1: matrix,
             film: &film,
             picture: &source,
         }],
-        matrix,
         default_current(),
     );
     let inv = Inversion::new(negative(&p)).unwrap();
@@ -370,11 +369,11 @@ fn out_of_range_shared_wb_is_rejected_not_clamped_or_replaced_by_identity() {
     assert!(matches!(
         estimate(
             &[FrameSamples {
+                camera_to_ap1: cast * cast,
                 film: &film,
-                picture: &source
+                picture: &source,
             }],
             FLOOR,
-            cast * cast,
             default_current(),
             || false
         ),
@@ -391,10 +390,10 @@ fn isolated_hdr_sample_does_not_move_median_exposure_or_clip_working_pixels() {
     let fit = |pixels: &[DVec3]| {
         proposal(
             &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &film,
                 picture: pixels,
             }],
-            DMat3::IDENTITY,
             default_current(),
         )
     };
@@ -442,18 +441,19 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
     let film = vec![BASE; 256];
     let source = picture(512, 0.05, 0.8);
     let frame = FrameSamples {
+        camera_to_ap1: DMat3::IDENTITY,
         film: &film,
         picture: &source,
     };
-    assert!(estimate(&[], FLOOR, DMat3::IDENTITY, default_current(), || false).is_err());
+    assert!(estimate(&[], FLOOR, default_current(), || false).is_err());
     assert!(
         estimate(
             &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 picture: &[],
                 ..frame
             }],
             FLOOR,
-            DMat3::IDENTITY,
             default_current(),
             || false
         )
@@ -461,25 +461,39 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
     );
     assert!(
         estimate(
-            &[FrameSamples { film: &[], ..frame }],
+            &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
+                film: &[],
+                ..frame
+            }],
             FLOOR,
-            DMat3::IDENTITY,
             default_current(),
             || false
         )
         .is_err()
     );
-    assert!(estimate(&[frame], 0., DMat3::IDENTITY, default_current(), || false).is_err());
-    assert!(estimate(&[frame], FLOOR, DMat3::ZERO, default_current(), || false).is_err());
+    assert!(estimate(&[frame], 0., default_current(), || false).is_err());
+    assert!(
+        estimate(
+            &[FrameSamples {
+                camera_to_ap1: DMat3::ZERO,
+                ..frame
+            }],
+            FLOOR,
+            default_current(),
+            || false
+        )
+        .is_err()
+    );
     let too_many = vec![BASE; MAX_SAMPLES_PER_FRAME + 1];
     assert!(matches!(
         estimate(
             &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &too_many,
                 ..frame
             }],
             FLOOR,
-            DMat3::IDENTITY,
             default_current(),
             || false
         ),
@@ -490,11 +504,11 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
         assert!(
             estimate(
                 &[FrameSamples {
+                    camera_to_ap1: DMat3::IDENTITY,
                     picture: &bad,
                     ..frame
                 }],
                 FLOOR,
-                DMat3::IDENTITY,
                 default_current(),
                 || false
             )
@@ -507,12 +521,12 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
             &[
                 frame,
                 FrameSamples {
+                    camera_to_ap1: DMat3::IDENTITY,
                     film: &[],
                     picture: &at_base
                 }
             ],
             FLOOR,
-            DMat3::IDENTITY,
             default_current(),
             || false
         )
@@ -526,6 +540,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
     let source = picture(512, 0.05, 0.8);
     let original = source.clone();
     let frames = [FrameSamples {
+        camera_to_ap1: DMat3::IDENTITY,
         film: &film,
         picture: &source,
     }];
@@ -543,7 +558,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
     };
     let mut checkpoints = 0;
     assert!(
-        estimate(&frames, FLOOR, DMat3::IDENTITY, current, || {
+        estimate(&frames, FLOOR, current, || {
             checkpoints += 1;
             false
         })
@@ -560,7 +575,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
         checkpoints,
     ] {
         let mut calls = 0;
-        let result = estimate(&frames, FLOOR, DMat3::IDENTITY, current, || {
+        let result = estimate(&frames, FLOOR, current, || {
             calls += 1;
             calls >= stop
         })

@@ -12,7 +12,7 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
     assert!(!output.exists());
     let project = crate::project::Project::load(&path).unwrap();
     assert!(
-        project.scan.as_ref().is_none_or(|s| s.flat_field.is_none()),
+        project.flat_field().is_none(),
         "this diagnostic does not implement captured flat correction"
     );
     let id = project.order[0];

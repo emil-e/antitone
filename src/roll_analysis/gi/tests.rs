@@ -127,6 +127,7 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &[],
             picture: p,
         })
@@ -135,7 +136,6 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     let mut calls = Vec::new();
     let result = refine_from(
         &frames,
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
@@ -162,7 +162,6 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     assert_eq!(result.frames.len(), images.len());
     let error = refine_from(
         &frames,
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
@@ -240,6 +239,7 @@ fn gamma_selection_uses_defined_colour_evidence_without_dropping_a_coloured_phot
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: matrix,
             film: &[],
             picture: p,
         })
@@ -254,7 +254,6 @@ fn gamma_selection_uses_defined_colour_evidence_without_dropping_a_coloured_phot
     let result = refine(
         &frames,
         &refs,
-        matrix,
         crate::processing::CAMERA_INPUT_FLOOR,
         proposal,
         &mut model,
@@ -300,6 +299,7 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &[],
             picture: p,
         })
@@ -312,7 +312,6 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
     let result = refine(
         &frames,
         &refs,
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 3),
         &mut model,
@@ -380,7 +379,6 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
     let pair = refine(
         &frames[..2],
         &refs[..2],
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 2),
         &mut model::ScalarReference,
@@ -412,6 +410,7 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &[],
             picture: p,
         })
@@ -420,7 +419,6 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
     let error = refine(
         &frames,
         &refs,
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 3),
         &mut model::ScalarReference,
@@ -432,7 +430,6 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
         refine(
             &frames,
             &refs,
-            DMat3::IDENTITY,
             crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 3),
             &mut model::ScalarReference,
@@ -518,6 +515,7 @@ fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibra
         .zip(&images)
         .map(|(picture, spatial)| SpatialFrameSamples {
             statistics: FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
                 film: &film,
                 picture,
             },
@@ -529,19 +527,12 @@ fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibra
         calls: 0,
         spatial_reads: 0,
     };
-    let proposal = estimate_spatial_with_model(
-        &frames,
-        common,
-        DMat3::IDENTITY,
-        truth,
-        &mut guard,
-        &mut || false,
-    )
-    .unwrap()
-    .unwrap();
+    let proposal = estimate_spatial_with_model(&frames, common, truth, &mut guard, &mut || false)
+        .unwrap()
+        .unwrap();
     assert!(guard.calls > 0 && guard.spatial_reads > 0);
     let statistics: Vec<_> = frames.iter().map(|f| f.statistics).collect();
-    let seed = estimate(&statistics, common, DMat3::IDENTITY, truth, || false)
+    let seed = estimate(&statistics, common, truth, || false)
         .unwrap()
         .unwrap();
     assert_eq!(proposal.input.calibration(), seed.input.calibration());
@@ -575,6 +566,7 @@ fn final_forward_errors_are_not_misreported_as_ordinary_wb_rejections() {
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &[],
             picture: p,
         })
@@ -588,7 +580,6 @@ fn final_forward_errors_are_not_misreported_as_ordinary_wb_rejections() {
         refine(
             &frames,
             &refs,
-            DMat3::IDENTITY,
             crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 3),
             &mut model,
@@ -628,6 +619,7 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
     let frames: Vec<_> = pictures
         .iter()
         .map(|p| FrameSamples {
+            camera_to_ap1: DMat3::IDENTITY,
             film: &[],
             picture: p,
         })
@@ -636,7 +628,6 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
     let proposal = refine(
         &frames,
         &refs,
-        DMat3::IDENTITY,
         crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 4),
         &mut model::ScalarReference,
@@ -683,7 +674,6 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
         refine(
             frames,
             refs,
-            DMat3::IDENTITY,
             crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 1),
             &mut model::ScalarReference,

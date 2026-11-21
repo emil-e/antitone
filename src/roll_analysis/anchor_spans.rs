@@ -21,7 +21,6 @@ pub(crate) fn balance_from_anchors(calibration: Calibration) -> Option<Balance> 
 pub(crate) fn estimate_anchor_spans(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
-    matrix: DMat3,
     input: InputSettings,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -29,7 +28,10 @@ pub(crate) fn estimate_anchor_spans(
     if cancelled() {
         return Ok(None);
     }
-    validate_camera_matrix(matrix)?;
+    let matrices: Vec<_> = frames.iter().map(|f| f.camera_to_ap1).collect();
+    for &matrix in &matrices {
+        validate_camera_matrix(matrix)?;
+    }
     let InputSettings::Negative {
         response,
         gamma,
@@ -52,11 +54,12 @@ pub(crate) fn estimate_anchor_spans(
     };
     negative.channel_gammas()?;
     let picture = SampleBatch::new(frames.iter().map(|frame| frame.picture));
-    let Some((wb, _)) = median_wb::estimate(&picture, negative, matrix, model, cancelled)? else {
+    let Some((wb, _)) = median_wb::estimate(&picture, negative, &matrices, model, cancelled)?
+    else {
         return Ok(None);
     };
     let Some((exposure, exposure_counts)) =
-        meter(&picture, negative, matrix, wb, model, cancelled)?
+        meter(&picture, negative, &matrices, wb, model, cancelled)?
     else {
         return Ok(None);
     };

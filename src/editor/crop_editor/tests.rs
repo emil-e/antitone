@@ -791,7 +791,7 @@ impl Harness {
         ratio: Option<f64>,
     ) -> Self {
         let mut editor = Editor::state();
-        crate::editor::tests::with_camera_basis(&mut editor);
+        crate::editor::tests::with_registered_photo(&mut editor);
         editor.document.visit.current_source = editor.document.project.order.first().copied();
         editor.document.project.orientation = roll;
         *editor.photo_orientation_mut() = PhotoOrientation {

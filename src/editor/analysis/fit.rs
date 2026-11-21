@@ -32,13 +32,17 @@ pub(super) struct Resources {
     pub initialization: Arc<crate::source::Initialization>,
 }
 
+struct Camera {
+    pixels: Arc<crate::scan::AnalysisInput>,
+    camera_to_ap1: glam::DMat3,
+}
+
 pub(super) struct Fit {
     evaluation: evaluation::Context,
     queue: crate::gpu::submission::Queue,
     request: Arc<Request>,
     correction: Option<Arc<Correction>>,
-    matrix: glam::DMat3,
-    cameras: Vec<Arc<crate::scan::AnalysisInput>>,
+    cameras: Vec<Camera>,
     support: Option<Rect>,
     film: Option<Rect>,
     picture: Option<Rect>,
@@ -118,7 +122,6 @@ impl Fit {
             }
         }
         let mut cameras = Vec::with_capacity(project.order.len());
-        let mut basis: Option<crate::project::ScanBasis> = None;
         for &source in &project.order {
             let physical = request.document.source_input(source, &initialization)?;
             let Some(camera) = sampling_inputs
@@ -127,15 +130,12 @@ impl Fit {
             else {
                 return Ok(None);
             };
-            let shared = basis.get_or_insert_with(|| {
-                crate::project::ScanBasis::from_development(camera.development())
+            cameras.push(Camera {
+                camera_to_ap1: glam::DMat3::from_cols_array_2d(&camera.development().camera_to_ap1),
+                pixels: camera.pixels(),
             });
-            shared.require_source(camera.development())?;
-            cameras.push(camera.pixels());
         }
-        let matrix = glam::DMat3::from_cols_array_2d(
-            &basis.expect("nonempty captured roll").camera.camera_to_ap1,
-        );
+
         let owned = Vec::with_capacity(project.order.len());
         request.document.capture_initialization(&initialization);
         analysis::verify(&request)?;
@@ -144,7 +144,6 @@ impl Fit {
             queue,
             request: Arc::new(request),
             correction,
-            matrix,
             cameras,
             support,
             film: None,
@@ -200,14 +199,7 @@ impl Fit {
         scan: &Scan,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Arc<crate::scan::AnalysisInput>>, Error> {
-        let actual = self.verify_scan(index, scan)?;
-        crate::project::ScanBasis {
-            camera: crate::project::CameraBasis {
-                camera_model: actual.development.camera_model.clone(),
-                camera_to_ap1: self.matrix.to_cols_array_2d(),
-            },
-        }
-        .require_source(&actual.development)?;
+        self.verify_scan(index, scan)?;
         Ok(crate::scan::AnalysisInput::capture(scan, cancelled)?.map(Arc::new))
     }
 
@@ -352,6 +344,7 @@ impl Fit {
         };
         require_picture(&picture)?;
         self.owned.push(FrameMeasurements {
+            camera_to_ap1: self.cameras[index].camera_to_ap1,
             floor: sampler.effective_floor(),
             film,
             picture,
@@ -374,6 +367,7 @@ impl Fit {
             .owned
             .iter()
             .map(|frame| FrameSamples {
+                camera_to_ap1: frame.camera_to_ap1,
                 film: &frame.film.pixels,
                 picture: &frame.picture.pixels,
             })
@@ -382,7 +376,6 @@ impl Fit {
         let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
             floor,
-            self.matrix,
             project.input,
             &mut model,
             &mut || cancelled(),
@@ -403,19 +396,26 @@ impl Fit {
         let load_seconds = load_started.elapsed().as_secs_f64();
         let initial = proposal.roll;
         let negative = proposal.input.negative_input().expect("anchor proposal");
-        let post = crate::color::wb_matrix(initial.wb)? * self.matrix * initial.exposure.exp2();
+        let posts: Vec<_> = self
+            .cameras
+            .iter()
+            .map(|camera| {
+                Ok(crate::color::wb_matrix(initial.wb)?
+                    * camera.camera_to_ap1
+                    * initial.exposure.exp2())
+            })
+            .collect::<Result<_, Error>>()?;
         let started = std::time::Instant::now();
         if !roll_analysis::semantic_refit(
             &mut proposal,
             &frames,
-            self.matrix,
             &mut model,
             &mut || cancelled(),
             |index, ids, stop| {
                 self.semantic_sites(
                     index,
                     ids,
-                    (negative, post),
+                    (negative, posts[index]),
                     classifier_drt,
                     &mut classifier,
                     stop,
@@ -467,7 +467,7 @@ impl Fit {
         let sampler = CameraSampler::captured(
             &self.evaluation,
             &self.queue,
-            self.cameras[index].clone(),
+            self.cameras[index].pixels.clone(),
             self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
         let Some(preview) = sampler.preview_centres(bounds, &mut || cancelled())? else {
@@ -564,7 +564,7 @@ impl Fit {
                 .extend(approved.entries.clone());
         }
         analysis::verify(request)?;
-        for id in &project.order {
+        for (index, id) in project.order.iter().enumerate() {
             if cancelled() {
                 return Ok(None);
             }
@@ -574,13 +574,14 @@ impl Fit {
                 candidate.project.input,
                 candidate.project.roll,
                 &record.grade_snapshot()?,
-                self.matrix,
+                self.cameras[index].camera_to_ap1,
                 record.development.active_area.into(),
             )?;
             if let Some(correction) = &self.correction {
-                correction
-                    .gpu
-                    .validate_matrix(self.matrix, crate::processing::MAX_SOURCE_GAIN)?;
+                correction.gpu.validate_matrix(
+                    self.cameras[index].camera_to_ap1,
+                    crate::processing::MAX_SOURCE_GAIN,
+                )?;
                 crate::gpu::source::SourceGeometry::new(record.development.active_area, [1, 1])?;
             }
         }
@@ -662,7 +663,7 @@ impl Fit {
                 return Ok(None);
             }
             progress(index, total);
-            let input = state.cameras[index].clone();
+            let input = state.cameras[index].pixels.clone();
             let retired = cancelled.clone();
             let measured = background::compute(&cancelled, move || {
                 let keep = state.sample_input(index, input, || retired.is_cancelled())?;

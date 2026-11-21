@@ -38,8 +38,7 @@ fn held_correction(
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "reference.dng",
             map,
-        )))
-        .unwrap();
+        )));
     let (started, observed) = oneshot::channel();
     let (release, resume) = oneshot::channel();
     let resources = editor.correction().after(async move {
@@ -72,7 +71,7 @@ fn working_request_awaits_its_captured_correction_without_an_inspector_observer(
             assert!(working.error.is_none());
             assert!(working.wanted.as_ref().unwrap().rendering.get().is_none());
         });
-        app.update(|editor| editor.document.project.set_flat_field(None).unwrap());
+        app.update(|editor| editor.document.project.set_flat_field(None));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
             editor.document.visit.working_view.support_ready()
@@ -119,7 +118,7 @@ fn replacing_a_working_request_does_not_wait_for_the_retired_corrections_prepara
         app.run_until(Duration::from_secs(15), |_| waiting.is_finished());
         input.correction = Resources::default();
         app.enter(|editor, cx| {
-            editor.document.project.set_flat_field(None).unwrap();
+            editor.document.project.set_flat_field(None);
             request_working(editor, spec.clone(), input.clone(), cx);
         });
         app.run_until(Duration::from_secs(15), |editor| {

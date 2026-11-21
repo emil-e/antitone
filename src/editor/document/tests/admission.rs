@@ -185,7 +185,7 @@ fn correction_retains_calibration_and_project_integrity_checks_processing_choice
         .unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(source.path.clone(), field);
-    document.project.set_flat_field(Some(settings)).unwrap();
+    document.project.set_flat_field(Some(settings));
     assert_eq!(Some(calibration), document.project.calibration().unwrap());
     serde_json::to_value(&document.project).unwrap();
     let before = document.project.clone();
@@ -225,8 +225,7 @@ fn persistence_preserves_valid_photo_grades_even_when_render_admission_rejects_t
             .set_flat_field(Some(crate::project::FlatFieldSettings::new(
                 reference.path.clone(),
                 map,
-            )))
-            .unwrap();
+            )));
         let ordered = document.project.order[0];
         document.project.remove_from_filmstrip(ordered).unwrap();
         assert_eq!(document.project.order, vec![reference.id]);

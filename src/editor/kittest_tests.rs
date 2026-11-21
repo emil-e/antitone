@@ -1002,14 +1002,6 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
     });
 }
 
-fn scan_setup(path: &std::path::Path, white_balance: [f64; 4]) -> crate::project::ScanSetup {
-    let source = document::read_source(path, Some(white_balance)).unwrap();
-    crate::project::ScanSetup {
-        basis: crate::project::ScanBasis::new(&source),
-        flat_field: None,
-    }
-}
-
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/raw")

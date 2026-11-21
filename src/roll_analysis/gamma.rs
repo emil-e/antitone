@@ -13,7 +13,7 @@ const NONPOSITIVE_CONES: &str = "tonal band mean has nonpositive Bradford respon
 
 fn bands(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     points: &[Vec<DVec3>],
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -21,7 +21,7 @@ fn bands(
     let batch = SampleBatch::new(points.iter().map(Vec::as_slice));
     let mut ranked: Vec<Vec<(usize, f64)>> = points.iter().map(|_| Vec::new()).collect();
     if !batch.read(model, negative, cancelled, |frame, sample, positive| {
-        ranked[frame].push((sample, (AP1_TO_XYZ * (matrix * positive)).y));
+        ranked[frame].push((sample, (AP1_TO_XYZ * (matrices[frame] * positive)).y));
         Ok(())
     })? {
         return Ok(None);
@@ -66,13 +66,13 @@ fn drift(means: [DVec3; 3]) -> Result<[DVec2; 2], Error> {
 #[cfg(test)]
 fn evaluate(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     bands: &Bands,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<f64>, Error> {
     evaluate_with_model(
         negative,
-        matrix,
+        matrices,
         bands,
         &mut super::model::ScalarReference,
         cancelled,
@@ -81,7 +81,7 @@ fn evaluate(
 
 fn evaluate_with_model(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     bands: &Bands,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -98,7 +98,7 @@ fn evaluate_with_model(
     })? {
         return Ok(None);
     }
-    for (mean, group) in means.iter_mut().zip(&batch.groups) {
+    for (index, (mean, group)) in means.iter_mut().zip(&batch.groups).enumerate() {
         if group.is_empty() {
             return Err(Error::UnusableSample("empty patch"));
         }
@@ -106,7 +106,7 @@ fn evaluate_with_model(
         if !mean.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        *mean = matrix * *mean;
+        *mean = matrices[index / 3] * *mean;
     }
 
     let mut total = [DVec2::ZERO; 2];
@@ -133,7 +133,7 @@ fn evaluate_with_model(
 
 fn evaluate_cached(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     bands: &Bands,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -149,7 +149,7 @@ fn evaluate_cached(
     if let Some(&score) = scores.get(&key) {
         return Ok(Some(score));
     }
-    let score = evaluate_with_model(negative, matrix, bands, model, cancelled)?;
+    let score = evaluate_with_model(negative, matrices, bands, model, cancelled)?;
     if let Some(value) = score {
         scores.insert(key, value);
     }
@@ -158,14 +158,14 @@ fn evaluate_cached(
 
 fn search(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     bands: &Bands,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
     scores: &mut Scores,
 ) -> Result<Option<(Balance, f64)>, Error> {
     let mut best = negative;
-    let Some(mut score) = evaluate_cached(best, matrix, bands, model, cancelled, scores)? else {
+    let Some(mut score) = evaluate_cached(best, matrices, bands, model, cancelled, scores)? else {
         return Ok(None);
     };
     let mut step = 0.125;
@@ -194,7 +194,7 @@ fn search(
                 }
                 let candidate = NegativeInput { balance, ..base };
                 let value =
-                    match evaluate_cached(candidate, matrix, bands, model, cancelled, scores) {
+                    match evaluate_cached(candidate, matrices, bands, model, cancelled, scores) {
                         Ok(Some(value)) => value,
                         Ok(None) => return Ok(None),
                         Err(Error::UnusableSample(NONPOSITIVE_CONES)) => continue,
@@ -217,13 +217,13 @@ fn search(
 #[cfg(test)]
 fn fit(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     points: &[Vec<DVec3>],
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Balance>, Error> {
     fit_with_model(
         negative,
-        matrix,
+        matrices,
         points,
         &mut super::model::ScalarReference,
         cancelled,
@@ -232,7 +232,7 @@ fn fit(
 
 pub(super) fn fit_with_model(
     negative: NegativeInput,
-    matrix: DMat3,
+    matrices: &[DMat3],
     points: &[Vec<DVec3>],
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -241,7 +241,7 @@ pub(super) fn fit_with_model(
         balance: Balance::default(),
         ..negative
     };
-    let Some(bands) = bands(initial, matrix, points, model, cancelled)? else {
+    let Some(bands) = bands(initial, matrices, points, model, cancelled)? else {
         return Ok(None);
     };
     let spans = (negative.calibration.dmin / negative.calibration.dmax).ln();
@@ -256,7 +256,7 @@ pub(super) fn fit_with_model(
     ];
     let mut winner = Balance::default();
     let mut score = f64::INFINITY;
-    // Evidence, calibration and matrix stay fixed across starts in this fit. Reuse
+    // Evidence, calibration and camera mappings stay fixed across starts in this fit. Reuse
     // exact candidate losses, not rounded controls or an approximate response model.
     let mut scores = Scores::new();
     for (index, &seed) in seeds.iter().enumerate() {
@@ -268,7 +268,7 @@ pub(super) fn fit_with_model(
                 balance: seed,
                 ..negative
             },
-            matrix,
+            matrices,
             &bands,
             model,
             cancelled,
@@ -345,7 +345,7 @@ mod tests {
         ];
         let bands = bands(
             negative,
-            DMat3::IDENTITY,
+            &[DMat3::IDENTITY],
             &points,
             &mut super::super::model::ScalarReference,
             &mut || false,
@@ -366,7 +366,8 @@ mod tests {
         let expected: Vec<_> = candidates
             .iter()
             .map(|&n| {
-                evaluate_with_model(n, DMat3::IDENTITY, &bands, &mut direct, &mut || false).unwrap()
+                evaluate_with_model(n, &[DMat3::IDENTITY], &bands, &mut direct, &mut || false)
+                    .unwrap()
             })
             .collect();
         assert_ne!(expected[0], expected[1], "candidate-key positive control");
@@ -376,7 +377,7 @@ mod tests {
             assert_eq!(
                 evaluate_cached(
                     candidates[index],
-                    DMat3::IDENTITY,
+                    &[DMat3::IDENTITY],
                     &bands,
                     &mut actual,
                     &mut || false,
@@ -394,7 +395,7 @@ mod tests {
         assert_eq!(
             evaluate_cached(
                 negative,
-                DMat3::IDENTITY,
+                &[DMat3::IDENTITY],
                 &bands,
                 &mut actual,
                 &mut || true,
@@ -439,7 +440,7 @@ mod tests {
                     balance: Balance::default(),
                     ..negative
                 },
-                DMat3::IDENTITY,
+                &[DMat3::IDENTITY],
                 &points,
                 &mut reference,
                 &mut || false,
@@ -457,7 +458,7 @@ mod tests {
                         balance: seed,
                         ..negative
                     },
-                    DMat3::IDENTITY,
+                    &[DMat3::IDENTITY],
                     &bands,
                     &mut reference,
                     &mut || false,
@@ -470,12 +471,15 @@ mod tests {
                 }
             }
             let mut actual = Count(0);
-            let fitted =
-                fit_with_model(negative, DMat3::IDENTITY, &points, &mut actual, &mut || {
-                    false
-                })
-                .unwrap()
-                .unwrap();
+            let fitted = fit_with_model(
+                negative,
+                &[DMat3::IDENTITY],
+                &points,
+                &mut actual,
+                &mut || false,
+            )
+            .unwrap()
+            .unwrap();
             assert_eq!(fitted, winner.0);
             assert!(
                 actual.0 > 0 && actual.0 <= reference.0,
@@ -506,47 +510,60 @@ mod tests {
             DVec3::new(0.2, 0.8, -0.1),
             DVec3::new(-0.03, 0.08, 1.3),
         );
-        let points = [
-            Balance::default(),
-            Balance {
-                warmth: 0.2,
-                tint: -0.1,
-            },
-            Balance {
-                warmth: -0.15,
-                tint: 0.1,
-            },
-        ]
-        .map(|wb| {
-            let direction = matrix.inverse() * wb_matrix(wb).unwrap() * DVec3::ONE;
-            (0..90)
-                .map(|i| {
-                    forward(
-                        cal,
-                        truth,
-                        direction * 2_f64.powf(-7. + i as f64 / 89. * 6.8),
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
-        for current in [
-            NegativeInput {
-                balance: Balance::default(),
-                ..truth
-            },
-            NegativeInput {
-                balance: Balance {
-                    warmth: 0.3,
-                    tint: -0.2,
-                },
-                ..truth
-            },
+        for matrices in [
+            [matrix; 3],
+            [
+                matrix,
+                DMat3::IDENTITY,
+                DMat3::from_diagonal(DVec3::new(0.8, 1.2, 1.1)),
+            ],
         ] {
-            let fitted = fit(current, matrix, &points, &mut || false)
-                .unwrap()
-                .unwrap();
-            assert!((fitted.warmth - truth.balance.warmth).abs() < 2e-6);
-            assert!((fitted.tint - truth.balance.tint).abs() < 2e-6);
+            let casts = [
+                Balance::default(),
+                Balance {
+                    warmth: 0.2,
+                    tint: -0.1,
+                },
+                Balance {
+                    warmth: -0.15,
+                    tint: 0.1,
+                },
+            ];
+            let points: Vec<_> = casts
+                .into_iter()
+                .zip(matrices)
+                .map(|(wb, matrix)| {
+                    let direction = matrix.inverse() * wb_matrix(wb).unwrap() * DVec3::ONE;
+                    (0..90)
+                        .map(|i| {
+                            forward(
+                                cal,
+                                truth,
+                                direction * 2_f64.powf(-7. + i as f64 / 89. * 6.8),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            for current in [
+                NegativeInput {
+                    balance: Balance::default(),
+                    ..truth
+                },
+                NegativeInput {
+                    balance: Balance {
+                        warmth: 0.3,
+                        tint: -0.2,
+                    },
+                    ..truth
+                },
+            ] {
+                let fitted = fit(current, &matrices, &points, &mut || false)
+                    .unwrap()
+                    .unwrap();
+                assert!((fitted.warmth - truth.balance.warmth).abs() < 2e-6);
+                assert!((fitted.tint - truth.balance.tint).abs() < 2e-6);
+            }
         }
     }
 
@@ -570,12 +587,12 @@ mod tests {
                 .map(|i| forward(cal, negative, DVec3::splat(0.1 + 0.8 * i as f64 / 89.)))
                 .collect(),
         ];
-        let fitted = fit(negative, DMat3::IDENTITY, &points, &mut || false)
+        let fitted = fit(negative, &[DMat3::IDENTITY], &points, &mut || false)
             .unwrap()
             .unwrap();
         assert!(fitted.warmth.abs().max(fitted.tint.abs()) < 2e-6);
         assert!(matches!(
-            fit(negative, -DMat3::IDENTITY, &points, &mut || false),
+            fit(negative, &[-DMat3::IDENTITY], &points, &mut || false),
             Err(Error::UnusableSample("no usable gamma drift search start"))
         ));
     }
@@ -607,14 +624,14 @@ mod tests {
             })
             .collect();
         assert!(
-            evaluate(negative, DMat3::IDENTITY, &groups, &mut || false)
+            evaluate(negative, &[DMat3::IDENTITY; 2], &groups, &mut || false)
                 .unwrap()
                 .unwrap()
                 < 1e-24
         );
         for frame in groups {
             assert!(
-                evaluate(negative, DMat3::IDENTITY, &vec![frame], &mut || false)
+                evaluate(negative, &[DMat3::IDENTITY], &vec![frame], &mut || false)
                     .unwrap()
                     .unwrap()
                     > 0.01

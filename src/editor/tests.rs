@@ -131,7 +131,7 @@ pub(super) fn dng_with_red_as_shot(bytes: &[u8]) -> Vec<u8> {
     changed
 }
 
-pub(super) fn with_camera_basis(editor: &mut Editor) {
+pub(super) fn with_registered_photo(editor: &mut Editor) {
     let development = Development::new(crate::raw::version(), [1.; 4]);
     editor
         .document
@@ -716,7 +716,7 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
 #[test]
 fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.project.order.first().copied();
     editor.document.project.orientation.horizontal = true;
     editor.photo_orientation_mut().turn_clockwise();
@@ -826,7 +826,7 @@ fn completing_calibration_preserves_the_current_view_in_either_pick_order() {
     ] {
         for initial_source in [None, Some(false), Some(true)] {
             let mut editor = fixture();
-            with_camera_basis(&mut editor);
+            with_registered_photo(&mut editor);
             if initial_source.is_none() {
                 editor.set_dmin(None);
                 editor.set_dmax(None);
@@ -2895,7 +2895,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
     for width in [270., 315.] {
         let context = egui::Context::default();
         let mut editor = fixture();
-        with_camera_basis(&mut editor);
+        with_registered_photo(&mut editor);
         editor.document.visit.current_source = editor.document.state.project.order.first().copied();
         for tab in [0, 1, 2] {
             editor.tab = tab;
@@ -3001,7 +3001,7 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
 fn section_expansion_is_scope_specific_and_does_not_change_project_state() {
     let context = egui::Context::default();
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.document.project.roll.exposure = 1.23456789;
     editor.photo_settings_mut().exposure = -2.3456789;
@@ -3104,7 +3104,7 @@ fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
 fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
     let context = egui::Context::default();
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.set_gamma(1.1);
     editor.set_balance(Balance {
@@ -3172,7 +3172,7 @@ fn section_and_color_resets_preserve_calibration_and_other_edit_scopes() {
 fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     let context = egui::Context::default();
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.tab = 1;
     for section in ["photo-composition", "photo-white-balance", "photo-exposure"] {
@@ -3283,7 +3283,7 @@ fn response_section_is_reachable_by_scrolling_while_stage_tabs_stay_fixed() {
 #[test]
 fn input_stage_switch_requires_confirmation_before_discarding_negative_settings() {
     let mut editor = fixture();
-    with_camera_basis(&mut editor);
+    with_registered_photo(&mut editor);
     let negative = editor.document.project.input;
     assert!(negative.is_negative() && negative.ready());
     crate::application::test_support::with_application(editor, |app| {

@@ -210,12 +210,10 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
             }
         }
         let reference_id = reference_id.unwrap();
-        project
-            .set_flat_field(Some(FlatFieldSettings::new(
-                project.source(reference_id).unwrap().path.clone(),
-                map.clone(),
-            )))
-            .unwrap();
+        project.set_flat_field(Some(FlatFieldSettings::new(
+            project.source(reference_id).unwrap().path.clone(),
+            map.clone(),
+        )));
         project.remove_from_filmstrip(reference_id).unwrap();
         assert!(project.source(reference_id).is_err());
         let directory = tempfile::tempdir().unwrap();

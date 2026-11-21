@@ -717,7 +717,7 @@ fn changed_photo_bytes_do_not_change_saved_state_or_invalidate_calibration() {
 }
 
 #[test]
-fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level() {
+fn source_locators_and_decoder_provenance_preserve_calibration_while_unknown_models_reject() {
     let dir = tempfile::tempdir().unwrap();
     let (mut project, dmin_source_id, _) = fixture(dir.path());
     let moved = dir.path().join("renamed.ARW");
@@ -890,7 +890,10 @@ fn digital_recipes_and_unresolved_negative_intent_preserve_mixed_camera_baseline
         ))
         .unwrap();
 
-    assert_eq!(project.camera_basis().unwrap().camera_model, "camera-a");
+    assert_eq!(
+        project.source(first).unwrap().development.camera_model,
+        "camera-a"
+    );
     assert_eq!(
         project
             .source(second)
@@ -943,7 +946,7 @@ fn digital_recipes_and_unresolved_negative_intent_preserve_mixed_camera_baseline
 }
 
 #[test]
-fn scan_basis_depends_on_camera_coordinates_not_decoder_provenance() {
+fn camera_descriptor_depends_on_coordinates_not_decoder_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let source = mixed_source(
         directory.path().join("basis.ARW").to_str().unwrap(),
@@ -951,28 +954,25 @@ fn scan_basis_depends_on_camera_coordinates_not_decoder_provenance() {
         1.,
         [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
     );
-    let basis = antitone::project::ScanBasis::from_development(&source.development);
+    let basis = source.development.camera_basis();
     let mut other_version = source.development.clone();
     other_version
         .decode
         .backend_version
         .push_str("-new-release");
-    assert_eq!(
-        basis,
-        antitone::project::ScanBasis::from_development(&other_version)
-    );
-    assert!(basis.require_source(&other_version).is_ok());
+    assert_eq!(basis, other_version.camera_basis());
+    assert!(source.development.same_processing(&other_version));
     let mut other_basis = source.development;
     other_basis.camera_model.push_str(" other camera");
-    assert!(basis.require_source(&other_basis).is_err());
+    assert_ne!(basis, other_basis.camera_basis());
 }
 
 #[test]
-fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
+fn default_negative_preserves_each_mixed_camera_development() {
     let directory = tempfile::tempdir().unwrap();
     let mut project = Project::default();
     assert!(matches!(project.input, InputSettings::Negative { .. }));
-    assert!(project.scan.is_none());
+    assert!(project.flat_field.is_none());
 
     let first = project
         .add_source(mixed_source(
@@ -983,8 +983,8 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
         ))
         .unwrap();
     assert_eq!(
-        project.scan_basis().unwrap().camera,
-        project.source(first).unwrap().development.camera_basis()
+        project.source(first).unwrap().development.camera_model,
+        "camera-a"
     );
 
     project
@@ -996,16 +996,24 @@ fn default_negative_admits_one_scan_basis_and_rejects_mixed_cameras() {
         ))
         .unwrap();
 
-    let before = project.clone();
-    assert!(
+    let input = project.input;
+    let third = project
+        .add_source(mixed_source(
+            directory.path().join("camera-b.ARW").to_str().unwrap(),
+            "camera-b",
+            1.,
+            [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]],
+        ))
+        .unwrap();
+    assert_eq!(project.input, input);
+    assert_eq!(
         project
-            .add_source(mixed_source(
-                directory.path().join("camera-b.ARW").to_str().unwrap(),
-                "camera-b",
-                1.,
-                [[0.9, 0., 0.1], [0., 1.1, 0.], [0.05, 0., 0.95]]
-            ))
-            .is_err()
+            .image_recipe(third)
+            .unwrap()
+            .neutral
+            .source_development
+            .resolved()
+            .unwrap(),
+        &project.source(third).unwrap().development
     );
-    assert_eq!(project, before);
 }

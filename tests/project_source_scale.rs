@@ -98,12 +98,6 @@ fn accepted_wb_requires_representable_gains_and_the_selected_backend_basis() {
             .is_err(),
         "Negative intent must not relabel the recorded AsShot development"
     );
-    assert!(
-        ScanBasis::from_development(&negative.sources[0].development)
-            .require_source(&negative.sources[0].development)
-            .is_err(),
-        "a Negative consumer requires unity development"
-    );
     negative.sources[0].development_mode = DevelopmentMode::Unity;
     assert!(
         serde_json::to_value(&negative).is_err(),

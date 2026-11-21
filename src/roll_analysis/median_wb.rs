@@ -9,16 +9,15 @@ const CONE_FLOOR: f64 = 1e-8;
 pub(super) fn estimate(
     picture: &SampleBatch,
     negative: NegativeInput,
-    camera_to_ap1: DMat3,
+    matrices: &[DMat3],
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<(Balance, Vec<usize>)>, Error> {
     let ap1_to_cones = ap1_to_cones();
-    let to_cones = ap1_to_cones * camera_to_ap1;
     let white = (ap1_to_cones * DVec3::ONE).ln();
     let mut chroma = vec![Vec::new(); picture.groups.len()];
     if !picture.read(model, negative, cancelled, |frame, _, positive| {
-        let cones = to_cones * positive;
+        let cones = ap1_to_cones * matrices[frame] * positive;
         if !cones.is_finite() {
             return Err(Error::NumericalOverflow);
         }
@@ -66,7 +65,6 @@ pub(super) fn estimate(
 pub(crate) fn semantic_refit(
     proposal: &mut Proposal,
     frames: &[FrameSamples<'_>],
-    matrix: DMat3,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
     mut classify: impl FnMut(
@@ -80,11 +78,12 @@ pub(crate) fn semantic_refit(
         .negative_input()
         .expect("anchor proposal contains calibration");
     let picture = SampleBatch::new(frames.iter().map(|frame| frame.picture));
-    let to_cones = ap1_to_cones() * matrix;
-    let white = (ap1_to_cones() * DVec3::ONE).ln();
+    let matrices: Vec<_> = frames.iter().map(|f| f.camera_to_ap1).collect();
+    let ap1_to_cones = ap1_to_cones();
+    let white = (ap1_to_cones * DVec3::ONE).ln();
     let mut chroma = vec![Vec::new(); frames.len()];
     if !picture.read(model, negative, cancelled, |frame, index, positive| {
-        let cones = to_cones * positive;
+        let cones = ap1_to_cones * matrices[frame] * positive;
         if !cones.is_finite() {
             return Err(Error::NumericalOverflow);
         }
@@ -137,7 +136,7 @@ pub(crate) fn semantic_refit(
         tint: quantile(&mut tint, 0.5).clamp(-1., 1.),
     };
     let Some((exposure, exposure_counts)) =
-        meter(&picture, negative, matrix, wb, model, cancelled)?
+        meter(&picture, negative, &matrices, wb, model, cancelled)?
     else {
         return Ok(false);
     };

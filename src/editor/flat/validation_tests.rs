@@ -19,8 +19,7 @@ fn set_map(document: &mut Document, gain: f64) {
     );
     document
         .project
-        .set_flat_field(Some(FlatFieldSettings::new("reference.dng", map)))
-        .unwrap();
+        .set_flat_field(Some(FlatFieldSettings::new("reference.dng", map)));
 }
 
 fn limited_device() -> (wgpu::Device, crate::gpu::submission::Queue) {
@@ -114,7 +113,7 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
         .unwrap()
         .is_none()
     );
-    document.project.set_flat_field(None).unwrap();
+    document.project.set_flat_field(None);
     assert!(
         Correction::prepare(
             &device,
@@ -179,8 +178,7 @@ fn map_upload_failure_preserves_the_previous_correction_and_history() {
     assert!(map.nodes().len() as u64 * 12 > device.limits().max_storage_buffer_binding_size);
     candidate
         .project
-        .set_flat_field(Some(FlatFieldSettings::new("larger.dng", map)))
-        .unwrap();
+        .set_flat_field(Some(FlatFieldSettings::new("larger.dng", map)));
     serde_json::to_value(&candidate.project).unwrap();
     let before = document.project.clone();
     let mut editor = Editor::new(&device, &queue);
@@ -214,7 +212,7 @@ fn map_upload_failure_preserves_the_previous_correction_and_history() {
 }
 
 #[test]
-fn preparing_and_reusing_a_map_ignore_unrelated_source_compatibility() {
+fn preparing_and_reusing_a_map_are_independent_of_photo_camera_descriptors() {
     let editor = crate::editor::tests::authored_fixture(&[]);
     let device = editor.document.visit.working_view.device().unwrap();
     let mut document = document();
@@ -272,7 +270,7 @@ fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_
     let mut document = document();
     document.project.sources[0].development.camera_to_ap1 =
         (glam::DMat3::IDENTITY * 1e15).to_cols_array_2d();
-    document.project.reset_scan_basis();
+
     set_map(&mut document, 1.);
     let prepared = Correction::prepare(&device, document.project.active_flat_field(), None)
         .unwrap()
@@ -313,7 +311,7 @@ fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_
     let mut ordinary = document.clone();
     ordinary.project.sources[0].development.camera_to_ap1 =
         glam::DMat3::IDENTITY.to_cols_array_2d();
-    ordinary.project.reset_scan_basis();
+
     recipe.neutral.source_development = ordinary
         .image_recipe(id)
         .unwrap()

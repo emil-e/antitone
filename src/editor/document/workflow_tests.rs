@@ -394,7 +394,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 .unwrap(),
             );
             let field = FlatFieldSettings::new(source.path.clone(), map);
-            candidate.project.set_flat_field(Some(field)).unwrap();
+            candidate.project.set_flat_field(Some(field));
             e.start_correction(candidate, cx);
         });
         app.run_until(Duration::from_secs(15), |e| {
@@ -402,7 +402,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 && !e.document.visit.source.pending()
                 && !e.correction().pending()
         });
-        let (negative, scan, expected_pixels) = app.read(|e| {
+        let (negative, correction, expected_pixels) = app.read(|e| {
             assert!(e.correction().prepared().is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
@@ -418,7 +418,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             .unwrap();
             (
                 e.document.project.input,
-                e.document.state.project.scan.clone(),
+                e.document.state.project.flat_field.clone(),
                 digital_proxy_pixels(e, &uncorrected, None),
             )
         });
@@ -471,7 +471,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                     .flat_field()
                     .is_none()
             );
-            assert!(e.document.state.project.scan.is_none());
+            assert!(e.document.state.project.flat_field.is_none());
             assert_eq!(
                 e.history_label(history::Direction::Undo),
                 Some("Input stage")
@@ -502,7 +502,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.read(|e| {
             assert_eq!(e.document.project.input, negative, "{}", e.status);
             assert!(e.correction().prepared().is_some() && !e.document.source);
-            assert_eq!(e.document.state.project.scan, scan);
+            assert_eq!(e.document.state.project.flat_field, correction);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(15), |e| {
@@ -533,11 +533,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 "{}",
                 e.status
             );
-            assert!(e.document.state.project.scan.is_none());
-            assert_eq!(
-                e.document.capture().scan_basis().as_ref(),
-                scan.as_ref().map(|scan| &scan.basis)
-            );
+            assert!(e.document.state.project.flat_field.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();

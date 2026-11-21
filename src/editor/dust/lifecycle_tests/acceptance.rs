@@ -696,7 +696,7 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
         .unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(record.path.clone(), field);
-    e.document.project.set_flat_field(Some(settings)).unwrap();
+    e.document.project.set_flat_field(Some(settings));
     e.document.correction = crate::editor::Correction::prepare(
         &e.source_services.as_ref().unwrap().device,
         e.document.project.active_flat_field(),

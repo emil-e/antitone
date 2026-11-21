@@ -94,14 +94,12 @@ pub struct SpatialFrameSamples<'a> {
 pub fn estimate_spatial(
     frames: &[SpatialFrameSamples<'_>],
     effective_floor: f64,
-    matrix: DMat3,
     current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
     estimate_spatial_with_model(
         frames,
         effective_floor,
-        matrix,
         current,
         &mut model::ScalarReference,
         &mut cancelled,
@@ -111,7 +109,6 @@ pub fn estimate_spatial(
 pub(crate) fn estimate_spatial_with_model(
     frames: &[SpatialFrameSamples<'_>],
     effective_floor: f64,
-    matrix: DMat3,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -120,7 +117,6 @@ pub(crate) fn estimate_spatial_with_model(
     estimate_spatial_with_provider(
         &statistics,
         effective_floor,
-        matrix,
         current,
         model,
         cancelled,
@@ -132,33 +128,22 @@ pub(crate) fn estimate_spatial_with_model(
 pub(crate) fn estimate_spatial_with_provider<S: AsRef<SpatialSamples>>(
     frames: &[FrameSamples<'_>],
     effective_floor: f64,
-    matrix: DMat3,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
     image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
 ) -> Result<Option<Proposal>, Error> {
-    let Some(seed) =
-        estimate_with_model(frames, effective_floor, matrix, current, model, cancelled)?
+    let Some(seed) = estimate_with_model(frames, effective_floor, current, model, cancelled)?
     else {
         return Ok(None);
     };
-    refine_from(
-        frames,
-        matrix,
-        effective_floor,
-        seed,
-        model,
-        cancelled,
-        image,
-    )
+    refine_from(frames, effective_floor, seed, model, cancelled, image)
 }
 
 #[cfg(test)]
 fn refine(
     frames: &[FrameSamples<'_>],
     images: &[&SpatialSamples],
-    matrix: DMat3,
     effective_floor: f64,
     proposal: Proposal,
     model: &mut impl ForwardModel,
@@ -166,7 +151,6 @@ fn refine(
 ) -> Result<Option<Proposal>, Error> {
     refine_from(
         frames,
-        matrix,
         effective_floor,
         proposal,
         model,
@@ -177,13 +161,13 @@ fn refine(
 
 fn refine_from<S: AsRef<SpatialSamples>>(
     frames: &[FrameSamples<'_>],
-    matrix: DMat3,
     effective_floor: f64,
     mut proposal: Proposal,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
     mut image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
 ) -> Result<Option<Proposal>, Error> {
+    let matrices: Vec<_> = frames.iter().map(|f| f.camera_to_ap1).collect();
     let initial = proposal
         .input
         .negative_input()
@@ -192,7 +176,7 @@ fn refine_from<S: AsRef<SpatialSamples>>(
     // It is not a WB pre-correction or an exposure-normalization step.
     let gain = exposure_multiplier(proposal.roll.exposure)?;
     let mut points = Vec::with_capacity(frames.len());
-    for index in 0..frames.len() {
+    for (index, &matrix) in matrices.iter().enumerate() {
         let Some(samples) = image(index, cancelled)? else {
             return Ok(None);
         };
@@ -237,7 +221,8 @@ fn refine_from<S: AsRef<SpatialSamples>>(
                 .collect::<Vec<_>>(),
         );
     }
-    let Some(balance) = gamma::fit_with_model(initial, matrix, &points, model, cancelled)? else {
+    let Some(balance) = gamma::fit_with_model(initial, &matrices, &points, model, cancelled)?
+    else {
         return Ok(None);
     };
     let negative = NegativeInput { balance, ..initial };
@@ -254,7 +239,10 @@ fn refine_from<S: AsRef<SpatialSamples>>(
         };
         let (count, correction) = match grayness::select(&rgb, &valid, image.size, gain, cancelled)
         {
-            Ok(Some(selected)) => (selected.indices.len(), neutral_wb(matrix * selected.mean)),
+            Ok(Some(selected)) => (
+                selected.indices.len(),
+                neutral_wb(matrices[index] * selected.mean),
+            ),
             Ok(None) => return Ok(None),
             Err(error @ Error::UnusableSample(_)) => (0, Err(error)),
             Err(error) => return Err(error),
@@ -288,7 +276,7 @@ fn refine_from<S: AsRef<SpatialSamples>>(
     let Some((ev, counts)) = meter(
         &picture,
         negative,
-        matrix,
+        &matrices,
         proposal.roll.wb,
         model,
         cancelled,

@@ -164,43 +164,42 @@ fn roll_wb_roundtrips_defaults_missing_optional_values_to_zero_and_rejects_inval
 }
 
 #[test]
-fn incompatible_scans_reject_at_registration_and_consumption_but_roundtrip_as_saved_intent() {
+fn mixed_camera_sources_preserve_calibration_and_roundtrip_each_development() {
     let mut project = project();
-    let before = project.clone();
-    for incompatible in [
+    let input = project.input;
+    for (index, other) in [
         source("camera B", DMat3::IDENTITY),
         source("camera A", DMat3::from_diagonal(DVec3::new(1.1, 1., 1.))),
-    ] {
-        assert!(
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut other = other;
+        other.path = format!("other-{index}.ARW").into();
+        let development = other.development.clone();
+        let id = project.add_source(other).unwrap();
+        assert_eq!(project.input, input);
+        assert_eq!(
             project
-                .require_scan_source(&incompatible.development)
-                .is_err()
-        );
-        assert!(project.add_source(incompatible.clone()).is_err());
-        assert_eq!(project, before);
-        let mut intent = project.clone();
-        intent.input = InputSettings::Digital;
-        let id = intent.add_source(incompatible).unwrap();
-        intent.input = before.input;
-        serde_json::to_value(&intent).unwrap();
-        assert!(intent.require_scan_sources().is_err());
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("incompatible-photo.antitone");
-        intent.save(&path, Save::New).unwrap();
-        let restored = Project::load(&path).unwrap();
-        assert_eq!(restored, intent);
-        assert!(
-            restored
-                .require_scan_source(&restored.source(id).unwrap().development)
-                .is_err()
+                .image_recipe(id)
+                .unwrap()
+                .neutral
+                .source_development
+                .resolved()
+                .unwrap(),
+            &development
         );
     }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mixed.antitone");
+    project.save(&path, Save::New).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), project);
 }
 
 #[test]
-fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip() {
+fn retained_calibration_survives_source_replacement_and_roundtrip() {
     let mut project = project();
-    let basis = project.scan.clone();
+    let input = project.input;
     project.sources.clear();
     project.order.clear();
     serde_json::to_value(&project).unwrap();
@@ -209,15 +208,9 @@ fn retained_scan_setup_controls_registration_after_source_removal_and_roundtrip(
     project.save(&path, Save::New).unwrap();
     let mut restored = Project::load(&path).unwrap();
     assert_eq!(restored, project);
-    assert_eq!(restored.scan, basis);
-    assert!(
-        restored
-            .add_source(source("camera B", DMat3::IDENTITY))
-            .is_err()
-    );
-    assert_eq!(restored, project);
+    assert_eq!(restored.input, input);
     restored
-        .add_source(source("camera A", DMat3::IDENTITY))
+        .add_source(source("camera B", DMat3::IDENTITY))
         .unwrap();
     serde_json::to_value(&restored).unwrap();
     let mut corrupt = restored.clone();

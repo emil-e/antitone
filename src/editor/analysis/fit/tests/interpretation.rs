@@ -27,7 +27,6 @@ fn cold_fit_acquires_unresolved_interpretations_before_computation_and_needs_no_
                 .is_err()
         );
     }
-    assert!(document.scan_basis().is_none());
     request.document = document;
     approved(&mut request);
     let (loader, developments) = observed();
@@ -152,9 +151,9 @@ fn acquired_rasters_establish_facts_before_matching_captured_region_evidence() {
 }
 
 #[test]
-fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and_without_correction()
- {
-    for corrected in [false, true] {
+fn fitting_uses_each_acquired_camera_mapping_across_development_modes_and_correction() {
+    for (corrected, mixed_matrices) in [(false, false), (true, false), (false, true), (true, true)]
+    {
         let (mut request, directory, device, queue) = request();
         let paths: Vec<_> = request
             .document
@@ -179,11 +178,33 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
             bytes[offset + index * 8 + 4..offset + index * 8 + 8]
                 .copy_from_slice(&gain.to_le_bytes());
         }
+        if mixed_matrices {
+            let matrix = (0..count)
+                .map(|index| ifd + 2 + index * 12)
+                .find(|entry| {
+                    u16::from_le_bytes(bytes[*entry..*entry + 2].try_into().unwrap()) == 50721
+                })
+                .expect("authored ColorMatrix1 tag");
+            assert_eq!(
+                u16::from_le_bytes(bytes[matrix + 2..matrix + 4].try_into().unwrap()),
+                10
+            );
+            assert_eq!(
+                u32::from_le_bytes(bytes[matrix + 4..matrix + 8].try_into().unwrap()),
+                9
+            );
+            let offset =
+                u32::from_le_bytes(bytes[matrix + 8..matrix + 12].try_into().unwrap()) as usize;
+            let numerator = i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            let denominator = i32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
+            // Perturb the declared XYZ-to-camera red response without changing camera codes.
+            bytes[offset..offset + 4]
+                .copy_from_slice(&(numerator + denominator / 10).to_le_bytes());
+        }
         std::fs::write(&paths[1], bytes).unwrap();
         let mut document = Document::default();
         document.import(&paths[..1]).unwrap();
         document.project.input = InputSettings::Digital;
-        document.project.scan = None;
         document.import(&paths[1..]).unwrap();
         assert_eq!(
             document.project.sources[0].development_mode,
@@ -202,6 +223,7 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
         let scheduler = source_loading::SourceLoader::new();
         let sources = scheduler.provider(None);
         let mut sampling_inputs = SamplingInputs::default();
+        let mut acquired_matrices = Vec::new();
         for id in &scope.project.order {
             let acquired = pollster::block_on(
                 scope
@@ -214,8 +236,14 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
                 acquired.record.development.decode.white_balance,
                 crate::project::UNITY_WB
             );
+            let scan = acquired.prepared.scan();
+            assert_eq!(
+                scan.camera_to_ap1,
+                glam::DMat3::from_cols_array_2d(&acquired.record.development.camera_to_ap1),
+            );
+            acquired_matrices.push(scan.camera_to_ap1);
             let input = Arc::new(
-                crate::scan::AnalysisInput::capture(&acquired.prepared.scan(), || false)
+                crate::scan::AnalysisInput::capture(&scan, || false)
                     .unwrap()
                     .unwrap(),
             );
@@ -228,13 +256,16 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
                 input,
             );
         }
+        assert_eq!(acquired_matrices[0] != acquired_matrices[1], mixed_matrices);
         scope.state.capture_initialization(&scope.initialization);
+        for (id, matrix) in scope.project.order.iter().zip(&acquired_matrices) {
+            let resolved = scope.source_input(*id).unwrap().development().unwrap();
+            assert_eq!(
+                glam::DMat3::from_cols_array_2d(&resolved.resolved().unwrap().camera_to_ap1),
+                *matrix,
+            );
+        }
         if corrected {
-            let basis = scope.capture().scan_basis().unwrap();
-            scope.project.scan = Some(crate::project::ScanSetup {
-                basis,
-                flat_field: None,
-            });
             let map = Arc::new(
                 crate::flat_field::FlatField::from_nodes(
                     [0, 0, 512, 512],
@@ -248,8 +279,7 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
                 .set_flat_field(Some(crate::project::FlatFieldSettings::new(
                     "reference.dng",
                     map,
-                )))
-                .unwrap();
+                )));
         }
         request.document = scope.capture();
         request.selected = scope.project.order[0];
@@ -264,10 +294,13 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
         };
         let correction = input(&resources, &request);
         let before = request.document.project.clone();
-        let outcome = pollster::block_on(run(
-            request.clone(),
-            correction,
-            resources,
+        let fit = resources.fit(request.clone(), correction).unwrap();
+        assert_eq!(fit.cameras.len(), acquired_matrices.len());
+        for (camera, matrix) in fit.cameras.iter().zip(&acquired_matrices) {
+            assert_eq!(camera.camera_to_ap1, *matrix);
+        }
+        let outcome = pollster::block_on(fit.run(
+            resources.classifier_drt(),
             Cancellation::default(),
             |_, _| {},
         ))

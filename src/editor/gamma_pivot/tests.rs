@@ -597,8 +597,7 @@ fn correction_changes_do_not_replace_the_picked_value_or_change_its_gamma_respon
                 .set_flat_field(Some(crate::project::FlatFieldSettings::new(
                     "pivot-value-reference.dng",
                     Arc::new(map),
-                )))
-                .unwrap();
+                )));
             editor.start_correction(candidate, cx);
         });
         app.run_until(Duration::from_secs(15), |editor| {

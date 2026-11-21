@@ -523,7 +523,6 @@ mod tests {
 
         let digital = InputSettings::Digital.capabilities();
         assert!(digital.grain);
-        assert!(!digital.scan_sources);
 
         let negative = InputSettings::Negative {
             dmin: None,
@@ -534,7 +533,6 @@ mod tests {
         }
         .capabilities();
         assert!(!negative.grain);
-        assert!(negative.scan_sources);
     }
 
     #[test]

@@ -55,10 +55,6 @@ pub(super) fn service_job(
         crate::source::input::Photograph {
             record: source.clone(),
             development: key.source.development.clone(),
-            basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
-                &source,
-            ))),
-            expected_camera: Some(source.development.camera_model.clone()),
         },
     );
     Job {
@@ -378,7 +374,7 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
         crate::flat_field::FlatField::from_nodes(a, [2, 2], vec![DVec3::splat(1.1); 4]).unwrap(),
     );
     let settings = crate::project::FlatFieldSettings::new(source.path.clone(), map);
-    document.project.set_flat_field(Some(settings)).unwrap();
+    document.project.set_flat_field(Some(settings));
     let corrected = key(&document, id);
     assert_ne!(corrected, plain);
     assert_eq!(corrected.source, plain.source);
@@ -389,7 +385,7 @@ fn correction_changes_image_identity_without_invalidating_unconverted_raw_proxie
     assert_eq!(corrected, recreated);
     document.project.flat_field_mut().unwrap().enabled = false;
     assert_eq!(key(&document, id), plain);
-    document.project.set_flat_field(None).unwrap();
+    document.project.set_flat_field(None);
     assert_eq!(key(&document, id), plain);
 }
 

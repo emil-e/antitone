@@ -444,12 +444,7 @@ impl Metadata {
         }
         let mut result = self.clone();
         result.groups.retain(|group| {
-            group.sources.first().is_some_and(|source| {
-                project.scan_basis().is_none_or(|basis| {
-                    !project.input.is_negative()
-                        || basis.require_source(&source.input.development).is_ok()
-                })
-            }) && group.sources.iter().all(|source| {
+            group.sources.iter().all(|source| {
                 project.source(source.input.source).is_ok_and(|record| {
                     crate::development_metadata::require_geometry(
                         &record.development,

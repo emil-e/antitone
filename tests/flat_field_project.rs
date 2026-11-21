@@ -51,12 +51,10 @@ fn fixture() -> Project {
         )
         .unwrap(),
     );
-    project
-        .set_flat_field(Some(FlatFieldSettings::new(
-            project.source(id).unwrap().path.clone(),
-            map,
-        )))
-        .unwrap();
+    project.set_flat_field(Some(FlatFieldSettings::new(
+        project.source(id).unwrap().path.clone(),
+        map,
+    )));
     project
 }
 
@@ -67,7 +65,7 @@ fn reference_provenance_stores_only_the_filename() {
     let reference = std::path::Path::new("outside-the-roll").join("light.ARW");
     let settings = FlatFieldSettings::new(reference, map);
     assert_eq!(settings.reference_name, "light.ARW");
-    project.set_flat_field(Some(settings)).unwrap();
+    project.set_flat_field(Some(settings));
     let json = serde_json::to_string(&project).unwrap();
     assert!(!json.contains("outside-the-roll"));
     let reopened: Project = serde_json::from_str(&json).unwrap();
@@ -109,7 +107,7 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
     disabled.flat_field_mut().unwrap().enabled = false;
     assert_eq!(disabled.calibration().unwrap(), calibration);
     let mut plain = project;
-    plain.set_flat_field(None).unwrap();
+    plain.set_flat_field(None);
     assert_eq!(plain.calibration().unwrap(), calibration);
     let json = serde_json::to_string(&plain).unwrap();
     assert!(!json.contains("flat_field"));
@@ -117,7 +115,7 @@ fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() 
 }
 
 #[test]
-fn map_and_development_validation_are_separate_from_scan_compatibility() {
+fn map_and_development_validate_independently() {
     let project = fixture();
     let mut changed = project.clone();
     changed.flat_field_mut().unwrap().reference_name = "reference.ARW".into();
@@ -128,11 +126,6 @@ fn map_and_development_validation_are_separate_from_scan_compatibility() {
     changed = project.clone();
     changed.sources[0].development.camera_to_ap1[0][0] += 0.1;
     serde_json::to_value(&changed).unwrap();
-    assert!(
-        changed
-            .require_scan_source(&changed.sources[0].development)
-            .is_err()
-    );
     changed.sources[0].development.camera_to_ap1 = DMat3::ZERO.to_cols_array_2d();
     assert!(serde_json::to_value(&changed).is_err());
     changed = project.clone();
@@ -147,7 +140,7 @@ fn map_and_development_validation_are_separate_from_scan_compatibility() {
     changed.flat_field_mut().unwrap().enabled = false;
     serde_json::to_value(&changed).unwrap();
     let mut json = serde_json::to_value(&project).unwrap();
-    json["scan"]["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
+    json["flat_field"]["map"]["size"] = serde_json::json!([0, 2]);
     assert!(serde_json::from_value::<Project>(json).is_err());
 }
 
@@ -165,18 +158,16 @@ fn dense_calibration_remains_usable_with_or_without_correction() {
     .enumerate()
     {
         let mut project = fixture();
-        project.set_flat_field(None).unwrap();
+        project.set_flat_field(None);
         if flat_gain > 1. {
             let map = Arc::new(
                 FlatField::from_nodes([30, 30, 760, 550], [2, 2], vec![DVec3::splat(flat_gain); 4])
                     .unwrap(),
             );
-            project
-                .set_flat_field(Some(FlatFieldSettings::new(
-                    project.sources[0].path.clone(),
-                    map,
-                )))
-                .unwrap();
+            project.set_flat_field(Some(FlatFieldSettings::new(
+                project.sources[0].path.clone(),
+                map,
+            )));
         }
 
         let floor = CAMERA_INPUT_FLOOR * anchor_scale * flat_gain;
@@ -224,7 +215,7 @@ fn dense_calibration_remains_usable_with_or_without_correction() {
             assert_eq!(mixed.input, project.input);
             project.sources.clear();
             project.order.clear();
-            project.scan = None;
+            project.flat_field = None;
             serde_json::to_value(&project).unwrap();
             assert_eq!(
                 Inversion::new(project.input.negative_input().unwrap())
@@ -238,15 +229,15 @@ fn dense_calibration_remains_usable_with_or_without_correction() {
 }
 
 #[test]
-fn digital_retains_dormant_scan_correction_without_applying_or_enforcing_it() {
+fn digital_roundtrip_retains_flat_field_without_applying_it() {
     let mut project = fixture();
     serde_json::to_value(&project).unwrap();
     let negative = project.input;
-    let scan = project.scan.clone();
+    let correction = project.flat_field.clone();
     assert!(project.active_flat_field().is_some());
     project.input = InputSettings::Digital;
     assert!(project.active_flat_field().is_none());
-    assert_eq!(project.scan, scan);
+    assert_eq!(project.flat_field, correction);
     assert!(
         project
             .image_recipe(project.order[0])
@@ -274,32 +265,21 @@ fn digital_retains_dormant_scan_correction_without_applying_or_enforcing_it() {
     project.save(&path, Save::New).unwrap();
     let mut reopened = Project::load(&path).unwrap();
     assert_eq!(reopened, project);
-    assert_eq!(reopened.scan, scan);
-    assert!(reopened.require_scan_sources().is_err());
-
-    reopened.sources.retain(|source| source.id != other_id);
-    reopened.order.retain(|id| *id != other_id);
-    reopened.require_scan_sources().unwrap();
+    assert_eq!(reopened.flat_field, correction);
+    assert_eq!(reopened.sources.len(), 2);
     reopened.input = negative;
     serde_json::to_value(&reopened).unwrap();
-    assert_eq!(
-        reopened.active_flat_field(),
-        scan.as_ref().unwrap().flat_field.as_ref()
-    );
+    assert_eq!(reopened.active_flat_field(), correction.as_ref());
 }
 
 #[test]
-fn scan_reentry_can_use_the_saved_map_with_changed_developed_dimensions() {
+fn negative_interpretation_uses_saved_correction_with_independent_source_dimensions() {
     let mut project = fixture();
     let negative = project.input;
     project.input = InputSettings::Digital;
     let mut other = project.sources[0].clone();
     other.path = "larger-same-camera.ARW".into();
     other.development.dimensions = [1024, 824];
-    assert_eq!(
-        antitone::project::ScanBasis::from_development(&other.development),
-        antitone::project::ScanBasis::from_development(&project.sources[0].development)
-    );
     project.add_source(other).unwrap();
     serde_json::to_value(&project).unwrap();
     assert!(project.active_flat_field().is_none());
@@ -307,7 +287,6 @@ fn scan_reentry_can_use_the_saved_map_with_changed_developed_dimensions() {
     serde_json::to_value(&project).unwrap();
     assert!(project.active_flat_field().is_some());
     project.flat_field_mut().unwrap().enabled = false;
-    project.require_scan_sources().unwrap();
 }
 
 #[test]

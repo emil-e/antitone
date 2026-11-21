@@ -974,7 +974,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
         wait(app);
         app.read(|e| {
             let mut cleared = accepted;
-            cleared.set_flat_field(None).unwrap();
+            cleared.set_flat_field(None);
             assert_eq!(e.document.project, cleared, "{}", e.status);
             assert!(e.correction().prepared().is_none());
             assert!(e.document.visit.canvas.ready.is_none());

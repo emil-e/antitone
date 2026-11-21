@@ -95,10 +95,6 @@ fn incompatible_requests_reject_without_rewriting_document_authority() {
             crate::source::input::Photograph {
                 record: record.clone(),
                 development: record.development.clone().into(),
-                basis: Arc::new(std::sync::OnceLock::from(crate::project::ScanBasis::new(
-                    &record,
-                ))),
-                expected_camera: Some(record.development.camera_model.clone()),
             },
         );
         let scheduler = source_loading::SourceLoader::new();

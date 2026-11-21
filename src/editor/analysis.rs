@@ -95,6 +95,7 @@ fn require_statistics(
 }
 
 struct FrameMeasurements {
+    camera_to_ap1: glam::DMat3,
     floor: f64,
     film: crate::scan::AnalysisSamples,
     picture: crate::scan::AnalysisSamples,

@@ -30,7 +30,7 @@ pub(super) enum Transition {
     Close,
 }
 
-/// Picker-extension hint: any listed RAW routes to scan import; contents decide compatibility.
+/// File-picker hint; RAW inspection determines whether a source can be developed.
 pub(super) fn is_raw_path(path: &std::path::Path) -> bool {
     path.extension().is_some_and(|extension| {
         RAW_EXTENSIONS
@@ -139,7 +139,6 @@ impl Editor {
                 if document.project == editor.document.project {
                     return;
                 }
-                let input_changed = document.project.input != editor.document.project.input;
                 document.capture_initialization(&editor.document.initialization);
                 let mut edit = edit;
                 edit.replace_snapshot(Arc::new(document));
@@ -150,9 +149,6 @@ impl Editor {
                     editor.document.visit.current_source,
                 );
                 editor.status = "Photos added".into();
-                if input_changed {
-                    editor.reinterpret_input(&cx);
-                }
                 let load = if editor.document.visit.current_source.is_none() {
                     editor.document.project.order.first().copied()
                 } else {
