@@ -92,7 +92,9 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 | Roll WB | Shared photographic colour balance after inversion |
 | Layer WB | Photographic colour balance at that layer's position after Roll WB |
 
-Manual gamma-neutral fitting uses individually inverted, full-resolution samples; neutral means AP1 white, not equal camera channels. WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
+The **Gamma & balance** eyedropper estimates relative channel gammas from the log attenuation of the area's mean corrected camera light relative to Dmin. It then inverts the individual original samples with that candidate balance and the measured Dmin and Dmax, and fits a replacement Roll WB to make the area's mean neutral in AP1 before Photo grading. Both fits must succeed for the editor to accept one undoable edit. The inferred Dmax in the readout is a diagnostic, not an inversion anchor. One patch constrains its own colour, not neutrality at other densities.
+
+Standalone WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
 
 ### Picked-colour gamma pivot
 

@@ -17,6 +17,7 @@ use crate::{
 use std::sync::Arc;
 
 mod query;
+pub(super) use query::roll_from_samples;
 
 #[cfg(test)]
 mod tests;

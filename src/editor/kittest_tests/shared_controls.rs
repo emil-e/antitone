@@ -233,7 +233,7 @@ fn tools_allow_shared_grading_and_replace_mask_artwork_without_resuming_it_impli
             "Auto-crop roll",
             "Analyze",
             "Pick Dmin (film base)",
-            "Pick neutral for gamma balance",
+            calibration::GAMMA_PICK_LABEL,
             "Pick neutral for white balance",
             "Add linear",
             "Add radial",
@@ -259,7 +259,7 @@ fn tools_allow_shared_grading_and_replace_mask_artwork_without_resuming_it_impli
                 "Auto-crop roll"
                 | "Analyze"
                 | "Pick Dmin (film base)"
-                | "Pick neutral for gamma balance" => {
+                | calibration::GAMMA_PICK_LABEL => {
                     stage(&mut h, "Roll");
                     click(&mut h, tool);
                 }

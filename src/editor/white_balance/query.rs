@@ -27,8 +27,16 @@ pub(super) fn roll(
     let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
-    let roll = samples.pipeline(&input)?.roll()?;
+    roll_from_samples(&samples, &input, cancelled)
+}
 
+/// The captured recipe must exclude the Roll WB being replaced.
+pub(in crate::editor) fn roll_from_samples(
+    samples: &Samples<'_>,
+    input: &crate::image_recipe::ImageRecipe,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Balance, Error> {
+    let roll = samples.pipeline(input)?.roll()?;
     crate::color::neutral_wb(samples.mean(roll, cancelled)?)
 }
 

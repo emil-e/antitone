@@ -55,8 +55,11 @@ start at 0.60, a sensible prior for most stocks; adjust to taste.
 **Balance** (the gamma balance wheel) is *not* white balance. It changes the relative
 response of the three colour channels across tones, so it can fix a colour cast that
 differs between shadows and highlights — a negative that goes warm in the highlights and
-cool in the shadows, for example. The eyedropper in the section header fits it from a
-neutral area.
+cool in the shadows, for example. With Dmin and Dmax measured, use the eyedropper in
+this section to select an area that should be neutral and click **Apply**. It sets both
+Gamma Balance and Roll white balance in one undoable edit, or changes neither if the
+fit fails. Check other tones across the roll: one patch cannot tell whether they are
+balanced.
 
 The **Gamma colour pivot** pin beside that eyedropper lets you hold an arbitrary colour
 while changing Gamma or Balance. Click the pin, select an area, then **Apply**. The pin

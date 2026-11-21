@@ -10,7 +10,7 @@ pub(super) fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
     let (tab, label) = match kind {
         PickerCase::Dmin => ("Roll", "Pick Dmin (film base)"),
         PickerCase::Dmax => ("Roll", "Pick Dmax"),
-        PickerCase::Gamma => ("Roll", "Pick neutral for gamma balance"),
+        PickerCase::Gamma => ("Roll", calibration::GAMMA_PICK_LABEL),
         PickerCase::GammaPivot => ("Roll", "Gamma colour pivot"),
         PickerCase::RollWb => ("Roll", "Pick neutral for white balance"),
         PickerCase::Wb => ("Photo", "Pick neutral for white balance"),

@@ -738,10 +738,18 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         let (editor_input, _roll) =
             harness.read(|editor| (editor.input(), editor.document.project.roll));
-        let (region, balance) = patches
+        let base = editor_input.calibration().unwrap().dmin;
+        let (region, expected_gammas) = patches
             .iter()
-            .find_map(|(r, _)| scan.roll_neutral(*r, &editor_input).ok().map(|b| (*r, b)))
-            .expect("usable corrected roll-neutral patch");
+            .find_map(|(region, rgb)| {
+                let spans = (base / *rgb).ln();
+                if spans.min_element() < 0.5 || spans.max_element() > 2. * spans.min_element() {
+                    return None;
+                }
+                let depth = (spans.x * spans.y * spans.z).cbrt();
+                Some((*region, spans / depth * crate::processing::DEFAULT_GAMMA))
+            })
+            .expect("usable corrected span patch");
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "White balance")
             .scroll_to_me();
@@ -751,17 +759,13 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             .click();
         harness.step();
         harness.try_run_realtime().unwrap();
-        // The roll neutral reference drives gamma balance; roll WB fills per-photo WB.
-        pick_patch(&mut harness, "Pick neutral for gamma balance", region);
+        pick_patch(&mut harness, calibration::GAMMA_PICK_LABEL, region);
         harness.read(|editor| {
-            let actual = editor.balance();
+            let negative = editor.input().negative_input().unwrap();
+            let actual = negative.channel_gammas().unwrap();
             assert!(
-                (actual.warmth - balance.warmth).abs() < 2e-6,
-                "{actual:?} != {balance:?}"
-            );
-            assert!(
-                (actual.tint - balance.tint).abs() < 2e-6,
-                "{actual:?} != {balance:?}"
+                (actual - expected_gammas).abs().max_element() < 2e-6,
+                "{actual:?} != {expected_gammas:?}"
             );
         });
         // Give the layer pick a real upstream cast, independent of gamma-fit rounding residuals.
