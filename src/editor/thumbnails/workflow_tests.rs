@@ -27,6 +27,7 @@ fn editor(
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = crate::editor::tests::fixture();
+        editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         editor.document = editor.document.replacement(document);
         editor.set_dmin(editor.document.state.project.dmin().map(DVec3::from_array));
         editor.set_dmax(editor.document.state.project.dmax().map(DVec3::from_array));
