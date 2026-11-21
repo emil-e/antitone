@@ -4,26 +4,26 @@ use crate::project::Development;
 #[test]
 fn vectorscope_is_the_initial_editor_plot() {
     let scopes = Scopes::default();
-    assert!(scopes.visible && scopes.vector);
-    assert_eq!(scopes.amplification, 1);
+    let settings = scopes.settings(OutputTarget::Srgb);
+    assert!(scopes.visible);
+    assert_eq!(settings.plot, Plot::Vector);
+    assert_eq!(settings.amplification, 1);
 }
 
 #[test]
-fn scope_feedback_reports_invalid_samples_outside_counts_and_errors() {
+fn scope_feedback_reports_invalid_samples_and_errors_but_not_off_plot_samples() {
     use crate::scopes::Counts;
     let counts = Counts {
         valid: 100,
         invalid: 0,
         outside: 0,
     };
-    assert_eq!(
+    assert!(
         scope_feedback(Some(Ok(Counts {
             outside: 12,
             ..counts
         })))
-        .unwrap()
-        .0,
-        "Outside plot: 12.0%"
+        .is_none()
     );
     let (text, color) = scope_feedback(Some(Ok(Counts {
         invalid: 3,
@@ -31,7 +31,7 @@ fn scope_feedback_reports_invalid_samples_outside_counts_and_errors() {
         ..counts
     })))
     .unwrap();
-    assert_eq!(text, "Invalid rendered samples: 3");
+    assert_eq!(text, "Invalid samples: 3");
     assert_eq!(color, egui::Color32::LIGHT_RED);
     assert_eq!(
         scope_feedback(Some(Err("Reduction failed".into()))).unwrap(),
@@ -49,7 +49,7 @@ fn scope_notices_stay_within_small_plots_and_bound_long_errors() {
             for align in [egui::Align2::LEFT_BOTTOM, egui::Align2::CENTER_CENTER] {
                 for text in [
                     "No image".into(),
-                    "Invalid rendered samples: 123".into(),
+                    "Invalid samples: 123".into(),
                     "GPU reduction failed: ".to_owned() + &"long diagnostic ".repeat(100),
                 ] {
                     let long_error = text.len() > 100;
@@ -91,17 +91,22 @@ fn scope_notices_stay_within_small_plots_and_bound_long_errors() {
 #[test]
 fn plot_switch_and_amplification_keep_slot_height_and_processing_state() {
     let context = egui::Context::default();
+    ui::configure_fonts(&context);
     for (width, height) in [(315., 600.), (270., 396.)] {
         let mut scopes = Scopes::default();
         let mut rectangles = Vec::new();
         for plot in [Plot::Rgb, Plot::Luma, Plot::Vector] {
-            scopes.vector = plot == Plot::Vector;
-            scopes.waveform = if plot == Plot::Luma {
-                Plot::Luma
+            scopes.kind = if plot == Plot::Vector {
+                ScopeKind::Vector
             } else {
-                Plot::Rgb
+                ScopeKind::Waveform
             };
-            scopes.amplification = 8;
+            scopes.waveform = if plot == Plot::Luma {
+                Waveform::Luma
+            } else {
+                Waveform::Rgb
+            };
+            scopes.zoom_by(3);
             for _ in 0..3 {
                 let mut slot = None;
                 let mut output = context.run_ui(
@@ -161,6 +166,7 @@ fn panel_frame(
 #[test]
 fn scope_height_follows_width_and_is_bounded_in_short_windows() {
     let context = egui::Context::default();
+    ui::configure_fonts(&context);
     let mut scopes = Scopes::default();
     let mut previous = 0.;
     let ratio = Scopes::default().height_ratio;
@@ -195,6 +201,7 @@ fn scope_height_follows_width_and_is_bounded_in_short_windows() {
 fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() {
     for dpi in [1., 2.] {
         let context = egui::Context::default();
+        ui::configure_fonts(&context);
         context.set_pixels_per_point(dpi);
         let mut scopes = Scopes::default();
         let size = egui::vec2(315., 900.);
@@ -274,19 +281,38 @@ fn viewing_and_scope_preferences_do_not_dirty_the_project() {
     for source in [true, false] {
         editor.document.source = source;
         editor.source_exposure = 2.;
-        editor.scopes.vector = true;
-        editor.scopes.amplification = 8;
+        editor.scopes.zoom_by(3);
         editor.scopes.height_ratio = 1.2;
         editor.scopes.visible = false;
         assert_eq!(editor.document.state.project, project);
         if source {
-            assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
+            assert!(editor.scope_request().is_none());
         }
     }
     editor.set_test_busy(true);
-    assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
+    assert!(editor.scope_request().is_none());
     editor.set_test_busy(false);
-    assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
+    assert!(editor.scope_request().is_none());
+}
+
+#[test]
+fn no_displayed_image_leaves_the_scope_plot_blank() {
+    let context = egui::Context::default();
+    ui::configure_fonts(&context);
+    let mut editor = super::super::tests::fixture();
+    let mut well = egui::Rect::NOTHING;
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let slot = editor.scope_panel(ui).expect("expanded scope");
+        well = slot.trace_well;
+        editor.paint_scope(Some(slot));
+    });
+    output.textures_delta.clear();
+    assert!(well.is_positive());
+    assert!(!output.shapes.iter().any(|shape| match &shape.shape {
+        egui::Shape::Text(text) => well.intersects(text.visual_bounding_rect()),
+        egui::Shape::Callback(callback) => well.intersects(callback.rect),
+        _ => false,
+    }));
 }
 
 #[test]
@@ -766,8 +792,9 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
         );
         assert_eq!(editor.document.state.project, before);
         editor.document.visit.canvas.ready = None;
-        prepare(frame(&mut editor, size), size);
-        assert!(matches!(editor.scope_request(), Err("Waiting for view")));
+        let empty = frame(&mut editor, size);
+        assert!(editor.scope_request().is_none());
+        prepare(empty, size);
         assert!(
             source.status(&gpu, settings).is_none(),
             "no painted image means no retained current trace"

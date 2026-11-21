@@ -231,6 +231,8 @@ Features compose `editor::ui` components through body closures and ordinary egui
 
 Shared value widgets edit local values and return interaction responses; features validate and accept changed values through short mutations. Completed inputs are independently undoable, with continuous gestures grouped as one action. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
 
+Use [`IconSegments`](../src/editor/ui/icons.rs) for a short set of mutually exclusive icon choices. The shared frame groups the choices, and egui's selected-button fill marks the current value. Give each segment an accessible name and keep commands and popup actions outside the frame.
+
 ### Inspector density and value grammar
 
 The inspector uses its own spacing scale, tighter than the rest of the application: [Inspector](../src/editor/ui/inspector.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset and related section tools. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
@@ -241,7 +243,7 @@ Dragging a track is absolute, except when the press begins with Shift: that pres
 
 White balance and gamma balance share one body: the two axis rows, and a label-free hue wheel at the right end of the block, with the eyedropper and section reset in the header. The axes use the same parameter grid: the wheel shortens the tracks from the right without moving their starts. The wheel is a correction surface rather than a measurement device, so it sizes with the panel width and drags relatively from the press origin — Shift gives ten-times finer motion and a double-click resets the balance. Precision and stepping stay with the axis rows and their numeric fields.
 
-Scopes sit at the top of the column with their own disclosure, plot menu and drag handle. Their height is a persisted ratio of the column width and the default is deliberately modest, so the stage controls stay reachable; the handle restores that default on double-click, and the vectorscope's plot is square, so its circle follows the shorter side.
+[Scopes](scopes.md) sit above the stage tabs. The resize handle adjusts a persisted height-to-width ratio; double-clicking restores the default so the stage controls stay reachable.
 
 The inspector reserves a band for the scroll bar because dense rows put values and header actions near the right edge, where a floating bar would take their pointer input.
 
