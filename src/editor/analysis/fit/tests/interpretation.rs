@@ -62,9 +62,13 @@ fn cold_fit_acquires_unresolved_interpretations_before_computation_and_needs_no_
         resources.fit(request.clone(), None).is_err(),
         "without retained camera rasters the closed loader must prevent a fresh acquisition"
     );
-    let outcome = pollster::block_on(fit.run(Cancellation::default(), |_, _| {}))
-        .unwrap()
-        .unwrap();
+    let outcome = pollster::block_on(fit.run(
+        resources.classifier_drt(),
+        Cancellation::default(),
+        |_, _| {},
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(outcome.frames, 2);
     assert!(
         outcome
@@ -135,9 +139,13 @@ fn acquired_rasters_establish_facts_before_matching_captured_region_evidence() {
     };
     let fit = resources.fit(request.clone(), None).unwrap();
     assert_eq!(developments.load(Ordering::Relaxed), 2);
-    let outcome = pollster::block_on(fit.run(Cancellation::default(), |_, _| {}))
-        .unwrap()
-        .unwrap();
+    let outcome = pollster::block_on(fit.run(
+        resources.classifier_drt(),
+        Cancellation::default(),
+        |_, _| {},
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(outcome.frames, 2);
     assert_eq!(request.document.project, before);
     assert_eq!(developments.load(Ordering::Relaxed), 2);

@@ -1495,24 +1495,27 @@ async fn fit_and_accept(
             sampling_inputs,
             initialization,
         };
-        let renderer = background::compute(&cancelled, move || {
-            renderers
-                .get(&device, &queue)
-                .map(|renderer| (device, queue, renderer))
+        let gpu = background::compute(&cancelled, move || {
+            let renderer = renderers.get(&device, &queue)?;
+            Ok((
+                renderer.evaluation().clone(),
+                (queue, renderer.submissions.clone()),
+                renderer.drt(crate::rendering::OutputTarget::Srgb).clone(),
+            ))
         })
         .await
         .map_err(|error| error.to_string())?;
-        let Some((device, queue, renderer)) = renderer else {
+        let Some((evaluation, queue_and_gate, classifier_drt)) = gpu else {
             return Ok(None);
         };
-        let state = fit::Fit::acquire(device, queue, renderer, captured, resources, &cancelled)
+        let state = fit::Fit::acquire(evaluation, queue_and_gate, captured, resources, &cancelled)
             .await
             .map_err(|error| error.to_string())?;
         let Some(state) = state else {
             return Ok(None);
         };
         state
-            .run(cancelled.clone(), move |done, total| {
+            .run(classifier_drt, cancelled.clone(), move |done, total| {
                 produced.progress(done, total)
             })
             .await

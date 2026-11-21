@@ -1,5 +1,11 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
-use crate::renderer::GpuRenderer;
+use crate::{
+    gpu::{
+        analysis::CameraSampler, drt, evaluation, photograph::camera_response,
+        submission::SubmissionGate,
+    },
+    rendering::OutputTarget,
+};
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 
@@ -30,9 +36,9 @@ pub(super) struct Resources {
 }
 
 pub(super) struct Fit {
-    device: wgpu::Device,
+    evaluation: evaluation::Context,
     queue: wgpu::Queue,
-    renderer: Arc<GpuRenderer>,
+    submissions: SubmissionGate,
     request: Arc<Request>,
     correction: Option<Arc<Correction>>,
     matrix: glam::DMat3,
@@ -45,9 +51,8 @@ pub(super) struct Fit {
 
 impl Fit {
     pub(super) async fn acquire(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        renderer: Arc<GpuRenderer>,
+        evaluation: evaluation::Context,
+        (queue, submissions): (wgpu::Queue, SubmissionGate),
         mut request: Request,
         resources: Resources,
         cancelled: &Cancellation,
@@ -139,9 +144,9 @@ impl Fit {
         request.document.capture_initialization(&initialization);
         analysis::verify(&request)?;
         Ok(Some(Self {
-            device,
+            evaluation,
             queue,
-            renderer,
+            submissions,
             request: Arc::new(request),
             correction,
             matrix,
@@ -256,11 +261,12 @@ impl Fit {
                 "captured camera grid differs from source",
             ));
         }
-        let renderer = self.renderer.clone();
+        let evaluation = self.evaluation.clone();
         let queue = self.queue.clone();
-        let sampler = crate::gpu::analysis::CameraSampler::captured(
-            &renderer,
-            (&queue, &renderer.submissions),
+        let submissions = self.submissions.clone();
+        let sampler = CameraSampler::captured(
+            &evaluation,
+            (&queue, &submissions),
             input,
             self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
@@ -359,7 +365,11 @@ impl Fit {
         Ok(true)
     }
 
-    fn finish(mut self, cancelled: impl Fn() -> bool) -> Result<Option<Outcome>, Error> {
+    fn finish(
+        mut self,
+        classifier_drt: &drt::Target,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Outcome>, Error> {
         if cancelled() {
             return Ok(None);
         }
@@ -375,8 +385,8 @@ impl Fit {
             })
             .collect();
         let mut model = crate::gpu::analysis::ResponseModel::new(
-            self.renderer.evaluation(),
-            (&self.queue, &self.renderer.submissions),
+            &self.evaluation,
+            (&self.queue, &self.submissions),
         );
         let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
@@ -411,7 +421,14 @@ impl Fit {
             &mut model,
             &mut || cancelled(),
             |index, ids, stop| {
-                self.semantic_sites(index, ids, negative, post, &mut classifier, stop)
+                self.semantic_sites(
+                    index,
+                    ids,
+                    (negative, post),
+                    classifier_drt,
+                    &mut classifier,
+                    stop,
+                )
             },
         )? {
             return Ok(None);
@@ -430,8 +447,8 @@ impl Fit {
         &self,
         index: usize,
         ids: &[usize],
-        negative: crate::processing::NegativeInput,
-        post: glam::DMat3,
+        (negative, post): (crate::processing::NegativeInput, glam::DMat3),
+        drt: &drt::Target,
         classifier: &mut semantic::Classifier,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Option<Vec<bool>>, Error> {
@@ -456,20 +473,31 @@ impl Fit {
         };
         let project = &self.request.document.project;
         let photo = project.source(project.order[index])?;
-        let sampler = crate::gpu::analysis::CameraSampler::captured(
-            &self.renderer,
-            (&self.queue, &self.renderer.submissions),
+        let sampler = CameraSampler::captured(
+            &self.evaluation,
+            (&self.queue, &self.submissions),
             self.cameras[index].clone(),
             self.correction.as_ref().map(|c| c.gpu.clone()),
         )?;
         let Some(preview) = sampler.preview_centres(bounds, &mut || cancelled())? else {
             return Ok(None);
         };
-        let Some(rgb) = preview.render(&self.renderer, &self.queue, negative, post, cancelled)?
+        if cancelled() {
+            return Ok(None);
+        }
+        let size = preview.size.map(|n| n as u32);
+        let endpoint =
+            camera_response::classifier_image(size, &preview.camera, negative, post, drt)?;
+        let Some(rgb) = read_classifier_rgb(
+            &self.evaluation,
+            (&self.queue, &self.submissions),
+            endpoint,
+            cancelled,
+        )?
         else {
             return Ok(None);
         };
-        let [width, height] = preview.size.map(|n| n as u32);
+        let [width, height] = size;
         let orientation = Orientation::new(
             Rect {
                 x: 0,
@@ -556,7 +584,7 @@ impl Fit {
             }
             let record = candidate.project.source(*id)?;
             crate::gpu::photograph::admission::prepare(
-                &self.device.limits(),
+                &self.evaluation.device().limits(),
                 candidate.project.input,
                 candidate.project.roll,
                 &record.grade_snapshot()?,
@@ -582,9 +610,55 @@ impl Fit {
     }
 }
 
+// Model input encoding is downstream of the graph's target-linear sRGB endpoint.
+fn read_classifier_rgb(
+    context: &evaluation::Context,
+    (queue, submissions): (&wgpu::Queue, &SubmissionGate),
+    image: evaluation::Value,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Option<Vec<[u8; 3]>>, Error> {
+    let domain = image.domain();
+    let bounds = domain.finite()?;
+    let width = bounds.width;
+    let request = context.request(
+        image,
+        evaluation::Region {
+            bounds,
+            grid: domain.grid,
+        },
+        evaluation::Tiling { tile: [width, 64] },
+    )?;
+    let mut output = vec![[0; 3]; bounds.width as usize * bounds.height as usize];
+    let stop = std::cell::RefCell::new(cancelled);
+    let read = context.read(
+        queue,
+        submissions,
+        &request,
+        || (stop.borrow_mut())(),
+        |block, pixels| {
+            let block = block.source()?;
+            for (i, p) in pixels.iter().enumerate() {
+                if p[3] < 0. || !p.iter().all(|v| v.is_finite()) {
+                    return Err(Error::NumericalOverflow);
+                }
+                let x = block.x as usize + i % block.width as usize;
+                let y = block.y as usize + i / block.width as usize;
+                for (c, &value) in p[..3].iter().enumerate() {
+                    output[y * width as usize + x][c] = (255.
+                        * OutputTarget::Srgb.encode(f64::from(value.clamp(0., 1.)))?)
+                    .round() as u8;
+                }
+            }
+            Ok(())
+        },
+    )?;
+    Ok(read.map(|_| output))
+}
+
 impl Fit {
     pub(super) async fn run(
         self,
+        classifier_drt: drt::Target,
         cancelled: Cancellation,
         mut progress: impl FnMut(usize, usize),
     ) -> Result<Option<Outcome>, Error> {
@@ -620,10 +694,10 @@ impl Fit {
         }
         progress(total, total);
         let retired = cancelled.clone();
-        Ok(
-            background::compute(&cancelled, move || state.finish(|| retired.is_cancelled()))
-                .await?
-                .flatten(),
-        )
+        Ok(background::compute(&cancelled, move || {
+            state.finish(&classifier_drt, || retired.is_cancelled())
+        })
+        .await?
+        .flatten())
     }
 }

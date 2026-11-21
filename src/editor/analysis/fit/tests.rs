@@ -19,11 +19,19 @@ struct Resources {
 }
 
 impl Resources {
+    fn classifier_drt(&self) -> drt::Target {
+        self.renderers
+            .get(&self.device, &self.queue)
+            .unwrap()
+            .drt(OutputTarget::Srgb)
+            .clone()
+    }
+
     fn fit(&self, request: Request, input: Option<Arc<Correction>>) -> Result<Fit, Error> {
+        let renderer = self.renderers.get(&self.device, &self.queue)?;
         pollster::block_on(Fit::acquire(
-            self.device.clone(),
-            self.queue.clone(),
-            self.renderers.get(&self.device, &self.queue)?,
+            renderer.evaluation().clone(),
+            (self.queue.clone(), renderer.submissions.clone()),
             request,
             super::Resources {
                 correction: input.into(),
@@ -68,12 +76,12 @@ async fn run(
     cancelled: Cancellation,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Outcome>, Error> {
+    let renderer = resources
+        .renderers
+        .get(&resources.device, &resources.queue)?;
     let state = Fit::acquire(
-        resources.device.clone(),
-        resources.queue.clone(),
-        resources
-            .renderers
-            .get(&resources.device, &resources.queue)?,
+        renderer.evaluation().clone(),
+        (resources.queue, renderer.submissions.clone()),
         request,
         super::Resources {
             correction: input.into(),
@@ -85,7 +93,15 @@ async fn run(
     )
     .await?;
     match state {
-        Some(state) => state.run(cancelled, progress).await,
+        Some(state) => {
+            state
+                .run(
+                    renderer.drt(OutputTarget::Srgb).clone(),
+                    cancelled,
+                    progress,
+                )
+                .await
+        }
         None => Ok(None),
     }
 }

@@ -44,9 +44,8 @@ fn fitting_waits_for_its_captured_map_and_cancellation_preserves_another_reader(
     with_application(Vec::<Result<Option<Fit>, Error>>::new(), |app| {
         let mut tasks = Vec::new();
         for stop in [cancelled.clone(), Cancellation::default()] {
-            let device = device.clone();
-            let queue = queue.clone();
-            let renderer = renderer.clone();
+            let evaluation = renderer.evaluation().clone();
+            let queue_and_gate = (queue.clone(), renderer.submissions.clone());
             let request = request.clone();
             let resources = super::super::Resources {
                 correction: correction.clone(),
@@ -58,7 +57,8 @@ fn fitting_waits_for_its_captured_map_and_cancellation_preserves_another_reader(
                 app.access()
                     .spawn(move |cx| async move {
                         let result =
-                            Fit::acquire(device, queue, renderer, request, resources, &stop).await;
+                            Fit::acquire(evaluation, queue_and_gate, request, resources, &stop)
+                                .await;
                         cx.update(move |results| results.push(result));
                     })
                     .unwrap(),

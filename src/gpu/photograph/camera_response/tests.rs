@@ -128,3 +128,95 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
     assert!(actual[0][0].is_finite() && actual[0][0] > 65536.);
     assert!(actual[1][0] > 0. && actual[1][1] < 0. && actual[1][2] < 0.);
 }
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn classifier_endpoint_applies_the_provisional_grade_then_srgb_without_a_renderer() {
+    let (device, queue, targets) = pollster::block_on(async {
+        let instance = crate::gpu::instance();
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let targets = drt::Targets::new(&device, &queue).await.unwrap();
+        (device, queue, targets)
+    });
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let gate = crate::gpu::submission::SubmissionGate::default();
+    let negative = NegativeInput {
+        calibration: Calibration {
+            dmin: DVec3::splat(0.7),
+            dmax: DVec3::splat(0.14),
+        },
+        gamma: 0.65,
+        response: Response::film(),
+        balance: Default::default(),
+    };
+    let camera = [
+        DVec3::new(0.32, 0.40, 0.51),
+        DVec3::new(0.50, 0.32, 0.42),
+        DVec3::new(0.40, 0.32, 0.22),
+        DVec3::new(0.52, 0.62, 0.44),
+    ];
+    let post = glam::DMat3::from_diagonal(DVec3::new(1.8, 1.2, 0.9));
+    assert!(
+        classifier_image(
+            [2, 2],
+            &camera,
+            negative,
+            post,
+            targets.get(OutputTarget::DisplayP3)
+        )
+        .is_err()
+    );
+    let image = classifier_image(
+        [2, 2],
+        &camera,
+        negative,
+        post,
+        targets.get(OutputTarget::Srgb),
+    )
+    .unwrap();
+    let domain = image.domain();
+    assert_eq!(domain.meaning, Meaning::Display);
+    let request = context
+        .request(
+            image,
+            Region {
+                bounds: domain.finite().unwrap(),
+                grid: domain.grid,
+            },
+            Tiling { tile: [1, 1] },
+        )
+        .unwrap();
+    let mut actual = [[0.; 3]; 4];
+    context
+        .read(
+            &queue,
+            &gate,
+            &request,
+            || false,
+            |region, pixels| {
+                let region = region.source()?;
+                assert_eq!(pixels.len(), 1);
+                actual[(region.x + 2 * region.y) as usize].copy_from_slice(&pixels[0][..3]);
+                Ok(())
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    let inversion = Inversion::new(negative).unwrap();
+    let working = camera.map(|rgb| post * inversion.apply(rgb).unwrap().rgb);
+    let reference = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
+    let untreated = camera.map(|rgb| inversion.apply(rgb).unwrap().rgb);
+    let expected = reference.render(&working).unwrap();
+    let without_post = reference.render(&untreated).unwrap();
+    assert!((expected[0] - without_post[0]).abs().max_element() > 0.05);
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        assert!(
+            (glam::Vec3::from_array(actual) - expected)
+                .abs()
+                .max_element()
+                < 3e-5
+        );
+    }
+}
