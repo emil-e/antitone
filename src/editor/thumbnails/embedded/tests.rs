@@ -676,6 +676,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
     for height in [52., 140., 240.] {
         for scale in [1., 2.] {
             let mut editor = Editor::state();
+            editor.presentation = Ok(pollster::block_on(Presentation::new(&device)).unwrap());
             *editor.document = fixture();
             editor.document.state.project.order.truncate(1);
             editor.preferences.filmstrip_height = height;

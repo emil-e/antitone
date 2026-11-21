@@ -385,6 +385,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
 #[test]
 fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_versions() {
     let (device, queue) = gpu();
+    let presentation = pollster::block_on(Presentation::new(&device)).unwrap();
     let mut thumbnails = Thumbnails::with_disk(
         device,
         queue,
@@ -401,6 +402,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let (commands, requests) = mpsc::channel();
     thumbnails.services = Some(Services::Controlled(commands));
     let mut editor = Editor::state();
+    editor.presentation = Ok(presentation);
     editor.document = document;
     editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
     editor.load_input(editor.document.state.project.input);
