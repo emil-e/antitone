@@ -31,7 +31,12 @@ impl Editor {
             self.look.loaded.push(asset.clone());
         }
     }
-    pub(super) fn imported_lut_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+    pub(super) fn imported_lut_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+        lead: ui::SectionLead,
+    ) {
         let labels = loaded_lut_labels(&self.look.loaded);
         let accepted = self.document.project.output.lut.as_ref();
         let name = accepted.map_or_else(
@@ -49,7 +54,7 @@ impl Editor {
         let mut clear = false;
         let mut import = false;
         ui.add_enabled_ui(self.lut_controls_allowed(), |ui| {
-            let (_, action) = ui::section(
+            let (_, action) = ui::section_with_lead(
                 ui,
                 "rendering-lut",
                 "LUT",
@@ -60,6 +65,7 @@ impl Editor {
                     tool: None,
                     default_open: Some(true),
                 },
+                lead,
                 |ui| {
                     ui::inspector_dropdown(ui, "creative-lut", "LUT", &name, |ui| {
                         if ui.selectable_label(!changed, "None").clicked() && changed {

@@ -701,7 +701,7 @@ impl Editor {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
             let title = selected.map_or_else(|| "Layers".into(), |record| format!("Layers: {}", record.name));
-            let (body, _) = ui::section(
+            let (body, _) = ui::section_with_lead(
                 ui,
                 "adjustment-layers",
                 &title,
@@ -712,6 +712,7 @@ impl Editor {
                     tool: None,
                     default_open: Some(true),
                 },
+                ui::SectionLead::First,
                 |ui| {
                     let (overlay, creation) = ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

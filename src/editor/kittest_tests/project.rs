@@ -557,24 +557,24 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
 
 #[test]
 fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate() {
-    fn open_stage(harness: &mut Harness<'_, Editor>, value: &str) {
-        let controls: Vec<_> = harness
-            .query_all_by_role(egui::accesskit::Role::ComboBox)
-            .filter(|node| node.accesskit_node().value().as_deref() == Some(value))
-            .collect();
-        assert_eq!(controls.len(), 1, "unique input-stage dropdown");
-        assert!(!controls[0].accesskit_node().is_disabled());
-        controls[0].click();
-    }
+    use egui::accesskit::{Role, Toggled};
+
     let raw = crate::raw::fixture::bayer_dng_with_as_shot([1800, 2200, 2800], [2, 1, 3]);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("unavailable.dng");
     std::fs::copy(raw.path(), &path).unwrap();
     editor_harness(|mut harness, _| {
         stage(&mut harness, "Roll");
-        open_stage(&mut harness, "Negative");
-        harness.try_run_realtime().unwrap();
-        harness.get_by_label("Digital").click();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::RadioButton, "Film negative")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Digital")
+            .click();
         harness.step();
         harness.read(|editor| {
             assert_eq!(
@@ -582,6 +582,27 @@ fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate(
                 crate::processing::InputSettings::Digital
             )
         });
+        harness.step();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::RadioButton, "Digital")
+                .accesskit_node()
+                .toggled(),
+            Some(Toggled::True)
+        );
+        assert!(harness.query_by_label("Calibration").is_none());
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Button, "Analyze")
+                .is_none()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Button, "Auto-crop roll")
+                .is_none()
+        );
+        harness.get_by_role_and_label(Role::Button, "White balance");
+
         harness.enter(|editor, cx| editor.add_raws(vec![path.clone()], cx));
         wait_opened_photo(&mut harness);
         let (source, records) = harness.read(|editor| {
@@ -604,11 +625,9 @@ fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate(
         });
         std::fs::remove_file(&path).unwrap();
         stage(&mut harness, "Roll");
-        open_stage(&mut harness, "Digital");
-        harness.try_run_realtime().unwrap();
         assert!(
             !harness
-                .get_by_label("Negative")
+                .get_by_role_and_label(Role::RadioButton, "Film negative")
                 .accesskit_node()
                 .is_disabled(),
             "stage option unavailable: {:?}",
@@ -622,7 +641,9 @@ fn stage_widgets_accept_unavailable_nonunity_photos_without_an_eligibility_gate(
                 e.status.clone()
             ))
         );
-        harness.get_by_label("Negative").click();
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Film negative")
+            .click();
         harness.step();
         wait_for(&mut harness, |editor| {
             editor.document.input_change.is_none() && !editor.document.visit.source.pending()

@@ -86,15 +86,16 @@ impl Scopes {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
-        use ui::{INSPECTOR_ROW_HEIGHT, icons};
+        use ui::{INSPECTOR_ROW_HEIGHT, SegmentLayout, Segments, icons};
 
         let row_height = INSPECTOR_ROW_HEIGHT;
-        let selector = icons::IconSegments {
+        let selector = Segments {
             choices: &[
                 (ScopeKind::Vector, icons::Icon::Vectorscope, "Vectorscope"),
                 (ScopeKind::Waveform, icons::Icon::Waveform, "Waveform"),
             ],
             height: row_height,
+            layout: SegmentLayout::Compact,
         };
         icons::row_at(ui, row_height, |ui| {
             let was_visible = self.visible;

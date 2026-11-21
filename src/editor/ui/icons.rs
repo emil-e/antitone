@@ -26,6 +26,9 @@ pub(in crate::editor) enum Icon {
     FlipHorizontal,
     FlipVertical,
     Crop,
+    BatchCrop,
+    FilmFrame,
+    Sensor,
     Analyze,
     LinearGradient,
     RadialGradient,
@@ -282,6 +285,28 @@ impl Icon {
                 line(&[[4., 1.], [4., 12.], [15., 12.]]);
                 line(&[[1., 4.], [12., 4.], [12., 15.]]);
             }
+            Self::BatchCrop => {
+                line(&[[5., 1.], [15., 1.], [15., 11.]]);
+                line(&[[1., 5.], [11., 5.], [11., 15.], [1., 15.], [1., 5.]]);
+                line(&[[4., 8.], [4., 12.], [8., 12.]]);
+            }
+            Self::FilmFrame => {
+                line(&[[1., 3.], [15., 3.], [15., 13.], [1., 13.], [1., 3.]]);
+                line(&[[4.5, 3.], [4.5, 13.]]);
+                line(&[[11.5, 3.], [11.5, 13.]]);
+                line(&[[1., 8.], [4.5, 8.]]);
+                line(&[[11.5, 8.], [15., 8.]]);
+            }
+            Self::Sensor => {
+                line(&[[3., 3.], [13., 3.], [13., 13.], [3., 13.], [3., 3.]]);
+                for pin in [6., 10.] {
+                    line(&[[pin, 1.], [pin, 3.]]);
+                    line(&[[pin, 13.], [pin, 15.]]);
+                    line(&[[1., pin], [3., pin]]);
+                    line(&[[13., pin], [15., pin]]);
+                }
+                line(&[[6., 6.], [10., 6.], [10., 10.], [6., 10.], [6., 6.]]);
+            }
             Self::GlobalAdjustmentLayer => {
                 line(&[[2., 2.], [14., 2.], [14., 14.], [2., 14.], [2., 2.]]);
                 line(&[[5., 8.], [11., 8.]]);
@@ -493,75 +518,6 @@ pub(in crate::editor) fn button_at(
         .inner
     })
     .inner
-}
-
-/// A compact one-of control. Keep related actions outside the shared frame.
-pub(in crate::editor) struct IconSegments<'a, T> {
-    pub choices: &'a [(T, Icon, &'a str)],
-    pub height: f32,
-}
-
-impl<T: Copy + PartialEq> IconSegments<'_, T> {
-    fn frame(ui: &Ui) -> egui::Frame {
-        let chrome = ui.visuals().widgets.noninteractive;
-        egui::Frame::new()
-            .fill(chrome.bg_fill)
-            .stroke(chrome.bg_stroke)
-            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-            .inner_margin(1)
-    }
-
-    pub fn width(&self, ui: &Ui) -> f32 {
-        self.choices.len() as f32 * self.height + Self::frame(ui).total_margin().sum().x
-    }
-
-    pub fn show(&self, ui: &mut Ui, current: &mut T) -> Response {
-        let frame = Self::frame(ui);
-        let size = egui::vec2(self.height, self.height - frame.total_margin().sum().y);
-        let previous = *current;
-
-        let content_size = egui::vec2(self.choices.len() as f32 * size.x, size.y);
-        let mut response = frame
-            .show(ui, |ui| {
-                ui.allocate_ui_with_layout(
-                    content_size,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = 0.;
-                        for &(value, icon, name) in self.choices {
-                            let selected = previous == value;
-                            let response = ui
-                                .add(egui::Button::selectable(selected, "").min_size(size))
-                                .on_hover_text(name);
-                            response.widget_info(|| {
-                                egui::WidgetInfo::selected(
-                                    egui::WidgetType::RadioButton,
-                                    response.enabled(),
-                                    selected,
-                                    name,
-                                )
-                            });
-                            let visuals = ui.style().interact_selectable(&response, selected);
-                            icon.paint(
-                                ui,
-                                response.rect,
-                                Stroke::new(1.5, visuals.fg_stroke.color),
-                            );
-
-                            if response.clicked() {
-                                *current = value;
-                            }
-                        }
-                    },
-                );
-            })
-            .response;
-        if *current != previous {
-            response.mark_changed();
-            ui.ctx().request_repaint();
-        }
-        response
-    }
 }
 
 pub(in crate::editor) fn toggle(

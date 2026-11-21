@@ -294,31 +294,15 @@ impl Editor {
                     self.apply_roll_orientation(action);
                 }
             }
-            if capabilities.roll_analysis || reviewing {
+            if capabilities.auto_crop || capabilities.roll_analysis || reviewing {
                 ui.separator();
-                if ToolButton::tool(
-                    Icon::Analyze,
-                    "Analyze",
-                    "Prepare and review sampling areas, then estimate the roll's starting grade.",
-                    analyzing,
-                )
-                .enabled(self.tool_start_available() && self.selected_area().is_some())
-                .show(ui)
-                .clicked()
-                {
-                    if analyzing {
-                        self.cancel_active_tool();
-                    } else {
-                        self.request_analysis(cx);
-                    }
-                }
             }
             if capabilities.auto_crop {
                 let cropping = self
                     .current_tool()
                     .is_some_and(|tool| tool.is::<auto_crop::AutoCropTool>());
                 if ToolButton::tool(
-                    Icon::Crop,
+                    Icon::BatchCrop,
                     "Auto-crop roll",
                     "Propose crop and straightening for the whole roll.",
                     cropping,
@@ -337,6 +321,27 @@ impl Editor {
                         );
                     }
                 }
+            }
+            if capabilities.roll_analysis || reviewing {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let help = if analyzing {
+                        "Exit analysis without applying the proposal."
+                    } else {
+                        "Analyze the roll to estimate a starting grade from reviewed sampling areas."
+                    };
+                    if ToolButton::tool(Icon::Analyze, "Analyze", help, analyzing)
+                        .enabled(self.tool_start_available() && self.selected_area().is_some())
+                        .emphasized()
+                        .show(ui)
+                        .clicked()
+                    {
+                        if analyzing {
+                            self.cancel_active_tool();
+                        } else {
+                            self.request_analysis(cx);
+                        }
+                    }
+                });
             }
         });
     }
