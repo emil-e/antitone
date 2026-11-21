@@ -1,7 +1,8 @@
 use super::*;
 
 #[test]
-fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_and_global_edits() {
+fn warm_physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_and_global_edits()
+ {
     calibrated_workflow(|mut harness, _, _directory| {
         wait_settled(&mut harness);
         harness.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(4.));
@@ -28,13 +29,23 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             );
         });
         harness.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 0,
-                    gpu_bytes: 0,
-                })
+            // This exercises regrading from resident support, separately from cold production.
+            let limits = editor.cache_limits();
+            assert!(limits.gpu_bytes > 0);
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                ..limits
+            });
+            let services = editor.source_services.as_ref().unwrap();
+            let renderer = services
+                .renderers
+                .get(&services.device, &services.queue)
+                .unwrap();
+            assert_eq!(
+                renderer.evaluation().cache_policy().generated_bytes,
+                limits.gpu_bytes
+            );
+            assert!(renderer.evaluation().retained_bytes() > 0);
         });
         // Hold physical acquisition, not the UI executor or frame-bound colour work.
         let hold = crate::background::testing::pause();
@@ -165,6 +176,78 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                 ),
                 "matching detail returns to the no-composition path"
             );
+        });
+    });
+}
+
+#[test]
+fn zero_retention_keeps_a_coherent_view_during_acquisition_and_publishes_the_latest_grade() {
+    calibrated_workflow(|mut harness, _, _directory| {
+        wait_settled(&mut harness);
+        harness.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(4.));
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        harness.render().unwrap();
+        wait_for(&mut harness, |editor| {
+            editor.document.visit.working_view.idle()
+        });
+        harness.update(|editor| {
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            });
+            let services = editor.source_services.as_ref().unwrap();
+            let renderer = services
+                .renderers
+                .get(&services.device, &services.queue)
+                .unwrap();
+            assert_eq!(renderer.evaluation().cache_policy().generated_bytes, 0);
+            assert_eq!(renderer.evaluation().retained_bytes(), 0);
+        });
+        let hold = crate::background::testing::pause();
+        let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+        harness.update(|editor| {
+            editor
+                .document
+                .visit
+                .canvas
+                .viewport
+                .pan(layout, 1., egui::vec2(500., 0.))
+        });
+        harness.step();
+        enter_numeric(&mut harness, "Exposure", "1.25");
+        harness.render().unwrap();
+        harness.read(|editor| {
+            assert!(!editor.document.visit.working_view.support_ready());
+            assert!(editor.document.visit.working_view.task.is_some());
+            assert!(editor.document.visit.working_view.error.is_none());
+            let displayed = editor
+                .canvas_frame
+                .displayed
+                .as_ref()
+                .expect("live pixels survive zero optional retention");
+            assert_eq!(displayed.view.target, editor.document.target());
+            assert_eq!(editor.photo_settings().exposure, 1.25);
+        });
+        drop(hold);
+        wait_for(&mut harness, |editor| {
+            editor.document.visit.working_view.support_ready()
+        });
+        harness.render().unwrap();
+        harness.read(|editor| {
+            let displayed = &editor.canvas_frame.displayed.as_ref().unwrap().view;
+            assert_eq!(
+                displayed.processing(),
+                editor.document.visit.working_view.processing().unwrap()
+            );
+            assert_eq!(displayed.target, editor.document.target());
+            assert_eq!(
+                displayed.spec.frame(),
+                editor.document.visit.working_view.current_frame().unwrap()
+            );
+            assert!(editor.document.visit.working_view.error.is_none());
         });
     });
 }

@@ -32,14 +32,9 @@ fn settings_close_commits_its_number_and_native_select_all_keeps_text_focus() {
         native_action(&mut harness, Action::Close);
         harness.read(|editor| assert!(editor.menus.panel.is_none()));
         harness.read(|editor| assert!(!editor.allow_close));
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.thumbnails.limits.cpu_bytes,
-                37 * cache_limits::MIB
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.cache_limits().cpu_bytes, 37 * cache_limits::MIB));
         let saved_limits = preferences::Store::open(path).unwrap().1.cache_limits;
-        harness.read(|editor| assert_eq!(saved_limits, Some(editor.document.thumbnails.limits)));
+        harness.read(|editor| assert_eq!(saved_limits, Some(editor.cache_limits())));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
     });
 }
@@ -62,12 +57,7 @@ fn native_paste_reaches_the_field_before_enter_commits_it() {
         }
         harness.key_press(egui::Key::Enter);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.thumbnails.limits.cpu_bytes,
-                37 * cache_limits::MIB
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.cache_limits().cpu_bytes, 37 * cache_limits::MIB));
         harness.read(|editor| {
             assert_eq!(
                 editor.menus.panel.as_ref().map(|panel| panel.kind),
@@ -117,7 +107,7 @@ fn settings_escape_cancels_numeric_text_before_dismissing_the_panel() {
     editor_harness(|mut harness, _| {
         harness.try_run_realtime().unwrap();
         native_action(&mut harness, Action::Settings);
-        let before = harness.read(|editor| editor.document.thumbnails.limits);
+        let before = harness.read(|editor| editor.cache_limits());
         harness
             .get_by_role_and_label(egui::accesskit::Role::SpinButton, "CPU cache")
             .click();
@@ -132,11 +122,11 @@ fn settings_escape_cancels_numeric_text_before_dismissing_the_panel() {
                 Some(ui::AppPanel::Settings)
             )
         });
-        harness.read(|editor| assert_eq!(editor.document.thumbnails.limits, before));
+        harness.read(|editor| assert_eq!(editor.cache_limits(), before));
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
         harness.read(|editor| assert!(editor.menus.panel.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.thumbnails.limits, before));
+        harness.read(|editor| assert_eq!(editor.cache_limits(), before));
     });
 }
 

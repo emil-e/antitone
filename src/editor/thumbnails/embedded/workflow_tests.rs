@@ -37,7 +37,8 @@ fn editor(document: Document, services: Services) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     editor.document = editor.document.replacement(document);
     editor.document.thumbnails.embedded.services = Some(services);
-    editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
+    editor.memory_pressure = memory::Pressure::Normal;
+    editor.apply_cache_budgets();
     editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
     editor
 }
@@ -306,14 +307,12 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
         let (services, requests) = controlled();
         editor.document.thumbnails.embedded.services = Some(services);
         editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
-        editor
-            .document
-            .thumbnails
-            .set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes,
-            });
-        editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
+        editor.set_cache_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes,
+        });
+        editor.memory_pressure = memory::Pressure::Normal;
+        editor.apply_cache_budgets();
         let context = egui::Context::default();
         with_application(editor, |app| {
             app.enter(|editor, access| {
@@ -376,13 +375,10 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
             );
             if gpu_bytes == 0 {
                 app.enter(|editor, access| {
-                    editor
-                        .document
-                        .thumbnails
-                        .set_limits(cache_limits::CacheLimits {
-                            cpu_bytes: 0,
-                            gpu_bytes: 64 << 20,
-                        });
+                    editor.set_cache_limits(cache_limits::CacheLimits {
+                        cpu_bytes: 0,
+                        gpu_bytes: 64 << 20,
+                    });
                     editor.acquire_embedded(&context, access);
                 });
                 for (_, image, _) in &wanted {
@@ -467,15 +463,8 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
         app.pump();
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.update(|editor| {
-            editor.document.thumbnails.pressure_override = Some(memory::Pressure::Critical);
-            editor
-                .document
-                .thumbnails
-                .apply_budgets(memory::CacheBudgets {
-                    images: 0,
-                    sources: 0,
-                    pressure: memory::Pressure::Critical,
-                })
+            editor.memory_pressure = memory::Pressure::Critical;
+            editor.apply_cache_budgets();
         });
         assert!(work.cancelled.load(Ordering::Relaxed));
         finish(work);
@@ -491,14 +480,8 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
             "critical pressure prevents a new request"
         );
         app.enter(|editor, access| {
-            editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
-            editor
-                .document
-                .thumbnails
-                .apply_budgets(memory::CacheBudgets::new(
-                    editor.document.thumbnails.limits,
-                    memory::Pressure::Normal,
-                ));
+            editor.memory_pressure = memory::Pressure::Normal;
+            editor.apply_cache_budgets();
             request(editor, access, &context);
         });
         app.pump();

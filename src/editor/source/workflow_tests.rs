@@ -222,13 +222,10 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut document = Document::default();
     document.import(&[path()]).unwrap();
     editor.document.install(document);
-    editor
-        .document
-        .thumbnails
-        .set_limits(super::super::cache_limits::CacheLimits {
-            cpu_bytes: 0,
-            gpu_bytes: 0,
-        });
+    editor.set_cache_limits(super::super::cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();

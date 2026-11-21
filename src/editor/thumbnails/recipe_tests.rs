@@ -435,13 +435,10 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
         {
             app.update(|editor| {
                 if index == 3 {
-                    editor
-                        .document
-                        .thumbnails
-                        .set_limits(cache_limits::CacheLimits {
-                            cpu_bytes: 0,
-                            gpu_bytes: 0,
-                        });
+                    editor.set_cache_limits(cache_limits::CacheLimits {
+                        cpu_bytes: 0,
+                        gpu_bytes: 0,
+                    });
                 }
                 editor.document.state.project.set_gamma(gamma);
                 editor.set_gamma(gamma);
@@ -731,13 +728,10 @@ fn assert_document_cards_finish(show_selected: bool) {
     let mut editor = Editor::state();
     editor.document = editor.document.replacement(document);
     editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
-    editor
-        .document
-        .thumbnails
-        .set_limits(cache_limits::CacheLimits {
-            cpu_bytes: 0,
-            gpu_bytes: 64 << 20,
-        });
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 64 << 20,
+    });
     editor.document.visit.current_source = Some(selected);
     // Keep the selected view unsettled throughout real thumbnail preparation.
     let frame = crate::frame_raster::FrameRaster::full(

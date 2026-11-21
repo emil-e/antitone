@@ -208,13 +208,10 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             );
         }
         harness.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 0,
-                    gpu_bytes: 0,
-                })
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            })
         });
         harness.read(|editor| assert!(editor.document.cache.protected_bytes() > 0));
         request_removal(&mut harness, "photo-1.dng");

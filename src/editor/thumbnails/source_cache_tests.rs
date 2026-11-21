@@ -166,7 +166,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             Arc::default(),
             Some(disk::DiskCache::at(directory.path().to_owned())),
         );
-        thumbnails.apply_budgets(memory::CacheBudgets::new(
+        thumbnails.apply_test_budgets(memory::CacheBudgets::new(
             cache_limits::CacheLimits {
                 cpu_bytes: 0,
                 gpu_bytes: 0,
@@ -235,7 +235,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         let mut thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
-        thumbnails.apply_budgets(memory::CacheBudgets::new(
+        thumbnails.apply_test_budgets(memory::CacheBudgets::new(
             cache_limits::CacheLimits {
                 cpu_bytes: BUDGET,
                 gpu_bytes: 0,
@@ -303,7 +303,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             Some(disk::DiskCache::at(directory.path().to_owned())),
             developments.clone(),
         );
-        thumbnails.apply_budgets(memory::CacheBudgets::new(
+        thumbnails.apply_test_budgets(memory::CacheBudgets::new(
             cache_limits::CacheLimits {
                 cpu_bytes: 0,
                 gpu_bytes: 0,
@@ -435,7 +435,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             Some(disk::DiskCache::at(directory.path().to_owned())),
             developments.clone(),
         );
-        thumbnails.apply_budgets(memory::CacheBudgets::new(
+        thumbnails.apply_test_budgets(memory::CacheBudgets::new(
             cache_limits::CacheLimits {
                 cpu_bytes: 0,
                 gpu_bytes: 0,

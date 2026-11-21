@@ -108,8 +108,6 @@ impl RenderBinding {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    #[cfg(feature = "raw")]
-    _pressure: crate::sys::MemoryPressureWatch,
     pub(crate) drt: drt::Targets,
     pub(crate) looks: lut3d::Looks,
     #[cfg(feature = "render")]
@@ -143,13 +141,9 @@ impl GpuRenderer {
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
-        #[cfg(feature = "raw")]
-        let pressure = evaluation.materializations().watch_pressure();
         let looks = lut3d::Looks::new(device).await?;
         let drt = drt::Targets::new(device, queue).await?;
         let renderer = Arc::new(Self {
-            #[cfg(feature = "raw")]
-            _pressure: pressure,
             drt,
             looks,
             #[cfg(feature = "render")]

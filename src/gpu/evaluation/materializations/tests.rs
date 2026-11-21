@@ -311,32 +311,6 @@ fn common_store_keeps_fitting_values_after_request_handles_leave() {
     assert!(later.is_empty());
 }
 
-#[cfg(feature = "raw")]
-#[test]
-fn pressure_observation_does_not_keep_cache_ownership_alive() {
-    let (device, _, _) = crate::gpu::test_support::render_context();
-    let context = Context::new(
-        &device,
-        CachePolicy {
-            generated_bytes: 64,
-        },
-    );
-    let values = context.materializations();
-    values.set_test_pressure(crate::sys::MemoryPressure::Normal);
-    let _watch = values.watch_pressure();
-    let image = produce(&values, 1, buffer(&device, 1.));
-    let weak = Arc::downgrade(&image.image);
-    drop(image);
-    assert!(weak.upgrade().is_some());
-    drop(values);
-    assert!(weak.upgrade().is_some(), "the context still owns its store");
-    drop(context);
-    assert!(
-        weak.upgrade().is_none(),
-        "the observer has no cache ownership"
-    );
-}
-
 #[test]
 fn selected_images_and_submitted_generated_values_update_the_common_recency_order() {
     let (device, _, _) = crate::gpu::test_support::render_context();
