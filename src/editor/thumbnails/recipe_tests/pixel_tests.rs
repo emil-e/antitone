@@ -264,7 +264,7 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
                 thumbnails.release_selected();
                 thumbnails.set_limits(cache_limits::CacheLimits {
                     cpu_bytes: 0,
-                    ..thumbnails.limits
+                    ..thumbnails.default_limits()
                 });
                 assert_eq!(
                     thumbnails.sources.proxy_count(),

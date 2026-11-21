@@ -270,6 +270,8 @@ pub struct Editor {
     tab: usize,
     preferences: preferences::Preferences,
     preference_store: Option<preferences::Store>,
+    memory_pressure: memory::Pressure,
+    memory_watch: Option<async_executor::Task<()>>,
     document: DocumentScope,
 
     next_request: u64,
@@ -296,6 +298,7 @@ impl Editor {
     }
 
     pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
+        let cache_limits = cache_limits::Hardware::current(Some(device)).defaults();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         renderers.prewarm(device.clone(), queue.clone());
         let developments = source_loading::SourceLoader::with_gpu(device, queue);
@@ -332,7 +335,7 @@ impl Editor {
         editor.source_epoch = source_epoch;
         editor.document.cache = thumbnails.sources.clone();
         editor.document.thumbnails = thumbnails;
-        editor.preferences.cache_limits = Some(editor.document.thumbnails.limits);
+        editor.set_cache_limits(cache_limits);
         editor.scopes = scopes;
         editor
     }
@@ -340,6 +343,7 @@ impl Editor {
     fn install_project(&mut self, document: Document) {
         self.cancel_active_tool();
         self.document = self.document.replacement(document);
+        self.apply_cache_budgets();
         self.id = self.request_id();
         self.document.visit.view = self.id;
         self.source_epoch
@@ -417,7 +421,9 @@ impl Editor {
         let mut document: document_scope::DocumentScope = document.into();
         document.project.input = input;
         let workspace_input = workspace_input::WorkspaceInput::default();
-        Self {
+        let mut preferences = preferences::Preferences::default();
+        preferences.cache_limits = Some(cache_limits::Hardware::current(None).defaults());
+        let mut editor = Self {
             developments: None,
             source_services: None,
             source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -441,15 +447,22 @@ impl Editor {
             source_exposure: 0.,
             source_white_balance: Default::default(),
             tab: 0,
-            preferences: preferences::Preferences::default(),
+            preferences,
             preference_store: None,
+            #[cfg(not(test))]
+            memory_pressure: crate::sys::memory_pressure(),
+            #[cfg(test)]
+            memory_pressure: memory::Pressure::Normal,
+            memory_watch: None,
 
             document,
             next_request: 0,
             output_services: None,
             files: Default::default(),
             allow_close: false,
-        }
+        };
+        editor.apply_cache_budgets();
+        editor
     }
 
     pub fn restore_ui_preferences(&mut self) {
@@ -702,10 +715,8 @@ impl Editor {
     }
 
     fn apply_preferences(&mut self, mut preferences: preferences::Preferences) {
-        let limits = *preferences
-            .cache_limits
-            .get_or_insert(self.document.thumbnails.limits);
-        self.document.thumbnails.set_limits(limits);
+        let limits = *preferences.cache_limits.get_or_insert(self.cache_limits());
+        self.set_cache_limits(limits);
         self.scopes.visible = preferences.scopes_visible;
         self.scopes.height_ratio = preferences.scope_height_ratio;
         self.preferences = preferences;
@@ -723,7 +734,7 @@ impl Editor {
     fn cache_preferences(&mut self, ui: &mut egui::Ui) {
         use cache_limits::{MAX_MIB, MIB};
         ui.set_min_width(330.);
-        let mut limits = self.document.thumbnails.limits;
+        let mut limits = self.cache_limits();
         let mut changed = false;
         for (label, bytes) in [
             ("CPU cache", &mut limits.cpu_bytes),
@@ -757,15 +768,19 @@ impl Editor {
             }
         }
         if ui::TextAction::new("Reset cache limits").show(ui).clicked() {
-            limits = self.document.thumbnails.default_limits();
+            limits = cache_limits::Hardware::current(
+                self.source_services
+                    .as_ref()
+                    .map(|services| &services.device),
+            )
+            .defaults();
             changed = true;
         }
         ui.label(
             "0 disables optional retention. Selected and visible work may exceed these limits.",
         );
         if changed {
-            self.document.thumbnails.set_limits(limits);
-            self.preferences.cache_limits = Some(limits);
+            self.set_cache_limits(limits);
             self.persist_preferences();
         }
     }

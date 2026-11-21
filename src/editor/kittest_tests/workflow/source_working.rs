@@ -612,13 +612,10 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
 fn uncalibrated_source_keeps_coherent_detail_and_inspection_through_zero_retention_navigation() {
     editor_harness(|mut harness, _| {
         harness.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 0,
-                    gpu_bytes: 0,
-                })
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            })
         });
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| {

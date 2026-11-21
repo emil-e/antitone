@@ -922,7 +922,7 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
     let document = fixture();
     let id = document.project.order[0];
     let (mut thumbnails, _requests) = controlled();
-    thumbnails.apply_budgets(memory::CacheBudgets::for_memory(
+    thumbnails.apply_test_budgets(memory::CacheBudgets::for_memory(
         48 << 30,
         memory::Pressure::Normal,
     ));
@@ -934,7 +934,7 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
         .generation
         .load(std::sync::atomic::Ordering::Relaxed);
     let critical = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Critical);
-    thumbnails.apply_budgets(critical);
+    thumbnails.apply_test_budgets(critical);
     assert!(thumbnails.cache.entries.is_empty());
     assert_eq!(
         thumbnails
@@ -942,7 +942,7 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
             .load(std::sync::atomic::Ordering::Relaxed),
         generation + 1
     );
-    thumbnails.apply_budgets(critical);
+    thumbnails.apply_test_budgets(critical);
     assert_eq!(
         thumbnails
             .generation
@@ -955,7 +955,8 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
 fn visible_then_eager_rendering_does_not_wait_for_refinement_or_grading_idle() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
+    editor.memory_pressure = memory::Pressure::Normal;
+    editor.apply_cache_budgets();
     let first = editor.document.state.project.order[0];
     let last = *editor.document.state.project.order.last().unwrap();
     for id in editor
@@ -1013,14 +1014,12 @@ fn visible_then_eager_rendering_does_not_wait_for_refinement_or_grading_idle() {
 fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loops() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    editor.document.thumbnails.pressure_override = Some(memory::Pressure::Normal);
-    editor
-        .document
-        .thumbnails
-        .set_limits(cache_limits::CacheLimits {
-            cpu_bytes: 0,
-            gpu_bytes: 0,
-        });
+    editor.memory_pressure = memory::Pressure::Normal;
+    editor.apply_cache_budgets();
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 0,
+    });
     let count = editor.document.state.project.order.len();
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
@@ -1030,7 +1029,7 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
             filmstrip_frame(
                 e,
                 &context,
-                memory::CacheBudgets::new(e.document.thumbnails.limits, memory::Pressure::Normal),
+                memory::CacheBudgets::new(e.cache_limits(), memory::Pressure::Normal),
                 cx,
             )
         });
@@ -1063,10 +1062,7 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
                 filmstrip_frame(
                     e,
                     &context,
-                    memory::CacheBudgets::new(
-                        e.document.thumbnails.limits,
-                        memory::Pressure::Normal,
-                    ),
+                    memory::CacheBudgets::new(e.cache_limits(), memory::Pressure::Normal),
                     cx,
                 )
             });
@@ -1083,7 +1079,8 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
 fn visible_work_advances_while_modal_input_remains_reserved() {
     let mut editor = Editor::state();
     *editor.document = fixture();
-    editor.document.thumbnails.pressure_override = Some(memory::Pressure::Warning);
+    editor.memory_pressure = memory::Pressure::Warning;
+    editor.apply_cache_budgets();
     let ids = editor.document.state.project.order[..2].to_vec();
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
@@ -1092,12 +1089,7 @@ fn visible_work_advances_while_modal_input_remains_reserved() {
         .start(crate::editor::ActivityOptions::new("Independent foreground operation").modal());
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.document
-                .thumbnails
-                .apply_budgets(memory::CacheBudgets::for_memory(
-                    48 << 30,
-                    memory::Pressure::Warning,
-                ));
+            e.apply_cache_budgets();
             e.document.thumbnails.visible = ids.clone();
             e.advance_thumbnail_demand(cx);
         });
@@ -1174,6 +1166,26 @@ fn eager_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
     (editor, requests)
+}
+
+impl Editor {
+    fn filmstrip_with_budgets(
+        &mut self,
+        ui: &mut egui::Ui,
+        budgets: memory::CacheBudgets,
+        cx: &UiContext<'_, Self>,
+    ) -> Option<(usize, egui::Modifiers)> {
+        self.memory_pressure = budgets.pressure;
+        if budgets.pressure == memory::Pressure::Normal {
+            self.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: budgets.sources as u64,
+                gpu_bytes: budgets.images as u64,
+            });
+        } else {
+            self.apply_cache_budgets();
+        }
+        self.filmstrip_contents(ui, cx)
+    }
 }
 
 fn filmstrip_frame(
@@ -1296,13 +1308,10 @@ fn offscreen_card_renders_after_its_cpu_pass_when_retention_space_returns() {
         }
     }
     let context = egui::Context::default();
-    editor
-        .document
-        .thumbnails
-        .set_limits(cache_limits::CacheLimits {
-            cpu_bytes: 0,
-            gpu_bytes: 3 << 20,
-        });
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: 0,
+        gpu_bytes: 3 << 20,
+    });
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx));
         let cpu = take_submission(app, &requests);
@@ -1314,7 +1323,7 @@ fn offscreen_card_renders_after_its_cpu_pass_when_retention_space_returns() {
         });
         app.enter(|e, cx| {
             e.document.visit.canvas.original.last_edit = std::time::Instant::now();
-            e.document.thumbnails.set_limits(cache_limits::CacheLimits {
+            e.set_cache_limits(cache_limits::CacheLimits {
                 cpu_bytes: 0,
                 gpu_bytes: 64 << 20,
             });
@@ -1470,7 +1479,8 @@ fn hidden_filmstrip_requests_rendered_thumbnails_and_keeps_resource_backoff() {
         });
         for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
             app.enter(|e, cx| {
-                e.document.thumbnails.pressure_override = Some(pressure);
+                e.memory_pressure = pressure;
+                e.apply_cache_budgets();
                 let mut output =
                     context.run_ui(Default::default(), |ui| e.hidden_filmstrip(ui, cx));
                 output.textures_delta.clear();
@@ -1688,13 +1698,10 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
         *editor.document = fixture();
         editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), Arc::default()));
         editor.document.state.project.order.truncate(36);
-        editor
-            .document
-            .thumbnails
-            .set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes: 256 << 20,
-            });
+        editor.set_cache_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 256 << 20,
+        });
         for id in editor.document.state.project.order.clone() {
             let image = Arc::new(
                 GpuImage::new_shared(

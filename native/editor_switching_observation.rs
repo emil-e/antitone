@@ -183,17 +183,15 @@ fn workload(
         scheduler.clone(),
     ))
     .with_sources(editor.document.cache.clone());
-    editor.document.thumbnails.pressure_override = None;
+    editor.memory_pressure = crate::sys::memory_pressure();
+    editor.apply_cache_budgets();
     *editor.document = document;
     editor.developments = Some(scheduler.clone());
     editor.source_epoch = epoch.clone();
-    editor
-        .document
-        .thumbnails
-        .set_limits(cache_limits::CacheLimits {
-            cpu_bytes: 1100 * cache_limits::MIB,
-            gpu_bytes: 16 * cache_limits::MIB,
-        });
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: 1100 * cache_limits::MIB,
+        gpu_bytes: 16 * cache_limits::MIB,
+    });
     editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
 
@@ -211,6 +209,7 @@ fn workload(
         editor.source_services.clone().unwrap(),
     ));
     let exercise = crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.start_memory_watch(cx));
         let exercise = (|| -> Result<()> {
             let mut paint = Paint::new(device);
             app.enter(|editor, access| {

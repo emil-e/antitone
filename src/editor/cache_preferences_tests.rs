@@ -12,15 +12,15 @@ fn restored_limits_control_caches_without_changing_project_or_recomputing_defaul
     let mut preferences = preferences::Preferences::default();
     preferences.cache_limits = Some(limits);
     editor.apply_preferences(preferences.clone());
-    assert_eq!(editor.document.thumbnails.limits, limits);
+    assert_eq!(editor.cache_limits(), limits);
     // Repeated repaint/pressure polling cannot select another hardware default.
     for _ in 0..4 {
-        editor.document.thumbnails.update_memory();
+        editor.apply_cache_budgets();
     }
-    assert_eq!(editor.document.thumbnails.limits, limits);
+    assert_eq!(editor.cache_limits(), limits);
     let mut reopened = tests::fixture();
     reopened.apply_preferences(preferences);
-    assert_eq!(reopened.document.thumbnails.limits, limits);
+    assert_eq!(reopened.cache_limits(), limits);
     assert_eq!(
         serde_json::to_value(&editor.document.state.project).unwrap(),
         project
@@ -149,13 +149,13 @@ fn cache_controls_are_named_and_reset_persists_without_changing_the_project() {
     frame(pointer(false), true);
     drop(frame);
     assert_eq!(
-        editor.document.thumbnails.limits,
+        editor.cache_limits(),
         editor.document.thumbnails.default_limits()
     );
-    assert_ne!(editor.document.thumbnails.limits, limits);
+    assert_ne!(editor.cache_limits(), limits);
     assert_eq!(
         preferences::Store::open(path).unwrap().1.cache_limits,
-        Some(editor.document.thumbnails.limits)
+        Some(editor.cache_limits())
     );
     assert_eq!(
         serde_json::to_value(&editor.document.state.project).unwrap(),

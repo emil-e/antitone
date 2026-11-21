@@ -10,15 +10,20 @@ mod adjustment_layers;
 fn calculation_retention_honors_the_full_settings_share_before_and_after_renderer_initialization() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let renderers = Arc::new(RendererCache::default());
-    let mut thumbnails = Thumbnails {
-        gpu: Some((device.clone(), queue.clone(), renderers.clone())),
-        ..Default::default()
-    };
+    let mut editor = Editor::state();
+    editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
+    editor.source_services = Some(crate::editor::source::Services {
+        developments: source_loading::SourceLoader::new(),
+        renderers: renderers.clone(),
+        device: device.clone(),
+        queue: queue.clone(),
+    });
+    editor.memory_pressure = memory::Pressure::Normal;
     let limits = cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 768 << 20,
     };
-    thumbnails.set_limits(limits);
+    editor.set_cache_limits(limits);
     let renderer = renderers.get(&device, &queue).unwrap();
     assert_eq!(
         renderer.evaluation.cache_policy().generated_bytes,
@@ -28,7 +33,7 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_rendere
         gpu_bytes: 512 << 20,
         ..limits
     };
-    thumbnails.set_limits(changed);
+    editor.set_cache_limits(changed);
     assert_eq!(
         renderer.evaluation.cache_policy().generated_bytes,
         changed.gpu_bytes
@@ -38,20 +43,142 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_rendere
         &renderers.get(&device, &queue).unwrap()
     ));
     for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
-        thumbnails.apply_budgets(memory::CacheBudgets::new(changed, pressure));
+        editor.memory_pressure = pressure;
+        editor.apply_cache_budgets();
         assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
-        assert_eq!(thumbnails.limits, changed);
-        thumbnails.apply_budgets(memory::CacheBudgets::new(changed, memory::Pressure::Normal));
+        assert_eq!(editor.cache_limits(), changed);
+        editor.memory_pressure = memory::Pressure::Normal;
+        editor.apply_cache_budgets();
         assert_eq!(
             renderer.evaluation.cache_policy().generated_bytes,
             changed.gpu_bytes
         );
     }
-    thumbnails.set_limits(cache_limits::CacheLimits {
+    editor.set_cache_limits(cache_limits::CacheLimits {
         gpu_bytes: 0,
         ..changed
     });
     assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
+}
+
+#[test]
+fn retained_cards_reduce_calculation_space_and_release_restores_admission_without_revoking_leases()
+{
+    use crate::gpu::evaluation::{ImageValue as StoredImage, RetainedKey};
+
+    pollster::block_on(async {
+        let (device, queue, _) = crate::gpu::test_support::render_context();
+        let renderers = Arc::new(RendererCache::default());
+        let mut editor = Editor::state();
+        *editor.document = super::tests::fixture();
+        editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
+        editor.source_services = Some(crate::editor::source::Services {
+            developments: source_loading::SourceLoader::new(),
+            renderers: renderers.clone(),
+            device: device.clone(),
+            queue: queue.clone(),
+        });
+        editor.memory_pressure = memory::Pressure::Normal;
+        let limits = cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 4 << 20,
+        };
+        editor.set_cache_limits(limits);
+        let renderer = renderers.get(&device, &queue).unwrap();
+        let image = Arc::new(
+            GpuImage::new_shared(
+                &renderer,
+                &device,
+                [256, 256],
+                &vec![[0; 4]; 256 * 256],
+                glam::DMat3::IDENTITY,
+                None,
+                OutputTarget::DisplayP3,
+            )
+            .await
+            .unwrap(),
+        );
+        let store = renderer.evaluation.materializations();
+        store.set_test_pressure(crate::sys::MemoryPressure::Normal);
+        let bytes = limits.gpu_bytes;
+        let key = RetainedKey::new(("calculation sharing card allowance", bytes));
+        let produce = || {
+            let device = device.clone();
+            let store = store.clone();
+            let key = key.clone();
+            async move {
+                store
+                    .obtain(key, Arc::new(bytes), bytes, move || async move {
+                        Ok(StoredImage::new(device.create_buffer(
+                            &wgpu::BufferDescriptor {
+                                label: None,
+                                size: bytes,
+                                usage: wgpu::BufferUsages::STORAGE,
+                                mapped_at_creation: false,
+                            },
+                        )))
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+        drop(produce().await);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some()
+        );
+
+        let live = produce().await;
+        let id = editor.document.project.order[0];
+        let card_key = super::tests::key(&editor.document, id);
+        editor
+            .document
+            .thumbnails
+            .cache
+            .insert(card_key, Ok(Product::camera(image.clone())));
+        editor.apply_cache_budgets();
+        let card_bytes = editor.document.thumbnails.cache.measured_bytes() as u64;
+        assert!(card_bytes >= 256 * 256 * 8 && card_bytes < limits.gpu_bytes);
+        assert_eq!(
+            renderer.evaluation.cache_policy().generated_bytes + card_bytes,
+            limits.gpu_bytes,
+            "actual card storage shares the chosen allowance with calculations"
+        );
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some()
+        );
+        drop(live);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_none(),
+            "an oversized calculation survives only while a consumer owns it"
+        );
+
+        editor.document.thumbnails.cache.retain(|_, _| false);
+        editor.apply_cache_budgets();
+        assert_eq!(editor.document.thumbnails.cache.measured_bytes(), 0);
+        assert_eq!(
+            renderer.evaluation.cache_policy().generated_bytes,
+            limits.gpu_bytes
+        );
+        assert_eq!(
+            image.linear.width(),
+            256,
+            "released optional ownership does not revoke the card consumer"
+        );
+        drop(produce().await);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some(),
+            "releasing the card restores actual calculation admission"
+        );
+        assert_eq!(editor.cache_limits(), limits);
+    });
 }
 
 #[test]

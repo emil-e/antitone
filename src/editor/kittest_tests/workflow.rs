@@ -936,13 +936,10 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_and_target_switch
             "navigation reacquires authoritative originals"
         );
         harness.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 0,
-                    gpu_bytes: 0,
-                })
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            })
         });
         harness.step();
         harness.render().unwrap();

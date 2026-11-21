@@ -563,13 +563,8 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
-                editor
-                    .document
-                    .thumbnails
-                    .apply_budgets(memory::CacheBudgets::for_memory(
-                        48 << 30,
-                        memory::Pressure::Critical,
-                    ));
+                editor.memory_pressure = memory::Pressure::Critical;
+                editor.apply_cache_budgets();
                 assert_eq!(editor.document.thumbnails.sources.proxy_count(), 1);
                 editor.validate_pending_preview();
                 assert!(editor.document.visit.pending_preview.is_some());

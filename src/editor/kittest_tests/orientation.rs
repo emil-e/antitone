@@ -4,13 +4,10 @@ use super::*;
 fn pending_preview_pixels_follow_turn_and_flip_buttons_before_source_completion() {
     editor_harness_with_gpu(true, |mut h, _, device, queue| {
         h.update(|editor| {
-            editor
-                .document
-                .thumbnails
-                .set_limits(cache_limits::CacheLimits {
-                    cpu_bytes: 64 << 20,
-                    gpu_bytes: 64 << 20,
-                });
+            editor.set_cache_limits(cache_limits::CacheLimits {
+                cpu_bytes: 64 << 20,
+                gpu_bytes: 64 << 20,
+            });
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {

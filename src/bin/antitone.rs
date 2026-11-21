@@ -60,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             editor.open_initial(path, &cx);
         }
         editor.restore_ui_preferences();
+        editor.start_memory_watch(&cx);
         Ok(editor)
     });
 

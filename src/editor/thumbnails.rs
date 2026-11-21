@@ -366,8 +366,6 @@ pub(super) struct Thumbnails {
     // CPU/disk completion history; an admissible GPU miss still needs rendering.
     attempted_sources: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
-    pub(super) limits: cache_limits::CacheLimits,
-    memory_watch: Option<memory::PressureWatch>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     embedded: embedded::EmbeddedPreviews,
     gpu: Option<(
@@ -382,18 +380,18 @@ pub(super) struct Thumbnails {
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
     refresh: Option<(ImageKey, std::time::Instant)>,
-    #[cfg(test)]
-    pressure_override: Option<memory::Pressure>,
 }
 
 impl Default for Thumbnails {
     fn default() -> Self {
-        let limits = cache_limits::Hardware::current(None).defaults();
         #[cfg(not(test))]
-        let pressure = crate::sys::memory_pressure();
+        let limits = cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 0,
+        };
         #[cfg(test)]
-        let pressure = memory::Pressure::Normal;
-        let budgets = memory::CacheBudgets::new(limits, pressure);
+        let limits = cache_limits::Hardware::current(None).defaults();
+        let budgets = memory::CacheBudgets::new(limits, memory::Pressure::Normal);
         Self {
             cache: Cache::new(budgets.images, |key: &ImageKey, value: &CachedProduct| {
                 key.retained_bytes()
@@ -420,8 +418,6 @@ impl Default for Thumbnails {
             visible_keys: Vec::new(),
             attempted_sources: Vec::new(),
             budgets,
-            limits,
-            memory_watch: None,
             repaint: Arc::default(),
             embedded: Default::default(),
             gpu: None,
@@ -432,8 +428,6 @@ impl Default for Thumbnails {
             generation: Arc::default(),
             pending: None,
             refresh: None,
-            #[cfg(test)]
-            pressure_override: Some(memory::Pressure::Normal),
         }
     }
 }
@@ -546,8 +540,6 @@ impl Thumbnails {
         self.cache.protect(Vec::new());
         self.visible_keys.clear();
         self.protect_cpu();
-        self.update_memory();
-        self.sync_image_budget();
     }
 
     fn protect_cpu(&self) {
@@ -580,8 +572,7 @@ impl Thumbnails {
             embedded: self.embedded.for_document(),
             ..Self::default()
         };
-        next.set_limits(self.limits);
-        next.sources.set_budget(next.budgets.sources as u64);
+        next.budgets = self.budgets;
         next
     }
 
@@ -591,50 +582,37 @@ impl Thumbnails {
             .map(|backend| self.sources.provider(backend.clone()))
     }
 
+    #[cfg(test)]
     pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
         cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
     }
 
+    #[cfg(test)]
     pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
-        self.limits = limits;
-        self.update_memory();
-        self.sync_image_budget();
+        self.apply_test_budgets(memory::CacheBudgets::new(limits, memory::Pressure::Normal));
     }
 
-    pub(super) fn update_memory(&mut self) {
-        #[cfg(not(test))]
-        let pressure = crate::sys::memory_pressure();
-        #[cfg(test)]
-        let pressure = self
-            .pressure_override
-            .unwrap_or_else(crate::sys::memory_pressure);
-        self.apply_budgets(memory::CacheBudgets::new(self.limits, pressure));
+    #[cfg(test)]
+    fn apply_test_budgets(&mut self, budgets: memory::CacheBudgets) {
+        let sources = self.sources.clone();
+        let renderers = self.gpu.as_ref().map(|(_, _, renderers)| renderers.clone());
+        memory::apply_budgets(budgets, &sources, self, renderers.as_deref());
     }
 
-    fn apply_budgets(&mut self, budgets: memory::CacheBudgets) {
-        if budgets == self.budgets {
-            return;
-        }
-        self.budgets = budgets;
-        if budgets.pressure == memory::Pressure::Critical {
+    pub(super) fn apply_budgets(&mut self, budgets: memory::CacheBudgets) -> usize {
+        if budgets.pressure == memory::Pressure::Critical
+            && self.budgets.pressure != memory::Pressure::Critical
+        {
             self.cancel();
             self.embedded.cancel();
         }
-        self.sync_image_budget();
-        self.sources.set_budget(self.budgets.sources as u64);
-    }
-
-    fn sync_image_budget(&mut self) {
-        let available = self.budgets.images;
-        self.embedded.set_budget(available.min(16 << 20));
+        self.budgets = budgets;
+        self.embedded.set_budget(budgets.images.min(16 << 20));
         self.cache
-            .set_budget(available.saturating_sub(self.embedded.byte_len()));
-        if let Some((_, _, renderers)) = &self.gpu {
-            let available = available
-                .saturating_sub(self.embedded.byte_len())
-                .saturating_sub(self.cache.measured_bytes());
-            renderers.set_retention_budget(available as u64);
-        }
+            .set_budget(budgets.images.saturating_sub(self.embedded.byte_len()));
+        self.embedded
+            .byte_len()
+            .saturating_add(self.cache.measured_bytes())
     }
 
     fn can_retain(&self, key: &ImageKey) -> bool {
@@ -701,7 +679,6 @@ impl Thumbnails {
             .collect::<Vec<_>>();
         wanted.extend(previous);
         self.cache.protect(wanted);
-        self.sync_image_budget();
     }
 
     pub fn new(
@@ -758,6 +735,7 @@ impl Thumbnails {
             gpu: Some((device.clone(), queue.clone(), renderers.clone())),
             ..Default::default()
         };
+        #[cfg(test)]
         state.set_limits(state.default_limits());
         state.embedded = embedded::EmbeddedPreviews::new();
         state.backend = Some(Arc::new(developments));
@@ -875,7 +853,6 @@ impl Thumbnails {
                 }
                 Ok(None) => false,
             };
-            self.sync_image_budget();
             return rendered;
         }
         false
@@ -1101,8 +1078,8 @@ impl Editor {
             .get_or_init(|| ui.ctx().clone());
         self.document.thumbnails.visible.clear();
         self.document.thumbnails.refresh_hidden_memory();
+        self.apply_cache_budgets();
         self.advance_thumbnail_demand(cx);
-        self.acquire_embedded(ui.ctx(), cx);
         if self.document.thumbnails.pending.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
@@ -1130,22 +1107,17 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Option<(usize, egui::Modifiers)> {
         self.document.thumbnails.preview = preview;
-        if self.document.thumbnails.memory_watch.is_none() {
-            self.document
-                .thumbnails
-                .repaint
-                .get_or_init(|| ui.ctx().clone());
-            self.document.thumbnails.memory_watch =
-                Some(memory::PressureWatch::new(ui.ctx().clone()));
-        }
-        self.document.thumbnails.update_memory();
-        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, cx)
+        self.document
+            .thumbnails
+            .repaint
+            .get_or_init(|| ui.ctx().clone());
+        self.apply_cache_budgets();
+        self.filmstrip_contents(ui, cx)
     }
 
-    fn filmstrip_with_budgets(
+    fn filmstrip_contents(
         &mut self,
         ui: &mut egui::Ui,
-        budgets: memory::CacheBudgets,
         cx: &UiContext<'_, Self>,
     ) -> Option<(usize, egui::Modifiers)> {
         if self.document.visit.canvas.ready.is_none()
@@ -1158,7 +1130,6 @@ impl Editor {
             .thumbnails
             .cache
             .retain(|key, _| key.field == field);
-        self.document.thumbnails.apply_budgets(budgets);
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut camera_wanted = Vec::new();
@@ -1532,6 +1503,7 @@ impl Editor {
             .collect();
         self.document.thumbnails.protect_cpu();
         self.document.thumbnails.protect_images(protected);
+        self.apply_cache_budgets();
         self.request_embedded_previews(&camera_wanted, ui.ctx(), cx);
         self.advance_thumbnail_demand(cx);
         if self.document.thumbnails.pending.is_some() || self.document.thumbnails.embedded.pending()
@@ -1689,7 +1661,7 @@ impl Editor {
                     }
                 }
                 drop(pending);
-                editor.document.thumbnails.update_memory();
+                editor.apply_cache_budgets();
                 editor.schedule_thumbnail(&cx, std::time::Instant::now(), rendered);
             });
         }) else {
@@ -1706,6 +1678,9 @@ impl Editor {
 
     pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
         self.schedule_thumbnail(cx, std::time::Instant::now(), false);
+        if let Some(context) = self.document.thumbnails.repaint.get().cloned() {
+            self.acquire_embedded(&context, cx);
+        }
     }
 
     fn schedule_thumbnail(
@@ -1752,6 +1727,7 @@ impl Editor {
             .collect();
         self.document.thumbnails.protect_cpu();
         self.document.thumbnails.protect_images(protected.clone());
+        self.apply_cache_budgets();
         if self.document.thumbnails.services.is_none() {
             if self.document.thumbnails.gpu.is_some() {
                 for key in protected {

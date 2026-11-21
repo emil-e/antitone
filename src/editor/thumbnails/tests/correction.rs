@@ -69,7 +69,11 @@ fn failed_map_preserves_source_thumbnail_paint_but_still_fails_precision_acquisi
         },
         memory::Pressure::Normal,
     );
-    editor.document.thumbnails.apply_budgets(budgets);
+    editor.memory_pressure = budgets.pressure;
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: budgets.sources as u64,
+        gpu_bytes: budgets.images as u64,
+    });
     let path = editor.document.source_path(id).unwrap();
     let key = editor.thumbnail_key(&source, &path, false).unwrap();
     assert!(key.recipe.as_ref().unwrap().is_none());
@@ -136,7 +140,11 @@ fn camera_thumbnail_paint_requests_its_map_without_waiting_or_using_an_absent_co
         },
         memory::Pressure::Normal,
     );
-    editor.document.thumbnails.apply_budgets(budgets);
+    editor.memory_pressure = budgets.pressure;
+    editor.set_cache_limits(cache_limits::CacheLimits {
+        cpu_bytes: budgets.sources as u64,
+        gpu_bytes: budgets.images as u64,
+    });
     let (release, resume) = futures_channel::oneshot::channel();
     let started = Arc::new(AtomicBool::new(false));
     let signal = started.clone();

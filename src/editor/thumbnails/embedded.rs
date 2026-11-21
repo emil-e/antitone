@@ -346,7 +346,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         self.document.thumbnails.embedded.request_visible(wanted);
-        self.document.thumbnails.sync_image_budget();
+        self.apply_cache_budgets();
         self.acquire_embedded(context, cx);
     }
 
@@ -394,8 +394,7 @@ impl Editor {
                     &workflow_context,
                 );
                 drop(pending);
-                editor.document.thumbnails.update_memory();
-                editor.document.thumbnails.sync_image_budget();
+                editor.apply_cache_budgets();
                 editor.acquire_embedded(&workflow_context, &cx);
             });
         }) else {

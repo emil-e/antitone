@@ -273,7 +273,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
             &document,
             &context,
         );
-        thumbnails.sync_image_budget();
+        thumbnails.apply_test_budgets(thumbnails.budgets);
     }
     for index in (0..36).rev().chain(0..36) {
         let wanted = vec![wanted(&document, index)];
@@ -425,7 +425,7 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
         )
         .unwrap()
         .0;
-    thumbnails.apply_budgets(memory::CacheBudgets {
+    thumbnails.apply_test_budgets(memory::CacheBudgets {
         images: 0,
         sources: 0,
         pressure: memory::Pressure::Critical,
