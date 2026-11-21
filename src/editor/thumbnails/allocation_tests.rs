@@ -73,7 +73,7 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
             RecordedImage {
                 pixels: renderer
                     .evaluation()
-                    .produce_prepared(&queue, &renderer.submissions, work, || false)
+                    .produce_prepared(&queue, work, || false)
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -120,12 +120,7 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
             "produce={produce}: {} < {minimum}",
             view.photographic_bytes()
         );
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &renderer.submissions,
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert!(
             view.photographic_bytes() >= minimum,

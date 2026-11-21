@@ -71,8 +71,10 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         std::fs::copy(fixture("illuminated-patches.dng"), &path).unwrap();
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let renderers = Arc::new(crate::renderer::RendererCache::new(Default::default()));
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
         let (ready, mut scan) = crate::editor::prepare_source(
             &renderers,
             &device,

@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu_export::authored::Request;
 use crate::gpu_export::authored_area as write;
 use crate::processing::Calibration;
@@ -7,7 +6,6 @@ use crate::processing::Calibration;
 #[test]
 fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_stop() {
     let (device, queue, renderer) = super::super::tests::context();
-    let gate = SubmissionGate::default();
     // Exercise changing production layouts rather than reuse of retained source images.
     renderer
         .evaluation()
@@ -85,7 +83,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 request(look),
                 (&path, Overwrite::Refuse),
                 || Ok(()),
@@ -130,7 +128,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         let result = write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             request(Some(look.clone())),
             (&path, Overwrite::Confirmed),
             || {

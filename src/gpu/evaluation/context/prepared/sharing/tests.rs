@@ -75,7 +75,7 @@ fn computes(preparation: &Preparation) -> usize {
 
 #[test]
 fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_inputs() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     for resident in [false, true] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let reads = Arc::new(AtomicUsize::new(0));
@@ -97,7 +97,6 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
                     context
                         .materialize(
                             &queue,
-                            &renderer.submissions,
                             &context.materializations(),
                             evaluation,
                             ImageFormat::Rgba32Float,
@@ -143,7 +142,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
                 .unwrap()
                 .encode_result(&device, &mut encoder, &recorded.pixels)
                 .unwrap();
-            renderer.submissions.submit(&queue, [encoder.finish()]);
+            queue.submit([encoder.finish()]);
             recorded.commands.as_ref().unwrap().submitted();
             recorded.pixels.submitted(&context.materializations());
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -151,7 +150,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
         } else {
             let image = pollster::block_on(
                 context
-                    .produce_images(&queue, &renderer.submissions, vec![shared])
+                    .produce_images(&queue, vec![shared])
                     .unwrap()
                     .remove(0),
             )
@@ -185,7 +184,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
 
 #[test]
 fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
     let mtf = value::gaussian(input, 1.).unwrap();
@@ -220,7 +219,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
     );
     let image = pollster::block_on(
         context
-            .produce_images(&queue, &renderer.submissions, vec![shared])
+            .produce_images(&queue, vec![shared])
             .unwrap()
             .remove(0),
     )
@@ -254,7 +253,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
 
 #[test]
 fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
     let source_request = context
@@ -272,7 +271,6 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
         context
             .materialize(
                 &queue,
-                &renderer.submissions,
                 &context.materializations(),
                 source_request,
                 ImageFormat::Rgba32Float,
@@ -321,7 +319,7 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
         .unwrap()
         .encode_result(&device, &mut encoder, &recorded.pixels)
         .unwrap();
-    renderer.submissions.submit(&queue, [encoder.finish()]);
+    queue.submit([encoder.finish()]);
     recorded.commands.as_ref().unwrap().submitted();
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let pixels = super::super::super::super::execute::read(&device, &queue, &recorded.pixels);
@@ -342,7 +340,7 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
 
 #[test]
 fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
     let source_request = context
@@ -360,7 +358,6 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
         context
             .materialize(
                 &queue,
-                &renderer.submissions,
                 &context.materializations(),
                 source_request,
                 ImageFormat::Rgba32Float,
@@ -427,7 +424,7 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
         .unwrap()
         .encode_result(&device, &mut encoder, &recorded.pixels)
         .unwrap();
-    renderer.submissions.submit(&queue, [encoder.finish()]);
+    queue.submit([encoder.finish()]);
     recorded.commands.as_ref().unwrap().submitted();
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     assert!(
@@ -440,7 +437,7 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
 
 #[test]
 fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Plane(reads.clone())));
@@ -493,7 +490,7 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
     );
     let image = pollster::block_on(
         context
-            .produce_images(&queue, &renderer.submissions, vec![work])
+            .produce_images(&queue, vec![work])
             .unwrap()
             .remove(0),
     )

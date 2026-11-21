@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 
 fn rejected_sample(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     look: &crate::looks::LookAsset,
 ) -> Arc<crate::gpu::lut3d::Check> {
     let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

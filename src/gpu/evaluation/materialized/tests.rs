@@ -116,7 +116,6 @@ fn a_live_containing_region_supplies_an_unbounded_calculation_without_source_io(
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, root.clone(), [3, 4, 10, 8].into()),
                 ImageFormat::Rgba32Float,
@@ -134,7 +133,6 @@ fn a_live_containing_region_supplies_an_unbounded_calculation_without_source_io(
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, root, [4, 5, 8, 6].into()),
                 ImageFormat::Rgba32Float,
@@ -167,7 +165,7 @@ fn a_live_containing_region_supplies_an_unbounded_calculation_without_source_io(
 
 fn roundtrip(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     scope: &Materializations,
     bound: Value,
 ) -> Image<ImageLayout> {
@@ -209,7 +207,6 @@ fn roundtrip(
         context
             .materialize(
                 queue,
-                &Default::default(),
                 scope,
                 evaluation,
                 ImageFormat::Rgba32Float,
@@ -231,7 +228,6 @@ fn native_camera_textures_preserve_each_code_and_cannot_bind_to_another_capture(
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(
                     &context,
@@ -300,7 +296,6 @@ fn split_continuous_textures_preserve_fractional_signed_and_above_code_range_val
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(
                     &context,
@@ -329,7 +324,6 @@ fn split_continuous_textures_preserve_fractional_signed_and_above_code_range_val
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &scope,
                     request(&context, original.clone(), region),
                     ImageFormat::Rgba32Float,
@@ -395,7 +389,6 @@ fn source_texture_uploads_are_bounded_and_preserve_every_row_across_strips() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, original.clone(), bounds),
                 ImageFormat::Rgba32Float,
@@ -469,7 +462,6 @@ fn uploaded_inputs_reuse_the_common_budget_across_changed_consumers() {
                 context
                     .materialize(
                         &queue,
-                        &Default::default(),
                         &scope,
                         request(&context, root, original.domain().finite().unwrap()),
                         ImageFormat::Rgba32Float,
@@ -522,7 +514,6 @@ fn overlapping_stored_support_covers_a_demand_without_reacquiring_the_overlap() 
                     context
                         .materialize(
                             &queue,
-                            &Default::default(),
                             &scope,
                             request(&context, original.clone(), region.into()),
                             format,
@@ -562,7 +553,6 @@ fn overlapping_materializations_do_not_hide_a_hole_in_their_union() {
                 context
                     .materialize(
                         &queue,
-                        &Default::default(),
                         &scope,
                         request(&context, original.clone(), region.into()),
                         ImageFormat::Rgba16Uint,
@@ -634,7 +624,6 @@ fn incomplete_materialization_is_a_miss_not_an_incomplete_image() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, original.clone(), part),
                 ImageFormat::Rgba16Uint,
@@ -670,7 +659,6 @@ fn a_larger_stored_extent_supplies_a_smaller_demand_without_source_reads() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(
                     &context,
@@ -694,7 +682,6 @@ fn a_larger_stored_extent_supplies_a_smaller_demand_without_source_reads() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, root, output.finite().unwrap()),
                 ImageFormat::Rgba32Float,
@@ -826,7 +813,6 @@ fn a_cached_intermediate_stops_fusion_and_recording_owns_its_shared_image() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, first.clone(), first.domain.finite().unwrap()),
                 ImageFormat::Rgba32Float,

@@ -2,7 +2,6 @@
 
 use crate::Error;
 use crate::gpu::evaluation;
-use crate::gpu::submission::SubmissionGate;
 use crate::renderer::GpuRenderer;
 use std::sync::Arc;
 
@@ -75,7 +74,7 @@ pub(crate) struct Completed {
 pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    (queue, gate): (&wgpu::Queue, &SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     root: evaluation::Value,
     check_look: bool,
     output: &wgpu::Texture,
@@ -164,7 +163,6 @@ pub(crate) fn execute(
                 worker: evaluation::Worker {
                     context: &renderer.evaluation,
                     queue,
-                    gate,
                     scope: &scope,
                     working: &evaluation::RunWorkingSet::default(),
                     cancelled: &cancelled,
@@ -210,7 +208,7 @@ pub(crate) fn execute(
             );
             if renderer
                 .evaluation
-                .submit(queue, gate, encoder, &cancelled)?
+                .submit(queue, encoder, &cancelled)?
                 .is_none()
             {
                 return Ok(None);
@@ -225,7 +223,7 @@ pub(crate) fn execute(
         let check = renderer.looks.check_image(device, &mut encoder, output);
         if renderer
             .evaluation
-            .submit_with(queue, gate, encoder, &cancelled, || check.begin(|| {}))?
+            .submit_with(queue, encoder, &cancelled, || check.begin(|| {}))?
             .is_none()
         {
             return Ok(None);

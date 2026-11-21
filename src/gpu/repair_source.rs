@@ -8,18 +8,14 @@ use crate::{
     scan::Scan,
 };
 use std::sync::Arc;
-use {
-    super::evaluation,
-    crate::gpu::{flat::GpuFlatField, submission::SubmissionGate},
-};
+use {super::evaluation, crate::gpu::flat::GpuFlatField};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
 pub(crate) struct Source<'a> {
     context: &'a evaluation::Context,
-    queue: &'a wgpu::Queue,
-    submissions: &'a SubmissionGate,
+    queue: &'a crate::gpu::submission::Queue,
     image: evaluation::Value,
     budget: evaluation::Tiling,
 }
@@ -28,7 +24,7 @@ impl<'a> Source<'a> {
     pub(crate) fn from_recipe(
         field: Option<Arc<GpuFlatField>>,
         renderer: &'a GpuRenderer,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
         scan: &Scan,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
@@ -43,13 +39,12 @@ impl<'a> Source<'a> {
 
     pub(crate) fn from_image(
         renderer: &'a GpuRenderer,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
         image: evaluation::Value,
     ) -> Result<Self, Error> {
         Ok(Self {
             context: renderer.evaluation(),
-            queue: gpu.0,
-            submissions: gpu.1,
+            queue: gpu,
             image,
             budget: evaluation::Tiling { tile: [512, 128] },
         })
@@ -76,16 +71,12 @@ impl<'a> Source<'a> {
             self.budget,
         )?;
         let mut succeeded = false;
-        let result = self.context.read(
-            self.queue,
-            self.submissions,
-            &query,
-            cancelled,
-            |_, pixels| {
+        let result = self
+            .context
+            .read(self.queue, &query, cancelled, |_, pixels| {
                 succeeded = pixels[0][3] >= 0.;
                 Ok(())
-            },
-        )?;
+            })?;
         Ok(result.map(|_| succeeded))
     }
 
@@ -123,12 +114,9 @@ impl BaseImage for Source<'_> {
         )?;
         let mut pixels = vec![[0.; 3]; cells];
 
-        let result = self.context.read(
-            self.queue,
-            self.submissions,
-            &evaluation,
-            cancelled,
-            |block, values| {
+        let result = self
+            .context
+            .read(self.queue, &evaluation, cancelled, |block, values| {
                 let block = block.source()?;
                 for (index, pixel) in values.iter().enumerate() {
                     let x = block.x + index as u32 % block.width - region.x;
@@ -144,8 +132,7 @@ impl BaseImage for Source<'_> {
                     }
                 }
                 Ok(())
-            },
-        )?;
+            })?;
 
         Ok(result.map(|_| pixels))
     }

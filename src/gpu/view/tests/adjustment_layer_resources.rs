@@ -2,7 +2,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
@@ -79,7 +78,7 @@ fn checkpoint(device: &wgpu::Device, name: &str) {
 fn exercise(
     monitor: &Arc<observation::Monitor>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
 ) -> Result<(), String> {
     let (renderer, kernels) = monitor.phase("local-infrastructure", || {
         pollster::block_on(async {
@@ -111,7 +110,7 @@ fn exercise(
             calibration(),
         )
     };
-    let gate = SubmissionGate::default();
+    let gate = queue.clone();
     let context = egui::Context::default();
     println!(
         "local_resources output=1920x1080 private_raw={private_raw} native_source_bytes={:?} excludes=native_host_scopes isolated_timings=false",
@@ -147,7 +146,6 @@ fn exercise(
             let sources = ViewImage::prefixes(
                 device,
                 queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -212,9 +210,9 @@ fn exercise(
                 Ok::<_, Error>((next, background, visible))
             })?;
             checkpoint(device, "current-building-encoded");
-            next.2.ensure_submitted(device, queue, &gate, &context);
+            next.2.ensure_submitted(device, queue, &context);
             if let Some((command, texture)) = encoded.take() {
-                gate.submit_with_completion(queue, [command], || {});
+                queue.submit_with_completion([command], || {});
                 drop(texture);
             }
             drop(previous);
@@ -249,7 +247,7 @@ fn exercise(
         assert!(owners.iter().all(|owner| owner.upgrade().is_none()));
         checkpoint(device, "source-owners-retired-encoded-live");
         if let Some((command, texture)) = encoded.take() {
-            gate.submit_with_completion(queue, [command], || {});
+            queue.submit_with_completion([command], || {});
             drop(texture);
         }
         monitor.phase("local-retirement", || observation::wait(device, queue))?;

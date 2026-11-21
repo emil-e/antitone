@@ -1,8 +1,5 @@
 use crate::{
-    gpu::{
-        lut3d::{Kernel, Lut, Validation},
-        submission::SubmissionGate,
-    },
+    gpu::lut3d::{Kernel, Lut, Validation},
     looks::Lut3D,
 };
 use glam::DVec3;
@@ -51,7 +48,9 @@ fn tetrahedral_hinges_cover_all_orders_ties_edges_clipping_and_nonfinite_rejecti
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut nodes = Vec::new();
         // These corner products have tetrahedral interpolants min(r,g), min(g,b),
         // min(b,r). Trilinear interpolation instead returns the interior products.
@@ -65,7 +64,6 @@ fn tetrahedral_hinges_cover_all_orders_ties_edges_clipping_and_nonfinite_rejecti
         let cpu = Arc::new(Lut3D::new(2, [-0.5; 3], [1.; 3], nodes).unwrap());
         let gpu = Lut::new(&device, &cpu).unwrap();
         let kernel = Kernel::new(&device).await.unwrap();
-        let gate = SubmissionGate::default();
         for case in 0..6 {
             let mut input = Vec::new();
             for r in [-0.4, 0.2, 0.9] {
@@ -126,7 +124,7 @@ fn tetrahedral_hinges_cover_all_orders_ties_edges_clipping_and_nonfinite_rejecti
             let mut encoder = device.create_command_encoder(&Default::default());
             kernel.encode(&mut encoder, &dispatch);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-            let submission = gate.submit(&queue, [encoder.finish()]);
+            let submission = queue.submit([encoder.finish()]);
             dispatch.check.begin(|| {});
             let (send, receive) = mpsc::channel();
             readback.map_async(wgpu::MapMode::Read, .., move |r| send.send(r).unwrap());
@@ -189,7 +187,7 @@ fn tetrahedral_hinges_cover_all_orders_ties_edges_clipping_and_nonfinite_rejecti
                 .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             kernel.encode(&mut encoder, &second);
-            let submission = gate.submit(&queue, [encoder.finish()]);
+            let submission = queue.submit([encoder.finish()]);
             second.check.begin(|| {});
             device
                 .poll(wgpu::PollType::Wait {
@@ -215,7 +213,9 @@ fn composed_admission_ignores_unused_texels_but_not_positive_overlap() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = Validation::new(&device).await.unwrap();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,

@@ -109,7 +109,6 @@ fn constituent_descriptions_do_not_author_values_or_parse_shader_libraries() {
 #[test]
 fn record_value_fanout_keeps_live_branches_and_metadata_through_reused_gpu_storage() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let plate = Plate::new();
     let area = CellRegion::new([-4, 5], [3, 2]);
     let input = source(Arc::new(plate.clone()));
@@ -136,7 +135,6 @@ fn record_value_fanout_keeps_live_branches_and_metadata_through_reused_gpu_stora
     context
         .read(
             &queue,
-            &gate,
             &query,
             || false,
             |r, block| {

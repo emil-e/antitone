@@ -75,7 +75,12 @@ fn fixture_editor<R>(test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapt
 }
 
 fn fixture_editor_gpu<R>(
-    test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>, wgpu::Device, wgpu::Queue) -> R,
+    test: impl FnOnce(
+        Harness<'_, Editor>,
+        Rc<RefCell<FloatCapture>>,
+        wgpu::Device,
+        crate::gpu::submission::Queue,
+    ) -> R,
 ) -> R {
     editor_harness_with_gpu(true, |mut harness, capture, device, queue| {
         harness.run();
@@ -532,8 +537,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
 
     fn read_bins(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         source: &wgpu::Buffer,
     ) -> Vec<u32> {
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
@@ -544,7 +548,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
         });
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(source, 0, &staging, 0, source.size());
-        let submission = gate.submit(queue, [encoder.finish()]);
+        let submission = queue.submit([encoder.finish()]);
         let (send, receive) = std::sync::mpsc::channel();
         staging.map_async(wgpu::MapMode::Read, .., move |result| {
             send.send(result).unwrap()
@@ -686,21 +690,17 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
             crate::scopes::reference([1, 1], &[[linear.x, linear.y, linear.z, 1.]], settings)
                 .unwrap();
         assert_eq!(expected_counts.outside, 0);
-        let (counts, submissions, bins) = harness.read(|editor| {
+        let (counts, bins) = harness.read(|editor| {
             let counts = editor
                 .scope_request()
                 .unwrap()
                 .status(editor.scopes.gpu.as_ref().unwrap(), settings)
                 .unwrap()
                 .unwrap();
-            (
-                counts,
-                editor.submissions.clone(),
-                editor.scopes.gpu.as_ref().unwrap().bins.clone(),
-            )
+            (counts, editor.scopes.gpu.as_ref().unwrap().bins.clone())
         });
         assert_eq!(counts.outside, 0);
-        let actual = read_bins(&device, &queue, &submissions, &bins);
+        let actual = read_bins(&device, &queue, &bins);
         for (actual, expected) in actual.iter().zip(expected_bins) {
             assert_eq!(*actual, expected * counts.valid);
         }

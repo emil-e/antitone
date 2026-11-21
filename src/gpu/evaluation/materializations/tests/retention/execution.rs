@@ -53,7 +53,6 @@ fn single_and_batched_materializations_preserve_independent_retention_choices() 
                 context
                     .materialize_many(
                         &queue,
-                        &Default::default(),
                         &scope,
                         vec![
                             live.clone(),
@@ -73,7 +72,6 @@ fn single_and_batched_materializations_preserve_independent_retention_choices() 
                     context
                         .materialize(
                             &queue,
-                            &Default::default(),
                             &scope,
                             live,
                             ImageFormat::Rgba32Float,
@@ -91,7 +89,6 @@ fn single_and_batched_materializations_preserve_independent_retention_choices() 
                     context
                         .materialize(
                             &queue,
-                            &Default::default(),
                             &scope,
                             request,
                             ImageFormat::Rgba32Float,

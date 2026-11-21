@@ -1,7 +1,6 @@
 //! Immutable, source-validated preparation for the shared TIFF/EXR engine.
 use super::*;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
 
 pub(crate) struct Job<'a> {
@@ -14,7 +13,7 @@ pub(crate) struct Job<'a> {
 pub(crate) fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     job: Job<'_>,
     destination: (&Path, Overwrite),
     execution: &mut Execution<'_>,

@@ -73,7 +73,7 @@ fn median(mut values: Vec<f64>) -> f64 {
 
 fn completion(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     encode: impl FnOnce(&mut wgpu::CommandEncoder),
 ) -> f64 {
     let start = Instant::now();
@@ -112,7 +112,9 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             "local_performance adapter={:?} samples={samples} warmups={warmups} timing=encode_submit_gpu_completion excludes=presentation_upload_reconstruction",
             adapter.get_info()
         );
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
             .await

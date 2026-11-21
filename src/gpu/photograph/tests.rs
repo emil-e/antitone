@@ -48,7 +48,7 @@ impl Source for Codes {
 
 fn evaluate(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &crate::renderer::GpuRenderer,
     root: Value,
     region: SourceRegion,
@@ -68,7 +68,7 @@ fn evaluate(
         .filter(|w| matches!(w, Work::Compute { .. }))
         .count();
     let pixels = Executor::with_programs(renderer.evaluation.programs.clone())
-        .run(device, queue, &Default::default(), &plan, || false)
+        .run(device, queue, &plan, || false)
         .unwrap()
         .unwrap();
     (read_buffer(device, queue, &pixels.pixels), computes)
@@ -153,7 +153,6 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
                 context
                     .materialize(
                         &queue,
-                        &Default::default(),
                         &context.materializations(),
                         request,
                         ImageFormat::Rgba32Float,
@@ -172,7 +171,6 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
         context
             .read(
                 &queue,
-                &Default::default(),
                 &request,
                 || false,
                 |_, values| {
@@ -340,7 +338,6 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         .evaluation()
         .read(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             |block, actual| {

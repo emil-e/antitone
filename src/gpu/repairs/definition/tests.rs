@@ -74,7 +74,7 @@ fn repair(point: [u32; 2], offset: [i32; 2]) -> Repair {
 }
 fn pixels(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     image: Value,
     region: CellRegion,
 ) -> Result<Vec<[f32; 4]>, Error> {
@@ -83,7 +83,7 @@ fn pixels(
 
 fn pixels_with_policy(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     image: Value,
     region: CellRegion,
     policy: Policy,
@@ -102,7 +102,6 @@ fn pixels_with_policy(
     context
         .read(
             queue,
-            &Default::default(),
             &query,
             || false,
             |block, values| {

@@ -67,7 +67,6 @@ fn an_operand_view_cannot_hide_mathematics_needed_by_a_later_demand() {
             },
         );
         let scope = context.materializations();
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let acquire = |definition: &Value| {
             let demand = definition.request(later).unwrap();
             assert!(definition.same_capture(&demand));
@@ -85,7 +84,6 @@ fn an_operand_view_cannot_hide_mathematics_needed_by_a_later_demand() {
                 context
                     .materialize(
                         &queue,
-                        &gate,
                         &scope,
                         query,
                         ImageFormat::Rgba32Float,

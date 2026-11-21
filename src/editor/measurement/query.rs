@@ -73,7 +73,6 @@ impl<'a> Samples<'a> {
 
         let result = self.renderer.evaluation().read(
             &self.services.queue,
-            self.services.renderers.submissions(),
             &evaluation,
             cancelled,
             |region, pixels| {

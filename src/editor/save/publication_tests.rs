@@ -201,13 +201,16 @@ fn a_real_devices_lut_capacity_does_not_limit_saved_json() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits {
-            max_storage_buffer_binding_size: 1024,
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 1024,
+                ..Default::default()
+            },
             ..Default::default()
         },
-        ..Default::default()
-    }))
+    ))
     .unwrap();
     let asset = Arc::new(
         LookAsset::new(

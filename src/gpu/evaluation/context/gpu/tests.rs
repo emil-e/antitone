@@ -80,12 +80,10 @@ fn repeated_named_and_anonymous_phase_reads_share_their_actual_captured_input() 
         };
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let scope = context.test_materializations(false);
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let working = RunWorkingSet::default();
         let worker = Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &|| false,

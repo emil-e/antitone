@@ -591,12 +591,7 @@ impl Editor {
                     geometry.frame_raster(pixels_per_point)
                 })
             };
-            self.rendered_paint(
-                rendered,
-                mapping,
-                self.submissions.clone(),
-                ui.ctx().clone(),
-            )
+            self.rendered_paint(rendered, mapping, ui.ctx().clone())
         } else {
             self.preview_paint(
                 &proxy,
@@ -636,7 +631,6 @@ impl Editor {
         &mut self,
         rendered: Arc<crate::gpu::view::RenderedView>,
         mapping: crate::geometry::TextureMapping,
-        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Option<ImagePaint> {
         let presentation = match &self.presentation {
@@ -649,17 +643,18 @@ impl Editor {
                 return None;
             }
         };
+        let queue = self.document.visit.working_view.queue()?.clone();
         match ImagePaint::rendered(
             presentation,
             rendered.clone(),
             mapping,
-            submissions.clone(),
+            queue.clone(),
             context.clone(),
         ) {
             Ok(paint) => Some(paint),
             Err(error) => {
                 self.document.visit.working_view.presentation_failed(error);
-                ImagePaint::retained(presentation, rendered, submissions, context).ok()
+                ImagePaint::retained(presentation, rendered, queue, context).ok()
             }
         }
     }
@@ -697,14 +692,10 @@ impl Editor {
                 .map(|correction| correction.gpu.clone()),
             target: self.document.target(),
         };
-        let submissions = self.submissions.clone();
-        let rendered = self.active_canvas_mut().preview.render(
-            demand,
-            kernels,
-            (&queue, &submissions),
-            context,
-            cx,
-        )?;
+        let rendered = self
+            .active_canvas_mut()
+            .preview
+            .render(demand, kernels, &queue, context, cx)?;
         let mapping = if source_outside_frame {
             let area = frame.composition.area();
             let draw = geometry.screen_region(area).intersect(geometry.canvas);
@@ -712,7 +703,7 @@ impl Editor {
         } else {
             preview_mapping(geometry.image, geometry.image.intersect(geometry.canvas))
         };
-        self.rendered_paint(rendered, mapping, submissions, context.clone())
+        self.rendered_paint(rendered, mapping, context.clone())
     }
 
     pub(super) fn viewer_canvas(
@@ -857,12 +848,8 @@ impl SourceView {
             source: self.source().expect("prepared source"),
         });
         if let Some(services) = services {
-            self.original.request_with(
-                services.clone(),
-                editor.submissions.clone(),
-                canvas.ui.ctx(),
-                cx,
-            );
+            self.original
+                .request_with(services.clone(), canvas.ui.ctx(), cx);
         }
         let original = match self.original.rendered() {
             Ok(image) => image,
@@ -907,7 +894,7 @@ impl SourceView {
                 let rendered = self.preview.render(
                     demand,
                     working.kernels.get().cloned(),
-                    (queue, &editor.submissions),
+                    queue,
                     canvas.ui.ctx(),
                     cx,
                 )?;
@@ -919,7 +906,7 @@ impl SourceView {
                 presentation,
                 rendered,
                 mapping,
-                editor.submissions.clone(),
+                editor.document.visit.working_view.queue()?.clone(),
                 canvas.ui.ctx().clone(),
             )
             .map_err(|error| editor.status = error.to_string())

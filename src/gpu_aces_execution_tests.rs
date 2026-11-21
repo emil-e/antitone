@@ -355,11 +355,10 @@ impl Executable {
     }
 }
 
-pub(super) async fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
+pub(super) async fn context() -> (wgpu::Device, crate::gpu::submission::Queue, Arc<GpuRenderer>) {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
+    let (device, queue) = crate::gpu::submission::request_device(&adapter, &wgpu::DeviceDescriptor {
             required_limits: crate::platform::device_limits(adapter.limits()),
             ..Default::default()
         })
@@ -372,7 +371,7 @@ pub(super) async fn context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
 
 pub(super) fn complete(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     encode: impl FnOnce(&mut wgpu::CommandEncoder),
 ) -> Timing {
     let start = Instant::now();
@@ -507,7 +506,7 @@ fn equivalent_aces_execution_preserves_signed_hdr_grid_and_both_targets() {
 
 fn performance_input(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &GpuRenderer,
     size: [u32; 2],
 ) -> wgpu::Buffer {

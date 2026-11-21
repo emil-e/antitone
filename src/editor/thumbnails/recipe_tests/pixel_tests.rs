@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    gpu::submission::SubmissionGate,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::Pipeline,
     rendering::CpuRenderer,
@@ -12,8 +11,7 @@ const LINEAR_TARGET_TOLERANCE: f32 = 0.0015;
 
 fn linear_pixels(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    submissions: &SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
     image: &GpuImage,
 ) -> Vec<[f32; 4]> {
     let width = image.linear.width();
@@ -39,7 +37,7 @@ fn linear_pixels(
         },
         image.linear.size(),
     );
-    let submission = submissions.submit(queue, [encoder.finish()]);
+    let submission = queue.submit([encoder.finish()]);
     let (send, receive) = mpsc::sync_channel(1);
     staging.map_async(wgpu::MapMode::Read, .., move |result| {
         send.send(result).unwrap();
@@ -273,7 +271,7 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
                     0,
                     "subsequent calculations must use retained GPU arguments, not a CPU proxy"
                 );
-                let actual = linear_pixels(&device, &queue, renderers.submissions(), &image);
+                let actual = linear_pixels(&device, &queue, &image);
                 assert_rendered(&actual, &expected);
                 assert_eq!(native_reads.load(std::sync::atomic::Ordering::Relaxed), 0);
             }

@@ -90,7 +90,7 @@ fn median(mut times: Vec<f64>) -> f64 {
 
 fn completion(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     encode: impl FnOnce(&mut wgpu::CommandEncoder),
 ) -> f64 {
     let start = Instant::now();
@@ -106,7 +106,11 @@ fn completion(
     start.elapsed().as_secs_f64() * 1000.
 }
 
-fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, output: &wgpu::Buffer) -> Vec<Vec4> {
+fn read_buffer(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    output: &wgpu::Buffer,
+) -> Vec<Vec4> {
     let read = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: output.size(),
@@ -124,7 +128,11 @@ fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, output: &wgpu::Buffer
     )
 }
 
-fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<Vec4> {
+fn read_image(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    image: &GpuImage,
+) -> Vec<Vec4> {
     let texture = &image.linear;
     let row = (texture.width() * 16).div_ceil(256) * 256;
     let read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -190,7 +198,9 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             adapter.get_info(),
             scan.camera_model
         );
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let renderer = api::renderer::GpuRenderer::new(&device, &queue)
             .await
@@ -470,7 +480,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             let image = refine(
                 &renderer,
                 &device,
-                (&queue, &crate::platform::SubmissionGate::default()),
+                &queue,
                 (&scan, None),
                 grade.clone(),
                 target,

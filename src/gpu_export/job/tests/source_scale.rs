@@ -1,11 +1,9 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::processing::InputSettings;
 
 #[test]
 fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero_ev() {
     let (device, queue, renderer) = super::super::super::tests::context();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     for (rgb, expected) in [
         ([2949, 11796, 5898], 0.18_f32),
@@ -77,7 +75,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Job {
                 scan: &scan,
                 field: None,

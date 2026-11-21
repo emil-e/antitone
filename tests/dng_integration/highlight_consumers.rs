@@ -3,7 +3,6 @@ use antitone::{
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu::submission::SubmissionGate,
     gpu_export::Format,
     renderer::GpuRenderer,
 };
@@ -35,7 +34,10 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
@@ -44,7 +46,7 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
     authored_export::write(
         &renderer,
         &device,
-        (&queue, &SubmissionGate::default()),
+        &queue,
         Request {
             scan: &scan,
             field: None,

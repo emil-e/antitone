@@ -1,8 +1,5 @@
 use super::*;
-use crate::gpu::{
-    lut3d::{Kernel, Lut},
-    submission::SubmissionGate,
-};
+use crate::gpu::lut3d::{Kernel, Lut};
 use std::{sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 
@@ -13,11 +10,12 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let reference = crate::looks::reference::ReferenceTransforms::new(&device, &queue)
             .await
             .unwrap();
-        let gate = SubmissionGate::default();
         let f = catalogue::fixtures();
         let kernel = Kernel::new(&device).await.unwrap();
         for case in &f.cases {
@@ -71,7 +69,7 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
             let mut encoder = device.create_command_encoder(&Default::default());
             kernel.encode(&mut encoder, &dispatch);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-            let submission = gate.submit(&queue, [encoder.finish()]);
+            let submission = queue.submit([encoder.finish()]);
             dispatch.check.begin(|| {});
             let (send, receive) = mpsc::channel();
             readback.map_async(wgpu::MapMode::Read, .., move |result| {
@@ -107,9 +105,7 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
                     selection.name()
                 );
             }
-            let viewed = reference
-                .apply(&device, &queue, &gate, false, &scene)
-                .unwrap();
+            let viewed = reference.apply(&device, &queue, false, &scene).unwrap();
             assert_eq!(viewed.len(), cases.len());
             let maximum = viewed
                 .iter()

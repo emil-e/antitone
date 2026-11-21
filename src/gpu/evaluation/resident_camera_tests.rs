@@ -21,7 +21,7 @@ use crate::processing::RollSettings;
 use glam::DVec3;
 
 fn evaluated(
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &crate::renderer::GpuRenderer,
     root: Value,
     policy: Policy,
@@ -55,7 +55,6 @@ fn evaluated(
         .evaluation
         .read(
             queue,
-            &crate::gpu::submission::SubmissionGate::default(),
             &request,
             || false,
             |region, values| {
@@ -388,7 +387,7 @@ fn resident_camera_execution_resources() {
             .unwrap()
             .unwrap();
         let raster = crate::gpu::raster::Raster::planned(&plan);
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         let peak = Arc::new(AtomicU64::new(0));
         let observed = peak.clone();
         let gpu = device.clone();
@@ -434,7 +433,7 @@ fn resident_camera_execution_resources() {
                         .unwrap();
                     prepared
                 };
-                let submission = gate.submit(queue, [encoder.finish()]);
+                let submission = queue.submit([encoder.finish()]);
                 device
                     .poll(wgpu::PollType::Wait {
                         submission_index: Some(submission),

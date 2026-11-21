@@ -37,18 +37,20 @@ fn full_frame(size: [u32; 2]) -> FrameRaster {
     .unwrap()
 }
 
-async fn device() -> (wgpu::Device, wgpu::Queue) {
+async fn device() -> (wgpu::Device, antitone::gpu::submission::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    adapter.request_device(&Default::default()).await.unwrap()
+    antitone::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap()
 }
 
 fn texture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &antitone::gpu::submission::Queue,
     size: [u32; 2],
     pixels: &[[f32; 4]],
 ) -> wgpu::Texture {
@@ -79,7 +81,11 @@ fn texture(
     image
 }
 
-fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Vec<u32> {
+fn read(
+    device: &wgpu::Device,
+    queue: &antitone::gpu::submission::Queue,
+    source: &wgpu::Buffer,
+) -> Vec<u32> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: source.size(),
@@ -104,7 +110,7 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Ve
 
 fn paint_pixels(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &antitone::gpu::submission::Queue,
     mut encoder: wgpu::CommandEncoder,
     paint: impl FnOnce(&mut wgpu::RenderPass<'static>),
 ) -> Vec<[f32; 4]> {
@@ -192,11 +198,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
     pollster::block_on(async {
         let (device, queue) = device().await;
         let context = egui::Context::default();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [256, 256],
-            pixels_per_point: 1.,
-        };
-        let mut resources = egui_wgpu::CallbackResources::default();
+        let resources = egui_wgpu::CallbackResources::default();
         for change in [
             Change::Grade,
             Change::Viewport,
@@ -228,6 +230,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
             };
             let parameters = ProcessingParameters::source();
             let first = ScopePaint::new(
+                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -236,7 +239,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                 context.clone(),
             );
             let mut encoder = device.create_command_encoder(&Default::default());
-            first.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+            first.prepare_frame(&device, &mut encoder);
             let mut requested_image = image.clone();
             let mut requested_settings = settings;
             let mut requested_frame = full_frame([7, 3]);
@@ -291,6 +294,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                 parameters
             };
             let latest = ScopePaint::new(
+                queue.clone(),
                 gpu.clone(),
                 requested_image.clone(),
                 latest_parameters,
@@ -298,7 +302,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                 requested_settings,
                 context.clone(),
             );
-            latest.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+            latest.prepare_frame(&device, &mut encoder);
             assert_eq!(gpu.reduction_count(), 1, "retain the outstanding-job bound");
             assert!(
                 gpu.status(
@@ -339,7 +343,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                     "old completion must not become the latest grade/region"
                 );
                 let mut encoder = device.create_command_encoder(&Default::default());
-                latest.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                latest.prepare_frame(&device, &mut encoder);
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 2);
@@ -503,13 +507,9 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             plot: Plot::Vector,
             ..Default::default()
         };
-        let mut resources = egui_wgpu::CallbackResources::default();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [600, 400],
-            pixels_per_point: 2.,
-        };
         let paint = |settings| {
             ScopePaint::new(
+                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -519,14 +519,14 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             )
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(settings).prepare_frame(&device, &mut encoder);
         assert!(
             !image
                 .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
                 .unwrap(),
             "viewer must reuse scope preparation"
         );
-        paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(settings).prepare_frame(&device, &mut encoder);
         assert_eq!(gpu.reduction_count(), 1);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -546,7 +546,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
                 .is_none()
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(zoom).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(zoom).prepare_frame(&device, &mut encoder);
         assert!(
             !image
                 .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
@@ -577,6 +577,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         );
         let paint = |settings| {
             ScopePaint::new(
+                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -596,7 +597,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
                 .prepare_authored(&device, &mut encoder, &calculation::inspection(parameters))
                 .unwrap()
         );
-        paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(settings).prepare_frame(&device, &mut encoder);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 3);
@@ -622,14 +623,14 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             ..settings
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(bad).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(bad).prepare_frame(&device, &mut encoder);
         assert!(
             gpu.status(&image, parameters, full_frame([7, 3]), bad)
                 .unwrap()
                 .is_err()
         );
         let failed_count = gpu.reduction_count();
-        paint(bad).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(bad).prepare_frame(&device, &mut encoder);
         assert_eq!(gpu.reduction_count(), failed_count);
         queue.submit([encoder.finish()]);
     });
@@ -807,13 +808,9 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         );
         let parameters = ProcessingParameters::source();
         let context = egui::Context::default();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [600, 400],
-            pixels_per_point: 2.,
-        };
-        let mut resources = egui_wgpu::CallbackResources::default();
         let paint = |settings| {
             ScopePaint::new(
+                queue.clone(),
                 gpu.clone(),
                 image.clone(),
                 parameters,
@@ -829,17 +826,17 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
             ..waveform
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(waveform).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(waveform).prepare_frame(&device, &mut encoder);
         for amplification in [1, 2, 4, 8, 4, 2, 8] {
             paint(Settings {
                 amplification,
                 ..latest
             })
-            .prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+            .prepare_frame(&device, &mut encoder);
         }
         assert_eq!(gpu.reduction_count(), 1);
         gpu.invalidate();
-        paint(latest).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(latest).prepare_frame(&device, &mut encoder);
         assert_eq!(
             gpu.reduction_count(),
             1,
@@ -852,7 +849,7 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
                 .is_none()
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(latest).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(latest).prepare_frame(&device, &mut encoder);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 2);
@@ -864,7 +861,7 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
             21
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(waveform).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(waveform).prepare_frame(&device, &mut encoder);
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let luma = Settings {
@@ -873,7 +870,7 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         };
         let before = gpu.reduction_count();
         let mut encoder = device.create_command_encoder(&Default::default());
-        paint(luma).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+        paint(luma).prepare_frame(&device, &mut encoder);
         assert_eq!(gpu.reduction_count(), before);
         assert_eq!(
             gpu.status(&image, parameters, full_frame([7, 3]), luma),

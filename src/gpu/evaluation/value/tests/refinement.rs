@@ -40,7 +40,7 @@ fn input(region: CellRegion, named: bool) -> (Value, Arc<AtomicUsize>) {
 }
 fn collect(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     value: Value,
     region: CellRegion,
     tile: [u32; 2],
@@ -58,7 +58,6 @@ fn collect(
     context
         .read(
             queue,
-            &Default::default(),
             &query,
             || false,
             |block, values| {

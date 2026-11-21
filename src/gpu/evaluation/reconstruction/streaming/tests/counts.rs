@@ -38,7 +38,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
 
     for delivery in ["read", "sink", "production"] {
         reads.lock().unwrap().clear();
-        let gate = crate::gpu::submission::SubmissionGate::default();
+        let gate = queue.clone();
         let submissions = Arc::new(AtomicUsize::new(0));
         let observed = submissions.clone();
         gate.observe_submissions(Arc::new(move || {
@@ -58,7 +58,6 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
             "read" => context
                 .read(
                     &queue,
-                    &gate,
                     &evaluation,
                     || false,
                     |_, values| {
@@ -71,7 +70,6 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
             "sink" => context
                 .evaluate_with(
                     &queue,
-                    &gate,
                     &evaluation,
                     || false,
                     Sink {
@@ -90,7 +88,6 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                 worker: Worker {
                     context: &context,
                     queue: &queue,
-                    gate: &gate,
                     scope: &context.materializations(),
                     working: &RunWorkingSet::default(),
                     cancelled: &|| false,

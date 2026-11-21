@@ -1,7 +1,6 @@
 //! Production working-view model, mapped masks and encoded-resource lifetime checks.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 mod model;
@@ -38,7 +37,7 @@ pub(super) fn authored_source(
 
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     source: Arc<ViewImage>,
     snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
@@ -56,7 +55,7 @@ fn render(
 
 fn render_with_basis(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     source: Arc<ViewImage>,
     snapshot: AdjustmentLayerSnapshot,
     target: OutputTarget,
@@ -74,12 +73,7 @@ fn render_with_basis(
     )
     .unwrap();
     let view = RenderedView::new(device, source, &input, target, None).unwrap();
-    view.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(device, queue, &egui::Context::default());
     view
 }
 

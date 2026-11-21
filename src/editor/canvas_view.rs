@@ -6,7 +6,6 @@ use crate::{
     gpu::{
         flat::GpuFlatField,
         photograph::request::PhotographRequest,
-        submission::SubmissionGate,
         view::{RenderedView, ViewImage, ViewKernels},
     },
     rendering::OutputTarget,
@@ -82,7 +81,7 @@ impl Preview {
         &mut self,
         demand: PreviewDemand,
         kernels: Option<Arc<ViewKernels>>,
-        gpu: (&wgpu::Queue, &SubmissionGate),
+        gpu: &crate::gpu::submission::Queue,
         context: &egui::Context,
         cx: &UiContext<'_, Editor>,
     ) -> Option<Arc<RenderedView>> {
@@ -118,7 +117,7 @@ impl Preview {
     fn start(
         demand: &PreviewDemand,
         kernels: Arc<ViewKernels>,
-        (queue, submissions): (&wgpu::Queue, &SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         context: &egui::Context,
         cx: &UiContext<'_, Editor>,
     ) -> Result<PreviewState, Error> {
@@ -134,10 +133,10 @@ impl Preview {
             return demand.present(images.remove(0)).map(PreviewState::Ready);
         }
 
-        let (queue, submissions, context) = (queue.clone(), submissions.clone(), context.clone());
+        let (queue, context) = (queue.clone(), context.clone());
         let task = cx.spawn(move |_| async move {
             let result = request
-                .produce(&queue, &submissions, || false)
+                .produce(&queue, || false)
                 .await
                 .map(|images| images.map(|mut images| images.remove(0)));
             context.request_repaint();

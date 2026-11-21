@@ -64,7 +64,6 @@ fn cold_aliases_compile_owned_backend_units_and_reuse_their_actual_result() {
             context
                 .materialize(
                     &queue,
-                    &Default::default(),
                     &scope,
                     query,
                     ImageFormat::Rgba32Float,
@@ -285,7 +284,6 @@ fn gpu_cpu_gpu_chain_assembles_nonlocal_inputs_and_reuses_the_natural_unit() {
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, block| {
@@ -332,7 +330,6 @@ fn a_whole_cpu_unit_larger_than_gpu_scratch_is_reused_across_output_tiles() {
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, block| {
@@ -375,7 +372,6 @@ fn cpu_cancellation_does_not_publish_a_partial_downstream_result() {
     let result = context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || stop.load(Ordering::Acquire),
             |_, _| {
@@ -499,7 +495,6 @@ fn independent_cpu_dependencies_are_fulfilled_before_intervening_gpu_commands() 
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, part| {
@@ -547,13 +542,7 @@ fn nested_cpu_readback_keeps_the_requested_materialization_scope() {
         .clone()
         .with_materializations(context.test_materializations(false));
     context
-        .read(
-            &queue,
-            &Default::default(),
-            &isolated,
-            || false,
-            |_, _| Ok(()),
-        )
+        .read(&queue, &isolated, || false, |_, _| Ok(()))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -562,7 +551,7 @@ fn nested_cpu_readback_keeps_the_requested_materialization_scope() {
         "an isolated query must not publish into the context's default store"
     );
     context
-        .read(&queue, &Default::default(), &query, || false, |_, _| Ok(()))
+        .read(&queue, &query, || false, |_, _| Ok(()))
         .unwrap()
         .unwrap();
     assert!(
@@ -624,7 +613,6 @@ fn an_owned_gpu_unit_materialization_executes_without_joining_its_own_pending_re
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &context.materializations(),
                 query,
                 ImageFormat::Rgba32Float,

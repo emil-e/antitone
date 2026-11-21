@@ -15,11 +15,6 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
         let (device, queue) = device().await;
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [600, 400],
-            pixels_per_point: 2.,
-        };
-        let mut resources = egui_wgpu::CallbackResources::default();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             for viewer_first in [false, true] {
                 let field = Arc::new(
@@ -69,6 +64,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 };
                 let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
                 let scope = calculation::scope_paint(
+                    queue.clone(),
                     gpu.clone(),
                     image.clone(),
                     parameters.clone(),
@@ -78,6 +74,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
+                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(parameters.clone()),
@@ -86,21 +83,21 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 if viewer_first {
-                    viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                    viewer.prepare_frame(&device, &mut encoder);
                     assert!(
                         !image
                             .prepare_authored(&device, &mut encoder, &parameters)
                             .unwrap()
                     );
-                    scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                    scope.prepare_frame(&device, &mut encoder);
                 } else {
-                    scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                    scope.prepare_frame(&device, &mut encoder);
                     assert!(
                         !image
                             .prepare_authored(&device, &mut encoder, &parameters)
                             .unwrap()
                     );
-                    viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                    viewer.prepare_frame(&device, &mut encoder);
                 }
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -175,7 +172,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 );
                 tile.encode_authored(&device, &mut encoder, &tile_parameters)
                     .unwrap();
-                scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                scope.prepare_frame(&device, &mut encoder);
                 assert!(
                     !image
                         .prepare_authored(&device, &mut encoder, &parameters)
@@ -221,6 +218,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         .is_none()
                 );
                 let scope = calculation::scope_paint(
+                    queue.clone(),
                     gpu.clone(),
                     image.clone(),
                     parameters.clone(),
@@ -230,6 +228,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let viewer = calculation::image_paint(
+                    queue.clone(),
                     &presentation,
                     image.clone(),
                     Some(parameters.clone()),
@@ -237,8 +236,8 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 )
                 .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
-                scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-                viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
+                scope.prepare_frame(&device, &mut encoder);
+                viewer.prepare_frame(&device, &mut encoder);
                 assert!(
                     !image
                         .prepare_authored(&device, &mut encoder, &parameters)

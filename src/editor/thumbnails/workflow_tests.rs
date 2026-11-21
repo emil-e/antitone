@@ -25,7 +25,9 @@ fn editor(
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = crate::editor::tests::fixture();
         editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         editor.document = editor.document.replacement(document);

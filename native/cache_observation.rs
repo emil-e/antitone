@@ -243,7 +243,7 @@ fn continuous_sources_do_not_understate_or_lower_the_diagnostic_memory_guard() {
 
 pub(super) fn wait(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
 ) -> std::result::Result<(), wgpu::PollError> {
     device
         .poll(wgpu::PollType::Wait {
@@ -267,30 +267,30 @@ fn preflight(read: Reading) -> Result<()> {
 }
 
 pub(super) fn with_monitor(
-    action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &wgpu::Queue) -> Result<()>,
+    action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &crate::gpu::submission::Queue) -> Result<()>,
 ) -> Result<()> {
     with_monitor_features(wgpu::Features::empty(), action)
 }
 
 pub(super) fn with_monitor_features(
     features: wgpu::Features,
-    action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &wgpu::Queue) -> Result<()>,
+    action: impl FnOnce(&Arc<Monitor>, &wgpu::Device, &crate::gpu::submission::Queue) -> Result<()>,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let (device, queue) = pollster::block_on(async {
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&wgpu::DeviceDescriptor {
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_features: features,
                 ..Default::default()
-            })
-            .await
-            .unwrap()
+            },
+        )
+        .await
+        .unwrap()
     });
     let baseline = reading(&device)?;
     preflight(baseline)?;

@@ -7,7 +7,7 @@ use crate::gpu::execution::test_support::OriginalControls as Request;
 fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     request: Request<'_>,
     sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
     mut check: impl FnMut() -> Result<(), Error>,
@@ -22,7 +22,6 @@ fn execute(
         check,
     )
 }
-use crate::gpu::submission::SubmissionGate;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
     crop::Crop,
@@ -106,7 +105,7 @@ fn request(scan: &Scan, output: OutputReference, encoding: SampleEncoding) -> Re
 
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &GpuRenderer,
     request: Request<'_>,
 ) -> Result<OutputBlock, Error> {
@@ -115,7 +114,7 @@ fn render(
     execute(
         renderer,
         device,
-        (queue, &SubmissionGate::default()),
+        queue,
         request,
         |render, complete| {
             output = Some(render([0; 2], size)?);
@@ -300,7 +299,7 @@ fn scene_rgb16_is_rejected_before_the_sink_and_valid_float_execution_remains_usa
     let result = execute(
         &renderer,
         &device,
-        (&queue, &SubmissionGate::default()),
+        &queue,
         invalid,
         |_, _| {
             called.set(true);
@@ -330,7 +329,7 @@ fn scene_rgb16_is_rejected_before_the_sink_and_valid_float_execution_remains_usa
 fn cancellation_after_submission_finishes_private_readback_without_delivering_a_block() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();
-    let gate = SubmissionGate::default();
+    let gate = queue.clone();
     let submits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = submits.clone();
     gate.observe_encoded_resources(std::sync::Arc::new(move || {
@@ -346,7 +345,7 @@ fn cancellation_after_submission_finishes_private_readback_without_delivering_a_
     let result = execute(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         request,
         |render, complete| {
             render([0; 2], size)?;
@@ -384,7 +383,7 @@ fn cancellation_after_submission_finishes_private_readback_without_delivering_a_
 fn oversized_destination_blocks_are_rejected_without_submission_and_do_not_poison_reuse() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();
-    let gate = SubmissionGate::default();
+    let gate = queue.clone();
     let submits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = submits.clone();
     gate.observe_encoded_resources(std::sync::Arc::new(move || {
@@ -401,7 +400,7 @@ fn oversized_destination_blocks_are_rejected_without_submission_and_do_not_poiso
     let result = execute(
         &renderer,
         &device,
-        (&queue, &gate),
+        &queue,
         request,
         |render, _| {
             render([0; 2], [TILE[0] + 1, TILE[1]])?;
@@ -444,7 +443,7 @@ fn completion_checks_publication_rights_and_retires_resources_after_cancelled_me
     let result = execute(
         &renderer,
         &device,
-        (&queue, &SubmissionGate::default()),
+        &queue,
         request,
         |render, complete| {
             render([0; 2], size)?;

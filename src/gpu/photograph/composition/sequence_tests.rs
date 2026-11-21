@@ -201,7 +201,7 @@ impl Source for Pixels {
     }
 }
 
-fn read(context: &Context, queue: &wgpu::Queue, image: Value) -> Vec<DVec3> {
+fn read(context: &Context, queue: &crate::gpu::submission::Queue, image: Value) -> Vec<DVec3> {
     let request = context
         .request(
             image.clone(),
@@ -216,7 +216,6 @@ fn read(context: &Context, queue: &wgpu::Queue, image: Value) -> Vec<DVec3> {
     context
         .read(
             queue,
-            &crate::gpu::submission::SubmissionGate::default(),
             &request,
             || false,
             |_, pixels| {

@@ -18,7 +18,7 @@ fn traversal_hints_do_not_change_the_completed_reconstruction_identity() {
     let region = Rect::new([0, 0], [1, 1]);
     let domain = output(map, region);
     let root = || reconstruct_mapped(input.clone(), domain, map).unwrap();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let submissions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = submissions.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -29,7 +29,6 @@ fn traversal_hints_do_not_change_the_completed_reconstruction_identity() {
             context
                 .materialize(
                     &queue,
-                    &gate,
                     &scope,
                     context
                         .request(

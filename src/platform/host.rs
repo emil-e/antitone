@@ -6,14 +6,11 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
-use crate::application::{Application, UiContext};
-use {
-    super::{
-        QuitGuard, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace, menu,
-        presentation, quit_cancel_on_unwind,
-    },
-    crate::gpu::submission::SubmissionGate,
+use super::{
+    QuitGuard, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace, menu,
+    presentation, quit_cancel_on_unwind,
 };
+use crate::application::{Application, UiContext};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -28,8 +25,6 @@ pub enum QuitState {
 }
 
 pub trait App: Sized {
-    /// The same gate used by every background submitter on this host's queue.
-    fn submission_gate(&self) -> SubmissionGate;
     fn ui(&mut self, ui: &mut egui::Ui, access: &UiContext<'_, Self>);
     fn menu_state(&self) -> Option<menu::State> {
         None
@@ -64,7 +59,11 @@ pub trait App: Sized {
 
 pub fn run<A: App>(
     title: &str,
-    create: impl for<'scope> FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>,
+    create: impl for<'scope> FnOnce(
+        &wgpu::Device,
+        &crate::gpu::submission::Queue,
+        UiContext<'scope, A>,
+    ) -> Result<A>,
 ) -> Result<u64> {
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     let context = egui::Context::default();
@@ -169,8 +168,11 @@ impl<A, F> Drop for Host<'_, A, F> {
     }
 }
 
-impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>>
-    Host<'scope, A, F>
+impl<
+    'scope,
+    A: App,
+    F: FnOnce(&wgpu::Device, &crate::gpu::submission::Queue, UiContext<'scope, A>) -> Result<A>,
+> Host<'scope, A, F>
 {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: Box<dyn std::error::Error>) {
         log::error!(error = error.to_string().as_str(); "host_failed");
@@ -209,8 +211,11 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
     }
 }
 
-impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>) -> Result<A>>
-    ApplicationHandler<HostEvent> for Host<'scope, A, F>
+impl<
+    'scope,
+    A: App,
+    F: FnOnce(&wgpu::Device, &crate::gpu::submission::Queue, UiContext<'scope, A>) -> Result<A>,
+> ApplicationHandler<HostEvent> for Host<'scope, A, F>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let _native_unwind = quit_cancel_on_unwind();
@@ -393,7 +398,7 @@ impl<'scope, A: App, F: FnOnce(&wgpu::Device, &wgpu::Queue, UiContext<'scope, A>
             wake = None;
         }
         if let Some(state) = &self.state {
-            let pending = state.app.read(App::submission_gate).pending();
+            let pending = state.gpu.queue.pending();
             if (pending || state.gpu.trace.as_ref().is_some_and(|t| t.pending()))
                 && let Err(error) = state.gpu.device.poll(wgpu::PollType::Poll)
             {
@@ -460,7 +465,7 @@ impl<A: App> State<'_, A> {
                 || size.width != self.gpu.config.width
                 || size.height != self.gpu.config.height
             {
-                self.gpu.configure(self.app.read(App::submission_gate))?;
+                self.gpu.configure()?;
             }
             if let Some(timing) = &mut timing {
                 timing.acquire_start = Some(Instant::now());
@@ -485,13 +490,13 @@ impl<A: App> State<'_, A> {
                     Some(frame)
                 }
                 wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.gpu.configure(self.app.read(App::submission_gate))?;
+                    self.gpu.configure()?;
                     self.gpu.window.request_redraw();
                     None
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
                     self.gpu.surface = self.gpu.instance.create_surface(self.gpu.window.clone())?;
-                    self.gpu.configure(self.app.read(App::submission_gate))?;
+                    self.gpu.configure()?;
                     self.gpu.window.request_redraw();
                     None
                 }
@@ -535,9 +540,12 @@ impl<A: App> State<'_, A> {
         let jobs = context.tessellate(output.shapes, output.pixels_per_point);
         for (id, deltas) in output.textures_delta.set.drain() {
             for delta in deltas {
-                self.gpu
-                    .renderer
-                    .update_texture(&self.gpu.device, &self.gpu.queue, id, &delta);
+                self.gpu.queue.update_egui_texture(
+                    &mut self.gpu.renderer,
+                    &self.gpu.device,
+                    id,
+                    &delta,
+                );
             }
         }
         if let Some(frame) = frame {
@@ -549,9 +557,9 @@ impl<A: App> State<'_, A> {
                 pixels_per_point: output.pixels_per_point,
             };
             let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-            let commands = self.gpu.renderer.update_buffers(
+            let commands = self.gpu.queue.update_egui_buffers(
+                &mut self.gpu.renderer,
                 &self.gpu.device,
-                &self.gpu.queue,
                 &mut encoder,
                 &jobs,
                 &screen,
@@ -598,16 +606,12 @@ impl<A: App> State<'_, A> {
             let commands = commands.into_iter().chain([encoder.finish()]);
             if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, &mut timing) {
                 trace.submitting(timing);
-                self.app.read(App::submission_gate).submit_with_completion(
-                    &self.gpu.queue,
-                    commands,
-                    trace.completion(timing),
-                );
+                self.gpu
+                    .queue
+                    .submit_with_completion(commands, trace.completion(timing));
                 timing.submit_end = Some(Instant::now());
             } else {
-                self.app
-                    .read(App::submission_gate)
-                    .submit(&self.gpu.queue, commands);
+                self.gpu.queue.submit(commands);
             }
             self.gpu.window.pre_present_notify();
             self.gpu.queue.present(frame);
@@ -791,7 +795,7 @@ struct Gpu {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: crate::gpu::submission::Queue,
     config: wgpu::SurfaceConfiguration,
     /// The pipeline's float target, bridged to a non-float swapchain by one copy pass.
     bridge: Option<Bridge>,
@@ -812,12 +816,14 @@ impl Gpu {
                 ..Default::default()
             })
             .await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = crate::gpu::submission::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 required_limits: super::device_limits(adapter.limits()),
                 ..Default::default()
-            })
-            .await?;
+            },
+        )
+        .await?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -862,7 +868,7 @@ impl Gpu {
             trace: Trace::from_env(),
         };
         // No application or background submitters exist during initial configuration.
-        gpu.configure(SubmissionGate::default())?;
+        gpu.configure()?;
         log::info!(
             adapter:? = gpu.adapter.get_info(),
             format:? = gpu.config.format,
@@ -886,7 +892,7 @@ impl Gpu {
         Ok(())
     }
 
-    fn configure(&mut self, submissions: SubmissionGate) -> Result<()> {
+    fn configure(&mut self) -> Result<()> {
         let trace_start = self.trace.as_ref().map(|_| Instant::now());
         if !self
             .surface
@@ -913,7 +919,7 @@ impl Gpu {
             "window_configured"
         );
 
-        submissions.configure(|| self.surface.configure(&self.device, &self.config));
+        self.queue.configure(&self.surface, &self.config);
         configure_presentation(&self.surface)?;
         if let Some(bridge) = &self.bridge {
             self.staged = Some(bridge.target(&self.device, self.config.width, self.config.height));

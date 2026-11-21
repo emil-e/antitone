@@ -1,9 +1,6 @@
 use super::*;
 use crate::{
-    gpu::{
-        lut3d::{Kernel, Lut},
-        submission::SubmissionGate,
-    },
+    gpu::lut3d::{Kernel, Lut},
     rendering::{CpuRenderer, OutputTarget},
 };
 use std::{sync::mpsc, time::Duration};
@@ -15,7 +12,9 @@ fn check(input: Vec<DVec3>) {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         for paper in Paper::all() {
             let model = Model::new(
                 Selection {
@@ -60,7 +59,7 @@ fn check(input: Vec<DVec3>) {
             let mut encoder = device.create_command_encoder(&Default::default());
             kernel.encode(&mut encoder, &dispatch);
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-            let submission = SubmissionGate::default().submit(&queue, [encoder.finish()]);
+            let submission = queue.submit([encoder.finish()]);
             dispatch.check.begin(|| {});
             let (send, receive) = mpsc::channel();
             readback.map_async(wgpu::MapMode::Read, .., move |r| send.send(r).unwrap());

@@ -66,7 +66,11 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_before_consumer
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
         .expect("history consumer test requires Metal");
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &Default::default(),
+    ))
+    .unwrap();
     let mut editor = Editor::new(&device, &queue);
     editor.document.thumbnails =
         (Thumbnails::default()).with_sources(editor.document.cache.clone());

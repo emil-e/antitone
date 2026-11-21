@@ -38,7 +38,7 @@ impl evaluation::Source for Pixels {
 
 fn pixels(
     renderer: &crate::renderer::GpuRenderer,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {
     let domain = image.domain();
@@ -59,7 +59,6 @@ fn pixels(
         .evaluation()
         .read(
             queue,
-            &Default::default(),
             &request,
             || false,
             |_, values| {

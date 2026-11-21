@@ -11,20 +11,22 @@ use {
 #[path = "../../../tests/support/gpu_headroom.rs"]
 mod headroom;
 
-async fn context() -> (wgpu::Device, wgpu::Queue, CameraFixture) {
+async fn context() -> (wgpu::Device, crate::gpu::submission::Queue, CameraFixture) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+    let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+        .await
+        .unwrap();
     let kernel = CameraFixture::new(&device).await.unwrap();
     (device, queue, kernel)
 }
 
 fn process(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     kernel: &CameraFixture,
     source: &ProcessingSource,
     count: usize,

@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
@@ -39,17 +38,12 @@ fn capture(
 
 fn render(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     source: Arc<ViewImage>,
     input: &AuthoredPhotograph,
 ) -> Vec<[f32; 4]> {
     let view = RenderedView::new(device, source, input, OutputTarget::Srgb, None).unwrap();
-    view.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(device, queue, &egui::Context::default());
     read(device, queue, &view.product.as_ref().unwrap().pixels)
 }
 
@@ -91,7 +85,6 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &SubmissionGate::default(),
             renderer,
             kernels,
             &scan,
@@ -182,7 +175,6 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             let source = ViewImage::prefix(
                 &device,
                 &queue,
-                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -348,7 +340,6 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
                 ViewImage::prefix(
                     &device,
                     &queue,
-                    &SubmissionGate::default(),
                     renderer.clone(),
                     kernels.clone(),
                     &scan,

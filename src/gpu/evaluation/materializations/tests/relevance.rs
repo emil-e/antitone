@@ -169,7 +169,6 @@ fn reading_a_cached_descendant_refreshes_the_declared_upstream_demand() {
     context
         .read(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             |block, pixels| {
@@ -231,7 +230,6 @@ fn evaluating_a_cached_descendant_into_a_sink_refreshes_upstream_relevance() {
     let counts = context
         .evaluate(
             &queue,
-            &Default::default(),
             &evaluation,
             || false,
             |_, image, _| {
@@ -311,13 +309,7 @@ fn recorded_demand_and_selected_storage_promote_only_after_submission() {
                 .encode_result(&device, &mut encoder, &output)
                 .unwrap();
             context
-                .submit_with(
-                    &queue,
-                    &Default::default(),
-                    encoder,
-                    || false,
-                    || recorded.submitted(),
-                )
+                .submit_with(&queue, encoder, || false, || recorded.submitted())
                 .unwrap()
                 .unwrap();
             assert_eq!(

@@ -1,12 +1,12 @@
 //! Shared pointwise photographic response over the captured camera samples used by roll fitting.
 
+use super::evaluation;
 use crate::{Error, processing::NegativeInput, roll_analysis::ForwardModel};
 use glam::DVec3;
 use std::{
     cell::{Cell, RefCell},
     sync::Arc,
 };
-use {super::evaluation, crate::gpu::submission::SubmissionGate};
 
 mod sampling;
 pub(crate) use sampling::CameraSampler;
@@ -16,19 +16,17 @@ mod tests;
 
 pub(crate) struct ResponseModel<'a> {
     context: &'a evaluation::Context,
-    queue: &'a wgpu::Queue,
-    submissions: &'a SubmissionGate,
+    queue: &'a crate::gpu::submission::Queue,
 }
 
 impl<'a> ResponseModel<'a> {
     pub(crate) fn new(
         context: &'a evaluation::Context,
-        gpu: (&'a wgpu::Queue, &'a SubmissionGate),
+        gpu: &'a crate::gpu::submission::Queue,
     ) -> Self {
         Self {
             context,
-            queue: gpu.0,
-            submissions: gpu.1,
+            queue: gpu,
         }
     }
 }
@@ -111,7 +109,6 @@ impl ForwardModel for ResponseModel<'_> {
 
         let result = self.context.read(
             self.queue,
-            self.submissions,
             &request,
             || {
                 let mut predicate = cancelled.borrow_mut();

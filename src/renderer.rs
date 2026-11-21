@@ -8,19 +8,11 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
-    submissions: crate::gpu::submission::SubmissionGate,
     retention_budget: std::sync::Mutex<Option<u64>>,
 }
 
 #[cfg(feature = "editor")]
 impl RendererCache {
-    pub(crate) fn new(submissions: crate::gpu::submission::SubmissionGate) -> Self {
-        Self {
-            submissions,
-            ..Default::default()
-        }
-    }
-
     pub(crate) fn set_retention_budget(&self, bytes: u64) {
         let mut budget = self.retention_budget.lock().unwrap();
         *budget = Some(bytes);
@@ -29,7 +21,11 @@ impl RendererCache {
         }
     }
 
-    pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
+    pub(crate) fn prewarm(
+        self: &Arc<Self>,
+        device: wgpu::Device,
+        queue: crate::gpu::submission::Queue,
+    ) {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by foreground consumers.
         std::thread::spawn(move || {
@@ -50,14 +46,10 @@ impl RendererCache {
         self.renderer.get().is_some()
     }
 
-    pub(crate) fn submissions(&self) -> &crate::gpu::submission::SubmissionGate {
-        &self.submissions
-    }
-
     pub(crate) fn get(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
     ) -> Result<Arc<GpuRenderer>, Error> {
         let renderer = self
             .renderer
@@ -66,12 +58,7 @@ impl RendererCache {
                 if let Some(bytes) = *self.retention_budget.lock().unwrap() {
                     policy.generated_bytes = bytes;
                 }
-                pollster::block_on(GpuRenderer::new_with_cache_policy(
-                    device,
-                    queue,
-                    self.submissions.clone(),
-                    policy,
-                ))
+                pollster::block_on(GpuRenderer::new_with_cache_policy(device, queue, policy))
             })
             .clone()?;
         // Serialize the final application with settings changes, including during initialization.
@@ -121,7 +108,6 @@ impl RenderBinding {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    pub(crate) submissions: crate::gpu::submission::SubmissionGate,
     #[cfg(feature = "raw")]
     _pressure: crate::sys::MemoryPressureWatch,
     pub(crate) drt: drt::Targets,
@@ -144,27 +130,16 @@ impl GpuRenderer {
         self.drt.get(target)
     }
 
-    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
-        Self::new_with_submissions(
-            device,
-            queue,
-            crate::gpu::submission::SubmissionGate::default(),
-        )
-        .await
-    }
-
-    pub async fn new_with_submissions(
+    pub async fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
     ) -> Result<Arc<Self>, Error> {
-        Self::new_with_cache_policy(device, queue, submissions, Default::default()).await
+        Self::new_with_cache_policy(device, queue, Default::default()).await
     }
 
     pub async fn new_with_cache_policy(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
@@ -173,7 +148,6 @@ impl GpuRenderer {
         let looks = lut3d::Looks::new(device).await?;
         let drt = drt::Targets::new(device, queue).await?;
         let renderer = Arc::new(Self {
-            submissions,
             #[cfg(feature = "raw")]
             _pressure: pressure,
             drt,

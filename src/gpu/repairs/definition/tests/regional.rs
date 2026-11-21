@@ -206,7 +206,6 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 query(&context, original),
                 ImageFormat::Rgba32Float,
@@ -227,7 +226,6 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 query(&context, changed.clone()),
                 ImageFormat::Rgba32Float,
@@ -282,7 +280,6 @@ fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_option
         context
             .read(
                 &queue,
-                &Default::default(),
                 &query(&context, node),
                 || false,
                 |block, values| {
@@ -336,7 +333,7 @@ fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
                 Tiling { tile: [128, 128] },
             )
             .unwrap();
-        context.read(&queue, &Default::default(), &query, || false, |_, _| Ok(()))
+        context.read(&queue, &query, || false, |_, _| Ok(()))
     };
     assert!(
         read([0, 0, 32, 32].into()).unwrap().is_some(),
@@ -378,7 +375,6 @@ fn admitted_repairs_keep_partial_views_renderable() {
             .unwrap();
         context.read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |region, pixels| {
@@ -435,7 +431,6 @@ fn regional_units_fit_small_allowances_without_changing_demand() {
     context
         .read(
             &queue,
-            &Default::default(),
             &query,
             || false,
             |_, pixels| {
@@ -479,7 +474,6 @@ fn unbounded_view_regions_with_negative_origins_keep_real_source_edges() {
         context
             .read(
                 &queue,
-                &Default::default(),
                 &evaluation,
                 || false,
                 |part, pixels| {

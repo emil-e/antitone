@@ -73,7 +73,7 @@ fn pixels(native: bool) -> (Value, Arc<AtomicUsize>, Vec<[f32; 4]>) {
 }
 fn uploaded(
     context: &Context,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     scope: &Materializations,
     source: Value,
 ) -> Image<ImageLayout> {
@@ -83,7 +83,6 @@ fn uploaded(
         context
             .materialize(
                 queue,
-                &Default::default(),
                 scope,
                 request(context, source, region),
                 format,
@@ -111,7 +110,6 @@ fn live_source_materializations_preserve_native_and_continuous_pixels_without_op
                 context
                     .materialize(
                         &queue,
-                        &Default::default(),
                         store,
                         request(&context, root.clone(), domain.finite().unwrap()),
                         ImageFormat::Rgba32Float,
@@ -157,7 +155,7 @@ fn cancelled_upload_keeps_its_producer_through_queued_copy_cleanup() {
     drop(producer);
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
@@ -174,7 +172,6 @@ fn cancelled_upload_keeps_its_producer_through_queued_copy_cleanup() {
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(&context, source, region),
                 ImageFormat::Rgba16Uint,
@@ -222,7 +219,7 @@ fn submitted_consumers_keep_materialized_inputs_after_owner_and_waiter_retire() 
         meaning: source.domain().meaning,
     };
     let root = reconstruct(source, domain).unwrap();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
@@ -242,7 +239,6 @@ fn submitted_consumers_keep_materialized_inputs_after_owner_and_waiter_retire() 
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 request(&context, root, domain.finite().unwrap()),
                 ImageFormat::Rgba32Float,

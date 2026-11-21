@@ -18,7 +18,7 @@ use antitone::{
     export::{self, Overwrite},
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{flat::GpuFlatField, submission::SubmissionGate},
+    gpu::flat::GpuFlatField,
     gpu_export::Format,
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
@@ -79,7 +79,10 @@ fn saturation_vibrance_with_film_paper_samples() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
@@ -104,7 +107,7 @@ fn saturation_vibrance_with_film_paper_samples() {
             authored_export::write(
                 &renderer,
                 &device,
-                (&queue, &SubmissionGate::default()),
+                &queue,
                 Request {
                     scan: &scan,
                     field: None,
@@ -170,7 +173,10 @@ fn photographic_tiff_pairs() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let start = Instant::now();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         println!(
@@ -288,7 +294,7 @@ fn photographic_tiff_pairs() {
                     authored_export::write(
                         &renderer,
                         &device,
-                        (&queue, &SubmissionGate::default()),
+                        &queue,
                         Request {
                             scan: &scan,
                             field: gpu_field.clone(),

@@ -118,14 +118,13 @@ impl Preparation {
 
     pub(crate) async fn produce(
         self,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
         let values = self
             .renderer
             .evaluation()
-            .produce_images(queue, submissions, self.work)?;
+            .produce_images(queue, self.work)?;
         let mut values = Box::pin(futures_util::future::try_join_all(values));
         let result = futures_util::future::poll_fn(|cx| {
             if cancelled() {
@@ -262,15 +261,14 @@ impl Request {
 
     pub(crate) async fn produce(
         &self,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
         let pending = self.pending.lock().unwrap().take();
         let Some(pending) = pending else {
             return Ok(self.ready());
         };
-        let result = pending.produce(queue, submissions, cancelled).await?;
+        let result = pending.produce(queue, cancelled).await?;
         if let Some(images) = &result {
             *self.ready.lock().unwrap() = Some(images.clone());
         }

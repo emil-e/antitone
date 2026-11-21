@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu_export::authored::{Request, write, write_checked};
 use crate::processing::Calibration;
 
@@ -7,9 +6,7 @@ use crate::processing::Calibration;
 #[test]
 fn editor_background_prewarm_initializes_the_shared_renderer() {
     let (device, queue, _) = super::tests::context();
-    let cache = Arc::new(crate::renderer::RendererCache::new(
-        SubmissionGate::default(),
-    ));
+    let cache = Arc::new(crate::renderer::RendererCache::default());
     cache.prewarm(device.clone(), queue.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !cache.is_initialized() && std::time::Instant::now() < deadline {
@@ -26,7 +23,6 @@ fn editor_background_prewarm_initializes_the_shared_renderer() {
 #[test]
 fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely() {
     let (device, queue, renderer) = super::tests::context();
-    let gate = SubmissionGate::default();
     let scan = Scan::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
@@ -74,7 +70,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
         write_checked(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             request(rotated, Format::Tiff(OutputTarget::Srgb)),
             &keep,
             Overwrite::Confirmed,
@@ -96,7 +92,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 request(composition, format),
                 &path,
                 Overwrite::Refuse,
@@ -137,15 +133,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
         let path = directory.path().join(format!("with-look-{name}.exr"));
         let mut input = request(rotated, Format::Exr(precision));
         input.luts = Some(look.clone()).into();
-        write(
-            &renderer,
-            &device,
-            (&queue, &gate),
-            input,
-            &path,
-            Overwrite::Refuse,
-        )
-        .unwrap();
+        write(&renderer, &device, &queue, input, &path, Overwrite::Refuse).unwrap();
         let actual = exr::prelude::read_first_flat_layer_from_file(path).unwrap();
         let expected = exr::prelude::read_first_flat_layer_from_file(
             directory.path().join(format!("rotated-{name}.exr")),

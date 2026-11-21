@@ -66,7 +66,7 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
         );
         let plan = super::tests::make_plan(root, [1, 1]);
         let result = Executor::default()
-            .run(&device, &queue, &Default::default(), &plan, || false)
+            .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         let actual = execute::read(&device, &queue, &result.pixels)[0];
@@ -117,7 +117,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
             for tile in [[4, 2], [1, 1]] {
                 let plan = super::tests::make_plan(root.clone(), tile);
                 let result = Executor::default()
-                    .run(&device, &queue, &Default::default(), &plan, || false)
+                    .run(&device, &queue, &plan, || false)
                     .unwrap()
                     .unwrap();
                 let pixels = execute::read(&device, &queue, &result.pixels);

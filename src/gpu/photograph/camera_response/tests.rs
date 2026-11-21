@@ -24,7 +24,6 @@ impl Source for CameraLight {
 fn native_response_preserves_finite_zero_light_signed_values_and_continuation_flags() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let domain = Domain {
         bounds: Some([9, 13, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -72,7 +71,6 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
     context
         .read(
             &queue,
-            &gate,
             &request,
             || false,
             |region, block| {
@@ -135,12 +133,13 @@ fn classifier_endpoint_applies_the_provisional_grade_then_srgb_without_a_rendere
     let (device, queue, targets) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let targets = drt::Targets::new(&device, &queue).await.unwrap();
         (device, queue, targets)
     });
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let negative = NegativeInput {
         calibration: Calibration {
             dmin: DVec3::splat(0.7),
@@ -191,7 +190,6 @@ fn classifier_endpoint_applies_the_provisional_grade_then_srgb_without_a_rendere
     context
         .read(
             &queue,
-            &gate,
             &request,
             || false,
             |region, pixels| {

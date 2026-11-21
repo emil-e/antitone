@@ -14,7 +14,6 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 context
                     .request(
@@ -58,9 +57,7 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
     assert!(reads.lock().unwrap().is_empty());
     let work = context.prepare_image(request).unwrap();
     assert!(!work.can_record());
-    let image = context
-        .produce_prepared(&queue, &Default::default(), work, || false)
-        .unwrap();
+    let image = context.produce_prepared(&queue, work, || false).unwrap();
     assert_eq!(
         super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
         vec![[-2., 3., 10_000., 8.]]
@@ -88,7 +85,6 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 context
                     .request(
@@ -129,13 +125,13 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
         .to_vec();
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
     let images = pollster::block_on(futures_util::future::try_join_all(
         context
-            .materialize_many(&queue, &gate, &scope, evaluations)
+            .materialize_many(&queue, &scope, evaluations)
             .unwrap(),
     ))
     .unwrap();

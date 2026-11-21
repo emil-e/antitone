@@ -64,8 +64,7 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
             spread: 0.,
         },
     ));
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let actual = sampler
         .sample(area, 16, |p| p.x >= a.x + 20, || false)
@@ -102,8 +101,7 @@ fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_releas
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     drop(scan);
     assert!(weak.upgrade().is_none());
     let count = crate::roll_analysis::MAX_SAMPLES_PER_FRAME;
@@ -124,7 +122,6 @@ fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_releas
         .context
         .read(
             &queue,
-            &gate,
             &request,
             || false,
             |_, pixels| {
@@ -159,8 +156,7 @@ fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually
         )
         .unwrap(),
     )));
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let actual = sampler
         .sample(area, 16, |_| true, || false)
@@ -184,7 +180,6 @@ fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually
 #[test]
 fn one_cached_payload_supports_changed_regions_and_correction_without_original_pixels() {
     let (_device, queue, renderer) = crate::gpu::test_support::render_context();
-    let gate = SubmissionGate::default();
     for rgb in [[6000, 12000, 9000], [2; 3], [65535; 3]] {
         let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
         let scan = Scan::open(file.path(), None).unwrap();
@@ -197,13 +192,9 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
         let mut reference = Scan::open(file.path(), None).unwrap();
         for field in [None, Some(variable_field(a))] {
             reference.set_flat_field(field.clone());
-            let sampler = CameraSampler::retained(
-                renderer.evaluation(),
-                (&queue, &gate),
-                input.clone(),
-                field,
-            )
-            .unwrap();
+            let sampler =
+                CameraSampler::retained(renderer.evaluation(), &queue, input.clone(), field)
+                    .unwrap();
             assert!(Arc::ptr_eq(&sampler.input, &input));
             assert_eq!(sampler.effective_floor(), reference.effective_floor());
             for minimum_x in [a.x, a.x + 12] {
@@ -240,8 +231,7 @@ fn native_white_remains_usable_evidence() {
     let (_device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
     let scan = Scan::open(file.path(), None).unwrap();
-    let gate = SubmissionGate::default();
-    let sampler = CameraSampler::new(renderer.evaluation(), (&queue, &gate), &scan).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
     let actual = sampler
         .sample(scan.area, 1, |_| true, || false)
         .unwrap()

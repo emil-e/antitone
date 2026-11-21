@@ -40,13 +40,10 @@ fn key(document: &Document) -> SourceKey {
     .unwrap()
 }
 
-async fn gpu() -> (wgpu::Device, wgpu::Queue) {
+async fn gpu() -> (wgpu::Device, crate::gpu::submission::Queue) {
     let instance = crate::gpu::instance();
-    instance
-        .request_adapter(&Default::default())
-        .await
-        .unwrap()
-        .request_device(&Default::default())
+    let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+    crate::gpu::submission::request_device(&adapter, &Default::default())
         .await
         .unwrap()
 }
@@ -55,7 +52,7 @@ fn prepare(
     document: &Document,
     cache: &Arc<crate::source::SourceCache>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderers: &crate::renderer::RendererCache,
 ) -> (Ready, Scan) {
     let id = document.project.order[0];

@@ -3,13 +3,12 @@
 pub(super) use super::authored_area as write;
 use super::*;
 use crate::gpu::execution::{self, SampleEncoding};
-use crate::gpu::submission::SubmissionGate;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_calculation(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     definition: crate::gpu::evaluation::Value,
     composition: Composition,
     format: Format,

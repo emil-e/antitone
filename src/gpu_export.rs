@@ -6,7 +6,6 @@ use crate::{
     Error,
     export::{self, ExrPrecision, ImageSize, Overwrite},
     geometry::Composition,
-    gpu::submission::SubmissionGate,
     renderer::GpuRenderer,
     rendering::OutputTarget,
 };
@@ -57,7 +56,7 @@ pub struct Request {
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     request: Request,
     path: &Path,
     overwrite: Overwrite,
@@ -70,7 +69,7 @@ pub fn write(
 pub fn write_checked(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     request: Request,
     path: &Path,
     overwrite: Overwrite,
@@ -93,7 +92,7 @@ pub fn write_checked(
 fn authored_area(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &crate::gpu::submission::Queue,
     request: authored::Request<'_>,
     destination: (&Path, Overwrite),
     check: impl FnMut() -> Result<(), Error>,

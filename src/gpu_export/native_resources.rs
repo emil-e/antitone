@@ -65,7 +65,7 @@ fn native_output_resources() {
             .unwrap();
     let path = directory.path().join("native-output");
     let peak = Arc::new(AtomicU64::new(0));
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let observed = peak.clone();
     let gpu = device.clone();
     gate.observe_encoded_resources(Arc::new(move || {
@@ -112,7 +112,7 @@ fn native_output_resources() {
                 return execution::execute(
                     &renderer,
                     &device,
-                    (&queue, &gate),
+                    &queue,
                     execution::Request {
                         definition,
                         composition,
@@ -135,7 +135,7 @@ fn native_output_resources() {
             crate::gpu_export::area::write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 Request {
                     scan: &scan,
                     field: None,

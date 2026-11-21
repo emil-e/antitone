@@ -6,6 +6,6 @@ The port retains the ratio-based reconstruction and [corrected ranges and border
 
 Ordinary f32 arithmetic can reverse near-tied direction comparisons and produce sparse larger differences from CPU DHT. Numerical identity is not the photographic acceptance criterion. [`raw_demosaic.rs`](../../tests/raw_demosaic.rs) checks weak-channel noise, luminance modulation, independent blue detail, chromatic edges and composed export. GPU feature builds exercise the accelerated source; native-only builds exercise the CPU fallback.
 
-The [Rust owner](../../src/gpu/demosaic.rs) receives the application's device, queue, submission gate and working allowance. LibRaw supplies prepared RGBG16 through a synchronous callback and resumes CPU development after readback. [Native development](../../docs/native-development.md) describes admission, lifetime and scheduling.
+The [Rust owner](../../src/gpu/demosaic.rs) receives the application's device, guarded queue and working allowance. LibRaw supplies prepared RGBG16 through a synchronous callback and resumes CPU development after readback. [Native development](../../docs/native-development.md) describes admission, lifetime and scheduling.
 
 Packages retain this provenance, the shader and license. Before public binary distribution, review corresponding-source and relinking obligations alongside LibRaw and RawSpeed; copying license notices alone does not satisfy them.

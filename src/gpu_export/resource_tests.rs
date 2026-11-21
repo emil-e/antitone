@@ -8,7 +8,6 @@ use crate::geometry::PhotoOrientation;
 use crate::geometry::QuarterTurns;
 use crate::geometry::RollOrientation;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewImage;
@@ -33,7 +32,7 @@ enum Backend {
 fn exercise(
     monitor: &Arc<observation::Monitor>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
 ) -> Result<(), String> {
     let backends: &[Backend] = match std::env::var("ANTITONE_EXPORT_RESOURCE_BACKEND").as_deref() {
         Ok("gpu") | Err(_) => &[Backend::Gpu],
@@ -67,13 +66,8 @@ fn exercise(
         scan.area.height,
         Arc::strong_count(scan.source())
     );
-    let gate = SubmissionGate::default();
     let renderer = monitor.phase("renderer-infrastructure", || {
-        pollster::block_on(GpuRenderer::new_with_submissions(
-            device,
-            queue,
-            gate.clone(),
-        ))
+        pollster::block_on(GpuRenderer::new(device, queue))
     })?;
     #[cfg(feature = "ocio-reference")]
     if backends.iter().any(|b| matches!(b, Backend::Reference)) {
@@ -199,7 +193,6 @@ fn exercise(
                     ViewImage::prefixes(
                         device,
                         queue,
-                        &gate,
                         renderer.clone(),
                         kernels.clone(),
                         &scan,
@@ -214,7 +207,7 @@ fn exercise(
         for source in &sources {
             let view = RenderedView::new(device, source.clone(), &input, OutputTarget::Srgb, None)
                 .map_err(|e| e.to_string())?;
-            view.ensure_submitted(device, queue, &gate, &context);
+            view.ensure_submitted(device, queue, &context);
             rendered.push(view);
         }
         observation::wait(device, queue).map_err(|e| e.to_string())?;
@@ -287,7 +280,7 @@ fn exercise(
                                     super::area::write(
                                         &renderer,
                                         device,
-                                        (queue, &gate),
+                                        queue,
                                         request,
                                         (&path, Overwrite::Refuse),
                                         || {
@@ -413,7 +406,7 @@ fn exercise(
                             OutputTarget::Srgb,
                             Some(&rendered[0]),
                         )?;
-                        updated.ensure_submitted(device, queue, &gate, &context);
+                        updated.ensure_submitted(device, queue, &context);
                         observation::wait(device, queue).map_err(|e| Error::Gpu(e.to_string()))?;
                         assert!(!updated.in_flight());
                         assert_eq!(updated.processing(), edited_input.clone());

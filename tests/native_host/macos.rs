@@ -4,7 +4,7 @@
 //! Checks focus/size forwarding, native resize, submitted frames, clean exit and explicit completion.
 //! Early close, timeout, absent completion or zero frames fail. A process watchdog bounds hangs.
 //! Does not establish physical gestures, native dialogs, monitor colour or broader-device acceptance.
-use antitone::{gpu::submission::SubmissionGate, platform::host};
+use antitone::platform::host;
 use std::{
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
@@ -90,7 +90,6 @@ impl egui_wgpu::CallbackTrait for PaintAck {
 }
 
 struct NativeApp {
-    submissions: SubmissionGate,
     report: Arc<Mutex<Report>>,
     mode: Mode,
     start: Instant,
@@ -99,10 +98,6 @@ struct NativeApp {
 }
 
 impl host::App for NativeApp {
-    fn submission_gate(&self) -> SubmissionGate {
-        self.submissions.clone()
-    }
-
     fn photo_fullscreen(&self) -> bool {
         self.mode == Mode::Fullscreen && self.index == 1
     }
@@ -410,7 +405,6 @@ pub fn main() -> host::Result<()> {
             "Antitone native host tests",
             move |_device, _queue, _application| {
                 Ok(NativeApp {
-                    submissions: SubmissionGate::default(),
                     report: outcome,
                     mode,
                     start: Instant::now(),

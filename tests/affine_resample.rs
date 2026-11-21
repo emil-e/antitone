@@ -14,7 +14,10 @@ fn gpu_rotated_box_footprints_match_scalar_coverage_across_tiles() {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) =
+            antitone::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
         let area = SourceRegion {
             x: 120,
             y: 73,

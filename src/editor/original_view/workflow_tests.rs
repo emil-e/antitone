@@ -12,11 +12,8 @@ fn editor() -> (Editor, source_loading::SourceLoader) {
     let mut e = fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&Default::default())
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });
@@ -77,7 +74,6 @@ fn reference_demand(
     original.last_edit = Instant::now() - Duration::from_secs(1);
     original.request_with(
         e.source_services.clone().unwrap(),
-        e.submissions.clone(),
         &egui::Context::default(),
         cx,
     );

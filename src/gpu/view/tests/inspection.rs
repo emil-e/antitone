@@ -2,7 +2,6 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 #[cfg(feature = "ocio-reference")]
@@ -20,7 +19,6 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
         let codes = scan.tile_region(scan.area, 0, 0, 64, 64).unwrap();
         assert!(codes.iter().any(|p| p[..3].iter().any(|v| *v > 65535.)));
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         let ctx = egui::Context::default();
         let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
         let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(0.).unwrap());
@@ -50,7 +48,6 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
             let source = ViewImage::prefix(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -80,7 +77,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
             let rendered =
                 RenderedView::inspection(&device, source, &input, OutputTarget::Srgb, None)
                     .unwrap();
-            rendered.ensure_submitted(&device, &queue, &gate, &ctx);
+            rendered.ensure_submitted(&device, &queue, &ctx);
             let expected = cpu.render(&expected).unwrap();
             for (a, b) in image(&device, &queue, &rendered.image).iter().zip(expected) {
                 for c in 0..3 {
@@ -99,7 +96,6 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
 fn physical_view_source_inspection_preserves_normalization_correction_and_reuses_linear_support() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         let context = egui::Context::default();
         let mut scan = scan();
         let frame = frame(&scan);
@@ -141,7 +137,6 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
             let source = ViewImage::prefix(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,
@@ -208,7 +203,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                             old.product.as_ref().unwrap()
                         ));
                     }
-                    view.ensure_submitted(&device, &queue, &gate, &context);
+                    view.ensure_submitted(&device, &queue, &context);
                     let graded = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                     for (pixel, neutral) in graded.iter().zip(&neutral) {
                         assert_eq!(pixel[3], neutral[3]);
@@ -224,7 +219,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     let reference = crate::refinement::refine(
                         &renderer,
                         &device,
-                        (&queue, &gate),
+                        &queue,
                         (&scan, gpu_field.clone()),
                         input.clone(),
                         target,
@@ -282,7 +277,6 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
 fn source_view_applies_camera_white_balance_after_acquisition_without_changing_support() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         let ctx = egui::Context::default();
         let scan = scan();
         let spec =
@@ -290,7 +284,6 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &gate,
             renderer,
             kernels,
             &scan,
@@ -312,7 +305,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             let view =
                 RenderedView::inspection(&device, source.clone(), &input, target, None).unwrap();
-            view.ensure_submitted(&device, &queue, &gate, &ctx);
+            view.ensure_submitted(&device, &queue, &ctx);
             let actual = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             for (actual, neutral) in actual.iter().zip(&neutral) {
                 let working = DVec3::new(neutral[0] as f64, neutral[1] as f64, neutral[2] as f64);
@@ -335,7 +328,6 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
 fn physical_view_source_inspection_composite_covers_missing_regional_support() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let gate = SubmissionGate::default();
         let context = egui::Context::default();
         let scan = scan();
         let full = frame(&scan);
@@ -356,7 +348,6 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
         let mut sources = ViewImage::prefixes(
             &device,
             &queue,
-            &gate,
             renderer,
             kernels,
             &scan,
@@ -376,7 +367,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
                 RenderedView::inspection(&device, detail.clone(), &input, target, None).unwrap();
             let b = RenderedView::inspection(&device, base.clone(), &input, target, None).unwrap();
             let view = RenderedView::composite(&device, a.clone(), b.clone(), full, None).unwrap();
-            view.ensure_submitted(&device, &queue, &gate, &context);
+            view.ensure_submitted(&device, &queue, &context);
             let actual = image(&device, &queue, &view.image);
             assert!(
                 actual

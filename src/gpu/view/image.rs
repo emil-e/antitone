@@ -23,8 +23,7 @@ impl ViewImage {
     #[allow(clippy::too_many_arguments)]
     pub fn camera_preview(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         proxy: &crate::scan::CameraProxy,
@@ -65,14 +64,7 @@ impl ViewImage {
             )?),
         )?;
         let (root, spec) = request.sampled_output(&renderer, &camera, field, spec, target)?;
-        Self::on_worker(
-            renderer,
-            kernels,
-            spec,
-            root,
-            (queue, submissions),
-            cancelled,
-        )
+        Self::on_worker(renderer, kernels, spec, root, queue, cancelled)
     }
 
     pub(super) fn proxy_request(
@@ -155,7 +147,7 @@ impl ViewImage {
         kernels: Arc<ViewKernels>,
         spec: SourceRequest,
         definition: Value,
-        gpu: (&wgpu::Queue, &SubmissionGate),
+        gpu: &crate::gpu::submission::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
         let work = renderer
@@ -167,7 +159,7 @@ impl ViewImage {
             RecordedImage {
                 pixels: renderer
                     .evaluation()
-                    .produce_prepared(gpu.0, gpu.1, work, cancelled)?
+                    .produce_prepared(gpu, work, cancelled)?
                     .try_into()?,
                 commands: None,
             }

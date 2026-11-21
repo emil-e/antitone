@@ -100,7 +100,7 @@ fn evaluate(
     let source = crate::gpu::repair_source::Source::from_recipe(
         context.correction.gpu()?,
         &renderer,
-        (&services.queue, services.renderers.submissions()),
+        &services.queue,
         &scan,
         &recipe,
     )?;

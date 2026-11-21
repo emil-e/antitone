@@ -106,7 +106,6 @@ fn cpu_input_reads_are_batched_independently_of_tiny_consumer_tiles() {
         let counts = context
             .read(
                 &queue,
-                &Default::default(),
                 &request,
                 || false,
                 |_, pixels| {

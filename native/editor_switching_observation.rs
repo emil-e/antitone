@@ -45,7 +45,7 @@ impl Paint {
         &mut self,
         editor: &mut crate::application::test_support::TestApplication<'_, Editor>,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         events: Vec<egui::Event>,
     ) -> Result<(egui::FullOutput, f64, f64)> {
         editor.pump();
@@ -64,7 +64,7 @@ impl Paint {
         let ui_seconds = start.elapsed().as_secs_f64();
         for (id, deltas) in &output.textures_delta.set {
             for delta in deltas {
-                self.renderer.update_texture(device, queue, *id, delta);
+                queue.update_egui_texture(&mut self.renderer, device, *id, delta);
             }
         }
         for id in &output.textures_delta.free {
@@ -79,9 +79,8 @@ impl Paint {
             .context
             .tessellate(output.shapes.clone(), output.pixels_per_point);
         let mut encoder = device.create_command_encoder(&Default::default());
-        let commands = self
-            .renderer
-            .update_buffers(device, queue, &mut encoder, &jobs, &screen);
+        let commands =
+            queue.update_egui_buffers(&mut self.renderer, device, &mut encoder, &jobs, &screen);
         let view = self.target.create_view(&Default::default());
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -99,9 +98,7 @@ impl Paint {
             self.renderer
                 .render(&mut pass.forget_lifetime(), &jobs, &screen);
         }
-        editor
-            .read(|state| state.submissions.clone())
-            .submit(queue, commands.into_iter().chain([encoder.finish()]));
+        queue.submit(commands.into_iter().chain([encoder.finish()]));
         calibration::wait(device, queue).map_err(|e| e.to_string())?;
         Ok((output, ui_seconds, start.elapsed().as_secs_f64()))
     }
@@ -140,7 +137,7 @@ fn pointer(point: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 fn workload(
     monitor: &Arc<Monitor>,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     samples: PathBuf,
 ) -> Result<()> {
     let start = Instant::now();
@@ -211,7 +208,6 @@ fn workload(
         renderers.clone(),
         device.clone(),
         queue.clone(),
-        editor.submissions.clone(),
         editor.source_services.clone().unwrap(),
     ));
     let exercise = crate::application::test_support::with_application(editor, |app| {

@@ -21,18 +21,14 @@ pub(super) fn pixels(
     let base = crate::gpu::repair_source::Source::from_recipe(
         field,
         &renderer,
-        (&services.queue, services.renderers.submissions()),
+        &services.queue,
         scan,
         recipe,
     )
     .unwrap();
     let image = crate::gpu::repairs::definition::healing_image(base.image(), repair).unwrap();
-    let mut reader = crate::gpu::repair_source::Source::from_image(
-        &renderer,
-        (&services.queue, services.renderers.submissions()),
-        image,
-    )
-    .unwrap();
+    let mut reader =
+        crate::gpu::repair_source::Source::from_image(&renderer, &services.queue, image).unwrap();
     let [x, y] = repair.support.origin();
     let [width, height] = repair.support.size();
     let values = reader
@@ -90,7 +86,7 @@ impl Image {
             .unwrap();
         let mut source = crate::gpu::repair_source::Source::from_image(
             &renderer,
-            (&services.queue, services.renderers.submissions()),
+            &services.queue,
             self.definition.clone(),
         )
         .unwrap();

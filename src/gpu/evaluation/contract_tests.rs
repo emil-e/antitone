@@ -27,7 +27,7 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
     let original = make_plan_with_policy(graded.clone(), [27, 23], Policy::Composed);
     let mut executor = execute::Executor::default();
     let base = executor
-        .run(&device, &queue, &Default::default(), &original, || false)
+        .run(&device, &queue, &original, || false)
         .unwrap()
         .unwrap();
     let base = execute::read(&device, &queue, &base.pixels);
@@ -60,7 +60,7 @@ fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
             "new compatible shader functions do not create another pass"
         );
         let result = executor
-            .run(&device, &queue, &Default::default(), &candidate, || false)
+            .run(&device, &queue, &candidate, || false)
             .unwrap()
             .unwrap();
         let actual = execute::read(&device, &queue, &result.pixels);
@@ -135,7 +135,7 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
         reads: reads.clone(),
     }));
     let plan = make_plan(node, [16, 16]);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let (changed, submissions) = (stop.clone(), Arc::new(AtomicUsize::new(0)));
     let observed = submissions.clone();
@@ -146,8 +146,7 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
     let mut executor = execute::Executor::default();
     assert!(
         executor
-            .run(&device, &queue, &gate, &plan, || stop
-                .load(Ordering::Relaxed))
+            .run(&device, &queue, &plan, || stop.load(Ordering::Relaxed))
             .unwrap()
             .is_none()
     );
@@ -155,7 +154,7 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
     assert!(
         executor
-            .run(&device, &queue, &gate, &plan, || true)
+            .run(&device, &queue, &plan, || true)
             .unwrap()
             .is_none()
     );

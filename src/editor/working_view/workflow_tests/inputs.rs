@@ -58,7 +58,6 @@ fn working_request_awaits_its_captured_correction_without_an_inspector_observer(
     let (mut editor, mut input, spec, scheduler) = fixture();
     let (resources, started, release) = held_correction(&mut editor, &mut input);
     let services = editor.source_services.clone().unwrap();
-    let submissions = editor.submissions.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, spec.clone(), input.clone(), cx));
         let waiting = app
@@ -102,7 +101,7 @@ fn working_request_awaits_its_captured_correction_without_an_inspector_observer(
             ));
             frame.clone()
         });
-        complete_frame(&frame, &services, &submissions);
+        complete_frame(&frame, &services);
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -184,7 +183,6 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
     common.set_test_pressure(memory::Pressure::Normal);
     let original = camera_source(&scan).unwrap();
     let key = original.identity().unwrap().clone();
-    let submissions = editor.submissions.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, spec(0.6), input.clone(), cx));
         app.run_until(Duration::from_secs(15), |editor| {
@@ -202,7 +200,6 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
                     .clone()
             }),
             &services,
-            &submissions,
         );
         let before: Vec<_> = common
             .ready::<ImageLayout>(&key)
@@ -229,7 +226,6 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
                     .clone()
             }),
             &services,
-            &submissions,
         );
         let after = common.ready::<ImageLayout>(&key);
         assert!(
@@ -271,7 +267,6 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
                     .clone()
             }),
             &services,
-            &submissions,
         );
         assert!(renderer.evaluation().retained_bytes() > 0);
     });
@@ -292,7 +287,6 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
         .unwrap();
     let values = renderer.evaluation().materializations();
     values.set_test_pressure(memory::Pressure::Normal);
-    let submissions = editor.submissions.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, inspection.clone(), pixels.clone(), cx));
         app.run_until(Duration::from_secs(15), |editor| {
@@ -310,7 +304,6 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
                     .clone()
             }),
             &services,
-            &submissions,
         );
         let initial: Vec<_> = values
             .ready::<ImageLayout>(source.identity().unwrap())
@@ -348,7 +341,6 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
                         .clone()
                 }),
                 &services,
-                &submissions,
             );
             let next = values.ready::<ImageLayout>(source.identity().unwrap());
             assert!(
@@ -372,7 +364,6 @@ fn departing_visit_keeps_reusable_values_only_through_common_budgeted_ownership(
         .unwrap();
     let values = renderer.evaluation().materializations();
     values.set_test_pressure(memory::Pressure::Normal);
-    let submissions = editor.submissions.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| request_working(editor, spec, input.clone(), cx));
         app.run_until(Duration::from_secs(15), |editor| {
@@ -390,7 +381,6 @@ fn departing_visit_keeps_reusable_values_only_through_common_budgeted_ownership(
                     .clone()
             }),
             &services,
-            &submissions,
         );
         let (key, weak) = app.read(|editor| {
             let source = editor.document.visit.working_view.source().unwrap();

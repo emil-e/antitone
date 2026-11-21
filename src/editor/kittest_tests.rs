@@ -257,8 +257,7 @@ struct FloatCapture {
 // only the optional inspection PNG is quantized/clipped, not the numeric readback.
 struct FloatRenderer {
     device: wgpu::Device,
-    queue: wgpu::Queue,
-    submissions: crate::platform::SubmissionGate,
+    queue: crate::gpu::submission::Queue,
     renderer: egui_wgpu::Renderer,
     capture: Rc<RefCell<FloatCapture>>,
 }
@@ -266,14 +265,12 @@ struct FloatRenderer {
 impl FloatRenderer {
     fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: crate::platform::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         capture: Rc<RefCell<FloatCapture>>,
     ) -> Self {
         Self {
             device: device.clone(),
             queue: queue.clone(),
-            submissions,
             capture,
             renderer: egui_wgpu::Renderer::new(
                 device,
@@ -291,8 +288,8 @@ impl TestRenderer for FloatRenderer {
     fn handle_delta(&mut self, delta: &mut egui::TexturesDelta) {
         for (id, updates) in delta.set.drain() {
             for update in updates {
-                self.renderer
-                    .update_texture(&self.device, &self.queue, id, &update);
+                self.queue
+                    .update_egui_texture(&mut self.renderer, &self.device, id, &update);
             }
         }
         for id in delta.free.drain() {
@@ -336,9 +333,13 @@ impl TestRenderer for FloatRenderer {
             mapped_at_creation: false,
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        let commands =
-            self.renderer
-                .update_buffers(&self.device, &self.queue, &mut encoder, &jobs, &screen);
+        let commands = self.queue.update_egui_buffers(
+            &mut self.renderer,
+            &self.device,
+            &mut encoder,
+            &jobs,
+            &screen,
+        );
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("kittest production callbacks and egui"),
@@ -368,8 +369,8 @@ impl TestRenderer for FloatRenderer {
             },
             texture.size(),
         );
-        self.submissions
-            .submit(&self.queue, commands.into_iter().chain([encoder.finish()]));
+        self.queue
+            .submit(commands.into_iter().chain([encoder.finish()]));
         let (send, receive) = mpsc::channel();
         buffer
             .slice(..)
@@ -431,18 +432,15 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             .request_adapter(&Default::default())
             .await
             .expect("dialog captures require Metal");
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
     editor.document.thumbnails =
         (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
-    let renderer = FloatRenderer::new(
-        &device,
-        &queue,
-        host::App::submission_gate(&editor).clone(),
-        capture,
-    );
+    let renderer = FloatRenderer::new(&device, &queue, capture);
     let state = RefCell::new(None);
     let mut harness = app_harness(&state, editor, renderer);
     harness.enter(|editor, cx| {
@@ -564,7 +562,9 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             .request_adapter(&Default::default())
             .await
             .expect("feedback captures require Metal");
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
     editor.document.thumbnails =
@@ -572,7 +572,6 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     let renderer = FloatRenderer::new(
         &device,
         &queue,
-        host::App::submission_gate(&editor).clone(),
         Rc::new(RefCell::new(FloatCapture::default())),
     );
     let state = RefCell::new(None);
@@ -849,7 +848,12 @@ fn editor_harness_with_thumbnails<R>(
 
 fn editor_harness_with_gpu<R>(
     thumbnails: bool,
-    test: impl FnOnce(Harness<'_, Editor>, Rc<RefCell<FloatCapture>>, wgpu::Device, wgpu::Queue) -> R,
+    test: impl FnOnce(
+        Harness<'_, Editor>,
+        Rc<RefCell<FloatCapture>>,
+        wgpu::Device,
+        crate::gpu::submission::Queue,
+    ) -> R,
 ) -> R {
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -857,7 +861,9 @@ fn editor_harness_with_gpu<R>(
             .request_adapter(&Default::default())
             .await
             .expect("composed UI test requires Metal");
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
     editor.document.thumbnails = (if thumbnails {
@@ -870,12 +876,7 @@ fn editor_harness_with_gpu<R>(
     })
     .with_sources(editor.document.cache.clone());
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
-    let renderer = FloatRenderer::new(
-        &device,
-        &queue,
-        host::App::submission_gate(&editor).clone(),
-        capture.clone(),
-    );
+    let renderer = FloatRenderer::new(&device, &queue, capture.clone());
     let owner = RefCell::new(None);
     let harness = app_harness(&owner, editor, renderer);
     test(harness, capture, device, queue)

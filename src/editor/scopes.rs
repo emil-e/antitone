@@ -332,7 +332,7 @@ impl ScopeInput {
         &self,
         gpu: Arc<GpuScopes>,
         settings: Settings,
-        submissions: crate::gpu::submission::SubmissionGate,
+        submissions: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> ScopePaint {
         ScopePaint::mapped_rendered(
@@ -454,10 +454,13 @@ impl Editor {
             trace.min.y += 4.;
             trace.max.y -= 4.;
         }
+        let Some(queue) = self.document.visit.working_view.queue() else {
+            return;
+        };
         let paint = input.paint(
             gpu.clone(),
             slot.settings,
-            self.submissions.clone(),
+            queue.clone(),
             slot.painter.ctx().clone(),
         );
         slot.painter

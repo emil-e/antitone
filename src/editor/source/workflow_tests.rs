@@ -231,11 +231,8 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
         });
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&Default::default())
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });

@@ -156,7 +156,7 @@ enum OutputFormat {
 fn prepare_source(
     renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     path: PathBuf,
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
@@ -172,7 +172,7 @@ fn prepare_source(
 fn prepare_source_cached(
     renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     path: PathBuf,
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
@@ -198,7 +198,7 @@ fn prepare_source_cached(
 fn prepare_source_scheduled(
     renderers: &crate::renderer::RendererCache,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     path: PathBuf,
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
@@ -249,7 +249,6 @@ fn prepare_source_scheduled(
 pub struct Editor {
     started: bool,
     menus: menu::Menus,
-    submissions: crate::platform::SubmissionGate,
     scopes: Scopes,
     fullscreen: Option<Fullscreen>,
     canvas_frame: canvas::Frame,
@@ -283,16 +282,23 @@ pub struct Editor {
 }
 
 impl Editor {
+    #[cfg(test)]
+    fn submissions(&self) -> &crate::gpu::submission::Queue {
+        self.document
+            .visit
+            .working_view
+            .queue()
+            .expect("initialized editor GPU")
+    }
+
     fn interaction_blocked(&self) -> bool {
         self.activities.has_modal()
     }
 
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let submissions = crate::platform::SubmissionGate::default();
-        let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
+    pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
+        let renderers = Arc::new(crate::renderer::RendererCache::default());
         renderers.prewarm(device.clone(), queue.clone());
-        let developments =
-            source_loading::SourceLoader::with_gpu(device, queue, submissions.clone());
+        let developments = source_loading::SourceLoader::with_gpu(device, queue);
         let thumbnails = Thumbnails::new(
             device.clone(),
             queue.clone(),
@@ -305,7 +311,6 @@ impl Editor {
         let queue = queue.clone();
         let mut editor = Self::state();
 
-        editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
         editor.look.services = Some(look::Services::new(device.limits()));
         editor.source_services = Some(source::Services {
@@ -318,7 +323,6 @@ impl Editor {
             renderers,
             device,
             queue,
-            submissions,
             editor
                 .source_services
                 .clone()
@@ -384,7 +388,7 @@ impl Editor {
         }
     }
 
-    fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &crate::gpu::submission::Queue) {
         self.presentation = pollster::block_on(Presentation::new(device));
         self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
@@ -415,7 +419,6 @@ impl Editor {
         document.project.input = input;
         let workspace_input = workspace_input::WorkspaceInput::default();
         Self {
-            submissions: crate::platform::SubmissionGate::default(),
             developments: None,
             source_services: None,
             source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1551,10 +1554,6 @@ impl host::App for Editor {
 
     fn photo_fullscreen_changed(&mut self, active: bool) {
         self.fullscreen_changed(active);
-    }
-
-    fn submission_gate(&self) -> crate::platform::SubmissionGate {
-        self.submissions.clone()
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {

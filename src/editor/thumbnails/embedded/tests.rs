@@ -659,7 +659,9 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     let developed = Arc::new(
         pollster::block_on(GpuImage::new(
@@ -721,6 +723,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
                     _ => None,
                 })
                 .unwrap();
+            editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), Arc::default()));
             editor
                 .document
                 .thumbnails
@@ -914,7 +917,9 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     let proper = pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         GpuImage::new(
             &device,
             &queue,

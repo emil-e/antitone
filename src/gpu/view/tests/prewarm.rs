@@ -1,13 +1,12 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
     pollster::block_on(async {
-        let (device, _queue, renderer, _kernels) = context().await;
+        let (device, queue, renderer, _kernels) = context().await;
         let image = Arc::new(
             GpuImage::new_shared(
                 &renderer,
@@ -30,6 +29,7 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         .unwrap();
         assert!(matches!(
             crate::viewer::ImagePaint::with_processing(
+                queue.clone(),
                 &presentation,
                 image.clone(),
                 Some(packed.into()),
@@ -42,6 +42,7 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         let inspection = AuthoredPhotograph::from(ProcessingParameters::source());
         assert!(
             crate::viewer::ImagePaint::with_processing(
+                queue.clone(),
                 &presentation,
                 image,
                 Some(inspection),
@@ -111,7 +112,6 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         let source = ViewImage::prefix(
             &device,
             &queue,
-            &Default::default(),
             renderer.clone(),
             kernels.clone(),
             &scan,
@@ -124,7 +124,6 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         let inspection = ViewImage::prefix(
             &device,
             &queue,
-            &Default::default(),
             renderer.clone(),
             kernels,
             &scan,
@@ -137,7 +136,6 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         // This renderer/device has never prepared thumbnails or photographic views.
         let compiled = renderer.evaluation.programs.len();
         let context = egui::Context::default();
-        let gate = SubmissionGate::default();
         let complete = |source: Arc<ViewImage>, input: &AuthoredPhotograph, target| {
             let capture =
                 crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone());
@@ -175,7 +173,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         ] {
             let input = processing_input(&device, calibration(), Default::default(), photo, &scan);
             let view = complete(source.clone(), &input, OutputTarget::Srgb);
-            view.ensure_submitted(&device, &queue, &gate, &context);
+            view.ensure_submitted(&device, &queue, &context);
             assert_eq!(
                 renderer.evaluation.programs.len(),
                 compiled,
@@ -184,7 +182,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         }
         let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(1.2).unwrap());
         let view = complete(inspection, &input, OutputTarget::DisplayP3);
-        view.ensure_submitted(&device, &queue, &gate, &context);
+        view.ensure_submitted(&device, &queue, &context);
         assert_eq!(
             renderer.evaluation.programs.len(),
             compiled,

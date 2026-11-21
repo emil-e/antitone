@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerStack},
@@ -57,12 +56,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             .unwrap(),
         );
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &SubmissionGate::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         let graded = view.product.as_ref().unwrap();
         let actual = read(&device, &queue, &graded.pixels);
         let field = read(

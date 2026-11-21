@@ -1,6 +1,5 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu_export::authored::{Request, write};
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
@@ -12,7 +11,6 @@ use crate::{
 #[test]
 fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_linear_target() {
     let (device, queue, renderer) = super::super::tests::context();
-    let gate = SubmissionGate::default();
     let fixture_directory = tempfile::tempdir().unwrap();
     let mut bytes =
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"))
@@ -160,7 +158,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                 write(
                     &renderer,
                     &device,
-                    (&queue, &gate),
+                    &queue,
                     request,
                     &path,
                     Overwrite::Refuse,

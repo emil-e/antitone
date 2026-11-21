@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 
 fn correlation(values: &[f64], dx: usize, dy: usize) -> f64 {
     let (mut a, mut b, mut aa, mut bb, mut ab, mut count) = (0., 0., 0., 0., 0., 0.);
@@ -190,12 +189,7 @@ fn grain_gpu_grain_matches_at_fixed_frame_sampling_across_source_resolutions() {
                                 ..Default::default()
                             };
                             let view = configured_probe(&device, &renderer, &kernels, config, seed);
-                            view.ensure_submitted(
-                                &device,
-                                &queue,
-                                &SubmissionGate::default(),
-                                &egui::Context::default(),
-                            );
+                            view.ensure_submitted(&device, &queue, &egui::Context::default());
                             let pixels =
                                 read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                             assert_eq!(pixels.len(), config.side * config.side);
@@ -268,12 +262,7 @@ fn grain_gpu_amount_is_preintegration_rms_with_sampling_loss() {
                     },
                     seed,
                 );
-                view.ensure_submitted(
-                    &device,
-                    &queue,
-                    &SubmissionGate::default(),
-                    &egui::Context::default(),
-                );
+                view.ensure_submitted(&device, &queue, &egui::Context::default());
                 let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                 let log: Vec<_> = pixels
                     .iter()

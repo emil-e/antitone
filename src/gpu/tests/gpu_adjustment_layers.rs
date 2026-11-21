@@ -26,11 +26,13 @@ use antitone::processing::RollSettings;
 use glam::{DMat3, DVec2, DVec3};
 use std::sync::Arc;
 
-fn context() -> (wgpu::Device, wgpu::Queue, CameraFixture) {
+fn context() -> (wgpu::Device, crate::gpu::submission::Queue, CameraFixture) {
     pollster::block_on(async {
         let instance = antitone::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         (device, queue, kernel)
     })
@@ -104,7 +106,7 @@ fn source(
 #[allow(clippy::too_many_arguments)]
 fn read(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     kernel: &CameraFixture,
     source: &ProcessingSource,
     n: usize,

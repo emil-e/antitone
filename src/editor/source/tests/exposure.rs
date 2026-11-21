@@ -139,7 +139,9 @@ fn offscreen_known_reference_is_captured_without_rejecting_extreme_grades_or_rea
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     editor.initialize_viewer(&device, &queue);
     editor.document.project.roll.exposure = 16.;

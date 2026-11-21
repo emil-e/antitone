@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
@@ -45,7 +44,7 @@ impl Default for ProbeConfig {
 // Monochrome mode cancels grain in green/red, isolating the image PSF.
 fn probe_view(
     device: &wgpu::Device,
-    _queue: &wgpu::Queue,
+    _queue: &crate::gpu::submission::Queue,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
     [scale, footprint]: [f64; 2],
@@ -176,7 +175,7 @@ fn configured_probe(
 
 fn render_probe(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
     scale_and_footprint: [f64; 2],
@@ -192,12 +191,7 @@ fn render_probe(
         enabled,
         seed,
     );
-    rendered.ensure_submitted(
-        device,
-        queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    rendered.ensure_submitted(device, queue, &egui::Context::default());
     read(device, queue, &rendered.product.as_ref().unwrap().pixels)
 }
 
@@ -332,12 +326,7 @@ fn grain_gpu_bandwidth_and_zoom_scaling() {
                     true,
                     17,
                 );
-                view.ensure_submitted(
-                    &device,
-                    &queue,
-                    &SubmissionGate::default(),
-                    &egui::Context::default(),
-                );
+                view.ensure_submitted(&device, &queue, &egui::Context::default());
                 let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
                 let expected = reconstructed_impulse(&view, scale);
                 assert!(pixels.iter().flatten().all(|v| v.is_finite()));

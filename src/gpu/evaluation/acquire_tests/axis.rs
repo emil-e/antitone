@@ -23,7 +23,7 @@ impl Source for Pixels {
 }
 fn reconstructed(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     context: &Context,
     size: [u32; 2],
     values: &[[f32; 4]],
@@ -40,7 +40,6 @@ fn reconstructed(
         values: values.to_vec(),
     }));
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let mut images = Vec::new();
     for x in (0..size[0]).step_by(columns as usize) {
         let region = [x, 0, columns.min(size[0] - x), size[1]]
@@ -61,7 +60,6 @@ fn reconstructed(
                 context
                     .materialize(
                         queue,
-                        &gate,
                         &scope,
                         request,
                         ImageFormat::Rgba32Float,
@@ -101,7 +99,6 @@ fn reconstructed(
         context
             .materialize(
                 queue,
-                &gate,
                 &scope,
                 request,
                 ImageFormat::Rgba32Float,

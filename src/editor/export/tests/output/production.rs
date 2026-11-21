@@ -6,7 +6,9 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let mut editor = Editor::new(&device, &queue);
         editor.document.thumbnails =
             (Thumbnails::default()).with_sources(editor.document.cache.clone());
@@ -130,9 +132,9 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         }
         let path = directory.path().join("cancelled.tif");
         std::fs::write(&path, b"existing destination").unwrap();
-        let gate = host::App::submission_gate(&editor).clone();
+        let gate = editor.submissions().clone();
         editor = wait(editor, |editor, cx| {
-            gate.configure(|| {
+            gate.hold_submission_lock(|| {
                 editor.export(
                     path.clone(),
                     OutputFormat::Tiff(OutputTarget::DisplayP3),

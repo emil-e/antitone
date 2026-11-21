@@ -12,7 +12,10 @@ use wgpu::util::DeviceExt;
 pub(crate) struct Targets([Target; 2]);
 
 impl Targets {
-    pub(crate) async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
+    pub(crate) async fn new(
+        device: &wgpu::Device,
+        queue: &crate::gpu::submission::Queue,
+    ) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let targets = (|| {
             Ok(Self([
@@ -267,7 +270,7 @@ void main() {{
 
 fn target_resources(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     target: OutputTarget,
 ) -> Result<Target, Error> {
     let (code, tables) = target_assets(target);

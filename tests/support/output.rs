@@ -12,7 +12,6 @@ use antitone::{
         flat::GpuFlatField,
         grading::Grading,
         photograph::{PhotographGraph, display_output},
-        submission::SubmissionGate,
     },
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
@@ -77,7 +76,7 @@ impl Request<'_> {
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &antitone::gpu::submission::Queue,
     request: Request<'_>,
     path: &Path,
     overwrite: Overwrite,
@@ -96,7 +95,7 @@ pub fn write(
 pub fn write_checked(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
+    gpu: &antitone::gpu::submission::Queue,
     request: Request<'_>,
     path: &Path,
     overwrite: Overwrite,

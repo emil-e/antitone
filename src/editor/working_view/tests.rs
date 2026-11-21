@@ -49,12 +49,13 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();
-        let gate = crate::gpu::submission::SubmissionGate::default();
 
         let scan = Scan::open(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -91,7 +92,6 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             let mut sources = ViewImage::prefixes(
                 &device,
                 &queue,
-                &gate,
                 renderer.clone(),
                 kernels.clone(),
                 &scan,

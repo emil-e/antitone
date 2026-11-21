@@ -9,7 +9,7 @@ use crate::{
     frame_raster::FrameRaster,
     geometry::{Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourcePoint},
     gpu::execution::test_support::OutputReference,
-    gpu::{flat::GpuFlatField, submission::SubmissionGate},
+    gpu::flat::GpuFlatField,
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
     scan::Scan,
@@ -124,7 +124,7 @@ fn oriented_crop(scan: &Scan, angle: f64) -> Composition {
 
 fn capture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &GpuRenderer,
     controls: OriginalControls<'_>,
 ) -> Vec<[f32; 4]> {
@@ -134,7 +134,7 @@ fn capture(
     execute(
         renderer,
         device,
-        (queue, &SubmissionGate::default()),
+        queue,
         request,
         |render, complete| {
             for y in (0..size[1]).step_by(TILE[1] as usize) {

@@ -7,7 +7,6 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     let renderer = pollster::block_on(GpuRenderer::new_with_cache_policy(
         &device,
         &queue,
-        SubmissionGate::default(),
         evaluation::CachePolicy { generated_bytes: 0 },
     ))
     .unwrap();
@@ -17,11 +16,10 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     )
     .unwrap();
     let recipe = recipe(&scan, InputSettings::Digital);
-    let gate = SubmissionGate::default();
     let mut original = Source::from_recipe(
         prepared_field(&device, &scan),
         &renderer,
-        (&queue, &gate),
+        &queue,
         &scan,
         &recipe,
     )
@@ -50,7 +48,7 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     let image =
         crate::gpu::repairs::definition::compose(original.image().clone(), &[failed, healthy])
             .unwrap();
-    let mut repaired = Source::from_image(&renderer, (&queue, &gate), image).unwrap();
+    let mut repaired = Source::from_image(&renderer, &queue, image).unwrap();
     assert_eq!(
         repaired.read(region, None, &|| false).unwrap().unwrap(),
         expected

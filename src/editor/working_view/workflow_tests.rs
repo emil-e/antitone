@@ -65,11 +65,8 @@ fn fixture() -> (
     let mut e = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .unwrap()
-            .request_device(&Default::default())
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap()
     });
@@ -109,11 +106,7 @@ fn fixture() -> (
     (e, input, spec, scheduler)
 }
 
-fn complete_frame(
-    frame: &Arc<Frame>,
-    services: &source::Services,
-    submissions: &crate::gpu::submission::SubmissionGate,
-) {
+fn complete_frame(frame: &Arc<Frame>, services: &source::Services) {
     let ui = egui::Context::default();
     for image in std::iter::once(&frame.source).chain(frame.underlay.as_ref()) {
         let rendered = RenderedView::from_image(
@@ -123,7 +116,7 @@ fn complete_frame(
             frame.request.target,
         )
         .unwrap();
-        rendered.ensure_submitted(&services.device, &services.queue, submissions, &ui);
+        rendered.ensure_submitted(&services.device, &services.queue, &ui);
     }
     services
         .device
@@ -311,7 +304,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     let resume = Mutex::new(resume);
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = count.clone();
-    e.submissions.observe_submissions(Arc::new(move || {
+    e.submissions().observe_submissions(Arc::new(move || {
         if observed.fetch_add(1, Ordering::Relaxed) == 0 {
             started.send(()).unwrap();
             resume
@@ -593,14 +586,13 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                 .render(&egui::Context::default())
                 .unwrap()
         });
-        let (rendered, queue, submissions) = app.read(|e| {
+        let (rendered, queue) = app.read(|e| {
             (
                 e.document.visit.working_view.rendered.clone().unwrap(),
                 e.source_services.as_ref().unwrap().queue.clone(),
-                e.submissions.clone(),
             )
         });
-        rendered.ensure_submitted(&device, &queue, &submissions, &egui::Context::default());
+        rendered.ensure_submitted(&device, &queue, &egui::Context::default());
         drop(rendered);
         let layout = definition.domain();
         let evaluation = context
@@ -617,7 +609,6 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             context
                 .materialize(
                     &queue,
-                    &submissions,
                     &scope,
                     evaluation.clone(),
                     crate::gpu::evaluation::ImageFormat::Rgba32Float,
@@ -641,7 +632,6 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         let stats = context
             .read(
                 &queue,
-                &submissions,
                 &evaluation,
                 || false,
                 |_, values| {
@@ -790,17 +780,13 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
         });
         app.pump();
         let ui = egui::Context::default();
-        let (rendered, device, queue, gate) = app.update(|e| {
+        let (rendered, device, queue) = app.update(|e| {
             assert!(
                 e.document.visit.working_view.task.is_none(),
                 "output-only demand must not reacquire originals"
             );
             let services = e.source_services.as_ref().unwrap();
-            let (device, queue, gate) = (
-                services.device.clone(),
-                services.queue.clone(),
-                e.submissions.clone(),
-            );
+            let (device, queue) = (services.device.clone(), services.queue.clone());
             let working = &mut e.document.visit.working_view;
             let frame = working.frame.as_ref().unwrap();
             assert!(shares_inputs(&before.source, &frame.source));
@@ -816,9 +802,9 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             let rendered = working.present(spec.frame(), None).unwrap().unwrap();
             assert!(rendered.processing() == processing);
             assert_eq!(rendered.target, OutputTarget::Srgb);
-            (rendered, device, queue, gate)
+            (rendered, device, queue)
         });
-        rendered.ensure_submitted(&device, &queue, &gate, &ui);
+        rendered.ensure_submitted(&device, &queue, &ui);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert!(!rendered.in_flight());
     });
@@ -844,7 +830,7 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
     let resume = Mutex::new(resume);
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = count.clone();
-    e.submissions.observe_submissions(Arc::new(move || {
+    e.submissions().observe_submissions(Arc::new(move || {
         if observed.fetch_add(1, Ordering::Relaxed) == 0 {
             started.send(()).unwrap();
             resume

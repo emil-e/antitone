@@ -30,7 +30,6 @@ use crate::gpu::photograph::assembly::Assembly;
 use crate::gpu::photograph::test_effects::NeighbourEffect;
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::source::SourceGeometry;
-use crate::gpu::submission::SubmissionGate;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 use crate::rendering::OutputTarget;
@@ -79,7 +78,7 @@ fn neighbour(left: DVec3, center: DVec3, right: DVec3, position: [f64; 2]) -> DV
 
 fn native(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &crate::renderer::GpuRenderer,
     scan: &crate::scan::Scan,
     stages: Assembly,
@@ -90,7 +89,7 @@ fn native(
     crate::gpu::execution::execute(
         renderer,
         device,
-        (queue, &SubmissionGate::default()),
+        queue,
         crate::gpu::execution::test_support::OriginalControls {
             scan,
             field: None,
@@ -206,7 +205,7 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
         let regional = crate::refinement::refine(
             &renderer,
             &device,
-            (&queue, &SubmissionGate::default()),
+            &queue,
             (&scan, None),
             processing.clone(),
             target,
@@ -333,12 +332,7 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
         None,
     )
     .unwrap();
-    view.ensure_submitted(
-        &device,
-        &queue,
-        &SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    view.ensure_submitted(&device, &queue, &egui::Context::default());
     let actual = read_buffer(&device, &queue, &view.product.as_ref().unwrap().pixels);
     let expected: Vec<_> = (0..frame.output[1])
         .flat_map(|y| (0..frame.output[0]).map(move |x| [x, y]))

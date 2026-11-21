@@ -1,8 +1,5 @@
 //! Pinned authoring-reference transforms for GPU conformance checks.
-use crate::{
-    Error,
-    gpu::{aces, submission::SubmissionGate},
-};
+use crate::{Error, gpu::aces};
 use std::{borrow::Cow, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 
@@ -16,7 +13,10 @@ pub(crate) struct ReferenceTransforms {
 }
 
 impl ReferenceTransforms {
-    pub(crate) async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
+    pub(crate) async fn new(
+        device: &wgpu::Device,
+        queue: &crate::gpu::submission::Queue,
+    ) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let buffer = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -189,8 +189,7 @@ void main() {{
     pub(crate) fn apply(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         inverse: bool,
         input: &[[f32; 4]],
     ) -> Result<Vec<[f32; 4]>, Error> {
@@ -270,7 +269,7 @@ void main() {{
             pass.dispatch_workgroups((input.len() as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
-        let submission = submissions.submit(queue, [encoder.finish()]);
+        let submission = queue.submit([encoder.finish()]);
         let (send, receive) = mpsc::channel();
         readback.map_async(wgpu::MapMode::Read, .., move |result| {
             let _ = send.send(result);

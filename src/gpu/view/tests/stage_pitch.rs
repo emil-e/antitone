@@ -117,12 +117,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             }),
         ));
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
-        view.ensure_submitted(
-            &device,
-            &queue,
-            &crate::gpu::submission::SubmissionGate::default(),
-            &egui::Context::default(),
-        );
+        view.ensure_submitted(&device, &queue, &egui::Context::default());
         let pixels = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
         let weights: Vec<f64> = (-8..=8)
             .map(|x| (-0.5 * f64::from(x * x) / 4.).exp())

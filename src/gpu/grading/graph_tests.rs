@@ -89,7 +89,7 @@ fn buffer(device: &wgpu::Device, values: &[[f32; 4]]) -> wgpu::Buffer {
 
 fn record(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     renderer: &crate::renderer::GpuRenderer,
     root: Value,
     region: CellRegion,

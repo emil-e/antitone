@@ -136,7 +136,6 @@ fn declared_disjoint_reads_keep_parent_order_and_do_not_acquire_the_intervening_
         .evaluation()
         .read(
             &queue,
-            &Default::default(),
             &request,
             || false,
             |_, block| {
@@ -200,7 +199,6 @@ fn distinct_source_uploads_survive_nonoverlapping_encoded_lifetimes() {
         .evaluation()
         .read(
             &queue,
-            &Default::default(),
             &request,
             || false,
             |_, block| {
@@ -428,13 +426,7 @@ fn declared_gpu_phase_lowers_against_its_resident_input_bindings() {
         .unwrap();
     renderer
         .evaluation()
-        .submit_with(
-            &queue,
-            &Default::default(),
-            encoder,
-            || false,
-            || recorded.submitted(),
-        )
+        .submit_with(&queue, encoder, || false, || recorded.submitted())
         .unwrap()
         .unwrap();
     let pixels = read_buffer(&device, &queue, &output);

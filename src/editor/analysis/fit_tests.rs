@@ -308,8 +308,7 @@ fn cached_fit_cancellation_waits_for_worker_cleanup_without_blocking_other_cpu_j
             e.source_services
                 .as_ref()
                 .unwrap()
-                .renderers
-                .submissions()
+                .queue
                 .observe_submissions(Arc::new(move || {
                     if enabled.swap(false, Ordering::SeqCst) {
                         entered.send(()).unwrap();

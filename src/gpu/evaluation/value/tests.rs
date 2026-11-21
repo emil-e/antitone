@@ -117,7 +117,7 @@ fn budget(r: CellRegion) -> Tiling {
 }
 fn run(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     value: &Value,
     policy: Policy,
 ) -> (Vec<[f32; 4]>, WorkCounts) {
@@ -129,7 +129,7 @@ fn run(
     )
     .unwrap();
     let result = Executor::default()
-        .run(device, queue, &Default::default(), &plan, || false)
+        .run(device, queue, &plan, || false)
         .unwrap()
         .unwrap();
     (
@@ -222,13 +222,11 @@ fn matching_value_keys_reuse_supersets_and_pass_through_without_source_reads() {
         small_value.identity(),
         "coverage is not a mathematical argument of this operation"
     );
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let scope = context.materializations();
     let first = pollster::block_on(
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 context
                     .request(
@@ -258,7 +256,6 @@ fn matching_value_keys_reuse_supersets_and_pass_through_without_source_reads() {
         context
             .materialize(
                 &queue,
-                &gate,
                 &scope,
                 context
                     .request(
@@ -279,7 +276,7 @@ fn matching_value_keys_reuse_supersets_and_pass_through_without_source_reads() {
     assert!(Arc::ptr_eq(&first.image, &second.image));
     assert_eq!(second.descriptor.region, full);
     assert_eq!(reads.load(Ordering::Relaxed), before);
-    let (pixels, stats) = run_cached(&context, &queue, &gate, &pass, small);
+    let (pixels, stats) = run_cached(&context, &queue, &pass, small);
     for (index, pixel) in pixels.iter().enumerate() {
         let p = [
             small.x + (index % small.width as usize) as i32,
@@ -305,8 +302,7 @@ fn matching_value_keys_reuse_supersets_and_pass_through_without_source_reads() {
 }
 fn run_cached(
     context: &Context,
-    queue: &wgpu::Queue,
-    gate: &crate::gpu::submission::SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
     node: &Value,
     coverage: CellRegion,
 ) -> (Vec<[f32; 4]>, WorkCounts) {
@@ -324,7 +320,6 @@ fn run_cached(
     let counts = context
         .read(
             queue,
-            gate,
             &evaluation,
             || false,
             |_, block| {
@@ -432,7 +427,7 @@ fn materialized_chain_recycles_retired_scratch_without_overwriting_active_inputs
     );
     assert!(plan.scheduled_bytes() < tile.fragment.resources.iter().map(Storage::bytes).sum());
     let execution = execute::Executor::default()
-        .run(&device, &queue, &Default::default(), &plan, || false)
+        .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
     let actual = execute::read(&device, &queue, &execution.pixels);

@@ -3,7 +3,6 @@ use super::*;
 #[test]
 fn fixed_tiles_preserve_rotated_masked_gaussian_math_and_complete_coverage() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let mut plate = Plate::new();
     let [sin, cos] = [0.31f64.sin(), 0.31f64.cos()];
     let [px, py] = plate.domain.grid.pitch;
@@ -37,7 +36,6 @@ fn fixed_tiles_preserve_rotated_masked_gaussian_math_and_complete_coverage() {
     context
         .read(
             &queue,
-            &gate,
             &evaluation,
             || false,
             |region, values| {

@@ -1499,16 +1499,16 @@ async fn fit_and_accept(
             let renderer = renderers.get(&device, &queue)?;
             Ok((
                 renderer.evaluation().clone(),
-                (queue, renderer.submissions.clone()),
+                queue,
                 renderer.drt(crate::rendering::OutputTarget::Srgb).clone(),
             ))
         })
         .await
         .map_err(|error| error.to_string())?;
-        let Some((evaluation, queue_and_gate, classifier_drt)) = gpu else {
+        let Some((evaluation, queue, classifier_drt)) = gpu else {
             return Ok(None);
         };
-        let state = fit::Fit::acquire(evaluation, queue_and_gate, captured, resources, &cancelled)
+        let state = fit::Fit::acquire(evaluation, queue, captured, resources, &cancelled)
             .await
             .map_err(|error| error.to_string())?;
         let Some(state) = state else {

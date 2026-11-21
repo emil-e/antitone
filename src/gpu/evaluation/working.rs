@@ -51,7 +51,7 @@ impl RunWorkingSet {
     pub(super) fn submit_gpu(
         &self,
         device: &wgpu::Device,
-        queue: (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
+        queue: &crate::gpu::submission::Queue,
         encoder: wgpu::CommandEncoder,
         resources: Allocations,
         submitted: impl FnOnce(),

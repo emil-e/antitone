@@ -37,7 +37,7 @@ fn cold_fit_acquires_unresolved_interpretations_before_computation_and_needs_no_
         initialization: Arc::default(),
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let fit = resources.fit(request.clone(), None).unwrap();
     assert_eq!(developments.load(Ordering::Relaxed), 2);
@@ -135,7 +135,7 @@ fn acquired_rasters_establish_facts_before_matching_captured_region_evidence() {
         initialization,
         device,
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+        renderers: Arc::new(crate::renderer::RendererCache::default()),
     };
     let fit = resources.fit(request.clone(), None).unwrap();
     assert_eq!(developments.load(Ordering::Relaxed), 2);
@@ -260,7 +260,7 @@ fn analyze_consumes_unity_interpretations_from_mixed_registration_modes_with_and
             initialization: scope.initialization.clone(),
             device,
             queue,
-            renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+            renderers: Arc::new(crate::renderer::RendererCache::default()),
         };
         let correction = input(&resources, &request);
         let before = request.document.project.clone();

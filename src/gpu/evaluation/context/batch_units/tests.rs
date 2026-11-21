@@ -144,12 +144,10 @@ fn declared_gpu_phases_keep_accumulator_state_across_disconnected_upstream_reads
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let working = RunWorkingSet::default();
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &|| false,
@@ -266,11 +264,9 @@ fn related_declared_units_share_containing_reads_and_release_them_after_completi
                     .unwrap()
             })
             .to_vec();
-        let gate = crate::gpu::submission::SubmissionGate::default();
         let worker = Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &|| false,

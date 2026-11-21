@@ -5,10 +5,13 @@ use std::sync::Mutex;
 fn cold_editor(limits: wgpu::Limits) -> (Editor, Arc<Mutex<Vec<PathBuf>>>) {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: limits,
-        ..Default::default()
-    }))
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        },
+    ))
     .unwrap();
     let reads = Arc::new(Mutex::new(Vec::new()));
     let observed = reads.clone();
@@ -52,13 +55,7 @@ fn cold_editor(limits: wgpu::Limits) -> (Editor, Arc<Mutex<Vec<PathBuf>>>) {
         renderers: renderers.clone(),
     };
     editor.source_services = Some(sources.clone());
-    editor.output_services = Some(Services::new(
-        renderers,
-        device,
-        queue,
-        crate::platform::SubmissionGate::default(),
-        sources,
-    ));
+    editor.output_services = Some(Services::new(renderers, device, queue, sources));
     (editor, reads)
 }
 

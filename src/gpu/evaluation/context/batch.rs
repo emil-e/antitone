@@ -4,8 +4,7 @@ use super::*;
 impl Context {
     pub(crate) fn materialize_many(
         &self,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::submission::SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         scope: &Materializations,
         evaluations: Vec<Evaluation>,
     ) -> Result<Vec<ImageFuture<ImageLayout>>, Error> {
@@ -19,6 +18,6 @@ impl Context {
             ..self.clone()
         };
         let prepared = context.prepare_images(evaluations)?;
-        context.produce_images(queue, gate, prepared)
+        context.produce_images(queue, prepared)
     }
 }

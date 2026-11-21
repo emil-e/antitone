@@ -142,7 +142,7 @@ pub(super) struct Services {
     pub developments: source_loading::SourceLoader,
     pub renderers: Arc<crate::renderer::RendererCache>,
     pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub queue: crate::gpu::submission::Queue,
 }
 
 impl Services {
@@ -338,7 +338,7 @@ impl Developed {
         self,
         renderers: &crate::renderer::RendererCache,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::submission::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Ready, Error> {
         if cancelled() {

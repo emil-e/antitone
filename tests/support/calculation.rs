@@ -97,6 +97,7 @@ impl ImageCalculations for GpuImage {
 }
 
 pub fn image_paint(
+    queue: antitone::gpu::submission::Queue,
     presentation: &Presentation,
     image: Arc<GpuImage>,
     calculation: Option<Calculation>,
@@ -105,10 +106,11 @@ pub fn image_paint(
     let root = calculation
         .map(|calculation| calculation(&image))
         .transpose()?;
-    ImagePaint::with_calculation(presentation, image, root, Default::default(), uv)
+    ImagePaint::with_calculation(queue, presentation, image, root, Default::default(), uv)
 }
 
 pub fn scope_paint(
+    queue: antitone::gpu::submission::Queue,
     gpu: Arc<GpuScopes>,
     image: Arc<GpuImage>,
     calculation: Calculation,
@@ -118,6 +120,7 @@ pub fn scope_paint(
 ) -> Result<ScopePaint, Error> {
     let root = calculation(&image)?;
     ScopePaint::with_calculation(
+        queue,
         gpu,
         image,
         (root, Default::default()),

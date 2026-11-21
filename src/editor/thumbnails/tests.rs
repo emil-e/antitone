@@ -642,7 +642,11 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
     *editor.document = fixture();
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(crate::gpu::submission::request_device(
+        &adapter,
+        &Default::default(),
+    ))
+    .unwrap();
     editor.initialize_viewer(&device, &queue);
     let id = editor.document.state.project.order[0];
     let other = editor.document.state.project.order[1];
@@ -877,7 +881,9 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
             .request_adapter(&Default::default())
             .await
             .unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     });
     for path in [path, native.path().to_owned()] {
         let mut editor = Editor::state();
@@ -1123,7 +1129,9 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
         let document = fixture();
@@ -1637,7 +1645,9 @@ fn camera_product_forecast_bounds_a_square_continuous_source() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -1667,13 +1677,16 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
         let mut editor = Editor::state();
         editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         *editor.document = fixture();
+        editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), Arc::default()));
         editor.document.state.project.order.truncate(36);
         editor
             .document
@@ -1831,7 +1844,9 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("not-a-raw.ARW");
         std::fs::write(&path, b"These bytes cannot be developed by LibRaw").unwrap();

@@ -3,19 +3,14 @@ use super::*;
 #[test]
 fn indeterminate_highlight_never_paints_outside_the_pill_at_either_end() {
     editor_harness(|editor, _| {
-        let (device, queue, submissions) = editor.read(|editor| {
+        let (device, queue) = editor.read(|editor| {
             let services = editor.source_services.as_ref().unwrap();
-            (
-                services.device.clone(),
-                services.queue.clone(),
-                host::App::submission_gate(editor).clone(),
-            )
+            (services.device.clone(), services.queue.clone())
         });
         for width in [280., 800.] {
             let renderer = FloatRenderer::new(
                 &device,
                 &queue,
-                submissions.clone(),
                 Rc::new(RefCell::new(FloatCapture::default())),
             );
             let mut harness = EguiHarness::builder()

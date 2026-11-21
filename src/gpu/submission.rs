@@ -1,114 +1,211 @@
-use std::sync::{Arc, Mutex};
-#[cfg(test)]
-type SubmissionObserver = Arc<dyn Fn() + Send + Sync>;
+//! One submission lane per device, shared by the host and workers.
 
-/// Shared by a hosted queue's UI and background submitters. Surface configuration
-/// must exclude new submissions while wgpu drains the queue. Encoding, uploads and
-/// explicit completion waits remain outside this gate. Device callbacks must not
-/// re-enter it: wgpu can invoke them from configure or submit.
-#[derive(Clone, Default)]
-pub struct SubmissionGate(
-    Arc<Mutex<()>>,
-    #[cfg(any(feature = "ui", test))] Arc<std::sync::atomic::AtomicUsize>,
-    #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
-    #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
-);
+#[cfg(any(feature = "ui", test))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+#[cfg(test)]
+type Observer = Arc<dyn Fn() + Send + Sync>;
+
+/// Request a device with a queue whose submission and surface configuration share one lock.
+pub async fn request_device(
+    adapter: &wgpu::Adapter,
+    descriptor: &wgpu::DeviceDescriptor<'_>,
+) -> Result<(wgpu::Device, Queue), wgpu::RequestDeviceError> {
+    let (device, queue) = adapter.request_device(descriptor).await?;
+    let lane = Lane {
+        queue,
+        #[cfg(feature = "ui")]
+        device: device.clone(),
+        exclusive: Mutex::new(()),
+        #[cfg(any(feature = "ui", test))]
+        pending: Arc::default(),
+    };
+    let queue = Queue(
+        Arc::new(lane),
+        #[cfg(test)]
+        Some(Arc::default()),
+    );
+    Ok((device, queue))
+}
+
+/// Clones share submission authority. Encoding, uploads and polling remain outside the lock.
+/// Device callbacks must not submit or configure: wgpu can invoke them inside either operation.
+#[derive(Clone)]
+pub struct Queue(Arc<Lane>, #[cfg(test)] Option<Arc<Observers>>);
+
+struct Lane {
+    queue: wgpu::Queue,
+    #[cfg(feature = "ui")]
+    device: wgpu::Device,
+    exclusive: Mutex<()>,
+    #[cfg(any(feature = "ui", test))]
+    pending: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct Observers {
+    encoded: Mutex<Option<Observer>>,
+    submitted: Mutex<Option<Observer>>,
+}
 
 /// Keeps the host polling through asynchronous readback, including after queue completion.
 #[cfg(any(feature = "ui", test))]
-pub(crate) struct PendingWork(Arc<std::sync::atomic::AtomicUsize>);
+pub(crate) struct PendingWork(Arc<AtomicUsize>);
+
 #[cfg(any(feature = "ui", test))]
 impl Drop for PendingWork {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::Release);
+        self.0.fetch_sub(1, Ordering::Release);
     }
 }
-impl SubmissionGate {
-    #[cfg(any(feature = "ui", test))]
-    pub(crate) fn track(&self) -> PendingWork {
-        self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        PendingWork(self.1.clone())
-    }
+
+impl Queue {
     pub fn submit(
         &self,
-        queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> wgpu::SubmissionIndex {
         #[cfg(test)]
-        self.observe_encoded();
-        let index = self.exclusive(|| queue.submit(commands));
+        if let Some(observers) = &self.1 {
+            observe(&observers.encoded);
+        }
+        let index = self.exclusive(|| self.0.queue.submit(commands));
         #[cfg(test)]
-        self.observe_submission();
+        if let Some(observers) = &self.1 {
+            observe(&observers.submitted);
+        }
         index
     }
 
-    /// Attach completion before a background submitter can advance the queue fence.
-    pub(crate) fn submit_with_completion(
+    /// Attach completion before another submitter can advance the queue fence.
+    pub fn submit_with_completion(
         &self,
-        queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
         completion: impl FnOnce() + Send + 'static,
     ) -> wgpu::SubmissionIndex {
         #[cfg(test)]
-        self.observe_encoded();
+        if let Some(observers) = &self.1 {
+            observe(&observers.encoded);
+        }
         let index = self.exclusive(|| {
             #[cfg(any(feature = "ui", test))]
-            self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            #[cfg(any(feature = "ui", test))]
-            let pending = self.1.clone();
-            let index = queue.submit(commands);
-            queue.on_submitted_work_done(move || {
+            let pending = self.track();
+            let index = self.0.queue.submit(commands);
+            self.0.queue.on_submitted_work_done(move || {
                 completion();
                 #[cfg(any(feature = "ui", test))]
-                pending.fetch_sub(1, std::sync::atomic::Ordering::Release);
+                drop(pending);
             });
             index
         });
         #[cfg(test)]
-        self.observe_submission();
+        if let Some(observers) = &self.1 {
+            observe(&observers.submitted);
+        }
         index
     }
 
-    /// Observe resources retained by encoded commands before queue retirement can release scratch.
-    #[cfg(test)]
-    pub(crate) fn observe_encoded_resources(&self, observer: SubmissionObserver) {
-        *self.3.lock().unwrap() = Some(observer);
+    pub fn write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+        self.0.queue.write_buffer(buffer, offset, data);
     }
 
-    #[cfg(test)]
-    fn observe_encoded(&self) {
-        let observer = self.3.lock().unwrap().clone();
-        if let Some(observer) = observer {
-            observer();
-        }
+    pub fn write_texture(
+        &self,
+        texture: wgpu::TexelCopyTextureInfo<'_>,
+        data: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    ) {
+        self.0.queue.write_texture(texture, data, layout, size);
     }
 
-    #[cfg(test)]
-    pub(crate) fn observe_submissions(&self, observer: SubmissionObserver) {
-        *self.2.lock().unwrap() = Some(observer);
+    pub fn get_timestamp_period(&self) -> f32 {
+        self.0.queue.get_timestamp_period()
     }
 
-    #[cfg(test)]
-    fn observe_submission(&self) {
-        let observer = self.2.lock().unwrap().clone();
-        if let Some(observer) = observer {
-            observer();
-        }
+    #[cfg(feature = "ui")]
+    pub(crate) fn configure(
+        &self,
+        surface: &wgpu::Surface<'_>,
+        config: &wgpu::SurfaceConfiguration,
+    ) {
+        self.exclusive(|| surface.configure(&self.0.device, config));
+    }
+
+    #[cfg(feature = "ui")]
+    pub(crate) fn present(&self, frame: wgpu::SurfaceTexture) {
+        self.0.queue.present(frame);
+    }
+
+    #[cfg(feature = "ui")]
+    pub fn update_egui_texture(
+        &self,
+        renderer: &mut egui_wgpu::Renderer,
+        device: &wgpu::Device,
+        id: egui::TextureId,
+        delta: &egui::epaint::ImageDelta,
+    ) {
+        renderer.update_texture(device, &self.0.queue, id, delta);
+    }
+
+    // egui's callback ABI receives the raw queue. Antitone callbacks ignore it and
+    // use their captured handle for any work they submit independently of the frame.
+    #[cfg(feature = "ui")]
+    pub fn update_egui_buffers(
+        &self,
+        renderer: &mut egui_wgpu::Renderer,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        jobs: &[egui::ClippedPrimitive],
+        screen: &egui_wgpu::ScreenDescriptor,
+    ) -> Vec<wgpu::CommandBuffer> {
+        renderer.update_buffers(device, &self.0.queue, encoder, jobs, screen)
+    }
+
+    #[cfg(any(feature = "ui", test))]
+    pub(crate) fn track(&self) -> PendingWork {
+        self.0.pending.fetch_add(1, Ordering::Relaxed);
+        PendingWork(self.0.pending.clone())
     }
 
     #[cfg(any(feature = "ui", test))]
     pub(crate) fn pending(&self) -> bool {
-        self.1.load(std::sync::atomic::Ordering::Acquire) != 0
+        self.0.pending.load(Ordering::Acquire) != 0
     }
 
-    #[cfg(any(feature = "ui", test))]
-    pub(crate) fn configure<R>(&self, configure: impl FnOnce() -> R) -> R {
-        self.exclusive(configure)
+    /// Keeps fixture readbacks off the workload's counters without bypassing its lock.
+    #[cfg(test)]
+    pub(crate) fn unobserved(&self) -> Self {
+        Self(self.0.clone(), None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_encoded_resources(&self, observer: Observer) {
+        *self.1.as_ref().unwrap().encoded.lock().unwrap() = Some(observer);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_submissions(&self, observer: Observer) {
+        *self.1.as_ref().unwrap().submitted.lock().unwrap() = Some(observer);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_submission_lock<R>(&self, operation: impl FnOnce() -> R) -> R {
+        self.exclusive(operation)
     }
 
     fn exclusive<R>(&self, operation: impl FnOnce() -> R) -> R {
-        let _guard = self.0.lock().unwrap();
+        let _guard = self.0.exclusive.lock().unwrap();
         operation()
+    }
+}
+
+#[cfg(test)]
+fn observe(slot: &Mutex<Option<Observer>>) {
+    let observer = slot.lock().unwrap().clone();
+    if let Some(observer) = observer {
+        observer();
     }
 }
 
@@ -117,82 +214,85 @@ mod tests {
     use super::*;
     use std::{sync::mpsc, time::Duration};
 
+    fn queue() -> (wgpu::Device, Queue) {
+        pollster::block_on(async {
+            let instance = crate::gpu::instance();
+            let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+            request_device(&adapter, &Default::default()).await.unwrap()
+        })
+    }
+
     #[test]
     fn pending_readback_keeps_host_polling_until_callback_or_abandonment() {
-        let gate = SubmissionGate::default();
-        let clone = gate.clone();
-        let pending = gate.track();
+        let (_, queue) = queue();
+        let clone = queue.clone();
+        let pending = queue.track();
         assert!(clone.pending());
         let callback = move || drop(pending);
         assert!(clone.pending());
         callback();
         assert!(!clone.pending());
-        let pending = gate.track();
+        let pending = queue.track();
         let abandoned = move || drop(pending);
         drop(abandoned);
-        assert!(!gate.pending());
-    }
-    #[test]
-    fn clones_share_the_gate_and_release_it_after_configuration() {
-        let gate = SubmissionGate::default();
-        let worker = gate.clone();
-        assert_eq!(
-            gate.exclusive(|| {
-                assert!(worker.0.try_lock().is_err());
-                42
-            }),
-            42
-        );
-        assert!(worker.0.try_lock().is_ok());
+        assert!(!queue.pending());
     }
 
     #[test]
-    fn queue_submission_waits_until_configuration_releases_the_shared_gate() {
-        pollster::block_on(async {
-            let instance = crate::gpu::instance();
-            let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-            let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-            for observed in [false, true] {
-                let gate = SubmissionGate::default();
-                let worker_gate = gate.clone();
-                let worker_queue = queue.clone();
-                let encoder = device.create_command_encoder(&Default::default());
-                let commands = [encoder.finish()];
-                let (ready, started) = mpsc::channel();
-                let (finished, submitted) = mpsc::channel();
-                let (completed, completion) = mpsc::channel();
-                let worker = gate.configure(|| {
-                    let worker = std::thread::spawn(move || {
-                        ready.send(()).unwrap();
-                        let index = if observed {
-                            worker_gate.submit_with_completion(&worker_queue, commands, move || {
-                                completed.send(()).unwrap();
-                            })
-                        } else {
-                            worker_gate.submit(&worker_queue, commands)
-                        };
-                        finished.send(index).unwrap();
-                    });
-                    started.recv_timeout(Duration::from_secs(5)).unwrap();
-                    assert!(matches!(
-                        submitted.recv_timeout(Duration::from_millis(100)),
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                    ));
-                    worker
+    fn fixture_readback_does_not_reenter_the_workload_observer() {
+        let (device, queue) = queue();
+        let fixture = queue.unobserved();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        queue.observe_submissions(Arc::new(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+            fixture.submit([device.create_command_encoder(&Default::default()).finish()]);
+        }));
+        queue.submit([]);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn cloned_queue_waits_for_configuration_lock_before_submitting() {
+        let (device, queue) = queue();
+        for observed in [false, true] {
+            let worker_queue = queue.clone();
+            let commands = [device.create_command_encoder(&Default::default()).finish()];
+            let (ready, started) = mpsc::channel();
+            let (finished, submitted) = mpsc::channel();
+            let (completed, completion) = mpsc::channel();
+            let worker = queue.hold_submission_lock(|| {
+                let worker = std::thread::spawn(move || {
+                    assert!(worker_queue.0.exclusive.try_lock().is_err());
+                    ready.send(()).unwrap();
+                    let index = if observed {
+                        worker_queue.submit_with_completion(commands, move || {
+                            completed.send(()).unwrap();
+                        })
+                    } else {
+                        worker_queue.submit(commands)
+                    };
+                    finished.send(index).unwrap();
                 });
-                let index = submitted.recv_timeout(Duration::from_secs(5)).unwrap();
-                worker.join().unwrap();
-                device
-                    .poll(wgpu::PollType::Wait {
-                        submission_index: Some(index),
-                        timeout: None,
-                    })
-                    .unwrap();
-                if observed {
-                    completion.recv_timeout(Duration::from_secs(5)).unwrap();
-                }
-                assert!(!gate.pending());
+                started.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert!(matches!(
+                    submitted.recv_timeout(Duration::from_millis(100)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ));
+                worker
+            });
+            let index = submitted.recv_timeout(Duration::from_secs(5)).unwrap();
+            worker.join().unwrap();
+            device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(index),
+                    timeout: None,
+                })
+                .unwrap();
+            if observed {
+                completion.recv_timeout(Duration::from_secs(5)).unwrap();
             }
-        });
+            assert!(!queue.pending());
+        }
     }
 }

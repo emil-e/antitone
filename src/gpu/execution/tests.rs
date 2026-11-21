@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::{
     crop::Crop,
     geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
@@ -28,7 +27,7 @@ fn composition(area: SourceRegion, angle: f64) -> Composition {
 
 pub(super) fn reconstructed(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     engine: &Reconstructor,
     unit: &Unit,
     pixel: impl Fn([u32; 2]) -> [f32; 4],
@@ -46,7 +45,7 @@ pub(super) fn reconstructed(
 
 fn submit_reconstruction(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu::submission::Queue,
     engine: &Reconstructor,
     unit: &Unit,
     pixel: impl Fn([u32; 2]) -> [f32; 4],
@@ -94,7 +93,7 @@ fn submit_reconstruction(
     engine
         .encode(device, &mut encoder, unit, &texture, &working)
         .unwrap();
-    SubmissionGate::default().submit(queue, [encoder.finish()])
+    queue.submit([encoder.finish()])
 }
 
 #[test]

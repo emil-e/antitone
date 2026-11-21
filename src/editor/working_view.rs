@@ -168,7 +168,7 @@ pub(super) struct Acquisition {
 #[derive(Default)]
 pub(super) struct WorkingView {
     pub(super) task: Option<async_executor::Task<()>>,
-    gpu: Option<(wgpu::Device, wgpu::Queue)>,
+    gpu: Option<(wgpu::Device, crate::gpu::submission::Queue)>,
     intent: Option<(FrameRaster, PhotographRequest, OutputTarget)>,
     revision: u64,
     #[cfg(test)]
@@ -188,7 +188,7 @@ pub(super) struct WorkingView {
 }
 
 impl WorkingView {
-    pub(super) fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub(super) fn new(device: wgpu::Device, queue: crate::gpu::submission::Queue) -> Self {
         let mut state = Self::default();
         state.gpu = Some((device, queue));
         state
@@ -263,7 +263,7 @@ impl WorkingView {
         self.gpu.as_ref().map(|(device, _)| device)
     }
 
-    pub(super) fn queue(&self) -> Option<&wgpu::Queue> {
+    pub(super) fn queue(&self) -> Option<&crate::gpu::submission::Queue> {
         self.gpu.as_ref().map(|(_, queue)| queue)
     }
 
@@ -697,8 +697,7 @@ pub(super) async fn acquire_images(
     mailbox: &Arc<Mailbox>,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
-    queue: &wgpu::Queue,
-    submissions: &crate::gpu::submission::SubmissionGate,
+    queue: &crate::gpu::submission::Queue,
 ) -> Option<Completion> {
     loop {
         let (demand, sequence) = {
@@ -758,7 +757,7 @@ pub(super) async fn acquire_images(
             let rendering =
                 demand.rendering(renderer.clone(), kernels.clone(), previous.as_ref())?;
             trace("graph_described");
-            let Some(images) = rendering.produce(queue, submissions, &cancelled).await? else {
+            let Some(images) = rendering.produce(queue, &cancelled).await? else {
                 return Ok(None);
             };
             trace("processed_ready");
@@ -905,11 +904,7 @@ impl Editor {
 }
 
 impl Acquisition {
-    pub async fn prepare(
-        self,
-        services: source::Services,
-        submissions: crate::platform::SubmissionGate,
-    ) -> Result<Option<Completion>, Error> {
+    pub async fn prepare(self, services: source::Services) -> Result<Option<Completion>, Error> {
         let kernels = self.kernels.clone();
         let prepared = crate::background::run(move |stop| {
             if stop.is_cancelled() {
@@ -930,14 +925,7 @@ impl Acquisition {
         let Some((services, renderer, kernels)) = prepared else {
             return Ok(None);
         };
-        Ok(acquire_images(
-            &self.mailbox,
-            &renderer,
-            &kernels,
-            &services.queue,
-            &submissions,
-        )
-        .await)
+        Ok(acquire_images(&self.mailbox, &renderer, &kernels, &services.queue).await)
     }
 }
 
@@ -972,10 +960,9 @@ impl Editor {
             return;
         }
         let owner = Arc::downgrade(&request.mailbox);
-        let submissions = self.submissions.clone();
         let mailbox = request.mailbox.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let acquisition = request.prepare(services, submissions);
+            let acquisition = request.prepare(services);
             let support = async {
                 loop {
                     let changed = mailbox.1.listen();

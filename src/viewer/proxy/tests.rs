@@ -74,12 +74,7 @@ fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_prox
         source.upgrade().is_none(),
         "the endpoint captures pixels, not the proxy owner"
     );
-    p3.ensure_submitted(
-        &device,
-        &queue,
-        &crate::gpu::submission::SubmissionGate::default(),
-        &egui::Context::default(),
-    );
+    p3.ensure_submitted(&device, &queue, &egui::Context::default());
     let pixels = crate::viewer::readback::image_pixels(&device, &queue, &p3.image);
     assert_eq!(pixels.len(), (size[0] * size[1]) as usize);
     assert!(
@@ -112,7 +107,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     .unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
     let spec = crate::gpu::view::request::SourceRequest::inspection(frame).unwrap();
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -164,7 +159,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         OutputTarget::Srgb,
     )
     .unwrap();
-    rendered.ensure_submitted(&device, &queue, &gate, &egui::Context::default());
+    rendered.ensure_submitted(&device, &queue, &egui::Context::default());
     assert_eq!(count.load(Ordering::Relaxed), 1);
     let pixels = crate::viewer::readback::image_pixels(&device, &queue, &rendered.image);
     assert_eq!(pixels.len(), 4);
@@ -182,7 +177,9 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let kernels = crate::gpu::view::ViewKernels::new(&device).await.unwrap();
         let size = [32, 16];
@@ -222,13 +219,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         )
         .unwrap();
         let source = proxy
-            .view_source(
-                &queue,
-                &crate::gpu::submission::SubmissionGate::default(),
-                kernels,
-                &spec.processing_fixture(),
-                spec,
-            )
+            .view_source(&queue, kernels, &spec.processing_fixture(), spec)
             .unwrap();
         assert_eq!(source.spec.frame().output, [16, 8]);
     });

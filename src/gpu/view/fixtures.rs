@@ -95,8 +95,7 @@ impl ViewImage {
     #[allow(clippy::too_many_arguments)]
     pub fn from_processing(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         source: Arc<ProcessingSource>,
@@ -125,7 +124,7 @@ impl ViewImage {
         let image = Self::from_recorded(renderer, kernels, spec, root, region, image)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         image.encode(device, &mut encoder);
-        gate.submit(queue, [encoder.finish()]);
+        queue.submit([encoder.finish()]);
         if let Some(commands) = &image.commands {
             commands.submitted();
         }
@@ -139,8 +138,7 @@ impl ViewImage {
     #[allow(clippy::too_many_arguments)]
     pub fn prefix(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
@@ -151,7 +149,6 @@ impl ViewImage {
         Self::prefixes(
             device,
             queue,
-            gate,
             renderer,
             kernels,
             scan,
@@ -165,8 +162,7 @@ impl ViewImage {
     #[allow(clippy::too_many_arguments)]
     pub fn prefixes(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
@@ -176,15 +172,14 @@ impl ViewImage {
     ) -> Result<Option<Vec<Arc<Self>>>, Error> {
         let scope = renderer.evaluation().test_materializations(false);
         pollster::block_on(Self::original_prefixes(
-            device, queue, gate, renderer, kernels, scan, field, specs, &scope, cancelled,
+            device, queue, renderer, kernels, scan, field, specs, &scope, cancelled,
         ))
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn original_prefixes(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &SubmissionGate,
+        queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
@@ -250,7 +245,7 @@ impl ViewImage {
             .collect::<Vec<_>>();
         let futures = renderer
             .evaluation()
-            .materialize_many(queue, gate, scope, requests)?;
+            .materialize_many(queue, scope, requests)?;
         let mut pending = Box::pin(futures_util::future::try_join_all(futures));
         let result = futures_util::future::poll_fn(|cx| {
             if cancelled() {

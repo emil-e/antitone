@@ -1,5 +1,4 @@
 use super::*;
-use crate::gpu::submission::SubmissionGate;
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
     gpu::test_inputs::AuthoredPhotograph,
@@ -111,19 +110,13 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
         "this local sample exercises ordinary HDR, not arithmetic saturation"
     );
 
-    let gate = SubmissionGate::default();
     let field = scan
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let mut local_source = crate::gpu::repair_source::Source::from_recipe(
-        field,
-        &renderer,
-        (&queue, &gate),
-        &scan,
-        &recipe,
-    )
-    .unwrap();
+    let mut local_source =
+        crate::gpu::repair_source::Source::from_recipe(field, &renderer, &queue, &scan, &recipe)
+            .unwrap();
     let local = crate::dust_repair::BaseImage::read(
         &mut local_source,
         crate::geometry::SourceRegion::from([area.x + 16, area.y + 16, 1, 1]),
@@ -172,7 +165,6 @@ fn repair_demand(
 #[test]
 fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_honours_stops() {
     let (device, queue, renderer) = super::super::tests::context();
-    let gate = SubmissionGate::default();
     let scan = Scan::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
@@ -238,7 +230,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 job(&recipe),
                 (&path, Overwrite::Refuse),
                 &mut Execution::default(),
@@ -260,7 +252,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
             write(
                 &renderer,
                 &device,
-                (&queue, &gate),
+                &queue,
                 job(&recipe),
                 (&path, Overwrite::Confirmed),
                 &mut Execution {
@@ -285,7 +277,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             job(&stale),
             (&path, Overwrite::Confirmed),
             &mut Execution::default(),
@@ -329,7 +321,6 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         "a cell at the crop edge contributes real area"
     );
     let before = project.clone();
-    let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
     for (name, format) in [
         ("edge.tif", Format::Tiff(OutputTarget::Srgb)),
@@ -338,7 +329,7 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         write(
             &renderer,
             &device,
-            (&queue, &gate),
+            &queue,
             Job {
                 scan: &scan,
                 field: None,

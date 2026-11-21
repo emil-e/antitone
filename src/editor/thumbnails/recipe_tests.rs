@@ -6,11 +6,13 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(feature = "ocio-reference")]
 mod pixel_tests;
 
-fn gpu() -> (wgpu::Device, wgpu::Queue) {
+fn gpu() -> (wgpu::Device, crate::gpu::submission::Queue) {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        adapter.request_device(&Default::default()).await.unwrap()
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
     })
 }
 

@@ -5,7 +5,6 @@ fn host_and_preexisting_gpu_values_commit_as_one_ready_group() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let working = RunWorkingSet::default();
     let region = [0, 0, 4, 2].into();
     let destination = gpu(&device, &[[0.; 4]; 8]);
@@ -13,7 +12,6 @@ fn host_and_preexisting_gpu_values_commit_as_one_ready_group() {
         worker: Worker {
             context: &context,
             queue: &queue,
-            gate: &gate,
             scope: &scope,
             working: &working,
             cancelled: &|| false,
@@ -62,7 +60,6 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
-    let gate = crate::gpu::submission::SubmissionGate::default();
     let working = RunWorkingSet::default();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let cancelled = || std::time::Instant::now() >= deadline;
@@ -70,7 +67,6 @@ fn pending_unit_wait_drains_prior_copies_before_the_other_producer_continues() {
     let worker = Worker {
         context: &context,
         queue: &queue,
-        gate: &gate,
         scope: &scope,
         working: &working,
         cancelled: &cancelled,

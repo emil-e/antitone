@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub fn refine(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
-    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
     parameters: impl Into<AuthoredPhotograph>,
     target: OutputTarget,
@@ -27,7 +27,7 @@ pub fn refine(
     refine_cancellable(
         renderer,
         device,
-        (queue, submissions),
+        queue,
         (scan, field),
         parameters,
         (target, view),
@@ -39,7 +39,7 @@ pub fn refine(
 pub(crate) fn refine_cancellable(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
-    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
     parameters: impl Into<AuthoredPhotograph>,
     (target, view): (OutputTarget, ViewRequest),
@@ -62,7 +62,7 @@ pub(crate) fn refine_cancellable(
     refine_definition(
         renderer,
         device,
-        (queue, submissions),
+        queue,
         root,
         (target, view),
         !input.luts().is_empty(),
@@ -73,7 +73,7 @@ pub(crate) fn refine_cancellable(
 pub(crate) fn refine_definition(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
-    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
+    queue: &crate::gpu::submission::Queue,
     original: crate::gpu::evaluation::Value,
     (target, view): (OutputTarget, ViewRequest),
     check_look: bool,
@@ -92,7 +92,7 @@ pub(crate) fn refine_definition(
     let Some(completed) = crate::gpu::execution::regional::execute(
         renderer,
         device,
-        (queue, submissions),
+        queue,
         root,
         check_look,
         &output.linear,

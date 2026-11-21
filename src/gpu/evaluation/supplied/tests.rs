@@ -142,10 +142,7 @@ fn recorded_arguments_keep_the_complete_unnamed_calculation_and_own_values_witho
     recorded
         .encode_result(&device, &mut encoder, &output)
         .unwrap();
-    context
-        .submit(&queue, &Default::default(), encoder, || false)
-        .unwrap()
-        .unwrap();
+    context.submit(&queue, encoder, || false).unwrap().unwrap();
     let actual = execute::read(&device, &queue, &output);
     assert_eq!(
         actual,
@@ -276,10 +273,7 @@ fn materialized_consumers_recycle_scratch_without_overwriting_a_supplied_value()
     recorded
         .encode_result(&device, &mut encoder, &output)
         .unwrap();
-    context
-        .submit(&queue, &Default::default(), encoder, || false)
-        .unwrap()
-        .unwrap();
+    context.submit(&queue, encoder, || false).unwrap().unwrap();
     assert_eq!(
         execute::read(&device, &queue, &output),
         vec![[4., 2., -4., 1.], [8., 4., -8., 2.]]
@@ -299,7 +293,6 @@ fn supplied_values_reject_another_definition_and_malformed_storage() {
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, definition.clone()),
                 ImageFormat::Rgba32Float,
@@ -397,7 +390,6 @@ fn produced_photographic_values_can_supply_their_captured_group_and_resolve_stag
         context
             .materialize(
                 &queue,
-                &Default::default(),
                 &scope,
                 request(&context, root.clone()),
                 ImageFormat::Rgba32Float,

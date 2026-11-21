@@ -134,13 +134,16 @@ impl Operation for Signed {
     }
 }
 
-fn collect(context: &Context, queue: &wgpu::Queue, query: &Evaluation) -> Vec<[f32; 4]> {
+fn collect(
+    context: &Context,
+    queue: &crate::gpu::submission::Queue,
+    query: &Evaluation,
+) -> Vec<[f32; 4]> {
     let region = query.region().bounds;
     let mut pixels = vec![[0.; 4]; region.width as usize * region.height as usize];
     context
         .read(
             queue,
-            &Default::default(),
             query,
             || false,
             |block, values| {
@@ -158,7 +161,12 @@ fn collect(context: &Context, queue: &wgpu::Queue, query: &Evaluation) -> Vec<[f
     pixels
 }
 
-fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch: u32) {
+fn exercise(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    photo: DustyPhoto,
+    batch: u32,
+) {
     let context = Context::new(
         device,
         CachePolicy {
@@ -167,7 +175,7 @@ fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch
     );
     let scope = context.materializations();
     scope.set_test_pressure(crate::sys::MemoryPressure::Normal);
-    let gate = crate::gpu::submission::SubmissionGate::default();
+    let gate = queue.clone();
     let camera = source(Arc::new(photo));
     let query = context
         .request(
@@ -183,7 +191,6 @@ fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch
         context
             .materialize(
                 queue,
-                &gate,
                 &scope,
                 query,
                 ImageFormat::Rgba16Uint,
@@ -249,7 +256,6 @@ fn exercise(device: &wgpu::Device, queue: &wgpu::Queue, photo: DustyPhoto, batch
             context
                 .materialize(
                     queue,
-                    &gate,
                     &scope,
                     query.clone(),
                     ImageFormat::Rgba32Float,

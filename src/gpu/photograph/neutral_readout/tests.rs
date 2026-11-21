@@ -32,7 +32,6 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
     let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
     let scalar = crate::processing::InputPipeline::new(input, matrix).unwrap();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let gate = crate::gpu::submission::SubmissionGate::default();
 
     for raw in [DVec3::ZERO, DVec3::new(0.07, 0.08, 0.09)] {
         let codes = (raw * 65535.).as_vec3();
@@ -72,7 +71,6 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
         context
             .read(
                 &queue,
-                &gate,
                 &evaluation,
                 || false,
                 |_, pixels| {
