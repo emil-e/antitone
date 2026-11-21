@@ -6,7 +6,7 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRegion,
     gpu::{
-        evaluation::{self, CellRegion, Domain, Grid, Meaning, Region, Tiling, Value},
+        evaluation::{self, CellRegion, Domain, Grid, Region, Tiling, Value},
         flat::GpuFlatField,
     },
     processing::NegativeInput,
@@ -26,7 +26,6 @@ mod tests;
 
 struct Pixels {
     pixels: Vec<[f32; 4]>,
-    meaning: Meaning,
 }
 
 impl evaluation::Source for Pixels {
@@ -34,7 +33,6 @@ impl evaluation::Source for Pixels {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [1, self.pixels.len() as u32])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: self.meaning,
         }
     }
 
@@ -129,10 +127,7 @@ impl Evidence {
             .map(|point| source.pixel_samples(point[0], point[1]))
             .collect::<Result<Vec<_>, _>>()?;
         let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
-            evaluation::source(Arc::new(Pixels {
-                pixels: codes,
-                meaning: Meaning::CameraCodes,
-            })),
+            evaluation::source(Arc::new(Pixels { pixels: codes })),
             field,
             &positions,
         )?;
@@ -148,10 +143,7 @@ impl Evidence {
             ));
         }
         Ok(Self {
-            camera: evaluation::source(Arc::new(Pixels {
-                pixels,
-                meaning: Meaning::Camera,
-            })),
+            camera: evaluation::source(Arc::new(Pixels { pixels })),
             weights: selected.into_iter().map(|(_, weight)| weight).collect(),
         })
     }

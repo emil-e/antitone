@@ -38,7 +38,6 @@ fn rotated_cell_areas_preserve_constant_mass_at_large_coordinates_and_true_sourc
     let domain = Domain {
         bounds: Some([0, 0, 1, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     for origin in [0., 1024., 8192.] {
         let code = format!(
@@ -61,7 +60,6 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
         );
         let root = pointwise(
             operators::source(Arc::new(Chart { domain, marker: 0. })),
-            Meaning::Graded,
             Function::new(code, "area_control"),
         );
         let plan = super::tests::make_plan(root, [1, 1]);
@@ -99,7 +97,6 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
                     pitch: [0.3, 0.7],
                     coverage: 1,
                 },
-                meaning: Meaning::Graded,
             };
             let mut output = domain;
             output.bounds = Some([0, 0, 4, 2].into());

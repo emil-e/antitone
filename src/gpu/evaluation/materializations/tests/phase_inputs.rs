@@ -9,7 +9,6 @@ fn image(device: &wgpu::Device, key: u32, value: f32) -> Image<ImageLayout> {
             domain: Domain {
                 bounds: Some(region),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Neutral,
             },
             region,
             format: ImageFormat::Rgba32Float,

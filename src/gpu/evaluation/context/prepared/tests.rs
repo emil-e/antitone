@@ -10,7 +10,6 @@ impl Source for Pixels {
         Domain {
             bounds: Some([0, 0, 8, 4].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -252,7 +251,7 @@ fn shifted(source: Value, delta: f32) -> Value {
         value::Access::Pointwise,
     )
     .with_uniform("Parameters", &[delta, 0., 0., 0.]);
-    value::pointwise(source, Meaning::Graded, operation).unwrap()
+    value::pointwise(source, operation).unwrap()
 }
 
 #[test]

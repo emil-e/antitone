@@ -53,7 +53,6 @@ fn aggregate_admission_of_a_nested_gpu_result_preserves_individually_admitted_ro
     let domain = Domain {
         bounds: Some([0, 0, 31, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let input = Value::new(
         domain,

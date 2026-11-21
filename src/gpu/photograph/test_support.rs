@@ -100,7 +100,6 @@ impl CameraFixture {
                 raster.size(),
             )),
             grid: Grid::from_raster(raster),
-            meaning: Meaning::CameraCodes,
         };
         let camera = Value::from_operation(
             domain,

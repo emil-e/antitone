@@ -302,7 +302,6 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
             Domain {
                 bounds: Some([0, 0, 11648, 8736].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::CameraCodes,
             }
         }
 

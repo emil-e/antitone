@@ -5,7 +5,6 @@ fn recording_values() -> (Value, Value, Domain, CellRegion) {
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Arguments,
     };
     let seed = value::Value::new(
         domain,
@@ -23,7 +22,6 @@ fn recording_values() -> (Value, Value, Domain, CellRegion) {
     let seed = seed;
     let root = value::pointwise(
         seed.clone(),
-        Meaning::Arguments,
         value::Operation::new(
             "recording doubled pixels",
             (),
@@ -51,7 +49,6 @@ fn recorded_value_images_publish_after_commit_without_blocking_independent_produ
         let domain = Domain {
             bounds: Some(CellRegion::new([0, 0], [4, 4])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Arguments,
         };
         let layout = ImageLayout {
             domain,

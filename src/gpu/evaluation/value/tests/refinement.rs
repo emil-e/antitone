@@ -31,7 +31,6 @@ fn input(region: CellRegion, named: bool) -> (Value, Arc<AtomicUsize>) {
         domain: Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
         },
         named,
         cells: cells.clone(),
@@ -214,7 +213,6 @@ fn shared_constituents_keep_each_window_stride_when_concatenated() {
     let value = Value::captured(
         Domain {
             bounds: Some(flat),
-            meaning: Meaning::Arguments,
             grid: source.domain().grid,
         },
         vec![source],

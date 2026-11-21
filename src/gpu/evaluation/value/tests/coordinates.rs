@@ -8,7 +8,6 @@ fn pixel_world_coordinates_preserve_small_offsets_at_large_integer_cell_origins(
         let domain = Domain {
             bounds: Some(area),
             grid: Grid::axis_aligned([2. - f64::from(x) * 0.5, -1.], [0.5, 2.]),
-            meaning: Meaning::Graded,
         };
         let value = Value::new(
             domain,

@@ -4,7 +4,6 @@ fn generated_layout() -> ImageLayout {
         domain: Domain {
             bounds: Some(region),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Arguments,
         },
         region,
         format: ImageFormat::Rgba32Float,
@@ -110,7 +109,6 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
             coverage: 8,
             ..Grid::axis_aligned([0.; 2], [1.; 2])
         },
-        meaning: Meaning::Graded,
     };
     let reads = Arc::new(AtomicUsize::new(0));
     let source = super::super::source(Arc::new(Pixels {
@@ -771,7 +769,6 @@ fn original_and_reconstruction_definitions_own_their_value_identity() {
     let output = Domain {
         bounds: Some([0, 0, 4, 3].into()),
         grid: Grid::axis_aligned([1., 2.], [2., 3.]),
-        meaning: Meaning::CameraCodes,
     };
     let reduced = super::super::reconstruction::reconstruct(first, output).unwrap();
     let same = super::super::reconstruction::reconstruct(second.clone(), output).unwrap();

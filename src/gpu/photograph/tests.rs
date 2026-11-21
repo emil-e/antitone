@@ -30,7 +30,6 @@ impl Source for Codes {
         Domain {
             bounds: Some(self.area.try_into().unwrap()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::CameraCodes,
         }
     }
 
@@ -123,7 +122,6 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             coverage: 8,
             ..Grid::axis_aligned([0., 48.], [128., 8.])
         },
-        meaning: Meaning::Graded,
     };
     let compose = |stages: &crate::gpu::photograph::assembly::Assembly| {
         let photograph = PhotographGraph::authored(
@@ -320,7 +318,6 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         Some(Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
     )
     .unwrap();
-    assert_eq!(root.domain().meaning, Meaning::Camera);
     let evaluation = renderer
         .evaluation()
         .request(
@@ -559,7 +556,6 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         let grading = input.grade().unwrap().for_grid(0);
         let doubled = pointwise(
             photo.neutral.clone(),
-            Meaning::Neutral,
             Function {
                 code: r#"
 fn double(p: vec4f, pos: vec2f) -> vec4f {

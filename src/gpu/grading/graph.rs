@@ -156,10 +156,7 @@ impl Grading {
                 grading.active_layers = active_layers;
                 images.push(grading.compose(borrowed_input(domain))?);
                 if active_layers {
-                    images.push(grading.layers(borrowed_input(Domain {
-                        meaning: Meaning::Graded,
-                        ..domain
-                    }))?);
+                    images.push(grading.layers(borrowed_input(domain))?);
                 }
             }
         }
@@ -206,18 +203,12 @@ impl Grading {
         roll: crate::processing::RollSettings,
         coverage: u32,
     ) -> Result<Value, Error> {
-        if input.domain().meaning != Meaning::Neutral {
-            return Err(Error::InvalidParameter("Roll requires neutral AP1"));
-        }
         let parameters = crate::gpu::parameters::ProcessingParameters::photographic(roll)?;
         let function = Function::new(Grading::shader(), "evaluation_roll")
             .with_uniform(2, &parameters)
             .with_uniform(8, &grading_context(&parameters, coverage));
         Ok(Value::from_operation(
-            Domain {
-                meaning: Meaning::Graded,
-                ..input.domain()
-            },
+            input.domain(),
             Some(input),
             Grade {
                 definition: GradeDefinition::Roll(roll, coverage),
@@ -227,11 +218,6 @@ impl Grading {
     }
 
     pub fn layers(&self, input: Value) -> Result<Value, Error> {
-        if input.domain().meaning != Meaning::Graded {
-            return Err(Error::InvalidParameter(
-                "adjustment layers require graded AP1",
-            ));
-        }
         Ok(if self.active_layers {
             Value::from_operation(
                 input.domain(),

@@ -67,7 +67,6 @@ fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_ext
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let root = reconstruct(compose(damaged, &[repair(40, 32)]).unwrap(), domain).unwrap();
     let budget = Tiling {

@@ -34,7 +34,6 @@ fn repeated_named_and_anonymous_phase_reads_share_their_actual_captured_input() 
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     for named in [false, true] {
         let cells = Arc::new(AtomicUsize::new(0));

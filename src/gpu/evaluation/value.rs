@@ -457,15 +457,7 @@ impl Value {
 
     /// Flatten and concatenate pixel regions by byte movement, not pixel arithmetic.
     #[cfg(test)]
-    pub(crate) fn concatenate(mut inputs: Vec<Value>) -> Result<Value, Error> {
-        if inputs.len() == 1
-            && inputs[0].domain().meaning == Meaning::Arguments
-            && inputs[0].coverage().x == 0
-            && inputs[0].coverage().y == 0
-            && inputs[0].coverage().height == 1
-        {
-            return Ok(inputs.pop().unwrap());
-        }
+    pub(crate) fn concatenate(inputs: Vec<Value>) -> Result<Value, Error> {
         let mut cells = 0u32;
         for input in &inputs {
             let r = input.coverage();
@@ -492,7 +484,6 @@ impl Value {
             Domain {
                 bounds: Some(region),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Arguments,
             },
             region,
             inputs,

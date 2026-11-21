@@ -18,10 +18,7 @@ fn expression_nodes<T: Clone>(
     steps: usize,
     new: impl Fn(Domain, CellRegion, Vec<T>, Operation) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    let arguments = Domain {
-        meaning: Meaning::Arguments,
-        ..domain
-    };
+    let arguments = domain;
     let seed=new(arguments,region,vec![source],
         Operation::new("paired sample witness v1",(),"fn pixel(p:vec2i, at:vec2f, value:vec4f)->array<vec4f,2>{return array<vec4f,2>(vec4f(value.rgb,1.0),vec4f(value.w,0.0,0.0,0.0));}","pixel",Access::Pointwise).with_shape(Shape::Pair))?;
     let mut current = seed.clone();

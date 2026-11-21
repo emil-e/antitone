@@ -10,10 +10,8 @@ struct Square;
 
 impl Square {
     fn compose(&self, input: Value) -> Result<Value, Error> {
-        let meaning = input.domain().meaning;
         Ok(evaluation::pointwise(
             input,
-            meaning,
             evaluation::Function {
                 code: "fn square(pixel: vec4f, position: vec2f) -> vec4f { return vec4f(pixel.rgb * pixel.rgb, pixel.w); }".into(),
                 symbol: "square",

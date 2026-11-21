@@ -7,11 +7,9 @@ fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
     let domain = Domain {
         bounds: Some(CellRegion::new([0, 0], [width, height])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let root = pointwise(
         resident::raster_input(domain),
-        Meaning::Graded,
         Function {
             code: r#"
 fn mark(p: vec4f, position: vec2f) -> vec4f {
@@ -103,7 +101,6 @@ fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
     let domain = Domain {
         bounds: Some([0, 0, 16, 16].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let region = domain.finite().unwrap();
     let bytes = u64::from(region.width) * u64::from(region.height) * 16;

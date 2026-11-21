@@ -70,14 +70,10 @@ impl PhotographGraph {
                 coverage: 1,
                 ..Grid::axis_aligned([0.; 2], [1.; 2])
             },
-            meaning: Meaning::Neutral,
         };
         let mut images = Grading::warmup_values(device, domain)?;
         images.push(inspect(
-            borrowed_input(Domain {
-                meaning: Meaning::Inspection,
-                ..domain
-            }),
+            borrowed_input(domain),
             ProcessingParameters::source(),
         )?);
         for image in images {

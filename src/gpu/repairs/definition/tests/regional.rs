@@ -32,7 +32,6 @@ impl Source for Plate {
         Domain {
             bounds: Some([0, 0, 512, 256].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -66,7 +65,6 @@ fn view(repairs: &[Repair]) -> Value {
     let domain = Domain {
         bounds: Some([0, 0, 256, 128].into()),
         grid: Grid::axis_aligned([0.; 2], [2.; 2]),
-        meaning: Meaning::Neutral,
     };
     reconstruct(compose(base, repairs).unwrap(), domain).unwrap()
 }
@@ -271,7 +269,6 @@ fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_option
     let domain = Domain {
         bounds: Some([0, 0, 256, 128].into()),
         grid: Grid::axis_aligned([0.; 2], [2.; 2]),
-        meaning: Meaning::Neutral,
     };
     let regional = reconstruct(repaired.clone(), domain).unwrap();
     let direct = crate::gpu::evaluation::reconstruct(repaired, domain).unwrap();
@@ -454,7 +451,6 @@ fn unbounded_view_regions_with_negative_origins_keep_real_source_edges() {
     let domain = Domain {
         bounds: None,
         grid: Grid::axis_aligned([0.; 2], [2.; 2]),
-        meaning: Meaning::Neutral,
     };
     let tiled = reconstruct(repaired.clone(), domain).unwrap();
     let direct = crate::gpu::evaluation::reconstruct(repaired, domain).unwrap();

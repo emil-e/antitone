@@ -12,11 +12,6 @@ use crate::{
 mod tests;
 
 pub(crate) fn normalized(camera: Value, negative: NegativeInput) -> Result<Value, Error> {
-    if camera.domain().meaning != Meaning::Camera {
-        return Err(Error::InvalidParameter(
-            "native response requires normalized camera light",
-        ));
-    }
     let program = InputTransform::new(negative, glam::DMat3::IDENTITY)?;
     PhotographGraph::native_positive(camera, program)
 }
@@ -58,7 +53,6 @@ impl Source for ProvisionalPositive {
         Domain {
             bounds: Some(CellRegion::new([0, 0], self.size)),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
 

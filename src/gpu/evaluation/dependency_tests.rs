@@ -11,7 +11,6 @@ impl Source for Coordinates {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [1000, 20])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn identity(&self) -> Option<RetainedKey> {
@@ -171,7 +170,6 @@ fn distinct_source_uploads_survive_nonoverlapping_encoded_lifetimes() {
     }));
     let a = pointwise(
         a,
-        Meaning::Neutral,
         Function::new(
             "fn triple(p: vec4f, position: vec2f) -> vec4f { return vec4f(3. * p.rgb, p.w); }",
             "triple",

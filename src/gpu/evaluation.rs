@@ -85,6 +85,8 @@ mod plan;
 
 #[cfg(feature = "editor")]
 mod inspection;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) use inspection::has_inspection;
 #[cfg(feature = "editor")]
 pub(crate) use inspection::inspect;
 

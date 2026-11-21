@@ -53,7 +53,6 @@ fn reconstruction(bounds: Option<Rect>) -> Reconstruction {
         input: Domain {
             bounds,
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         },
         mapping,
         packed: mapping,

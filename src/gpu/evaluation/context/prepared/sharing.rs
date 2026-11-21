@@ -149,10 +149,7 @@ fn discover(
         let spatial = node.missing
             && node.source_work
             && !node.parents.is_empty()
-            && node.value.inputs().iter().any(|input| {
-                input.domain().meaning == node.value.domain().meaning
-                    && input.domain().grid != node.value.domain().grid
-            });
+            && super::super::super::reconstruction::is_projection(&node.value);
         let source = !node.source_slices.is_empty()
             && !node.parents.is_empty()
             && node.value.operation().source().is_some()

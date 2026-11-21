@@ -10,12 +10,11 @@ pub(super) fn frame_input(
     compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
     sampling: Sampling,
 ) -> Result<(FrameRaster, [u32; 2]), Error> {
-    use crate::gpu::evaluation::{CellRegion, Domain, Grid, Meaning, borrowed_input};
+    use crate::gpu::evaluation::{CellRegion, Domain, Grid, borrowed_input};
     let requested = CellRegion::new([0, 0], output.output).validate()?;
     let input = borrowed_input(Domain {
         bounds: matches!(sampling, Sampling::CameraCells { .. }).then_some(requested),
         grid: Grid::from_frame(output),
-        meaning: Meaning::Neutral,
     });
     let required = dependency_bounds(&input, compose, requested)?;
     let low = [required.x, required.y];
@@ -30,11 +29,10 @@ pub(super) fn original_input(
     requested: SourceRegion,
     compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
 ) -> Result<SourceRegion, Error> {
-    use crate::gpu::evaluation::{Domain, Grid, Meaning, borrowed_input};
+    use crate::gpu::evaluation::{Domain, Grid, borrowed_input};
     let input = borrowed_input(Domain {
         bounds: Some(source.try_into()?),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     });
     dependency_bounds(&input, compose, requested.try_into()?)?.source()
 }

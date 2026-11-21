@@ -19,11 +19,6 @@ impl ViewImage {
                 coverage: 8,
                 ..e::Grid::from_frame(spec.plan().output())
             },
-            meaning: if spec.is_inspection() {
-                e::Meaning::Inspection
-            } else {
-                e::Meaning::Neutral
-            },
         });
         Self {
             spec,

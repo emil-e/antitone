@@ -79,7 +79,6 @@ fn domain() -> Domain {
     Domain {
         bounds: Some([0, 0, 16, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     }
 }
 fn check(root: Value, targets: Vec<(Value, Rect)>) -> bool {

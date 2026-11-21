@@ -152,7 +152,6 @@ fn supplied(source: &wgpu::Buffer, dimensions: [u32; 4]) -> SuppliedImage {
             coverage: dimensions[2],
             ..Grid::axis_aligned([0.; 2], [1.; 2])
         },
-        meaning: Meaning::Graded,
     };
     SuppliedImage::from_buffer(
         borrowed_input(domain),
@@ -439,7 +438,6 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                         coverage,
                         ..Grid::axis_aligned([0.; 2], [1.; 2])
                     },
-                    meaning: Meaning::Graded,
                 };
                 let image = display_output(
                     borrowed_input(domain),
@@ -646,7 +644,6 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
             coverage: 8,
             ..Grid::axis_aligned([0.; 2], [1.; 2])
         },
-        meaning: Meaning::Graded,
     };
     #[derive(Debug, PartialEq, Hash)]
     struct Nonfinite;
@@ -835,12 +832,34 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
 }
 
 #[test]
+fn float_attachment_preserves_scene_linear_rgb_and_converts_coverage_to_alpha() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let pixels = [[-0.125, 0.25, 3.5, 8.], [1.5, -0.25, 0.5, 9.]];
+    let source = supplied(&buffer(&device, &pixels), [2, 1, 8, 0]);
+    let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
+    let recording = crate::gpu::recorded_image::Texture::new(
+        renderer.evaluation(),
+        &device,
+        source.clone(),
+        source.definition().clone(),
+        &output,
+    )
+    .unwrap();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    recording.encode(&device, &mut encoder).unwrap();
+    queue.submit([encoder.finish()]);
+    assert_eq!(
+        read_texture(&device, &queue, &output),
+        [[-0.125, 0.25, 3.5, 1.], [1.5, -0.25, 0.5, 1.]]
+    );
+}
+
+#[test]
 fn display_attachment_admission_checks_format_extent_and_complete_grid() {
     let (device, _queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let budget = Tiling { tile: [3, 2] };
     let image = renderer

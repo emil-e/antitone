@@ -9,7 +9,6 @@ fn verify(frame: FrameRaster, exterior: bool) {
     let input = Domain {
         bounds: Some(area.try_into().unwrap()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let mut grid = Grid::from_frame(frame);
     grid.coverage = 8;
@@ -19,7 +18,6 @@ fn verify(frame: FrameRaster, exterior: bool) {
             frame.output,
         )),
         grid,
-        meaning: Meaning::Neutral,
     };
     let node = reconstruct(super::super::super::super::borrowed_input(input), output).unwrap();
     let op = (node.operation.as_ref() as &dyn std::any::Any)

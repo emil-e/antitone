@@ -82,7 +82,6 @@ impl Source for Ramp {
         Domain {
             bounds: Some([0, 0, 1000, 20].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Neutral,
         }
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {

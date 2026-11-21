@@ -25,7 +25,6 @@ fn large_reduction_uses_representable_contributions_on_portable_bindings() {
     let input = raster_input(Domain {
         bounds: Some(Rect::new([0; 2], [4096; 2])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     });
     let mapping = Mapping {
         start: [0.; 2],
@@ -67,7 +66,6 @@ fn maximum_source_support_mask_fits_portable_device_bindings() {
     let domain = Domain {
         bounds: Some(Rect::new([0; 2], [SOURCE_TILE[0], SOURCE_TILE[1] + 1])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     let mapping = Mapping {
         start: [256., 0.],

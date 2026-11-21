@@ -30,7 +30,6 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         e::Domain {
             bounds: Some(area.try_into().unwrap()),
             grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: e::Meaning::Neutral,
         },
         vec![[0.1, 0.2, 0.3, 0.]; area.width as usize * area.height as usize],
     )

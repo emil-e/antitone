@@ -105,7 +105,6 @@ fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_floor_flags
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::from_raster(raster),
-        meaning: Meaning::Inspection,
     };
     let values = [
         [-0.5, 2., 0.25, 9.],

@@ -42,16 +42,7 @@ fn pixel(cell:vec2i,position:vec2f,p:Parameters)->vec4f {
         value::Access::Neighborhood,
     )
     .with_uniform("Parameters", &[seed, 0u32, 0, 0]);
-    value::Value::new(
-        Domain {
-            meaning: Meaning::Arguments,
-            ..domain
-        },
-        bounds,
-        vec![],
-        operation,
-    )
-    .unwrap()
+    value::Value::new(domain, bounds, vec![], operation).unwrap()
 }
 
 struct ApplyField;
@@ -96,7 +87,6 @@ fn domain() -> Domain {
     Domain {
         bounds: Some([11, 17, 9, 7].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     }
 }
 
@@ -308,7 +298,8 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
                 Vec::new(),
             )
             .unwrap();
-        let reserved = first.cached_image(Meaning::Arguments).cloned();
+        let field_key = field(d, 7).identity().unwrap().clone();
+        let reserved = first.cached_image(&field_key).cloned();
         assert!(
             reserved.is_some(),
             "recording owns its field even without optional retention"
@@ -337,7 +328,7 @@ fn recorded_generated_values_reuse_the_scope_without_program_history() {
             )
             .unwrap();
         if let Some(field) = &reserved {
-            let reused = next.cached_image(Meaning::Arguments).unwrap();
+            let reused = next.cached_image(&field_key).unwrap();
             assert_eq!(
                 field.pixels, reused.pixels,
                 "sharing is by image value, not a previous-program parameter"
@@ -388,10 +379,7 @@ fn abandoning_an_unsubmitted_generated_value_releases_its_reservation() {
         },
     );
     let scope = context.test_materializations(true);
-    let domain = Domain {
-        meaning: Meaning::Arguments,
-        ..domain()
-    };
+    let domain = domain();
     let layout = ImageLayout {
         domain,
         region: domain.finite().unwrap(),

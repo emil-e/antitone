@@ -287,45 +287,6 @@ fn display_reference_can_deliver_linear_float_or_encoded_rgb16_without_a_file_co
 }
 
 #[test]
-fn scene_rgb16_is_rejected_before_the_sink_and_valid_float_execution_remains_usable() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let scan = scan();
-    let called = Cell::new(false);
-    let invalid = request(
-        &scan,
-        OutputReference::SceneReferred,
-        SampleEncoding::Rgb16(OutputTarget::Srgb),
-    );
-    let result = execute(
-        &renderer,
-        &device,
-        &queue,
-        invalid,
-        |_, _| {
-            called.set(true);
-            Ok(())
-        },
-        || Ok(()),
-    );
-    assert!(matches!(result, Err(Error::InvalidParameter(_))));
-    assert!(
-        !called.get(),
-        "invalid scene storage must fail before handing work to a sink"
-    );
-    render(
-        &device,
-        &queue,
-        &renderer,
-        request(
-            &scan,
-            OutputReference::SceneReferred,
-            SampleEncoding::LinearFloat,
-        ),
-    )
-    .unwrap();
-}
-
-#[test]
 fn cancellation_after_submission_finishes_private_readback_without_delivering_a_block() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();

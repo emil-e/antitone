@@ -346,16 +346,16 @@ fn quality_refinement_counts_graph_declared_inputs_not_just_visible_cells() {
 
 #[test]
 fn acquisition_follows_interleaved_neighbourhoods_and_changes_of_sample_meaning() {
-    use crate::gpu::evaluation::{Function, Meaning, pointwise};
+    use crate::gpu::evaluation::{Function, pointwise};
     let plan = Plan::for_graph(
         Request { output: frame(), sampling: Sampling::NeutralFootprints },
         |input| {
-            let opponents = pointwise(input, Meaning::Arguments, Function::new(
+            let opponents = pointwise(input, Function::new(
                 "fn opponents(v:vec4f,p:vec2f)->vec4f { return vec4f(v.r-v.g,v.g,v.b-v.g,v.w); }",
                 "opponents",
             ));
             let spread = definition([2, 1], [4, 2]).compose(opponents)?;
-            let light = pointwise(spread, Meaning::Neutral, Function::new(
+            let light = pointwise(spread, Function::new(
                 "fn light(v:vec4f,p:vec2f)->vec4f { return vec4f(v.r+v.g,v.g,v.b+v.g,v.w); }",
                 "light",
             ));

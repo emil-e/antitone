@@ -180,7 +180,6 @@ fn recorded_neighbourhoods_materialize_callable_inputs_when_their_combined_bindi
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     };
     for uniforms in [limit - 3, limit - 1] {
         let declarations = (0..uniforms)

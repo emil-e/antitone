@@ -4,24 +4,6 @@ use super::CellRegion as Rect;
 use super::*;
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Meaning {
-    /// Normalized camera light, before interpretation and the camera-to-working matrix.
-    Camera,
-    CameraCodes,
-    /// Signed native-camera positive, before camera-to-working conversion.
-    NativePositive,
-    Neutral,
-    /// Working AP1 on the pre-inversion source-view branch.
-    Inspection,
-    Graded,
-    /// A scalar mixing weight repeated in RGB, with input metadata retained in w.
-    Weight,
-    Display,
-    /// Packed calculation arguments, not photographic samples on an original grid.
-    Arguments,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grid {
     /// Source-coordinate corner of grid cell (0, 0).
@@ -118,7 +100,6 @@ pub struct Domain {
     /// Finite source-cell boundaries; reconstructed planes have no new viewport edge.
     pub bounds: Option<Rect>,
     pub grid: Grid,
-    pub meaning: Meaning,
 }
 
 impl Domain {
@@ -380,10 +361,10 @@ impl Drop for Content {
 }
 
 #[derive(Debug, PartialEq, Hash)]
-struct ImageIdentity {
+pub(super) struct ImageIdentity {
     domain: Domain,
     upstream: Vec<RetainedKey>,
-    operation: RetainedKey,
+    pub(super) operation: RetainedKey,
 }
 
 /// Pointwise ABI: fn(vec4f, vec2f) -> vec4f, preserving metadata in w.

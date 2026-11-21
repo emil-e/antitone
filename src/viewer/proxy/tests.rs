@@ -146,12 +146,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     let source = request.ready().expect("small resident proxy").remove(0);
     assert!(source.commands.is_some());
     assert!(!*source.submitted.lock().unwrap());
-    assert!(
-        source
-            .definition
-            .ancestors()
-            .any(|node| node.domain().meaning == crate::gpu::evaluation::Meaning::Inspection)
-    );
+    assert!(crate::gpu::evaluation::has_inspection(&source.definition));
     let rendered = crate::gpu::view::RenderedView::from_image(
         &device,
         source,

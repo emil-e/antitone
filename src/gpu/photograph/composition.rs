@@ -101,7 +101,7 @@ impl<'a> RecipeGraph<'a> {
                     continuous: true,
                     mapping: Mapping::Originals,
                 },
-            )?,
+            ),
             quality: Quality::Originals,
         })
     }
@@ -131,7 +131,7 @@ impl<'a> RecipeGraph<'a> {
                     continuous: source.continuous,
                     mapping: Mapping::Resident(source.geometry()),
                 },
-            )?,
+            ),
             quality: Quality::CameraProxy,
         })
     }
@@ -303,7 +303,6 @@ impl<'a> RecipeGraph<'a> {
                     coverage: 8,
                     ..Grid::from_frame(plan.output())
                 },
-                meaning: Meaning::Neutral,
             },
         )?;
         let output = ViewOutput::new(layout.presentation, plan.output(), 8);
@@ -380,7 +379,6 @@ impl Assembly {
                     coverage: 8,
                     ..Grid::from_frame(plan.output())
                 },
-                meaning: Meaning::Neutral,
             },
         )?;
         self.grading = self.grading.map(|grading| grading.for_grid(8));
@@ -412,10 +410,7 @@ impl Assembly {
 
     pub fn camera(&self, source: Value) -> Value {
         Value::from_operation(
-            Domain {
-                meaning: Meaning::Camera,
-                ..source.domain()
-            },
+            source.domain(),
             Some(source),
             Camera {
                 captured: self.capture.as_ref().expect("camera metadata").clone(),
@@ -425,10 +420,7 @@ impl Assembly {
 
     pub fn interpret(&self, camera: Value) -> Result<Value, Error> {
         Ok(Value::from_operation(
-            Domain {
-                meaning: Meaning::NativePositive,
-                ..camera.domain()
-            },
+            camera.domain(),
             Some(camera),
             Native::new(self.interpretation)?,
         ))
@@ -439,15 +431,7 @@ impl Assembly {
             "working conversion lacks captured camera metadata",
         ))?;
         Ok(Value::from_operation(
-            Domain {
-                meaning: match self.interpretation {
-                    Interpretation::Packed(parameters) if !parameters.graded() => {
-                        Meaning::Inspection
-                    }
-                    _ => Meaning::Neutral,
-                },
-                ..native.domain()
-            },
+            native.domain(),
             Some(native),
             Working::new(capture.interpretation, capture.matrix)?,
         ))
@@ -505,7 +489,6 @@ impl Assembly {
                 Domain {
                     bounds: Some(region.try_into()?),
                     grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                    meaning: domain.meaning,
                 },
             )?
         } else {
@@ -648,11 +631,6 @@ impl PhotographGraph {
         neutral: Value,
         recipe: &ImageRecipe,
     ) -> Result<(Value, crate::acquisition::Plan), Error> {
-        if neutral.domain().meaning != Meaning::Neutral {
-            return Err(Error::InvalidParameter(
-                "a photograph requires its positive prefix",
-            ));
-        }
         let program = InputTransform::from_recipe(&recipe.neutral)?;
         let area = recipe.neutral.source_development.active_area().into();
         let grading = Grading::new(limits, recipe.roll, recipe.grade.clone(), area)?;
@@ -677,8 +655,7 @@ impl PhotographGraph {
     }
 
     fn require_recipe_source(source: &Value, recipe: &ImageRecipe) -> Result<(), Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
             || source.domain().finite()?.source()?
                 != recipe.neutral.source_development.active_area().into()
         {
@@ -726,9 +703,7 @@ impl PhotographGraph {
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
     ) -> Result<Self, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
                 "photographic conversion requires original camera cells",
             ));
@@ -755,9 +730,7 @@ impl PhotographGraph {
         matrix: glam::DMat3,
         view: crate::gpu::interpretation::InspectionView,
     ) -> Result<Value, Error> {
-        if source.domain().meaning != Meaning::CameraCodes
-            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
-        {
+        if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
                 "inspection requires original camera cells",
             ));
@@ -770,7 +743,7 @@ impl PhotographGraph {
                 continuous: true,
                 mapping: Mapping::Originals,
             },
-        )?
+        )
         .inspection(view)
     }
 
@@ -805,7 +778,6 @@ pub(crate) fn prewarm_output(
     let input = borrowed_input(Domain {
         bounds: Some(CellRegion::new([0, 0], [1, 1])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     });
     let looked = crate::gpu::lut3d::prewarm_value(input.clone())?;
     context.prewarm_image(looked.clone())?;

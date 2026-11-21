@@ -4,15 +4,11 @@ use crate::halation::HalationParameters;
 
 pub(crate) fn halation(input: Value, parameters: HalationParameters) -> Result<Value, Error> {
     parameters.validate()?;
-    if input.domain.meaning != Meaning::Graded {
-        return Err(Error::InvalidParameter("halation requires graded AP1"));
-    }
     if parameters.strength == 0. {
         return Ok(input);
     }
     let positive = value::pointwise(
         input.clone(),
-        Meaning::Graded,
         value::Operation::new(
             "positive halation light v1",
             (),

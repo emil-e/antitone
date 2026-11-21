@@ -124,7 +124,6 @@ fn shader_validation_is_deferred_and_pixel_bodies_keep_their_access_and_dispatch
     ] {
         let node = pointwise(
             input.clone(),
-            Meaning::Graded,
             Operation::new(
                 "invalid authored body",
                 (),
@@ -198,30 +197,19 @@ fn unnamed_calculations_keep_actual_capture_equivalence_without_shader_byte_iden
         "unchanged",
     );
     let operation = Operation::shader_function(None, function.clone());
-    let root = pointwise(input.clone(), Meaning::Graded, operation.clone()).unwrap();
+    let root = pointwise(input.clone(), operation.clone()).unwrap();
     let lowered = root.request(root.domain().finite().unwrap()).unwrap();
     assert!(root.identity().is_none() && lowered.identity().is_none());
     assert!(root.same_definition(&lowered));
-    assert!(
-        root.same_definition(
-            &pointwise(input.clone(), Meaning::Graded, operation.clone()).unwrap()
-        )
-    );
+    assert!(root.same_definition(&pointwise(input.clone(), operation.clone()).unwrap()));
     assert!(
         !root.same_definition(
-            &pointwise(
-                input,
-                Meaning::Graded,
-                Operation::shader_function(None, function)
-            )
-            .unwrap()
+            &pointwise(input, Operation::shader_function(None, function)).unwrap()
         ),
         "equal shader bytes are not a semantic identity"
     );
     assert!(
-        !root.same_definition(
-            &pointwise(source(Arc::new(Plate::new())), Meaning::Graded, operation).unwrap()
-        ),
+        !root.same_definition(&pointwise(source(Arc::new(Plate::new())), operation).unwrap()),
         "shared mathematical bodies must still compare their ordered upstream values"
     );
     assert_eq!(plate.reads.load(Ordering::Relaxed), 0);

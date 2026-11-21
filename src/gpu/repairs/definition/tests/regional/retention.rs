@@ -84,7 +84,6 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
             let domain = Domain {
                 bounds: Some(CellRegion::new([0, 0], size)),
                 grid: Grid::axis_aligned([0.; 2], [512. / size[0] as f64, 256. / size[1] as f64]),
-                meaning: Meaning::Neutral,
             };
             reconstruct(compose(base.clone(), repairs).unwrap(), domain).unwrap()
         })

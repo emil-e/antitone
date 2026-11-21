@@ -37,7 +37,6 @@ fn photographic_functions_and_masked_composition_validate() {
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let base = gpu::repairs::fixtures::image(domain, vec![[1.; 4]; 16]).unwrap();
     let replacement = gpu::repairs::fixtures::image(

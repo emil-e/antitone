@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    gpu::evaluation::{self, CellRegion, Domain, Grid, Meaning, Region, Source, Tiling},
+    gpu::evaluation::{self, CellRegion, Domain, Grid, Region, Source, Tiling},
     looks::LutChain,
     rendering::OutputTarget,
 };
@@ -14,7 +14,6 @@ impl Source for Ramp {
         Domain {
             bounds: Some(CellRegion::new([0, 0], [WIDTH, 1])),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-            meaning: Meaning::Graded,
         }
     }
     fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {

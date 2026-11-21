@@ -6,7 +6,6 @@ fn domain() -> Domain {
     Domain {
         bounds: Some([-8, -8, 24, 24].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     }
 }
 fn wanted() -> CellRegion {

@@ -29,7 +29,6 @@ fn healing_does_not_swallow_underlying_source_read_errors() {
             Domain {
                 bounds: Some([0, 0, 96, 64].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Neutral,
             }
         }
         fn read(&self, _: CellRegion) -> Result<Vec<[f32; 4]>, Error> {

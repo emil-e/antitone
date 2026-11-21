@@ -172,14 +172,12 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
             grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::planned(
                 source.spec.plan(),
             )),
-            meaning: crate::gpu::evaluation::Meaning::Graded,
         };
         let output = crate::gpu::evaluation::Domain {
             bounds: Some([0, 0, 50, 50].into()),
             grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::frame(
                 frame,
             )),
-            meaning: crate::gpu::evaluation::Meaning::Graded,
         };
         let offset = source.spec.plan().output_offset().unwrap().map(f64::from);
         let scale = std::array::from_fn(|i| f64::from(source.spec.plan().output().output[i]) / 50.);
@@ -275,7 +273,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
                 .commands
                 .as_ref()
                 .unwrap()
-                .cached_image(crate::gpu::evaluation::Meaning::Arguments)
+                .cached_grain_field()
                 .unwrap();
             assert!(!field.ready());
             assert_eq!(
@@ -327,7 +325,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .commands
             .as_ref()
             .unwrap()
-            .cached_image(crate::gpu::evaluation::Meaning::Arguments);
+            .cached_grain_field();
         let b = edited
             .product
             .as_ref()
@@ -335,7 +333,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .commands
             .as_ref()
             .unwrap()
-            .cached_image(crate::gpu::evaluation::Meaning::Arguments);
+            .cached_grain_field();
         assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
         assert!(
             b.unwrap().ready(),

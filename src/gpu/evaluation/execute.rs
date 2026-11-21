@@ -1473,12 +1473,20 @@ impl Recorded {
     }
 
     #[cfg(test)]
-    pub fn cached_image(&self, meaning: Meaning) -> Option<&Arc<RetainedBuffer>> {
+    pub(crate) fn cached_image(&self, key: &RetainedKey) -> Option<&Arc<RetainedBuffer>> {
+        self.executor
+            .retained
+            .iter()
+            .find(|value| &value.key == key)
+    }
+
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn cached_grain_field(&self) -> Option<&Arc<RetainedBuffer>> {
         self.executor.retained.iter().find(|value| {
             value
-                .descriptor
-                .downcast_ref::<ImageLayout>()
-                .is_some_and(|layout| layout.domain.meaning == meaning)
+                .key
+                .get::<super::contract::ImageIdentity>()
+                .is_some_and(|image| super::grain::is_field_key(&image.operation))
         })
     }
 

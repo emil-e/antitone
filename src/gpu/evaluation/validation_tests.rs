@@ -12,7 +12,6 @@ fn display_does_not_hide_invalid_working_pixels_in_either_physical_policy() {
             let source = source(Arc::new(super::tests::fixture()));
             let input = pointwise(
                 source,
-                Meaning::Neutral,
                 Function {
                     code: format!(
                         r#"

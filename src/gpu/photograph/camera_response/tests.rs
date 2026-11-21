@@ -27,7 +27,6 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
     let domain = Domain {
         bounds: Some([9, 13, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Camera,
     };
     let negative = NegativeInput {
         calibration: Calibration {
@@ -51,7 +50,6 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
     }));
     let readout = normalized(camera, negative).unwrap();
 
-    assert_eq!(readout.domain().meaning, Meaning::NativePositive);
     assert_eq!(readout.domain().finite().unwrap(), domain.finite().unwrap());
     assert_eq!(readout.domain().grid, domain.grid);
 
@@ -175,7 +173,6 @@ fn classifier_endpoint_applies_the_provisional_grade_then_srgb_without_a_rendere
     )
     .unwrap();
     let domain = image.domain();
-    assert_eq!(domain.meaning, Meaning::Display);
     let request = context
         .request(
             image,

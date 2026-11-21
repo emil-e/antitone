@@ -10,7 +10,6 @@ fn immutable_table_and_uniform_arguments_stay_private_in_fused_and_stored_pixel_
     let layer = |input: Value, gain: u32, bias: u32, offset: f32| {
         pointwise(
             input,
-            Meaning::Graded,
             Operation::new(
                 "table affine witness v1",
                 (gain, bias, NumericKey(offset)),
@@ -60,7 +59,6 @@ fn captured_library_resources_link_privately_and_unused_exports_do_not_reach_exe
             .bindings;
         pointwise(
             input,
-            Meaning::Graded,
             Operation::new(
                 "captured affine library witness",
                 NumericKey([gain, bias]),
@@ -133,7 +131,6 @@ fn cached_shader_libraries_do_not_capture_arguments_or_requested_coverage() {
                     .bindings;
                 let root = pointwise(
                     source(Arc::new(plate.clone())),
-                    Meaning::Graded,
                     Operation::new(
                         "program cache bound arguments witness",
                         NumericKey([gain, bias]),
@@ -207,7 +204,6 @@ fn cached_shader_libraries_do_not_capture_arguments_or_requested_coverage() {
     let region = plate.domain.finite().unwrap();
     let incomplete = pointwise(
         source(Arc::new(plate.clone())),
-        Meaning::Graded,
         Operation::new(
             "incomplete cached capture witness",
             (),

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::gpu::{
-    evaluation::{Meaning, Value},
+    evaluation::Value,
     grading::Grading,
     interpretation::{InputTransform, InspectionView},
     photograph::{PhotographGraph, operations::CameraInput},
@@ -19,7 +19,6 @@ impl ImageProcessing {
                 raster.size(),
             )),
             grid: crate::gpu::evaluation::Grid::from_raster(raster),
-            meaning: Meaning::CameraCodes,
         };
         if let Some(camera) = camera.as_ref().filter(|camera| camera.domain() == domain) {
             return Ok(camera.clone());
@@ -162,12 +161,7 @@ impl GpuImage {
         if self.processing.is_none() {
             return Err(Error::Gpu("rendered image has no source buffer".into()));
         }
-        if root.domain().finite()? != crate::gpu::evaluation::CellRegion::new([0, 0], self.size())
-            || !matches!(
-                root.domain().meaning,
-                Meaning::Neutral | Meaning::Graded | Meaning::Inspection | Meaning::Display
-            )
-        {
+        if root.domain().finite()? != crate::gpu::evaluation::CellRegion::new([0, 0], self.size()) {
             return Err(Error::InvalidParameter(
                 "calculation differs from working image storage",
             ));

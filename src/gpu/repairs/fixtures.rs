@@ -38,7 +38,6 @@ pub(crate) fn replacements(values: &[Arc<EvaluatedRepair>]) -> Result<Vec<Replac
                 domain: Domain {
                     bounds: Some(region),
                     grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                    meaning: Meaning::Neutral,
                 },
                 region,
                 pixels,

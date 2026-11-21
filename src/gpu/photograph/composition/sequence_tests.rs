@@ -59,7 +59,6 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
             e::Domain {
                 bounds: Some(e::CellRegion::new([0, 0], [128, 128])),
                 grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: e::Meaning::CameraCodes,
             }
         }
         fn read(&self, _: e::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
@@ -138,10 +137,8 @@ struct Scale(DVec3);
 
 impl Scale {
     fn compose(&self, image: Value) -> Result<Value, Error> {
-        let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
-            meaning,
             Function::new(
                 r#"
 @group(0) @binding(18)
@@ -163,10 +160,8 @@ struct Square;
 
 impl Square {
     fn compose(&self, image: Value) -> Result<Value, Error> {
-        let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
-            meaning,
             Function::new(
                 "fn square_assembly_input(pixel: vec4f, position: vec2f) -> vec4f { return vec4f(pixel.rgb * pixel.rgb, pixel.a); }",
                 "square_assembly_input",
@@ -253,7 +248,6 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
     let domain = Domain {
         bounds: Some(area.try_into().unwrap()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::CameraCodes,
     };
     let camera = [
         DVec3::new(0.125, 0.25, 0.5),
@@ -269,10 +263,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
             .collect(),
     }));
     let normalized = source(Arc::new(Pixels {
-        domain: Domain {
-            meaning: Meaning::Camera,
-            ..domain
-        },
+        domain,
         values: camera
             .iter()
             .map(|p| p.as_vec3().extend(0.).to_array())
@@ -370,7 +361,6 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     let domain = Domain {
         bounds: Some([0, 0, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Neutral,
     };
     let values = [0.125, 0.5, 1., 4.];
     let input = source(Arc::new(Pixels {
@@ -407,7 +397,6 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     let mut assembly = Assembly::filtered(grading);
     assembly.author = effects.author;
     let mut output = domain;
-    output.meaning = Meaning::Graded;
     output.bounds = Some([0, 0, 2, 1].into());
     output.grid = Grid::axis_aligned([0.; 2], [2., 1.]);
     let (_, graded) = assembly.grade(input.clone()).unwrap();
@@ -440,7 +429,6 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
     let input = crate::gpu::evaluation::borrowed_input(Domain {
         bounds: Some(CellRegion::new([0; 2], [80, 64])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-        meaning: Meaning::Graded,
     });
     let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
     let halo = crate::halation::HalationSettings {
@@ -469,7 +457,6 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
         domain: Domain {
             bounds: Some(CellRegion::new([0; 2], [8, 4])),
             grid: Grid::axis_aligned([0.; 2], [10., 16.]),
-            meaning: Meaning::Graded,
         },
         offset: [0; 2],
         scale: [10., 16.],

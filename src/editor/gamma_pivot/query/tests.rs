@@ -76,7 +76,6 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     let evidence = Evidence {
         camera: evaluation::source(Arc::new(Pixels {
             pixels: pixels.clone(),
-            meaning: Meaning::Camera,
         })),
         weights: vec![1., 3.],
     };
@@ -170,7 +169,6 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     let extremes = Evidence {
         camera: evaluation::source(Arc::new(Pixels {
             pixels: vec![[0.001, 0.9, 0.4, 0.]],
-            meaning: Meaning::Camera,
         })),
         weights: vec![1.],
     };
@@ -180,7 +178,6 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     let floored = Evidence {
         camera: evaluation::source(Arc::new(Pixels {
             pixels: vec![[0., 0.2, 0.3, 0.]],
-            meaning: Meaning::Camera,
         })),
         weights: vec![1.],
     };

@@ -47,7 +47,6 @@ fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
         let candidate = make_plan_with_policy(
             value::pointwise(
                 graded.clone(),
-                Meaning::Graded,
                 value::Operation::pointwise_function("gain witness", NumericKey(gain), function),
             )
             .unwrap(),
