@@ -1,5 +1,7 @@
 //! Captured photographic input transforms and source-inspection interpretation.
 
+#[cfg(feature = "editor")]
+use crate::gpu::evaluation::{Function, Value, value};
 use crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource};
 use crate::{Error, processing::InputSettings};
 use glam::DMat3;
@@ -43,6 +45,55 @@ impl InspectionView {
     pub(crate) fn parameters(self) -> Result<ProcessingParameters, Error> {
         ProcessingParameters::source_with_matrix(self.matrix)
     }
+}
+
+#[cfg(feature = "editor")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+struct FilteredInspection {
+    columns: [[f32; 4]; 3],
+    coverage: [u32; 4],
+}
+
+#[cfg(feature = "editor")]
+impl std::hash::Hash for FilteredInspection {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for value in self.columns.into_iter().flatten() {
+            crate::float_hash::f32(value, state);
+        }
+        self.coverage.hash(state);
+    }
+}
+
+/// Apply the viewing transform to already-filtered, ungraded working light.
+#[cfg(feature = "editor")]
+pub(crate) fn inspect_filtered(
+    input: Value,
+    parameters: ProcessingParameters,
+) -> Result<Value, Error> {
+    let operation = FilteredInspection {
+        columns: parameters.post.map(|column| column.to_array()),
+        coverage: [input.domain().grid.coverage, 0, 0, 0],
+    };
+    value::pointwise(
+        input,
+        value::Operation::pointwise_function(
+            "source inspection v1",
+            operation,
+            Function::new(
+                include_str!("interpretation/inspection.wgsl"),
+                "inspect_source",
+            )
+            .with_uniform(0, &operation),
+        ),
+    )
+}
+
+#[cfg(all(test, feature = "editor"))]
+pub(crate) fn has_filtered_inspection(image: &Value) -> bool {
+    image
+        .ancestors()
+        .any(|node| node.parameters::<FilteredInspection>().is_some())
 }
 
 /// Source execution captured separately from photographic controls.

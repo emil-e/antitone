@@ -70,7 +70,7 @@ fn photographic_functions_and_masked_composition_validate() {
 fn composed_working_view_validates() {
     validate(
         "source inspection functions",
-        include_str!("gpu/evaluation/inspection.wgsl"),
+        include_str!("gpu/interpretation/inspection.wgsl"),
         &[],
     );
     validate(

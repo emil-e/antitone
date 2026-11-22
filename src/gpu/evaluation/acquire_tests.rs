@@ -121,7 +121,7 @@ fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_floor_flags
         glam::DVec3::new(0.125, 0.5, 0.25),
         glam::DVec3::new(-0.25, 0.125, 2.),
     );
-    let root = inspect(
+    let root = crate::gpu::interpretation::inspect_filtered(
         borrowed_input(domain),
         crate::gpu::parameters::ProcessingParameters::source_with_matrix(matrix).unwrap(),
     )
