@@ -31,7 +31,7 @@ fn codecs_emit_compressed_data_before_requesting_later_bands_and_preserve_produc
             &mut file,
             size,
             crate::profiles::icc(OutputTarget::Srgb),
-            order,
+            (order, BLOCK),
             &mut |origin, extent| {
                 visited += 1;
                 if origin[1] >= stop {

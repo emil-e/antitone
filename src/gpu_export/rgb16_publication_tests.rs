@@ -5,7 +5,7 @@ fn rgb16_late_status_errors_preserve_destination_and_remove_temporary() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing");
     let composition = Composition::new(
-        [0, 0, 129, 1].into(),
+        [0, 0, TIFF_BLOCK[0] + 1, 1].into(),
         Default::default(),
         Default::default(),
     )

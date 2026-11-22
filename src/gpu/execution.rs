@@ -6,8 +6,10 @@ mod originals;
 #[cfg(feature = "raw")]
 mod request;
 
-#[cfg(feature = "raw")]
-pub(crate) use originals::{Stats, TILE, execute};
+#[cfg(all(feature = "raw", feature = "export"))]
+pub(crate) use originals::{Stats, execute_blocks};
+#[cfg(all(feature = "raw", test))]
+pub(crate) use originals::{TILE, execute};
 #[cfg(feature = "raw")]
 pub(crate) use request::{OutputBlock, Request, SampleEncoding};
 

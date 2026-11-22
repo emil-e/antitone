@@ -44,9 +44,9 @@ fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
         },
     ] {
         let row: Vec<_> = blocks(size).collect();
-        let public: Vec<_> = ordered_blocks(size, BlockOrder::RowMajor).collect();
+        let public: Vec<_> = ordered_blocks(size, (BlockOrder::RowMajor, BLOCK)).collect();
         assert_eq!(row, public);
-        let spatial: Vec<_> = ordered_blocks(size, BlockOrder::Spatial2x2).collect();
+        let spatial: Vec<_> = ordered_blocks(size, (BlockOrder::Spatial2x2, BLOCK)).collect();
         let mut sorted = spatial.clone();
         sorted.sort_by_key(|(origin, _)| (origin[1], origin[0]));
         assert_eq!(row, sorted);

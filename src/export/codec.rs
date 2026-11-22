@@ -46,7 +46,7 @@ impl FileFormat {
         file: &mut fs::File,
         size: ImageSize,
         target: RenderTarget,
-        order: BlockOrder,
+        blocks: (BlockOrder, [u32; 2]),
         mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Samples>,
     ) -> Result<()> {
         let mismatch = || Error::InvalidParameter("samples do not match the file encoding");
@@ -55,7 +55,7 @@ impl FileFormat {
                 file,
                 size,
                 profiles::icc(target),
-                order,
+                blocks,
                 &mut |origin, extent| match block(origin, extent)? {
                     Samples::Rgb16(codes) => Ok(codes),
                     _ => Err(mismatch()),

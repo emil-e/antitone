@@ -86,11 +86,21 @@ fn authored_area(
     area::write_calculation(renderer.evaluation(), gpu, request, destination, check)
 }
 
-fn default_order(composition: Composition) -> export::BlockOrder {
-    if composition.is_exact() {
-        export::BlockOrder::RowMajor
-    } else {
-        export::BlockOrder::Spatial2x2
+const TIFF_BLOCK: [u32; 2] = [512; 2];
+
+fn block_layout(composition: Composition, plan: Plan) -> (export::BlockOrder, [u32; 2]) {
+    use export::BlockOrder::{RowMajor, Spatial2x2};
+
+    match plan.format().layout() {
+        Layout::Rgb16 => {
+            let order = if composition.is_exact() {
+                RowMajor
+            } else {
+                Spatial2x2
+            };
+            (order, TIFF_BLOCK)
+        }
+        Layout::Float(_) => (RowMajor, export::BLOCK),
     }
 }
 
@@ -109,7 +119,7 @@ fn encode_with_checked(
     plan.write(
         destination,
         ImageSize { width, height },
-        default_order(composition),
+        block_layout(composition, plan),
         |origin, extent| {
             let block = build(origin, extent)?;
             match (plan.target(), scene.as_ref(), block) {

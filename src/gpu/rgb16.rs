@@ -57,8 +57,9 @@ impl Rgb16 {
         output: &wgpu::Buffer,
         count: u32,
     ) -> Result<(), Error> {
+        let groups = count.div_ceil(64);
         if count == 0
-            || count > super::execution::TILE[0] * super::execution::TILE[1]
+            || groups > device.limits().max_compute_workgroups_per_dimension
             || input.size() < u64::from(count) * 16
             || output.size() < u64::from(count) * 8
         {
@@ -97,7 +98,7 @@ impl Rgb16 {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(groups, 1, 1);
         Ok(())
     }
 }
