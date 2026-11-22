@@ -1662,13 +1662,13 @@ fn camera_product_forecast_bounds_a_square_continuous_source() {
         development.dimensions = [256, 256];
         development.active_area = [0, 0, 256, 256];
         let image = GpuImage::new_continuous_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(OutputTarget::DisplayP3),
             [256, 256],
             &vec![[1000.25, 2000.5, 3000.75, 0.]; 256 * 256],
             glam::DMat3::IDENTITY,
             None,
-            OutputTarget::DisplayP3,
         )
         .await
         .unwrap();
@@ -1704,13 +1704,13 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
         for id in editor.document.state.project.order.clone() {
             let image = Arc::new(
                 GpuImage::new_shared(
-                    &renderer,
-                    &device,
+                    renderer.evaluation().clone(),
+                    renderer.looks().clone(),
+                    renderer.drt(OutputTarget::DisplayP3),
                     [256, 256],
                     &vec![[0; 4]; 256 * 256],
                     glam::DMat3::IDENTITY,
                     None,
-                    OutputTarget::DisplayP3,
                 )
                 .await
                 .unwrap(),

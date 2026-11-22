@@ -153,8 +153,9 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             "regional composition"
         );
         let resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(target),
             [area.width, area.height],
             &camera,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
@@ -165,7 +166,6 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
                 )
                 .unwrap(),
             ),
-            target,
         ))
         .unwrap();
 

@@ -92,13 +92,13 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
         let renderer = renderers.get(&device, &queue).unwrap();
         let image = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 [256, 256],
                 &vec![[0; 4]; 256 * 256],
                 glam::DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),

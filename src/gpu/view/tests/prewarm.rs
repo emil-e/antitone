@@ -9,13 +9,13 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
         let (device, _queue, renderer, _kernels) = context().await;
         let image = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::Srgb),
                 [2, 2],
                 &[[32000, 20000, 10000, 0]; 4],
                 DMat3::IDENTITY,
                 None,
-                OutputTarget::Srgb,
             )
             .await
             .unwrap(),
@@ -52,21 +52,32 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
 }
 
 #[test]
-fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_compilation() {
+fn fresh_resident_camera_reuses_warm_programs_after_the_startup_handles_retire() {
     pollster::block_on(async {
-        let (device, queue, renderer, _kernels) = context().await;
+        let instance = crate::gpu::instance();
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap();
+        let evaluation = crate::gpu::evaluation::Context::new(&device, Default::default());
+        let looks = Arc::new(crate::gpu::lut3d::Looks::new(&device));
+        let targets = crate::gpu::drt::Targets::new(&device, &queue)
+            .await
+            .unwrap();
+        crate::gpu::photograph::prewarm_viewer(&evaluation, &targets).unwrap();
         let image = GpuImage::new_shared(
-            &renderer,
-            &device,
+            evaluation.clone(),
+            looks,
+            targets.get(OutputTarget::Srgb),
             [4, 2],
             &[[32000, 20000, 10000, 0]; 8],
             DMat3::IDENTITY,
             None,
-            OutputTarget::Srgb,
         )
         .await
         .unwrap();
-        let compiled = renderer.evaluation.programs.len();
+        drop(targets);
+        let compiled = evaluation.programs.len();
         for input in [
             AuthoredPhotograph::from(ProcessingParameters::source()),
             AuthoredPhotograph::new(
@@ -84,7 +95,7 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
                 .encode_processing(&device, &mut encoder, &input)
                 .unwrap();
             assert_eq!(
-                renderer.evaluation.programs.len(),
+                evaluation.programs.len(),
                 compiled,
                 "camera paint must use initialization's compiled endpoint (positive: {})",
                 input.is_positive()

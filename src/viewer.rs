@@ -1,12 +1,11 @@
 use crate::Error;
 use crate::geometry::TextureMapping;
 use crate::gpu::allocation::DeviceAllocationExt;
-use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::renderer::GpuRenderer;
+use crate::gpu::{drt, evaluation, lut3d::Looks, parameters::ProcessingParameters};
 use crate::rendering::OutputTarget;
 use glam::DMat3;
 use std::sync::Arc;
@@ -21,7 +20,9 @@ mod film_tests;
 pub(crate) mod readback;
 
 struct ImageProcessing {
-    renderer: Arc<GpuRenderer>,
+    evaluation: evaluation::Context,
+    looks: Arc<Looks>,
+    transform: drt::Target,
     source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
     recording: std::sync::Mutex<Option<crate::gpu::recorded_image::Texture>>,
@@ -52,65 +53,88 @@ impl GpuImage {
         geometry: Option<SourceGeometry>,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        let renderer = GpuRenderer::new(device, queue).await?;
+        let evaluation = evaluation::Context::new(device, Default::default());
+        let looks = Arc::new(Looks::new(device));
+        let targets = drt::Targets::new(device, queue).await?;
+        crate::gpu::photograph::prewarm_viewer(&evaluation, &targets)?;
         Self::new_shared(
-            &renderer,
-            device,
+            evaluation,
+            looks,
+            targets.get(target),
             size,
             pixels,
             camera_to_ap1,
             geometry,
-            target,
         )
         .await
     }
+    /// Create a resident camera image using shared resources from the same GPU device.
     pub async fn new_shared(
-        renderer: &Arc<GpuRenderer>,
-        device: &wgpu::Device,
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        transform: &drt::Target,
         size: [u32; 2],
         pixels: &[[u16; 4]],
         camera_to_ap1: DMat3,
         geometry: Option<SourceGeometry>,
-        target: OutputTarget,
     ) -> Result<Self, Error> {
         if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
             return Err(Error::Gpu(
                 "source dimensions do not match the GPU image".into(),
             ));
         }
-        let source = ProcessingSource::new(device, pixels, camera_to_ap1, geometry)?;
-        Self::create(
-            device,
-            size[0],
-            size[1],
-            Some((renderer.clone(), Arc::new(source))),
-            target,
-        )
-        .await
+        let source = ProcessingSource::new(evaluation.device(), pixels, camera_to_ap1, geometry)?;
+        Self::from_camera(evaluation, looks, transform, Arc::new(source), size).await
     }
+
+    /// Continuous-camera counterpart to [`Self::new_shared`].
     pub async fn new_continuous_shared(
-        renderer: &Arc<GpuRenderer>,
-        device: &wgpu::Device,
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        transform: &drt::Target,
         size: [u32; 2],
         pixels: &[[f32; 4]],
         camera_to_ap1: DMat3,
         geometry: Option<SourceGeometry>,
-        target: OutputTarget,
     ) -> Result<Self, Error> {
         if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
             return Err(Error::Gpu(
                 "source dimensions do not match the GPU image".into(),
             ));
         }
-        let source = ProcessingSource::new_continuous(device, pixels, camera_to_ap1, geometry)?;
-        Self::create(
-            device,
-            size[0],
-            size[1],
-            Some((renderer.clone(), Arc::new(source))),
-            target,
-        )
-        .await
+        let source =
+            ProcessingSource::new_continuous(evaluation.device(), pixels, camera_to_ap1, geometry)?;
+        Self::from_camera(evaluation, looks, transform, Arc::new(source), size).await
+    }
+
+    async fn from_camera(
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        transform: &drt::Target,
+        source: Arc<ProcessingSource>,
+        size: [u32; 2],
+    ) -> Result<Self, Error> {
+        let device = evaluation.device();
+        let [width, height] = size;
+        let mut image =
+            Self::new_rendered(device, width, height, transform.output_target()).await?;
+        let working = device.try_create_buffer(&wgpu::BufferDescriptor {
+            label: Some("processed AP1 preview"),
+            size: u64::from(width) * u64::from(height) * 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })?;
+        image.processing = Some(ImageProcessing {
+            evaluation,
+            looks,
+            transform: transform.clone(),
+            source,
+            working,
+            recording: std::sync::Mutex::new(None),
+            camera: std::sync::Mutex::new(None),
+            last_calculation: std::sync::Mutex::new(None),
+        });
+        Ok(image)
     }
 
     pub async fn new_rendered(
@@ -119,17 +143,7 @@ impl GpuImage {
         height: u32,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        Self::create(device, width, height, None, target).await
-    }
-
-    async fn create(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        source: Option<(Arc<GpuRenderer>, Arc<ProcessingSource>)>,
-        target: OutputTarget,
-    ) -> Result<Self, Error> {
-        let count = width
+        width
             .checked_mul(height)
             .filter(|n| *n > 0)
             .ok_or(Error::InvalidParameter("invalid GPU image dimensions"))?;
@@ -156,30 +170,12 @@ impl GpuImage {
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         })?;
-        let processing = source
-            .map(|(renderer, source)| -> Result<_, Error> {
-                let working = device.try_create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("processed AP1 preview"),
-                    size: u64::from(count) * 16,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })?;
-                Ok(ImageProcessing {
-                    renderer,
-                    source,
-                    working,
-                    recording: std::sync::Mutex::new(None),
-                    camera: std::sync::Mutex::new(None),
-                    last_calculation: std::sync::Mutex::new(None),
-                })
-            })
-            .transpose()?;
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
             device_limits: device.limits(),
-            processing,
+            processing: None,
             linear,
             target,
             bindings: Default::default(),

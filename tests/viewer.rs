@@ -342,8 +342,9 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                     })
                                     .collect();
                                 let tile = GpuImage::new_shared(
-                                    &renderer,
-                                    &device,
+                                    renderer.evaluation().clone(),
+                                    renderer.looks().clone(),
+                                    renderer.drt(target),
                                     [6, 4],
                                     &pixels,
                                     matrix,
@@ -354,7 +355,6 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                         )
                                         .unwrap(),
                                     ),
-                                    target,
                                 )
                                 .await
                                 .unwrap();

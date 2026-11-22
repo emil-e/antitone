@@ -248,14 +248,15 @@ pub(super) use crate::scan::CameraPixels as Proxy;
 impl Proxy {
     pub(super) async fn image(
         &self,
-        renderer: &Arc<crate::renderer::GpuRenderer>,
-        device: &wgpu::Device,
-        target: OutputTarget,
+        evaluation: crate::gpu::evaluation::Context,
+        looks: Arc<crate::gpu::lut3d::Looks>,
+        transform: &crate::gpu::drt::Target,
         area: [u32; 4],
     ) -> Result<Arc<GpuImage>, Error> {
         let image = GpuImage::new_continuous_shared(
-            renderer,
-            device,
+            evaluation,
+            looks,
+            transform,
             [self.width, self.height],
             &self.pixels,
             self.matrix,
@@ -263,7 +264,6 @@ impl Proxy {
                 area,
                 [self.width, self.height],
             )?),
-            target,
         )
         .await?;
         Ok(Arc::new(image))
@@ -905,9 +905,9 @@ fn make_image(
     metrics.renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let image = pollster::block_on(proxy.image(
-        &renderer,
-        device,
-        job.key.target,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt(job.key.target),
         job.key.source.source.active_area,
     ))?;
     metrics.image_seconds = tick.elapsed().as_secs_f64();

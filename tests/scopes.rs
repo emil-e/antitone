@@ -488,13 +488,13 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
         let image = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 [7, 3],
                 &[[2000, 3000, 4000, 0]; 21],
                 DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),
@@ -561,13 +561,13 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         let previous_image = image.clone();
         let image = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 [7, 3],
                 &[[4000, 5000, 6000, 0]; 21],
                 DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),
@@ -599,13 +599,13 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         assert_eq!(gpu.reduction_count(), 3);
         let other = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 [7, 3],
                 &[[2000, 3000, 4000, 0]; 21],
                 DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),

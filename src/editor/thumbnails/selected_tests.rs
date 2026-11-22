@@ -326,11 +326,12 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let path = directory.path().join("selected.ARW");
         let id = add_source(&mut editor, path.clone());
         let source = editor.document.state.project.source(id).unwrap();
+        let renderer = renderers.get(&device, &queue).unwrap();
         let image = proxy()
             .image(
-                &renderers.get(&device, &queue).unwrap(),
-                &device,
-                OutputTarget::DisplayP3,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 source.development.active_area,
             )
             .await

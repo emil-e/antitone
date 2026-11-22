@@ -1,11 +1,31 @@
 use super::*;
 use crate::gpu::evaluation;
+#[cfg(any(feature = "ui", feature = "editor"))]
 use crate::gpu::grading::Grading;
+#[cfg(feature = "ui")]
 use crate::gpu::interpretation::{InputTransform, InspectionView};
+#[cfg(feature = "editor")]
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::photograph::PhotographGraph;
+#[cfg(feature = "ui")]
 use crate::gpu::source::ProcessingSource;
 
+pub(crate) fn prewarm_viewer(
+    context: &evaluation::Context,
+    drt: &crate::gpu::drt::Targets,
+) -> Result<(), Error> {
+    context.prewarm_texture(borrowed_input(Domain {
+        bounds: Some([0, 0, 1, 1].into()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+    }))?;
+    super::composition::prewarm_output(context, drt)?;
+    #[cfg(feature = "editor")]
+    PhotographGraph::prewarm_filtered(context, drt)?;
+    #[cfg(feature = "ui")]
+    PhotographGraph::prewarm_resident(context, drt)?;
+    Ok(())
+}
+
+#[cfg(any(feature = "ui", feature = "editor"))]
 impl PhotographGraph {
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_resident(

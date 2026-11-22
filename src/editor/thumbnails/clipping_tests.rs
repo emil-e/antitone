@@ -177,13 +177,13 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
             .collect::<Vec<[u16; 4]>>();
         let image = Arc::new(
             GpuImage::new_shared(
-                &shared,
-                &device,
+                shared.evaluation().clone(),
+                shared.looks().clone(),
+                shared.drt(OutputTarget::DisplayP3),
                 [25, 17],
                 &pixels,
                 glam::DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),

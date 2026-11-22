@@ -45,13 +45,13 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     .map(|i| [2000 + i * 900, 3000 + i * 700, 4000 + i * 1100, 0])
                     .collect();
                 let image = GpuImage::new_shared(
-                    &renderer,
-                    &device,
+                    renderer.evaluation().clone(),
+                    renderer.looks().clone(),
+                    renderer.drt(target),
                     [8, 4],
                     &pixels,
                     DMat3::IDENTITY,
                     Some(SourceGeometry::new([12, 7, 8, 4], [8, 4]).unwrap()),
-                    target,
                 )
                 .await
                 .unwrap();
@@ -112,25 +112,25 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 // Different matrices, source storage and parameters still share only pipelines.
                 let thumbnail = Arc::new(
                     GpuImage::new_shared(
-                        &renderer,
-                        &device,
+                        renderer.evaluation().clone(),
+                        renderer.looks().clone(),
+                        renderer.drt(target),
                         [4, 2],
                         &[[42000, 12000, 6000, 0]; 8],
                         DMat3::from_diagonal(DVec3::new(0.8, 1.1, 0.9)),
                         None,
-                        target,
                     )
                     .await
                     .unwrap(),
                 );
                 let tile = GpuImage::new_shared(
-                    &renderer,
-                    &device,
+                    renderer.evaluation().clone(),
+                    renderer.looks().clone(),
+                    renderer.drt(target),
                     [8, 4],
                     &[[17000, 24000, 31000, 0]; 32],
                     DMat3::from_diagonal(DVec3::new(1.2, 0.7, 1.1)),
                     None,
-                    target,
                 )
                 .await
                 .unwrap();
@@ -195,13 +195,13 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 let original = image.clone();
                 let image = Arc::new(
                     GpuImage::new_shared(
-                        &renderer,
-                        &device,
+                        renderer.evaluation().clone(),
+                        renderer.looks().clone(),
+                        renderer.drt(target),
                         [8, 4],
                         &[[8000, 16000, 24000, 0]; 32],
                         DMat3::IDENTITY,
                         Some(SourceGeometry::new([12, 7, 8, 4], [8, 4]).unwrap()),
-                        target,
                     )
                     .await
                     .unwrap(),

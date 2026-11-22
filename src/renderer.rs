@@ -75,7 +75,7 @@ impl RendererCache {
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
     pub(crate) drt: drt::Targets,
-    pub(crate) looks: lut3d::Looks,
+    pub(crate) looks: Arc<lut3d::Looks>,
     #[cfg(feature = "render")]
     pub(crate) evaluation: crate::gpu::evaluation::Context,
 }
@@ -86,7 +86,7 @@ impl GpuRenderer {
         &self.evaluation
     }
 
-    pub fn looks(&self) -> &lut3d::Looks {
+    pub fn looks(&self) -> &Arc<lut3d::Looks> {
         &self.looks
     }
 
@@ -114,7 +114,7 @@ impl GpuRenderer {
         queue: &crate::gpu::submission::Queue,
     ) -> Result<Arc<Self>, Error> {
         let device = evaluation.device().clone();
-        let looks = lut3d::Looks::new(&device);
+        let looks = Arc::new(lut3d::Looks::new(&device));
         let drt = drt::Targets::new(&device, queue).await?;
         let renderer = Arc::new(Self {
             drt,
@@ -122,25 +122,7 @@ impl GpuRenderer {
             #[cfg(feature = "render")]
             evaluation,
         });
-        renderer
-            .evaluation
-            .prewarm_texture(crate::gpu::evaluation::borrowed_input(
-                crate::gpu::evaluation::Domain {
-                    bounds: Some([0, 0, 1, 1].into()),
-                    grid: crate::gpu::evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
-                },
-            ))?;
-        crate::gpu::photograph::prewarm_output(&renderer.evaluation, &renderer.drt)?;
-        #[cfg(feature = "editor")]
-        crate::gpu::photograph::PhotographGraph::prewarm_filtered(
-            &renderer.evaluation,
-            &renderer.drt,
-        )?;
-        #[cfg(feature = "ui")]
-        crate::gpu::photograph::PhotographGraph::prewarm_resident(
-            &renderer.evaluation,
-            &renderer.drt,
-        )?;
+        crate::gpu::photograph::prewarm_viewer(&renderer.evaluation, &renderer.drt)?;
         Ok(renderer)
     }
 }

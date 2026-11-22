@@ -4,6 +4,7 @@ use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::renderer::GpuRenderer;
 #[cfg(test)]
 mod tests;
 
@@ -135,12 +136,12 @@ impl GpuProxy {
 
     #[cfg(test)]
     pub(crate) fn image(&self, target: OutputTarget) -> Result<Arc<GpuImage>, Error> {
-        Ok(Arc::new(pollster::block_on(GpuImage::create(
-            self.0.renderer.evaluation().device(),
-            self.0.size[0],
-            self.0.size[1],
-            Some((self.0.renderer.clone(), self.0.source.clone())),
-            target,
+        Ok(Arc::new(pollster::block_on(GpuImage::from_camera(
+            self.0.renderer.evaluation().clone(),
+            self.0.renderer.looks().clone(),
+            self.0.renderer.drt(target),
+            self.0.source.clone(),
+            self.0.size,
         ))?))
     }
 

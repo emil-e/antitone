@@ -39,8 +39,8 @@ impl GpuImage {
         crate::gpu::photograph::display_output(
             prefix,
             luts,
-            &processing.renderer.looks,
-            processing.renderer.drt.get(self.target),
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -101,8 +101,8 @@ impl GpuImage {
             &processing.source,
             self.size(),
             field,
-            processing.renderer.looks(),
-            processing.renderer.drt(self.target),
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -144,8 +144,8 @@ impl GpuImage {
         crate::gpu::photograph::display_output(
             image,
             input.luts(),
-            &processing.renderer.looks,
-            processing.renderer.drt.get(self.target),
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -222,11 +222,11 @@ impl GpuImage {
             device,
             raster,
             root.clone(),
-            processing.renderer.evaluation.clone(),
+            processing.evaluation.clone(),
         )?;
         prepared.encode_result(device, encoder, &processing.working)?;
         let prepared_binding = crate::gpu::recorded_image::Texture::new(
-            processing.renderer.evaluation(),
+            &processing.evaluation,
             device,
             crate::gpu::evaluation::SuppliedImage::from_buffer(
                 root.clone(),

@@ -43,7 +43,7 @@ pub(crate) use composition::RecipeGraph;
 #[cfg(feature = "render")]
 pub use composition::display_output;
 #[cfg(feature = "render")]
-pub(crate) use composition::prewarm_output;
+pub(crate) use prewarm::prewarm_viewer;
 #[cfg(all(test, feature = "editor"))]
 mod provenance_tests;
 #[cfg(feature = "editor")]
@@ -54,7 +54,7 @@ pub(crate) mod shader;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, ResidentCamera};
-#[cfg(all(feature = "render", any(feature = "ui", feature = "editor")))]
+#[cfg(feature = "render")]
 mod prewarm;
 #[cfg(test)]
 pub mod test_support;
