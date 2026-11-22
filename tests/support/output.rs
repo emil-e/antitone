@@ -82,8 +82,7 @@ pub fn write(
     overwrite: Overwrite,
 ) -> Result<(), Error> {
     antitone::gpu_export::write(
-        renderer,
-        device,
+        renderer.evaluation(),
         gpu,
         request.calculation(renderer, device)?,
         path,
@@ -102,8 +101,7 @@ pub fn write_checked(
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<(), Error> {
     antitone::gpu_export::write_checked(
-        renderer,
-        device,
+        renderer.evaluation(),
         gpu,
         request.calculation(renderer, device)?,
         path,

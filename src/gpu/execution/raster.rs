@@ -6,11 +6,11 @@ use crate::acquisition::Request as AcquisitionRequest;
 use crate::acquisition::Sampling;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::Composition;
+use crate::gpu::evaluation::Context;
 use crate::gpu::raster::Raster;
 use crate::gpu::recorded_image::Prepared;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::renderer::GpuRenderer;
 
 #[cfg(all(test, target_os = "macos", feature = "render"))]
 #[path = "raster_tests.rs"]
@@ -76,8 +76,7 @@ impl<'a> Request<'a> {
 
     pub fn encode(
         self,
-        renderer: &GpuRenderer,
-        device: &wgpu::Device,
+        context: &Context,
         encoder: &mut wgpu::CommandEncoder,
         working: &wgpu::Buffer,
     ) -> Result<Prepared, Error> {
@@ -109,6 +108,7 @@ impl<'a> Request<'a> {
                 .map(|geometry| Raster::region(geometry.region(), geometry.size()))
                 .unwrap_or_else(|| Raster::native([0, 0, self.layout[0], self.layout[1]].into()))
         });
+        let device = context.device();
         let root = crate::gpu::photograph::PhotographGraph::from_resident_fixture(
             &device.limits(),
             self.source,
@@ -116,8 +116,7 @@ impl<'a> Request<'a> {
             raster,
         )?
         .processed;
-        let prepared =
-            Prepared::from_composition(device, raster, root, renderer.evaluation.clone())?;
+        let prepared = Prepared::from_composition(device, raster, root, context.clone())?;
         prepared.encode_from(device, encoder, &self.source.input, working)?;
         Ok(prepared)
     }

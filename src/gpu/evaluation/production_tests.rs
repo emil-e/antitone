@@ -22,8 +22,7 @@ fn canonical(
     let composition = request.composition;
     let mut pixels = None;
     crate::gpu::execution::execute(
-        renderer,
-        device,
+        renderer.evaluation(),
         queue,
         request.lower(device, renderer).unwrap(),
         |render, finish| {

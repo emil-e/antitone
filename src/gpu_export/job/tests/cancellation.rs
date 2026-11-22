@@ -115,8 +115,7 @@ fn export_cancellation_reaches_the_real_healer_after_its_inputs_arrive_and_prese
     let path = directory.path().join("result.exr");
     std::fs::write(&path, b"keep existing output").unwrap();
     let result = crate::gpu_export::write_checked(
-        &renderer,
-        &device,
+        renderer.evaluation(),
         &queue,
         crate::gpu_export::Request {
             definition,

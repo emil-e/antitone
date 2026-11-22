@@ -4,24 +4,24 @@ pub(super) use super::authored_area as write;
 use super::*;
 use crate::gpu::execution::{self, SampleEncoding};
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn write_calculation(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
+    context: &evaluation::Context,
     gpu: &crate::gpu::submission::Queue,
-    definition: crate::gpu::evaluation::Value,
-    composition: Composition,
-    format: Format,
+    request: Request,
     destination: (&Path, Overwrite),
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<execution::Stats, Error> {
+    let Request {
+        definition,
+        composition,
+        format,
+    } = request;
     let encoding = match format {
         Format::Tiff(target) => SampleEncoding::Rgb16(target),
         Format::Exr(_) => SampleEncoding::LinearFloat,
     };
     execution::execute(
-        renderer,
-        device,
+        context,
         gpu,
         execution::Request {
             definition,

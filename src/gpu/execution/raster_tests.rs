@@ -55,13 +55,12 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
     let output = crate::gpu::raster::buffer(&device, [2, 2], "source-layout admission").unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
     let _prepared = Request::new(&source, &input, Some(&plan), plan.input().size())
-        .encode(&renderer, &device, &mut encoder, &output)
+        .encode(renderer.evaluation(), &mut encoder, &output)
         .expect("matching source layout must be encodable");
     assert!(
         matches!(
             Request::new(&source, &input, Some(&unrelated), plan.input().size()).encode(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &mut encoder,
                 &output
             ),
