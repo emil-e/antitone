@@ -7,6 +7,7 @@ use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
 use crate::gpu::view::request::SourceRequest;
+use crate::gpu::{drt, evaluation, lut3d::Looks};
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
@@ -39,21 +40,24 @@ impl Clone for Demand {
 impl Demand {
     fn rendering(
         &self,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: evaluation::Context,
+        looks: &Looks,
+        transform: &drt::Target,
         kernels: Arc<ViewKernels>,
         previous: Option<&SourceRequest>,
     ) -> Result<Arc<crate::gpu::view::rendering::Request>, Error> {
         self.rendering
             .get_or_init(|| {
                 crate::gpu::view::rendering::Request::photograph(
-                    renderer,
+                    context,
                     kernels,
                     &self.pixels.scan()?,
                     self.pixels.correction.gpu()?,
                     crate::gpu::view::rendering::Intent {
                         capture: &self.capture,
                         frame: self.frame,
-                        target: self.target,
+                        looks,
+                        transform,
                     },
                     previous,
                 )
@@ -99,6 +103,9 @@ pub(super) struct Frame {
     pub source: Arc<ViewImage>,
     pub underlay: Option<Arc<ViewImage>>,
     pub request: Arc<Demand>,
+    // Support refresh can reauthor from an already warm frame without joining GPU startup.
+    looks: Arc<Looks>,
+    targets: Arc<drt::Targets>,
 }
 impl Frame {
     #[cfg(test)]
@@ -106,7 +113,13 @@ impl Frame {
         std::iter::once(&self.source).chain(self.underlay.iter())
     }
 
-    fn from_images(request: Arc<Demand>, sequence: u64, mut images: Vec<Arc<ViewImage>>) -> Self {
+    fn from_images(
+        request: Arc<Demand>,
+        sequence: u64,
+        mut images: Vec<Arc<ViewImage>>,
+        looks: Arc<Looks>,
+        targets: Arc<drt::Targets>,
+    ) -> Self {
         let underlay = images.pop();
         let source = images.pop().expect("detail and underlay image products");
         Self {
@@ -114,6 +127,8 @@ impl Frame {
             request,
             source,
             underlay,
+            looks,
+            targets,
         }
     }
 
@@ -389,12 +404,7 @@ impl WorkingView {
             if matches!(error, Error::GpuOutOfMemory(_))
                 && let Some(frame) = &self.frame
             {
-                frame
-                    .source
-                    .renderer
-                    .evaluation()
-                    .materializations()
-                    .evict_optional();
+                frame.source.context.materializations().evict_optional();
             }
         }
         self.failed = self.wanted.clone();
@@ -518,14 +528,22 @@ impl WorkingView {
             return;
         }
         let rendering = wanted.rendering(
-            frame.source.renderer.clone(),
+            frame.source.context.clone(),
+            &frame.looks,
+            frame.targets.get(wanted.target),
             frame.source.kernels().clone(),
             Some(&frame.source.spec),
         );
         match rendering {
             Ok(rendering) => {
                 self.frame = Some(match rendering.ready() {
-                    Some(images) => Arc::new(Frame::from_images(wanted, sequence, images)),
+                    Some(images) => Arc::new(Frame::from_images(
+                        wanted,
+                        sequence,
+                        images,
+                        frame.looks.clone(),
+                        frame.targets.clone(),
+                    )),
                     None => frame,
                 });
             }
@@ -692,10 +710,11 @@ impl Drop for WorkingView {
 }
 
 // Physical acquisition follows the latest captured demand while retaining one admission.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn acquire_images(
     mailbox: &Arc<Mailbox>,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    context: &evaluation::Context,
+    looks: &Arc<Looks>,
+    targets: &Arc<drt::Targets>,
     kernels: &Arc<ViewKernels>,
     queue: &crate::gpu::submission::Queue,
 ) -> Option<Completion> {
@@ -712,8 +731,8 @@ pub(super) async fn acquire_images(
                 seconds = started.elapsed().as_secs_f64(),
                 width = frame.output[0],
                 height = frame.output[1],
-                retained_bytes = renderer.evaluation().retained_bytes(),
-                cache_limit = renderer.evaluation().cache_policy().generated_bytes;
+                retained_bytes = context.retained_bytes(),
+                cache_limit = context.cache_policy().generated_bytes;
                 "working_view_phase"
             );
         };
@@ -754,8 +773,13 @@ pub(super) async fn acquire_images(
                 .completed
                 .as_ref()
                 .map(|frame| frame.source.spec.clone());
-            let rendering =
-                demand.rendering(renderer.clone(), kernels.clone(), previous.as_ref())?;
+            let rendering = demand.rendering(
+                context.clone(),
+                looks,
+                targets.get(demand.target),
+                kernels.clone(),
+                previous.as_ref(),
+            )?;
             trace("graph_described");
             let Some(images) = rendering.produce(queue, &cancelled).await? else {
                 return Ok(None);
@@ -765,6 +789,8 @@ pub(super) async fn acquire_images(
                 demand.clone(),
                 sequence,
                 images,
+                looks.clone(),
+                targets.clone(),
             ))))
         }
         .await;
@@ -773,7 +799,7 @@ pub(super) async fn acquire_images(
             return None;
         }
         if matches!(&result, Err(Error::GpuOutOfMemory(_))) {
-            renderer.evaluation().materializations().evict_optional();
+            context.materializations().evict_optional();
         }
         let mut state = mailbox.0.lock().unwrap();
         if let Ok(Some(frame)) = &result
@@ -925,7 +951,15 @@ impl Acquisition {
         let Some((services, renderer, kernels)) = prepared else {
             return Ok(None);
         };
-        Ok(acquire_images(&self.mailbox, &renderer, &kernels, &services.queue).await)
+        Ok(acquire_images(
+            &self.mailbox,
+            renderer.evaluation(),
+            renderer.looks(),
+            &renderer.drt,
+            &kernels,
+            &services.queue,
+        )
+        .await)
     }
 }
 

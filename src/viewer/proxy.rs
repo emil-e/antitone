@@ -122,7 +122,9 @@ impl GpuProxy {
         target: OutputTarget,
     ) -> Result<crate::gpu::view::rendering::Request, Error> {
         crate::gpu::view::rendering::Request::camera_proxy(
-            self.0.renderer.clone(),
+            self.0.renderer.evaluation().clone(),
+            self.0.renderer.looks(),
+            self.0.renderer.drt(target),
             kernels,
             &self.0.source,
             field,
@@ -130,7 +132,6 @@ impl GpuProxy {
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
                 crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             }))?,
-            target,
         )
     }
 

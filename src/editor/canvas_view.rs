@@ -33,7 +33,7 @@ impl PreviewDemand {
     }
 
     fn present(&self, image: Arc<ViewImage>) -> Result<Arc<RenderedView>, Error> {
-        let device = image.renderer.evaluation().device().clone();
+        let device = image.context.device().clone();
         RenderedView::from_image(&device, image, self.capture.clone(), self.target)
     }
 }

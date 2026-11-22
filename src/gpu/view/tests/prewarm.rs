@@ -165,7 +165,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 .unwrap();
             let region = endpoint.domain().finite().unwrap();
             let image = ViewImage::from_recorded(
-                renderer.clone(),
+                renderer.evaluation().clone(),
                 source.kernels().clone(),
                 spec,
                 endpoint,

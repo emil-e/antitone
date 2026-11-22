@@ -199,7 +199,9 @@ fn render_repaired(
     let source = pollster::block_on(ViewImage::original_prefixes(
         device,
         queue,
-        base.renderer.clone(),
+        base.fixture_renderer
+            .clone()
+            .expect("authored view fixture"),
         base.kernels.clone(),
         scan,
         None,
@@ -245,7 +247,7 @@ fn filter_authored_repairs(
     )
     .unwrap();
     let bounds = root.domain().finite().unwrap();
-    let evaluation = source.renderer.evaluation();
+    let evaluation = &source.context;
     let request = evaluation
         .request(
             root.clone(),
@@ -271,8 +273,11 @@ fn filter_authored_repairs(
             .unwrap(),
     )
     .unwrap();
-    ViewImage::from_recorded(
-        source.renderer.clone(),
+    ViewImage::from_recorded_fixture(
+        source
+            .fixture_renderer
+            .clone()
+            .expect("authored view fixture"),
         source.kernels().clone(),
         spec,
         root,
@@ -340,7 +345,10 @@ fn sparse_repair_projection_retains_signed_hdr_and_ignores_replaced_values() {
         }
         let alternative = colour::authored_source(
             &device,
-            original_source.renderer.clone(),
+            original_source
+                .fixture_renderer
+                .clone()
+                .expect("authored view fixture"),
             original_source.kernels.clone(),
             &alternative,
             frame,

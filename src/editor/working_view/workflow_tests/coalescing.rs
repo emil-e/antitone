@@ -55,7 +55,7 @@ fn assert_coherent(editor: &mut Editor, wanted: &Demand) {
         frame
             .source
             .definition
-            .same_definition(&requested_image(wanted, &frame.source).unwrap())
+            .same_definition(&requested_image(wanted, &frame.source, frame).unwrap())
     );
     let rendered = working.rendered.as_ref().unwrap();
     assert!(

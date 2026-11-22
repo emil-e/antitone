@@ -177,12 +177,13 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "working",
                     physical,
                     crate::gpu::view::rendering::photograph(
-                        &renderer,
+                        &limits,
                         &scan,
                         None,
                         &capture,
                         SourceRequest::for_frame(view).unwrap(),
-                        target,
+                        renderer.looks(),
+                        renderer.drt(target),
                     )
                     .unwrap()
                     .definition,

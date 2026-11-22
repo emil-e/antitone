@@ -154,31 +154,32 @@ impl RenderedView {
 
     #[allow(clippy::too_many_arguments)]
     pub fn render_from_retained(
-        device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
         source: Arc<ViewImage>,
         capture: PhotographRequest,
         field: Option<Arc<GpuFlatField>>,
-        target: OutputTarget,
+        looks: &crate::gpu::lut3d::Looks,
+        transform: &crate::gpu::drt::Target,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
+        let device = source.context.device();
         let (definition, spec) = capture.retained_output(
             &device.limits(),
             &source.definition,
             field,
             &source.spec,
-            source.renderer.looks(),
-            source.renderer.drt(target),
+            looks,
+            transform,
         )?;
         let image = ViewImage::on_worker(
-            source.renderer.clone(),
+            source.context.clone(),
             source.kernels().clone(),
             spec,
             definition,
             queue,
             cancelled,
         )?;
-        Self::from_image(device, image, capture, target)
+        Self::from_image(device, image, capture, transform.output_target())
     }
 
     #[cfg(test)]
@@ -195,10 +196,14 @@ impl RenderedView {
             input,
             previous.and_then(|view| view.product.as_ref()),
         )?;
+        let renderer = source
+            .fixture_renderer
+            .as_ref()
+            .expect("authored view fixture");
         let endpoint = capture.display(
             product.definition.clone(),
-            product.renderer.looks(),
-            product.renderer.drt(target),
+            renderer.looks(),
+            renderer.drt(target),
         )?;
         Self::from_value(device, product, capture, target, endpoint)
     }
@@ -225,7 +230,7 @@ impl RenderedView {
             device, width, height, target,
         ))?);
         let recording = crate::gpu::recorded_image::Texture::new(
-            product.renderer.evaluation(),
+            &product.context,
             device,
             product.supplied()?,
             endpoint,
@@ -317,7 +322,7 @@ impl RenderedView {
             let BufferImage::Produced(pixels) = &view.pixels else {
                 return Vec::new();
             };
-            let scope = view.renderer.evaluation.materializations();
+            let scope = view.context.materializations();
             view.definition
                 .ancestors()
                 .filter(|node| {
@@ -421,9 +426,7 @@ impl RenderedView {
             if let Some(stages) = &graded.commands {
                 stages.submitted();
             }
-            graded
-                .pixels
-                .submitted(&graded.renderer.evaluation.materializations());
+            graded.pixels.submitted(&graded.context.materializations());
         }
         *submitted = true;
     }

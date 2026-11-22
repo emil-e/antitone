@@ -111,6 +111,8 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                 source: underlay.clone(),
                 underlay: Some(underlay),
                 request: Arc::new(Demand::fixture(first.clone(), input.clone())),
+                looks: renderer.looks().clone(),
+                targets: renderer.drt.clone(),
             }));
             working.request(Demand::fixture(first.clone(), input.clone()));
             let mut navigated = first.clone();

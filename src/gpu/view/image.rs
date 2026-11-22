@@ -7,7 +7,9 @@ use crate::gpu::source::SourceGeometry;
 
 pub struct ViewImage {
     pub spec: SourceRequest,
-    pub renderer: Arc<crate::renderer::GpuRenderer>,
+    pub(crate) context: e::Context,
+    #[cfg(test)]
+    pub(crate) fixture_renderer: Option<Arc<crate::renderer::GpuRenderer>>,
     pub(super) kernels: Arc<ViewKernels>,
     pub definition: Value,
     pub region: e::CellRegion,
@@ -22,15 +24,15 @@ impl ViewImage {
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]
     pub fn camera_preview(
-        device: &wgpu::Device,
+        context: e::Context,
         queue: &crate::gpu::submission::Queue,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        looks: &crate::gpu::lut3d::Looks,
+        transform: &crate::gpu::drt::Target,
         kernels: Arc<ViewKernels>,
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
         request: &crate::gpu::photograph::request::PhotographRequest,
-        target: crate::rendering::OutputTarget,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
         request.require_proxy(proxy)?;
@@ -54,6 +56,7 @@ impl ViewImage {
             region: area,
             size: proxy.dimensions(),
         })?;
+        let device = context.device();
         let camera = ProcessingSource::new_continuous(
             device,
             &proxy.pixels,
@@ -63,15 +66,9 @@ impl ViewImage {
                 proxy.dimensions(),
             )?),
         )?;
-        let (root, spec) = request.sampled_output(
-            &device.limits(),
-            &camera,
-            field,
-            spec,
-            renderer.looks(),
-            renderer.drt(target),
-        )?;
-        Self::on_worker(renderer, kernels, spec, root, queue, cancelled)
+        let (root, spec) =
+            request.sampled_output(&device.limits(), &camera, field, spec, looks, transform)?;
+        Self::on_worker(context, kernels, spec, root, queue, cancelled)
     }
 
     pub(super) fn proxy_request(
@@ -121,7 +118,7 @@ impl ViewImage {
     }
 
     pub(crate) fn from_recorded(
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: e::Context,
         kernels: Arc<ViewKernels>,
         spec: SourceRequest,
         definition: Value,
@@ -129,7 +126,9 @@ impl ViewImage {
         image: RecordedImage,
     ) -> Result<Arc<Self>, Error> {
         let image = Arc::new(Self {
-            renderer,
+            context,
+            #[cfg(test)]
+            fixture_renderer: None,
             kernels,
             spec,
             definition,
@@ -150,29 +149,24 @@ impl ViewImage {
 
     /// Existing workers can fulfil missing production without queueing another worker.
     pub(crate) fn on_worker(
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: e::Context,
         kernels: Arc<ViewKernels>,
         spec: SourceRequest,
         definition: Value,
         gpu: &crate::gpu::submission::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
-        let work = renderer
-            .evaluation()
-            .prepare_image(Self::evaluation(renderer.evaluation(), definition.clone())?)?;
+        let work = context.prepare_image(Self::evaluation(&context, definition.clone())?)?;
         let image = if work.can_record() {
-            work.record(renderer.evaluation())?
+            work.record(&context)?
         } else {
             RecordedImage {
-                pixels: renderer
-                    .evaluation()
-                    .produce_prepared(gpu, work, cancelled)?
-                    .try_into()?,
+                pixels: context.produce_prepared(gpu, work, cancelled)?.try_into()?,
                 commands: None,
             }
         };
         let region = definition.domain().finite()?;
-        Self::from_recorded(renderer, kernels, spec, definition, region, image)
+        Self::from_recorded(context, kernels, spec, definition, region, image)
     }
 
     pub(crate) fn byte_len(&self) -> u64 {

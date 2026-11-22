@@ -1883,12 +1883,12 @@ impl Worker {
         let view = if let Some(previous) = previous {
             let source = previous.product().expect("photographic card product");
             RenderedView::render_from_retained(
-                &self.device,
                 &self.queue,
                 source.clone(),
                 capture,
                 job.correction.gpu()?,
-                job.key.target,
+                renderer.looks(),
+                renderer.drt(job.key.target),
                 &|| !self.active(job),
             )?
         } else {
@@ -1909,15 +1909,15 @@ impl Worker {
                 .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
                 .clone()?;
             let source = ViewImage::camera_preview(
-                &self.device,
+                renderer.evaluation().clone(),
                 &self.queue,
-                renderer,
+                renderer.looks(),
+                renderer.drt(job.key.target),
                 kernels,
                 proxy,
                 job.correction.gpu()?,
                 spec,
                 &capture,
-                job.key.target,
                 &|| !self.active(job),
             )?;
             metrics.calculation_seconds = tick.elapsed().as_secs_f64();

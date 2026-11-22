@@ -22,7 +22,8 @@ impl ViewImage {
         });
         Self {
             spec,
-            renderer,
+            context: renderer.evaluation().clone(),
+            fixture_renderer: Some(renderer),
             kernels,
             definition,
             region,
@@ -33,10 +34,32 @@ impl ViewImage {
         }
     }
 
+    pub(crate) fn from_recorded_fixture(
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        spec: SourceRequest,
+        definition: e::Value,
+        region: e::CellRegion,
+        recorded: e::RecordedImage,
+    ) -> Result<Arc<Self>, Error> {
+        let mut image = Self::from_recorded(
+            renderer.evaluation().clone(),
+            kernels,
+            spec,
+            definition,
+            region,
+            recorded,
+        )?;
+        Arc::get_mut(&mut image).unwrap().fixture_renderer = Some(renderer);
+        Ok(image)
+    }
+
     pub(super) fn fixture_input(&self) -> Arc<Self> {
         let (spec, supplied) = self.argument.as_ref().expect("explicit fixture argument");
-        Self::from_recorded(
-            self.renderer.clone(),
+        Self::from_recorded_fixture(
+            self.fixture_renderer
+                .clone()
+                .expect("authored view fixture"),
             self.kernels.clone(),
             spec.clone(),
             supplied.definition().clone(),
@@ -73,7 +96,7 @@ impl ViewImage {
         let found = cache.find_ready::<e::ImageLayout>(root.identity()?, |layout| {
             layout.domain == root.domain() && layout.region == region
         })?;
-        Self::from_recorded(
+        Self::from_recorded_fixture(
             renderer,
             kernels,
             wanted.clone(),
@@ -116,16 +139,14 @@ impl ViewImage {
             },
         )?)?;
         let image = work.record(context)?;
-        let image = Self::from_recorded(renderer, kernels, spec, root, region, image)?;
+        let image = Self::from_recorded_fixture(renderer, kernels, spec, root, region, image)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         image.encode(device, &mut encoder);
         queue.submit([encoder.finish()]);
         if let Some(commands) = &image.commands {
             commands.submitted();
         }
-        image
-            .pixels
-            .submitted(&image.renderer.evaluation().materializations());
+        image.pixels.submitted(&image.context.materializations());
         *image.submitted.lock().unwrap() = true;
         Ok(image)
     }
@@ -265,7 +286,7 @@ impl ViewImage {
             .zip(definitions)
             .zip(images)
             .map(|((spec, root), image)| {
-                Self::from_recorded(
+                Self::from_recorded_fixture(
                     renderer.clone(),
                     kernels.clone(),
                     spec,
@@ -288,7 +309,7 @@ impl ViewImage {
     ) -> Result<Arc<Self>, Error> {
         let capture = PhotographRequest::Fixture(input.clone());
         let (root, plan) = capture.filtered(
-            &source.renderer.evaluation().device().limits(),
+            &source.context.device().limits(),
             &source.spec,
             source.definition.clone(),
         )?;
@@ -313,19 +334,22 @@ impl ViewImage {
                 return Ok(previous.clone());
             }
         }
-        let context = source.renderer.evaluation();
+        let context = &source.context;
         let work = context.prepare_supplied(
             Self::evaluation(context, root.clone())?,
             vec![source.supplied()?],
         )?;
         let image = work.record(context)?;
         let spec = capture.planned_request(
-            &source.renderer.evaluation().device().limits(),
+            &source.context.device().limits(),
             source.spec.clone(),
             plan,
         )?;
-        let mut image = Self::from_recorded(
-            source.renderer.clone(),
+        let mut image = Self::from_recorded_fixture(
+            source
+                .fixture_renderer
+                .clone()
+                .expect("authored view fixture"),
             source.kernels.clone(),
             spec,
             root,

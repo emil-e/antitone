@@ -74,7 +74,7 @@ impl RendererCache {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    pub(crate) drt: drt::Targets,
+    pub(crate) drt: Arc<drt::Targets>,
     pub(crate) looks: Arc<lut3d::Looks>,
     #[cfg(feature = "render")]
     pub(crate) evaluation: crate::gpu::evaluation::Context,
@@ -115,7 +115,7 @@ impl GpuRenderer {
     ) -> Result<Arc<Self>, Error> {
         let device = evaluation.device().clone();
         let looks = Arc::new(lut3d::Looks::new(&device));
-        let drt = drt::Targets::new(&device, queue).await?;
+        let drt = Arc::new(drt::Targets::new(&device, queue).await?);
         let renderer = Arc::new(Self {
             drt,
             looks,

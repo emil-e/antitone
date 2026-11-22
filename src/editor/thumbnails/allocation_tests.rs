@@ -113,7 +113,7 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
         );
         let region = definition.domain().finite().unwrap();
         let image = ViewImage::from_recorded(
-            renderer.clone(),
+            renderer.evaluation().clone(),
             kernels,
             spec,
             definition,

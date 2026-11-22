@@ -127,8 +127,11 @@ fn processing_input(
 
 fn independent_image(image: &Arc<ViewImage>) -> Arc<ViewImage> {
     assert!(*image.submitted.lock().unwrap());
-    ViewImage::from_recorded(
-        image.renderer.clone(),
+    ViewImage::from_recorded_fixture(
+        image
+            .fixture_renderer
+            .clone()
+            .expect("authored view fixture"),
         image.kernels().clone(),
         image.spec.clone(),
         image.definition.clone(),
