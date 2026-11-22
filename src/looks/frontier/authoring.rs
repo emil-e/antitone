@@ -12,7 +12,6 @@ use std::{fs, io::Write, path::Path};
 
 const GRID: usize = 129;
 const WIDTH: f64 = 1. / 1024.;
-const NEGATIVE_GAMMA: f64 = 0.9514395916432657;
 
 /// Read original software data without executing it and write only derived AP1 responses.
 /// `destination` must not exist, so regeneration cannot replace accepted assets in place.
@@ -45,7 +44,6 @@ pub fn generate(
     )?;
     let reference = reference_parameters(OutputTarget::Srgb);
     let inverse = CpuRenderer::new_inverse_reference(reference)?;
-    let forward = CpuRenderer::new_reference(reference)?;
     let anchors = [
         [410.43065207185845, 422.6037663707722, 424.35454914309963],
         [475.5513132216693, 488.6933467623055, 485.5754511774941],
@@ -102,38 +100,44 @@ pub fn generate(
     fs::create_dir(destination).map_err(failure)?;
     let mut hashes = serde_json::Map::new();
     for (variant, response) in responses {
-        let negative = negative_response(&response, &forward, &inverse)?;
-        let names = match variant {
-            Variant::A => ["density-a.f32.z", "density-negative-a.f32.z"],
-            Variant::B => ["density-b.f32.z", "density-negative-b.f32.z"],
+        let name = match variant {
+            Variant::A => "density-a.f32.z",
+            Variant::B => "density-b.f32.z",
         };
-        for (name, response) in names.into_iter().zip([&response, &negative]) {
-            let bytes = response.bytes();
-            hashes.insert(
-                name.into(),
-                blake3::hash(&bytes).to_hex().to_string().into(),
-            );
-            let file = fs::File::create(destination.join(name)).map_err(failure)?;
-            let mut compressor = flate2::write::ZlibEncoder::new(file, flate2::Compression::best());
-            compressor.write_all(&bytes).map_err(failure)?;
-            compressor.finish().map_err(failure)?;
-        }
+        let bytes = response.bytes();
+        hashes.insert(
+            name.into(),
+            blake3::hash(&bytes).to_hex().to_string().into(),
+        );
+        let file = fs::File::create(destination.join(name)).map_err(failure)?;
+        let mut compressor = flate2::write::ZlibEncoder::new(file, flate2::Compression::best());
+        compressor.write_all(&bytes).map_err(failure)?;
+        compressor.finish().map_err(failure)?;
     }
     let metadata = serde_json::json!({
         "contract": "frontier-density65-ap1-d60-v1",
-        "source_blake3": {"ColorData.dat": blake3::hash(&colour).to_hex().to_string(), "negative_setup": blake3::hash(&setup).to_hex().to_string()},
+        "source_blake3": {
+            "ColorData.dat": blake3::hash(&colour).to_hex().to_string(),
+            "negative_setup": blake3::hash(&setup).to_hex().to_string(),
+        },
         "raw_payload_blake3": hashes,
         "input": "formed native0..1023 RGB codes; uniform65 grid; first axis fastest",
         "output": "AP1/D60 authored rendering carrier; ordinary selected-output ACES follows",
-        "authoring": {"grid": GRID, "sigma": 0.5, "radius": 2, "boundary": "odd reflection at lower code boundaries; constant upper extension", "final_grid": density::SIZE, "space": "Gaussian AP1 response volume in code coordinates"},
-        "shaper_anchors_GRB": anchors,
-        "negative_rendering": {
-            "gamma": NEGATIVE_GAMMA,
-            "domain": "linear sRGB-reference RGB; signed componentwise power; fixed points 0 and 1",
-            "order": "native smoothed65 AP1 nodes -> forward reference -> gamma -> inverse reference -> float32 AP1",
-            "additional_smoothing": false,
+        "authoring": {
+            "grid": GRID,
+            "sigma": 0.5,
+            "radius": 2,
+            "boundary": "odd reflection at lower code boundaries; constant upper extension",
+            "final_grid": density::SIZE,
+            "space": "Gaussian AP1 response volume in code coordinates",
         },
-        "reference": {"OCIO": crate::rendering::ocio_version(), "parameters": reference_parameters(OutputTarget::Srgb), "upper_encoded_continuation_width": WIDTH, "black_endpoint": "preserved"},
+        "shaper_anchors_GRB": anchors,
+        "reference": {
+            "OCIO": crate::rendering::ocio_version(),
+            "parameters": reference_parameters(OutputTarget::Srgb),
+            "upper_encoded_continuation_width": WIDTH,
+            "black_endpoint": "preserved",
+        },
     });
     fs::write(
         destination.join("generation.json"),
@@ -141,25 +145,6 @@ pub fn generate(
     )
     .map_err(failure)
 }
-fn negative_gamma(value: f64) -> f64 {
-    value.signum() * value.abs().powf(NEGATIVE_GAMMA)
-}
-
-fn negative_response(
-    native: &density::Response,
-    forward: &CpuRenderer,
-    inverse: &CpuRenderer,
-) -> Result<density::Response, Error> {
-    // Precompose rendering tone offline; normal preparation needs only the AP1 volume.
-    let reference = forward.apply_unbounded(&native.values())?;
-    let adjusted: Vec<_> = reference
-        .iter()
-        .map(|rgb| rgb.as_dvec3().map(negative_gamma))
-        .collect();
-    let carrier = inverse.apply_unbounded(&adjusted)?;
-    density::Response::new(carrier.iter().map(|rgb| rgb.to_array()).collect())
-}
-
 fn landing(v: f64) -> f64 {
     if v > 1. - WIDTH {
         1. - WIDTH * WIDTH / (v - 1. + 2. * WIDTH)
@@ -222,21 +207,6 @@ fn gaussian(mut nodes: Vec<DVec3>, grid: usize) -> Vec<DVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn negative_gamma_keeps_black_white_and_a_monotone_signed_extension() {
-        assert_eq!(negative_gamma(0.), 0.);
-        assert_eq!(negative_gamma(1.), 1.);
-        assert!(negative_gamma(0.18) > 0.18);
-        let points = [-1024., -1., -1e-12, 0., 1e-12, 0.18, 1., 2., 1024.];
-        let values = points.map(negative_gamma);
-        assert!(values.iter().all(|v| v.is_finite()));
-        assert!(values.windows(2).all(|v| v[0] < v[1]));
-        assert!(values[0] < 0. && values[8] > 1.);
-        for x in [1e-12, 0.18, 1., 2.] {
-            assert_eq!(negative_gamma(-x), -negative_gamma(x));
-        }
-    }
-
     #[test]
     fn black_is_valid_for_inverse_reference_without_a_lower_rgb_guard() {
         assert_eq!(landing(0.), 0.);

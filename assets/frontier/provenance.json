@@ -17,136 +17,37 @@
   "prepared_grid": 65,
   "source_contract": "frontier-density65-ap1-d60-v1",
   "rights": "Derived numeric inputs from Fujifilm Frontier350/370 parameter data. Source availability is not redistribution permission; public asset clearance remains separate from local application verification.",
-  "formation_calibration": {
-    "fit": "A only; four neutral parameters frozen before neutral-preserving colour fit; B shares parameters with source-defined +62 codes",
-    "reference": "Antitone Fuji Crystal Archive TypeII/None at e3f1f5c8; per-channel black alignment (F-Fblack)/(1-Fblack) in linear sRGB preserves display white1; calibration targets only",
-    "matrix_rows": [
-      [
-        1.282289562775313,
-        -0.24594354514113376,
-        -0.03634601763417918
-      ],
-      [
-        -0.2653420950705695,
-        1.2556186905489233,
-        0.009723404521646214
-      ],
-      [
-        -0.07093156157153224,
-        -0.07084708062746652,
-        1.1417786421989988
-      ]
-    ],
-    "encoding": {
-      "codes_per_stop": 73.78531879357067,
-      "black_code_A": 0,
-      "knee": 0.0044459647893383926,
-      "toe": 2.5,
-      "channel_gains_RGB": [
-        1.0328716504309126,
-        1,
-        1.0760157025406742
-      ],
-      "additive_channel_code_offsets_RGB": [
-        0,
-        0,
-        0
-      ]
-    },
-    "order": "row-sum-one matrix -> local gamut/nonnegative proxy -> RGB gains -> formation -> fixed response",
-    "density_objective": "33 equally spaced neutral exposures EV[-5,+3], pointwise OKLab; fit code scale, knee/exposure, R/G and B/G gains",
-    "black_constraint": "A input code0 fixed, no fitted black translation; source response endpoint preserved",
-    "colour_objective": "120 moderate relative-neutral OKLab ab controls; neutral parameters frozen",
-    "diagnostics": {
-      "feature_order": [
-        "midtones_mean_L",
-        "midtones_L_per_EV",
-        "shadows_L_per_EV"
-      ],
-      "actual": [
-        0.4666709309381354,
-        0.1737211048482328,
-        0.062047335465289004
-      ],
-      "reference": [
-        0.46598299135322674,
-        0.1738748258260303,
-        0.04228707966783954
-      ]
-    },
-    "palette_training": 120,
-    "held_out_palette": 216,
-    "photographic_optimization": false,
-    "toe_shape_support": "Antitone generic C-41 forward family; archived Portra 400/Ektar 100 Status-M curve study at 3f397897, docs/research/film-response-model-study.md; not scanner-density calibration."
+  "runtime_definitions": {
+    "shared_native_readout": "readout.json",
+    "already_positive": "positive.json",
+    "colour_stock": "negative.json",
+    "ownership": "Executable files contain current parameters only. This provenance records rationale/source evidence and is not part of a runtime calibration parser or model fingerprint."
   },
-  "colour_negative_calibration": {
-    "source_model": "src/looks/frontier/negative.rs; shared src/looks/spektrafilm/negative.rs formation",
+  "positive_input": {
+    "source_model": "src/looks/frontier/positive.rs",
+    "basis": "Fixed standard AP1/D60 to floating-point linear Rec.709/sRGB D65, Bradford adaptation. No sRGB transfer encoding or input clipping.",
+    "encoding": "Radial mixed-drive compression -> shared reference-negative characteristic -> per-bank diagonal neutral slopes -> grey-centred native codes.",
+    "colour_fitting": false,
+    "neutral_calibration": "Three code slopes per bank calibrated on neutral exposures with a soft baseline-brightness penalty; not photographic or colour-matrix fitting.",
+    "neutral_artifact_sha256": "934aba72614242c793c95b6f3fe4f1517bee9d27aa3e95c69f9e8286ef177213"
+  },
+  "stock_input": {
+    "source_model": "src/looks/frontier/negative.rs",
     "negative_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
-    "reference": "Fuji Crystal Archive TypeII + Kodak Portra 400 at the same scene exposure",
-    "fit": "Portra400/A characterization shared across colour stocks; B receives source-mode +62 codes before continuation; no per-stock equalization",
-    "input_exposure_gain": 1,
-    "HD_compensation": false,
-    "density_units": "-log10(base-relative spectral transmission)",
-    "grey_setup": "mean(Dgrey)/Dgrey_j at scene grey0.18; preserve basezero and each stock mean grey OD",
-    "black_code_A": 0,
-    "codes_per_optical_density": 515,
-    "channel_gains_RGB": [1.0389265051082284, 1, 1.0318751992283606],
-    "matrix_rows": [
-      [
-        0.9749188050172526,
-        0.03164970403459537,
-        -0.006568509051847915
-      ],
-      [
-        -0.10026808253832398,
-        1.0523759610528092,
-        0.04789212148551488
-      ],
-      [
-        0.14823225898420794,
-        0.016360899739573016,
-        0.835406841276219
-      ]
-    ],
-    "code_offsets_RGB": [0, 0, 0],
-    "continuation": "lower clamp at code0; above1015, 1023-64/(q-1007)",
-    "tone_characterization": "Shared515code/OD scale chosen as a brightness/contrast compromise; fixed stock formation/exposure and no fitted black pedestal",
-    "colour_objective": "120 Portra400/A relative-own-neutral OKLab ab controls against FujiTypeII+samePortra; six row-sum-one matrix coefficients, identity-biased; coloured lightness unconstrained",
-    "rendering_gamma": {
-      "exponent": 0.9514395916432657,
-      "domain": "linear sRGB-reference RGB; signed componentwise power, fixed points0and1; no clipping",
-      "white_anchor": "normalized rendering reference white1, not scene AP1=1 or nativecode1023",
-      "fit": "one Portra400/A middle-grey OKLab L to None/A, with density calibration frozen; None supplies tone reference, not colour target",
-      "B_floor_fixed": false,
-      "authoring": "native65 AP1 response -> forward sRGB reference -> gamma -> inverse reference -> float32 AP1 at the same65code nodes; no additional smoothing",
-      "response_assets": {
-        "A": "density-negative-a.f32.z",
-        "B": "density-negative-b.f32.z"
-      }
-    },
-    "palette_training": 120,
-    "held_out_palette": 216,
-    "B_or_photographic_optimization": false,
+    "formation": "Nominal, paper-independent Spektrafilm exposure/development and source dye/base spectra.",
+    "readout": "Base-relative spectral scanner OD, centred at nominal scene grey; mean(Dgrey)/Dgrey channel balance retains density strength. Identity cross-channel mixing and per-bank diagonal neutral slopes.",
+    "colour_fitting": false,
+    "neutral_calibration": "One shared three-channel slope vector per bank, calibrated jointly across all16 stocks with a soft own-baseline brightness penalty; no per-stock normalization.",
+    "neutral_artifact_sha256": "3b2701d9b815c6cd224e39e02c5f682c2aa2e8aabd391dda0e0e9bb40f479f19",
     "sensor_file": "sensor.json",
     "sensor_sha256": "320246fe85e6d653434ed3d762db689bf1035e85fca4b77ba6ef021ec53903ef",
     "sensor_status": "Approximate digitization of attributed SP3000 illumination, original measurement provenance unverified; detector/optics treated constant within each band"
   },
-  "mode_origins": {
-    "A": 450,
-    "B": 512,
-    "translation_before_upper_limit": 62,
-    "parameter_file": "ez171autoc-nega.dat",
-    "parameter_sha256": "86605d6cac570ad2414eebe4cda2824392f34769037af7300091906f294a0736",
-    "parameter_offsets_hex": [
-      "0x2a",
-      "0x2c"
-    ],
-    "source_functions": [
-      "_lut3_1set at 0x100260a0",
-      "_SetCrt10bitLut at 0x10001180",
-      "_SetCrt3dLut at 0x10001230"
-    ],
-    "interpretation": "Relative source-mode origin; not a B brightness/colour fit or complete factory auto-setup emulation"
+  "tone_reference": {
+    "stock_scale": "Generic-reference Frontier/A neutral exposure curve aligned to Fuji Crystal Archive TypeII/None over33 exposures from-5to+3EV. Selected stocks inherit the density readout, not individually fitted tone curves.",
+    "positive_scale": "Already-positive encoding aligned to that frozen neutral reference, with separate bank neutral slopes.",
+    "stock_scale_artifact_sha256": "2b29dfd19b5de44df8fc9dcb89c4f91edc4c26927ef081f4c53ff8bc7b17d5aa",
+    "rendering": "Native A/B last, without output gamma or pedestal subtraction. Grey anchors fix scene18%grey; off-axis stock neutral curves, native floors and colour-brightness coupling remain."
   },
   "response_derivation": {
     "input_domain_RGB": [
@@ -194,15 +95,11 @@
     "generator": "antitone-frontier-bake; user-supplied ColorData.dat and ez171autoc-nega.dat",
     "asset_sha256": {
       "density-a.f32.z": "4b9f02cd22ad3ab902c3b125c36f5a12843a89431beb4bb6e40b8f80988340ac",
-      "density-b.f32.z": "419941d72f1482e410c30dc616a5778bea965944c7baf6d3c0d9e444ccf4c0a5",
-      "density-negative-a.f32.z": "f33e1f6a703d7d29d808f6fc1ac2afa018e2d65bbc66e37beb4dbd1a5e7a1ebe",
-      "density-negative-b.f32.z": "9f304d7eeeacd0ba6cfc6b1f494ab43892034a187b6735727a4e9a6c479ee370"
+      "density-b.f32.z": "419941d72f1482e410c30dc616a5778bea965944c7baf6d3c0d9e444ccf4c0a5"
     },
     "raw_samples_sha256": {
       "a": "e5da8e73f8bd17e78b4ba964e6bf415052ae6528ce68af390ad3254ea4f74d56",
-      "b": "8584c0243743e0ab6c310150ed726f80290b27a4f2184cf2f9b6258e2304ae10",
-      "negative_a": "531468f536436931f96bd0cb03fb1e77adeac9c54d5aa182ef366f6a1c176469",
-      "negative_b": "3f755867901dce94f8a0f7feb4519a7d93449a28c538074b1a2f7dd1b8573ed4"
+      "b": "8584c0243743e0ab6c310150ed726f80290b27a4f2184cf2f9b6258e2304ae10"
     }
   }
 }

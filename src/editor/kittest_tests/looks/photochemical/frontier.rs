@@ -262,7 +262,7 @@ fn frontier_colour_stock_controls_preserve_pairs_history_other_slots_and_saved_p
                     .unwrap()
                     .id()
                     .to_string(),
-                "00f53bc4a9bae2ffa297e8b20cdc010bf5a4f85c14998e34a4d5bf22b31ecce1"
+                "d291a5d512263f1759ae2145925060263dc12973fe04f31571363cd5045de849"
             );
         });
         let none = h.read(|e| e.document.project.output.film_and_paper.clone());

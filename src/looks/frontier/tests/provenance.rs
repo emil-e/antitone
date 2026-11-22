@@ -2,28 +2,25 @@ use super::*;
 use crate::looks::{Lut3D, cache::Cache, material};
 
 #[test]
-fn renderer_revision_identifies_native_or_gamma_response_by_selection() {
+fn both_input_adapters_use_the_same_native_response_revision() {
     let portra = spektrafilm::Negative::from_id("kodak_portra_400");
-    for (variant, native, gamma) in [
+    for (variant, bytes) in [
         (
             Variant::A,
             include_bytes!("../../../../assets/frontier/density-a.f32.z").as_slice(),
-            include_bytes!("../../../../assets/frontier/density-negative-a.f32.z").as_slice(),
         ),
         (
             Variant::B,
             include_bytes!("../../../../assets/frontier/density-b.f32.z").as_slice(),
-            include_bytes!("../../../../assets/frontier/density-negative-b.f32.z").as_slice(),
         ),
     ] {
-        for (negative, bytes) in [(None, native), (portra, gamma)] {
+        for negative in [None, portra] {
             let LookOrigin::Renderer { revision, .. } = (Selection { negative, variant }).origin()
             else {
                 unreachable!()
             };
             assert_eq!(revision, blake3::hash(bytes).to_hex().to_string());
         }
-        assert_ne!(blake3::hash(native), blake3::hash(gamma));
     }
 }
 

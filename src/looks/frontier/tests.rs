@@ -1,10 +1,11 @@
 use super::*;
+mod acceptance;
 mod provenance;
 
 #[test]
-fn authoring_response_matches_independent_density_controls() {
+fn positive_entry_matches_independent_controls() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/frontier/density-controls.json"
+        "../../../tests/fixtures/frontier/positive-controls.json"
     ))
     .unwrap();
     let inputs = fixture["inputs"].as_array().unwrap();
@@ -63,7 +64,7 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
         let default = selection.prepare(&cancel).unwrap();
         assert_eq!(default.lut().size(), baking::DEFAULT_GRID);
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/frontier/density-controls.json"
+            "../../../tests/fixtures/frontier/positive-controls.json"
         ))
         .unwrap();
         let key = if variant == Variant::A { "A" } else { "B" };
@@ -71,21 +72,19 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
             default.id().to_string(),
             fixture["outputs"][key]["lut_identity"].as_str().unwrap()
         );
-        for input in [DVec3::ZERO, DVec3::splat(-0.01)] {
-            let sampled = default.lut().apply(input).unwrap();
-            if variant == Variant::A {
-                // Stored ACEScct zero is rounded to f32; a double-precision
-                // decode therefore has a tiny quantization residual, not a pedestal.
-                let zero = f64::from(photographic::encode(0.) as f32);
-                let encoded = default
-                    .lut()
-                    .sample_encoded(input.map(photographic::encode))
-                    .unwrap();
-                assert!(
-                    (encoded - DVec3::splat(zero)).abs().max_element() <= 4. * f64::EPSILON * zero
-                );
-            } else {
-                assert!(sampled.min_element() > 0.);
+        for row in fixture["outputs"][key]["baked_black_controls"]
+            .as_array()
+            .unwrap()
+        {
+            let input: DVec3 = serde_json::from_value(row["input"].clone()).unwrap();
+            let expected_encoded: DVec3 = serde_json::from_value(row["encoded"].clone()).unwrap();
+            let encoded = default
+                .lut()
+                .sample_encoded(input.map(photographic::encode))
+                .unwrap();
+            assert!((encoded - expected_encoded).abs().max_element() < 2e-15);
+            if variant == Variant::B {
+                assert!(default.lut().apply(input).unwrap().min_element() > 0.);
             }
         }
         super::super::sampling::assert_material_vertices(default.lut(), |rgb| {
@@ -105,7 +104,7 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
 }
 
 #[test]
-fn fixed_black_anchor_uses_each_source_bank_without_an_output_black_override() {
+fn formation_selects_the_native_bank_without_an_output_black_override() {
     let cancel = AtomicBool::new(false);
     for negative in [None]
         .into_iter()
@@ -113,21 +112,18 @@ fn fixed_black_anchor_uses_each_source_bank_without_an_output_black_override() {
     {
         for variant in Variant::all() {
             let model = Model::new(Selection { negative, variant }, &cancel).unwrap();
-            let source = match negative {
-                Some(_) => density::Source::Negative(variant),
-                None => density::Source::Native(variant),
+            let codes = match &model.input {
+                Input::Positive(entry) => entry.coordinates(DVec3::ZERO).unwrap(),
+                Input::Negative(entry) => entry.coordinates(DVec3::ZERO).unwrap(),
             };
             let black = model.ap1(DVec3::ZERO).unwrap();
-            assert_eq!(
-                black,
-                source
-                    .load()
-                    .unwrap()
-                    .sample(DVec3::splat(variant.code_offset()))
-            );
-            if variant == Variant::A {
-                assert_eq!(black, DVec3::ZERO);
-            } else {
+            assert_eq!(black, density::load(variant).unwrap().sample(codes));
+            if variant == Variant::A && negative.is_none() {
+                assert_eq!(
+                    density::load(variant).unwrap().sample(DVec3::ZERO),
+                    DVec3::ZERO
+                );
+            } else if variant == Variant::B {
                 assert!(black.min_element() > 0.);
             }
         }

@@ -40,7 +40,7 @@ fn frontier_baked_luts_compose_both_targets() {
         frontier::{Selection, Variant},
     };
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/frontier/density-controls.json"
+        "../../../tests/fixtures/frontier/positive-controls.json"
     ))
     .unwrap();
     let inputs = fixture["inputs"].as_array().unwrap();
@@ -57,82 +57,85 @@ fn frontier_baked_luts_compose_both_targets() {
         .collect();
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let input = buffer(&device, &pixels);
-    for (variant, name) in [(Variant::A, "A"), (Variant::B, "B")] {
-        let asset = Arc::new(
-            Selection {
-                negative: None,
-                variant,
-            }
-            .prepare(&std::sync::atomic::AtomicBool::new(false))
-            .unwrap(),
-        );
-        let chain = LutChain {
-            lut: None,
-            film_and_paper: Some(asset.clone()),
-        };
-        for (target, key) in [
-            (OutputTarget::Srgb, "Srgb"),
-            (OutputTarget::DisplayP3, "DisplayP3"),
-        ] {
-            let output = texture(
-                &device,
-                [pixels.len() as u32, 1],
-                wgpu::TextureFormat::Rgba32Float,
+    for negative in [
+        None,
+        crate::looks::spektrafilm::Negative::from_id("kodak_portra_400"),
+    ] {
+        for (variant, bank) in [(Variant::A, "A"), (Variant::B, "B")] {
+            let name = format!("{}/{bank}", negative.map_or("none", |s| s.id()));
+            let asset = Arc::new(
+                Selection { negative, variant }
+                    .prepare(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap(),
             );
-            let binding = render_reference(
-                &renderer,
-                &device,
-                supplied(&input, [pixels.len() as u32, 1, 0, 0]),
-                target,
-                &chain,
-                &output,
-            )
-            .unwrap();
-            let mut encoder = device.create_command_encoder(&Default::default());
-            binding.encode(&device, &mut encoder).unwrap();
-            let submission = queue.submit([encoder.finish()]);
-            device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(submission),
-                    timeout: Some(std::time::Duration::from_secs(10)),
-                })
+            let chain = LutChain {
+                lut: None,
+                film_and_paper: Some(asset.clone()),
+            };
+            for (target, key) in [
+                (OutputTarget::Srgb, "Srgb"),
+                (OutputTarget::DisplayP3, "DisplayP3"),
+            ] {
+                let output = texture(
+                    &device,
+                    [pixels.len() as u32, 1],
+                    wgpu::TextureFormat::Rgba32Float,
+                );
+                let binding = render_reference(
+                    &renderer,
+                    &device,
+                    supplied(&input, [pixels.len() as u32, 1, 0, 0]),
+                    target,
+                    &chain,
+                    &output,
+                )
                 .unwrap();
-            let actual = read_texture(&device, &queue, &output);
-            let carrier: Vec<_> = pixels
-                .iter()
-                .map(|p| {
-                    asset
-                        .lut()
-                        .apply(glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
-                        .unwrap()
-                })
-                .collect();
-            let expected = crate::rendering::CpuRenderer::new(target)
-                .unwrap()
-                .render(&carrier)
-                .unwrap();
-            let expected: Vec<_> = expected.iter().map(|v| v.as_dvec3().to_array()).collect();
-            assert_eq!(expected.len(), inputs.len());
-            assert_eq!(actual.len(), inputs.len());
-            let mut maximum = 0f64;
-            for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
-                for c in 0..3 {
-                    let error = (actual[c] as f64 - expected[c]).abs();
-                    maximum = maximum.max(error);
-                    assert!(
-                        error < 2e-5,
-                        "{name}/{key} control {i} channel {c}: {actual:?} {expected:?}, error {error}"
-                    );
+                let mut encoder = device.create_command_encoder(&Default::default());
+                binding.encode(&device, &mut encoder).unwrap();
+                let submission = queue.submit([encoder.finish()]);
+                device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(submission),
+                        timeout: Some(std::time::Duration::from_secs(10)),
+                    })
+                    .unwrap();
+                let actual = read_texture(&device, &queue, &output);
+                let carrier: Vec<_> = pixels
+                    .iter()
+                    .map(|p| {
+                        asset
+                            .lut()
+                            .apply(glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
+                            .unwrap()
+                    })
+                    .collect();
+                let expected = crate::rendering::CpuRenderer::new(target)
+                    .unwrap()
+                    .render(&carrier)
+                    .unwrap();
+                let expected: Vec<_> = expected.iter().map(|v| v.as_dvec3().to_array()).collect();
+                assert_eq!(expected.len(), inputs.len());
+                assert_eq!(actual.len(), inputs.len());
+                let mut maximum = 0f64;
+                for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                    for c in 0..3 {
+                        let error = (actual[c] as f64 - expected[c]).abs();
+                        maximum = maximum.max(error);
+                        assert!(
+                            error < 2e-5,
+                            "{name}/{key} control {i} channel {c}: {actual:?} {expected:?}, error {error}"
+                        );
+                    }
                 }
+                eprintln!(
+                    "{name}/{key}: {} controls, max linear RGB error {maximum}",
+                    actual.len()
+                );
             }
-            eprintln!(
-                "{name}/{key}: {} controls, max linear RGB error {maximum}",
-                actual.len()
-            );
+            let a = renderer.looks.resource(asset.lut()).unwrap();
+            let b = renderer.looks.resource(asset.lut()).unwrap();
+            assert!(Arc::ptr_eq(&a, &b));
         }
-        let a = renderer.looks.resource(asset.lut()).unwrap();
-        let b = renderer.looks.resource(asset.lut()).unwrap();
-        assert!(Arc::ptr_eq(&a, &b));
     }
 }
 fn buffer(device: &wgpu::Device, pixels: &[[f32; 4]]) -> wgpu::Buffer {
