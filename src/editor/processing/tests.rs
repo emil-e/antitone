@@ -18,6 +18,7 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, crate::gpu::s
     let mut editor = super::super::tests::fixture();
     editor.initialize_viewer(&device, &queue);
     let record = Source {
+        capture_time: None,
         development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "local-fixture.ARW".into(),

@@ -4,6 +4,7 @@ use crate::{application::test_support::with_application, project::SourceDevelopm
 
 fn record(path: &str) -> Source {
     Source {
+        capture_time: None,
         development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: path.into(),

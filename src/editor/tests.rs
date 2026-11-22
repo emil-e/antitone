@@ -134,6 +134,7 @@ pub(super) fn with_registered_photo(editor: &mut Editor) {
         .document
         .register_with_development(
             crate::project::Source {
+                capture_time: None,
                 development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "fixture.ARW".into(),
@@ -493,6 +494,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     analysis_support: None,
                     proxy: proxy.clone(),
                     record: Source {
+                        capture_time: None,
                         development_mode: crate::project::DevelopmentMode::Unity,
                         id: SourceId(0),
                         path,
@@ -915,6 +917,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_out_of_range_controls() 
         .document
         .project
         .add_source(Source {
+            capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: "test-camera.ARW".into(),
@@ -1158,6 +1161,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         .map(|source| source.development.decode.clone())
         .unwrap_or_else(|| Development::new(crate::raw::version(), [1.; 4]));
     let record = Source {
+        capture_time: None,
         development_mode: crate::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "current.ARW".into(),
@@ -2646,6 +2650,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
             .document
             .register_with_development(
                 Source {
+                    capture_time: None,
                     development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: path.into(),

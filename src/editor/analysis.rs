@@ -786,10 +786,29 @@ impl Editor {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct ReviewedPhoto {
+    pub source: SourceId,
+    pub areas: Areas,
+    pub file: crate::source::FileKey,
+}
+
 #[derive(Clone)]
 pub(super) struct Approved {
-    pub entries: Vec<SourceAnalysis>,
-    pub files: Vec<thumbnails::FileKey>,
+    pub entries: Vec<ReviewedPhoto>,
+}
+
+impl Approved {
+    fn entry(&self, id: SourceId) -> Option<&ReviewedPhoto> {
+        self.entries.iter().find(|entry| entry.source == id)
+    }
+
+    pub(super) fn records(&self) -> impl Iterator<Item = SourceAnalysis> + '_ {
+        self.entries.iter().map(|entry| SourceAnalysis {
+            source: entry.source,
+            areas: entry.areas.clone(),
+        })
+    }
 }
 
 pub(super) struct Review {
@@ -814,26 +833,22 @@ fn review_label(canvas: egui::Rect, q: [egui::Pos2; 4], picture: bool) -> egui::
 }
 
 fn verify_file(document: &Document, approved: &Approved) -> Result<(), Error> {
-    if approved.files.len() != document.project.order.len()
-        || approved.entries.len() != approved.files.len()
-    {
+    if approved.entries.len() != document.project.order.len() {
         return Err(Error::UnusableSample("incomplete analysis-area review"));
     }
-    for (i, id) in document.project.order.iter().enumerate() {
-        let path = document.source_path(*id)?;
-        if document.file_key(&path) != approved.files[i] {
+    for &id in &document.project.order {
+        let row = approved
+            .entry(id)
+            .filter(|row| row.areas.ready())
+            .ok_or(Error::UnusableSample("missing reviewed analysis areas"))?;
+        let path = document.source_path(id)?;
+        if document.file_key(&path) != row.file {
             return Err(Error::UnusableSample(
                 "source changed since analysis-area review",
             ));
         }
-        let row = &approved.entries[i];
-        if row.source != *id || !row.areas.ready() {
-            return Err(Error::UnusableSample(
-                "missing or unordered reviewed analysis areas",
-            ));
-        }
         row.areas
-            .validate(document.project.source(*id)?.development.active_area.into())?;
+            .validate(document.project.source(id)?.development.active_area.into())?;
     }
     Ok(())
 }
@@ -937,10 +952,8 @@ impl AnalyzeTool {
         self.review
             .as_ref()?
             .approved
-            .entries
-            .iter()
-            .find(|r| r.source == id)
-            .map(|r| &r.areas)
+            .entry(id)
+            .map(|row| &row.areas)
     }
 
     pub(super) fn selected_region(&self, id: SourceId) -> Option<Coverage> {
@@ -1310,7 +1323,6 @@ fn assemble_review(
     let order = &request.document.project.order;
     let metadata = &request.document.spatial_metadata;
     let mut entries = Vec::with_capacity(order.len());
-    let mut files = Vec::with_capacity(order.len());
     for (index, &source) in order.iter().enumerate() {
         progress(index, order.len());
         if cancelled() {
@@ -1322,18 +1334,16 @@ fn assemble_review(
             .flat_map(|group| &group.sources)
             .find(|row| row.input.source == source)
             .ok_or(Error::UnusableSample("shared area detection is not ready"))?;
-        entries.push(SourceAnalysis {
+        entries.push(ReviewedPhoto {
             source,
             areas: review_windows(request, regions)?,
-        });
-        files.push(
-            request
+            file: request
                 .document
                 .file_key(&request.document.source_path(source)?),
-        );
+        });
     }
     progress(order.len(), order.len());
-    Ok((!cancelled()).then_some(Approved { entries, files }))
+    Ok((!cancelled()).then_some(Approved { entries }))
 }
 
 async fn prepare_review(
@@ -1666,7 +1676,7 @@ impl AnalyzeTool {
         if self.operation.decision.is_none() {
             return;
         }
-        let Some(fit) = self.begin_analysis_fit(editor, editor.document.project.order.len()) else {
+        let Some(fit) = self.begin_analysis_fit(editor, areas.entries.len()) else {
             return;
         };
         let decision = self.operation.decision.take().unwrap();

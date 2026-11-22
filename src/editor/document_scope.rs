@@ -103,6 +103,7 @@ pub(super) struct DocumentScope {
     pub auto_crop: super::auto_crop::State,
     pub source: bool,
     pub roll_selection: super::RollSelection,
+    pub roll_order: super::roll_order::View,
 
     pub export: super::export::State,
     pub importing: Option<async_executor::Task<()>>,
@@ -142,6 +143,10 @@ pub(super) struct DocumentScope {
 }
 
 impl DocumentScope {
+    pub(super) fn displayed_order(&self) -> std::borrow::Cow<'_, [SourceId]> {
+        self.roll_order.sort.ids(&self.state.project)
+    }
+
     pub(super) fn active_index(&self) -> Option<usize> {
         let active = self.visit.current_source?;
         self.state.project.order.iter().position(|id| *id == active)
@@ -346,6 +351,7 @@ impl From<Document> for DocumentScope {
             flat_correction: None,
             hosted_tool: Default::default(),
             roll_selection: super::RollSelection::default(),
+            roll_order: Default::default(),
 
             export: Default::default(),
             importing: None,

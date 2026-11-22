@@ -115,7 +115,7 @@ Cancel signals the workflow's cooperative cancellation token. Export and Analyze
 
 ## Export photographs
 
-File → **Export…** writes Selected photos or All photos in filmstrip order. Choose an existing destination folder, TIFF or EXR, and format-specific output settings. TIFF offers sRGB/Display P3 with 16-bit RGB and lossless Deflate; EXR has fixed scene-linear AP0 and half/full float precision. [Colour and output](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains the different rendering semantics.
+File → **Export…** captures Selected photos or All photos in the displayed filmstrip order on confirmation. Choose an existing destination folder, TIFF or EXR, and format-specific output settings. TIFF offers sRGB/Display P3 with 16-bit RGB and lossless Deflate; EXR has fixed scene-linear AP0 and half/full float precision. [Colour and output](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains the different rendering semantics.
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 
@@ -186,14 +186,18 @@ An embedded preview is already camera-rendered and carries a **Camera** badge. I
 
 ## Select and remove roll photos
 
-Selection is temporary workspace state, separate from each source's accepted Photo settings. The visit owns the active photograph; its position follows the project order. The active photo always belongs to the selected set and has a lighter neutral card background plus the selection outline.
+Selection is temporary workspace state, separate from each source's accepted Photo settings. The visit owns the active photograph; its position follows the displayed order. The active photo always belongs to the selected set and has a lighter neutral card background plus the selection outline.
 
 - Plain click makes that photo active, retaining or replacing the selection; arrow navigation uses the same rule.
 - Cmd-click toggles membership without changing the active photo; Shift-click selects the contiguous range from the last plain-click anchor; Shift–Cmd–A reduces the selection to the active photo.
 
+The filmstrip's [sort control](../src/editor/roll_order.rs) changes presentation only. Custom shows the saved sequence; File Name and Capture Time sort the same IDs and break ties using Custom. Arrow navigation, Shift-click ranges and export follow the displayed sequence. Sorting preserves the active photo, selection and range anchor.
+
+A drag moves the selected photos as a block if it starts on a selected card, or one photo otherwise. A changed drop saves the displayed sequence with the move applied and switches to Custom. This replaces the previous Custom order as one undoable edit. Undo and Redo reveal the restored order in Custom.
+
 Browsing replaces the visit only when the active photo changes. Selecting the active photo preserves its interaction and acquisition, including when source loading is pending or has failed. Adding scans to an existing roll preserves the active visit and selected input interpretation.
 
-**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old index in the shortened roll rather than the next surviving identity. Cancel preserves surviving drafts; confirmation retires the removed photo's work through its visit. Document-wide reviews retain their owners and validate current targets on Apply.
+**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old displayed index in the shortened roll rather than the next surviving identity. Cancel preserves surviving drafts; confirmation retires the removed photo's work through its visit. Document-wide reviews retain their owners and validate current targets on Apply.
 
 ## Responsiveness and optional caches
 

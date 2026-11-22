@@ -28,12 +28,26 @@ macro_rules! fixed_field {
     };
 }
 
-fixed_field!(
-    SchemaVersion,
-    u32,
-    SCHEMA_VERSION,
-    "unsupported project schema"
-);
+impl Serialize for SchemaVersion {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        SCHEMA_VERSION.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SchemaVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        match u32::deserialize(deserializer)? {
+            // Schema 22 did not record capture times; the source field defaults to None.
+            22 | SCHEMA_VERSION => Ok(Self),
+            _ => Err(serde::de::Error::custom("unsupported project schema")),
+        }
+    }
+}
 fixed_field!(
     ProcessingModel,
     u32,
@@ -52,6 +66,8 @@ fixed_field!(
 struct SourceRecord {
     id: SourceId,
     path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    capture_time: Option<CaptureTime>,
     development: SourceDevelopment,
     development_mode: DevelopmentMode,
 

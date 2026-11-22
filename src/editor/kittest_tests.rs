@@ -35,6 +35,7 @@ mod preview_failure;
 mod progress;
 mod project;
 mod roll_changes;
+mod roll_order;
 mod roll_selection;
 mod settling;
 mod shared_controls;

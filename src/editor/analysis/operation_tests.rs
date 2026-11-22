@@ -43,7 +43,6 @@ fn confirmation_after_history_freezes_reviewed_areas_and_captures_the_restored_d
         let request = testing::request(app, &mut reply);
         let captured = request.areas.unwrap();
         assert_eq!(captured.entries, reviewed.entries);
-        assert_eq!(captured.files, reviewed.files);
         assert_eq!(request.document.project, before);
         reply
             .result
@@ -93,8 +92,8 @@ fn cancelling_the_waiting_review_allows_an_immediate_new_action_and_one_complete
                 .analysis_review()
                 .unwrap()
                 .approved
-                .entries
-                .clone();
+                .records()
+                .collect::<Vec<_>>();
             assert!(
                 !editor
                     .document
@@ -159,10 +158,17 @@ fn incomplete_confirmation_keeps_the_review_available_for_a_valid_retry() {
                 .analysis_review_mut()
                 .unwrap()
                 .approved
-                .entries = reviewed.clone();
+                .entries = reviewed;
+            let records = editor
+                .document
+                .analysis_review()
+                .unwrap()
+                .approved
+                .records()
+                .collect::<Vec<_>>();
             editor.confirm_analysis_review(cx);
             assert!(editor.analysis_fitting(), "{}", editor.status);
-            reviewed
+            records
         });
         app.run_until(LIMIT, |editor| {
             editor.document.analysis_operation().is_none() && !editor.interaction_blocked()

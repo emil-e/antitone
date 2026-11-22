@@ -42,6 +42,7 @@ fn record(path: &Path, scan: &Scan) -> Source {
     let area = scan.area;
     Source {
         id: SourceId(0),
+        capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         path: path.into(),
         development: SourceDevelopment {

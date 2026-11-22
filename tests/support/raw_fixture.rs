@@ -16,7 +16,7 @@ pub fn bayer_dng_with_rgb(rgb: [u16; 3]) -> FixturePath {
 }
 
 pub fn bayer_dng_with_camera(rgb: [u16; 3], xyz_to_camera: [f64; 9]) -> FixturePath {
-    camera_with_neutral(xyz_to_camera, [(1, 1); 3], |_, _| rgb)
+    camera_with_neutral(xyz_to_camera, [(1, 1); 3], |_, _| rgb, None)
 }
 
 /// Declares capture WB in the RAW itself, independently of the requested development balance.
@@ -38,13 +38,24 @@ pub fn bayer_dng_with_as_shot_samples(
     gains: [u32; 3],
     pixel: impl Fn(u32, u32) -> [u16; 3],
 ) -> FixturePath {
-    camera_with_neutral(XYZ_TO_CAMERA, gains.map(|gain| (1, gain)), pixel)
+    camera_with_neutral(XYZ_TO_CAMERA, gains.map(|gain| (1, gain)), pixel, None)
+}
+
+#[allow(dead_code)]
+pub fn bayer_dng_with_exif_date(tag: u16, date: &[u8; 20]) -> FixturePath {
+    camera_with_neutral(
+        XYZ_TO_CAMERA,
+        [(1, 1); 3],
+        |_, _| [8000, 16000, 24000],
+        Some((tag, date)),
+    )
 }
 
 fn camera_with_neutral(
     xyz_to_camera: [f64; 9],
     neutral: [(u32, u32); 3],
     pixel: impl Fn(u32, u32) -> [u16; 3],
+    exif_date: Option<(u16, &[u8; 20])>,
 ) -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
@@ -93,6 +104,9 @@ fn camera_with_neutral(
         ),
         (50778, 3, short(21)),
     ];
+    if exif_date.is_some() {
+        entries.push((34665, 4, long(0)));
+    }
     entries.sort_by_key(|entry| entry.0);
     let mut bytes = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
     bytes.extend_from_slice(&(entries.len() as u16).to_le_bytes());
@@ -113,7 +127,18 @@ fn camera_with_neutral(
         if tag == 273 {
             strip_offset = offset + 8;
         }
-        if data.len() <= 4 {
+        if tag == 34665 {
+            let (exif_tag, date) = exif_date.unwrap();
+            let exif_ifd = bytes.len() as u32;
+            bytes[offset + 8..offset + 12].copy_from_slice(&exif_ifd.to_le_bytes());
+            bytes.extend_from_slice(&1u16.to_le_bytes());
+            bytes.extend_from_slice(&exif_tag.to_le_bytes());
+            bytes.extend_from_slice(&2u16.to_le_bytes());
+            bytes.extend_from_slice(&20u32.to_le_bytes());
+            bytes.extend_from_slice(&(exif_ifd + 18).to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(date);
+        } else if data.len() <= 4 {
             bytes[offset + 8..offset + 8 + data.len()].copy_from_slice(&data);
         } else {
             let position = bytes.len() as u32;

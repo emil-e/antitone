@@ -7,6 +7,7 @@ use glam::{DMat3, DVec3};
 
 fn source(model: &str, matrix: DMat3) -> Source {
     Source {
+        capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "test.ARW".into(),

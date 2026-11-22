@@ -44,6 +44,7 @@ pub(in crate::editor) enum Icon {
     Eye,
     ChevronRight,
     ChevronDown,
+    Sort,
 }
 
 impl Icon {
@@ -58,6 +59,13 @@ impl Icon {
             ));
         };
         match self {
+            Self::Sort => {
+                line(&[[2., 4.], [8., 4.]]);
+                line(&[[2., 8.], [6., 8.]]);
+                line(&[[2., 12.], [4., 12.]]);
+                line(&[[12., 2.], [12., 13.]]);
+                line(&[[9., 10.], [12., 13.], [15., 10.]]);
+            }
             Self::Pin { active, filled } => {
                 let stroke = if active {
                     Stroke::new(stroke.width, ui.visuals().selection.stroke.color)

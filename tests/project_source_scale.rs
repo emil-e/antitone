@@ -10,6 +10,7 @@ fn digital(gain: f64) -> Project {
     project
         .add_source(Source {
             id: SourceId(0),
+            capture_time: None,
             development_mode: antitone::project::DevelopmentMode::AsShot,
             path: "source.arw".into(),
             development: SourceDevelopment {

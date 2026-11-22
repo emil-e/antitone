@@ -449,6 +449,7 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     let id = project
         .add_source(Source {
             id: SourceId(0),
+            capture_time: None,
             development_mode: antitone::project::DevelopmentMode::Unity,
             path: file.path().into(),
             development: first_development,

@@ -53,7 +53,8 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
                 .analysis_review()
                 .expect("interactive sampling review");
             assert_eq!(
-                review.approved.entries, accepted.analysis_regions,
+                review.approved.records().collect::<Vec<_>>(),
+                accepted.analysis_regions,
                 "physical exclusion must not overwrite authored areas"
             );
         });

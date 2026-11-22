@@ -106,8 +106,8 @@ fn edited_review_uses_cached_camera_evidence_after_the_native_worker_closes_and_
                 .analysis_review()
                 .unwrap()
                 .approved
-                .entries
-                .clone()
+                .records()
+                .collect::<Vec<_>>()
         });
         scheduler.close_and_wait().unwrap();
         confirm_with_cached_camera_evidence(app, &starts);

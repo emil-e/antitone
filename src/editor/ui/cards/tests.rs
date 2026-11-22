@@ -48,7 +48,7 @@ fn render(
     frame(context, 315., enabled, events, |ui| {
         let layout = ContactSheetLayout::new(height - 12., height < 90.);
         let id = ui.id().with("caller-card");
-        let card = layout.begin(ui, origin, id, selected, false, true);
+        let card = layout.begin(ui, origin, id, selected, false, Some(egui::Sense::click()));
         match content {
             Content::Empty => (),
             Content::Loading => card.loading(ui),
@@ -92,7 +92,7 @@ fn contextual_status_combines_activity_and_failure_without_hiding_reasons() {
                 ui.id().with("status-photo"),
                 false,
                 false,
-                true,
+                Some(egui::Sense::click()),
             );
             card.caption(ui, "01.ARW");
             (card.image_rect, card.status(ui, &status))
@@ -120,7 +120,7 @@ fn warning_cues_fit_compact_cards_explain_the_photo_and_do_not_steal_selection()
                     ui.id().with("warned-photo"),
                     true,
                     true,
-                    true,
+                    Some(egui::Sense::click()),
                 );
                 card.caption(ui, "01.ARW");
                 let warning = card.status(
@@ -286,7 +286,7 @@ fn captions_and_camera_badges_clip_to_their_regions_at_viewport_edges() {
                             ui.id().with("clipped-card"),
                             false,
                             false,
-                            true,
+                            Some(egui::Sense::click()),
                         );
                         card.camera_badge(ui);
                         card.caption(ui, "01.ARW");
@@ -358,7 +358,7 @@ fn card_responses_preserve_hover_mouse_keyboard_and_inherited_disabled_behavior(
 fn card_availability_preserves_ids_captions_and_following_widgets() {
     let context = Context::default();
     let name = "京都_Summer_Scan_Reference_Roll01_Frame_04397.ARW";
-    let draw = |enabled, selected, events| {
+    let draw = |enabled: bool, selected, events| {
         frame(&context, 315., true, events, |ui| {
             let layout = ContactSheetLayout::new(40., true);
             let next_id = ui.next_auto_id();
@@ -369,7 +369,7 @@ fn card_availability_preserves_ids_captions_and_following_widgets() {
                 ui.id().with("card"),
                 selected,
                 false,
-                enabled,
+                enabled.then(egui::Sense::click),
             );
             card.caption(ui, name);
             assert_eq!(ui.next_auto_id(), next_id);
@@ -447,7 +447,7 @@ fn active_background_preserves_geometry_selection_outline_and_filename_semantics
                             ui.id().with("active-card"),
                             true,
                             active,
-                            true,
+                            Some(egui::Sense::click()),
                         );
                         card.caption(ui, "full-source-filename.ARW");
                         assert_eq!(ui.next_auto_id(), next_id);

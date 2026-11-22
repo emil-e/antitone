@@ -11,6 +11,7 @@ fn fixture(index: usize) -> Editor {
             .state
             .register_with_development(
                 Source {
+                    capture_time: None,
                     development_mode: crate::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: format!("photo-{index}.ARW").into(),

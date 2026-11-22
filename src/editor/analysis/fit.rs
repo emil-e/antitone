@@ -269,7 +269,13 @@ impl Fit {
         if let Some(picture) = self.picture {
             require_picture_bounds(picture, active)?;
         }
-        let frame_areas = self.request.areas.as_ref().map(|a| &a.entries[index].areas);
+        let source = self.request.document.project.order[index];
+        let frame_areas = self.request.areas.as_ref().map(|approved| {
+            &approved
+                .entry(source)
+                .expect("verified reviewed photo")
+                .areas
+        });
         let regions = self
             .request
             .document
@@ -277,7 +283,7 @@ impl Fit {
             .groups
             .iter()
             .flat_map(|group| &group.sources)
-            .find(|row| row.input.source == self.request.document.project.order[index]);
+            .find(|row| row.input.source == source);
         let film_planes: Vec<_> = regions
             .and_then(|row| row.film.as_ref())
             .into_iter()
@@ -561,7 +567,7 @@ impl Fit {
             candidate
                 .project
                 .analysis_regions
-                .extend(approved.entries.clone());
+                .extend(approved.records());
         }
         analysis::verify(request)?;
         for (index, id) in project.order.iter().enumerate() {

@@ -212,6 +212,13 @@ impl Editor {
                 .restore(&mut document.state.project, direction)
                 .expect("history entry selected in this transaction")
         };
+        self.document.roll_order.drag = None;
+        // Replaying a permutation reveals the saved order without replacing the visit.
+        let reordered = before.order != self.document.project.order
+            && before.sources == self.document.project.sources;
+        if reordered {
+            self.document.roll_order.sort = Default::default();
+        }
         self.document
             .sampling_inputs
             .retain(&self.document.state, &self.document.initialization);
@@ -233,19 +240,20 @@ impl Editor {
         let stage_changed = before.input.is_negative() != self.document.project.input.is_negative();
         let same_visit = !stage_changed
             && self.document.visit.current_source == selected
-            && match (&next, &self.document.visit.canvas.ready) {
-                (Some(input), Some(ready)) => {
-                    input.matches(&ready.path, &ready.file, &ready.record)
-                }
-                (Some(input), None) => self
-                    .document
-                    .visit
-                    .source
-                    .input
-                    .as_ref()
-                    .is_some_and(|current| current.same_request(input)),
-                (None, _) => true,
-            };
+            && (reordered
+                || match (&next, &self.document.visit.canvas.ready) {
+                    (Some(input), Some(ready)) => {
+                        input.matches(&ready.path, &ready.file, &ready.record)
+                    }
+                    (Some(input), None) => self
+                        .document
+                        .visit
+                        .source
+                        .input
+                        .as_ref()
+                        .is_some_and(|current| current.same_request(input)),
+                    (None, _) => true,
+                });
         if !same_visit {
             if self.document.visit.current_source == selected {
                 self.reinterpret_photo();

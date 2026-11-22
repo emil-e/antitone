@@ -116,6 +116,7 @@ mod save;
 use crate::export::Overwrite;
 #[cfg(test)]
 mod input_tests;
+mod roll_order;
 mod roll_selection;
 #[cfg(test)]
 mod tests;

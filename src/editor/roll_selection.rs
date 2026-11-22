@@ -38,13 +38,13 @@ impl Editor {
         modifiers: egui::Modifiers,
         cx: &UiContext<'_, Self>,
     ) {
-        let Some(&id) = self.document.state.project.order.get(index) else {
+        let order = self.document.displayed_order().into_owned();
+        let Some(&id) = order.get(index) else {
             return;
         };
-        let order = &self.document.state.project.order;
         self.document
             .roll_selection
-            .reconcile(order, self.document.visit.current_source);
+            .reconcile(&order, self.document.visit.current_source);
         let active = if modifiers.shift {
             let anchor = self.document.roll_selection.anchor.unwrap_or(id);
             let start = order
@@ -157,7 +157,12 @@ impl Editor {
                 return;
             }
         };
-        let index = self.document.active_index().unwrap_or(0);
+        let index = self
+            .document
+            .displayed_order()
+            .iter()
+            .position(|id| Some(*id) == self.document.visit.current_source)
+            .unwrap_or(0);
         draft.update(|project| {
             for id in ids {
                 project
@@ -174,9 +179,8 @@ impl Editor {
             .sampling_inputs
             .retain(&scope.state, &scope.initialization);
         self.document.roll_selection = RollSelection::default();
-        if !self.document.state.project.order.is_empty() {
-            let index = index.min(self.document.state.project.order.len() - 1);
-            let id = self.document.state.project.order[index];
+        let order = self.document.displayed_order();
+        if let Some(&id) = order.get(index.min(order.len().saturating_sub(1))) {
             self.document.roll_selection.only(id);
             self.browse_photo(id, cx);
         } else {

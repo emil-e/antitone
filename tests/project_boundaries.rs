@@ -12,6 +12,7 @@ fn project() -> Project {
             .add_source(Source {
                 id: SourceId(0),
                 path: path.into(),
+                capture_time: None,
                 development_mode: DevelopmentMode::Unity,
                 development: SourceDevelopment {
                     decode: Development::new("test".into(), [1.; 4]),

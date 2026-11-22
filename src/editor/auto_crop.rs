@@ -5,7 +5,7 @@ use crate::{
 };
 #[cfg(test)]
 use std::rc::Weak;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 #[derive(Clone)]
 struct Entry {
@@ -22,7 +22,7 @@ struct Entry {
 
 #[derive(Clone)]
 pub(super) struct Draft {
-    order: Vec<SourceId>,
+    roll_photos: HashSet<SourceId>,
     scope: &'static str,
     attempted: usize,
     summary: String,
@@ -42,7 +42,9 @@ impl Draft {
     }
 
     fn belongs_to(&self, editor: &Editor) -> bool {
-        self.order == editor.document.state.project.order
+        let order = &editor.document.state.project.order;
+        self.roll_photos.len() == order.len()
+            && order.iter().all(|id| self.roll_photos.contains(id))
             && self
                 .entries
                 .iter()
@@ -236,7 +238,7 @@ impl Editor {
             problems.len()
         );
         Some(Draft {
-            order: self.document.state.project.order.clone(),
+            roll_photos: self.document.state.project.order.iter().copied().collect(),
             scope,
             attempted,
             summary: self.status.clone(),
