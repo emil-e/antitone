@@ -109,12 +109,6 @@ impl crate::image_mtf::ImageMtfParameters {
     }
 }
 
-impl crate::halation::HalationParameters {
-    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        crate::gpu::evaluation::halation(input, *self)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Grain {
     pub parameters: crate::grain::GrainParameters,

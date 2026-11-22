@@ -43,13 +43,11 @@ fn retained_grading_arguments_follow_branches_and_count_each_shared_definition_o
         bytes > 0,
         "the fixture must actually retain grading arguments"
     );
-    let halo = halation(
-        graded.clone(),
-        crate::halation::HalationParameters {
-            sigma: 0.25,
-            strength: 0.54,
-        },
-    )
+    let halo = crate::halation::HalationParameters {
+        sigma: 0.25,
+        strength: 0.54,
+    }
+    .compose(graded.clone())
     .unwrap();
     assert_eq!(
         Grading::captured_bytes(&halo),

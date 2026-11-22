@@ -207,7 +207,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
                 control.stages =
                     crate::gpu::photograph::assembly::Assembly::authored(move |mut image, _| {
                         if let Some(halo) = definition.halation {
-                            image = crate::gpu::evaluation::halation(image, halo)?;
+                            image = halo.compose(image)?;
                         }
                         let grain = definition.grain.unwrap().grain();
                         crate::gpu::evaluation::grain(image, grain, definition.seed)

@@ -538,7 +538,7 @@ impl Assembly {
             image = crate::gpu::gaussian::blur(image, film.image_mtf_sigma)?;
         }
         if let Some(halation) = self.halation {
-            image = crate::gpu::evaluation::halation(image, halation)?;
+            image = halation.compose(image)?;
         }
         if let Some(output) = output {
             image = output.compose(image)?;

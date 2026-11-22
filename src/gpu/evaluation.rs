@@ -59,9 +59,6 @@ mod fusion_tests;
 
 mod grain;
 
-mod halation;
-pub(crate) use halation::halation;
-
 mod materializations;
 mod materialized;
 mod supplied;

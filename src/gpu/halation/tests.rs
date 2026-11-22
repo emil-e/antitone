@@ -1,5 +1,7 @@
 use super::*;
-use crate::gpu::evaluation::CellRegion as Rect;
+use crate::gpu::evaluation::{
+    CellRegion as Rect, Executor, Grid, Plan, Policy, Source, raster_input, source,
+};
 use crate::halation::reference;
 use wgpu::util::DeviceExt;
 
@@ -50,7 +52,7 @@ fn render(
     root: Value,
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
-    let region = root.domain.finite().unwrap();
+    let region = root.domain().finite().unwrap();
     let plan = Plan::with_policy(root, region, Tiling { tile }, Policy::Composed).unwrap();
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation test readback"),
@@ -152,7 +154,7 @@ fn tuned_default_impulse_matches_oracle_across_tile_boundaries() {
     .parameters([3840, 2160])
     .unwrap()
     .unwrap();
-    let root = halation(source(Arc::new(data.clone())), parameters).unwrap();
+    let root = parameters.compose(source(Arc::new(data.clone()))).unwrap();
     let tiled = render(&device, &queue, root.clone(), [7, 5]);
     assert_reference(&tiled, &data, parameters);
     assert_eq!(tiled, render(&device, &queue, root, size));
@@ -239,12 +241,7 @@ fn completed_signed_mtf_precedes_positive_light_extraction() {
         "signed fixture distinguishes otherwise commuting Gaussians"
     );
     let input = crate::gpu::gaussian::blur(source(Arc::new(data)), mtf_sigma).unwrap();
-    let actual = render(
-        &device,
-        &queue,
-        halation(input, parameters).unwrap(),
-        [11, 9],
-    );
+    let actual = render(&device, &queue, parameters.compose(input).unwrap(), [11, 9]);
     for (a, b) in actual.iter().zip(expected) {
         for c in 0..3 {
             assert!((f64::from(a[c]) - b[c]).abs() < 3e-6);
@@ -411,25 +408,19 @@ fn zero_strength_bypasses_and_abandoned_recordings_leave_input_unchanged() {
     let (device, queue) = context();
     let data = fixture([19, 17], [1.; 2], 0, vec![[2., -0.2, 4., 3.]; 323]);
     let input = raster_input(data.domain);
-    assert!(
-        input.same_capture(
-            &halation(
-                input.clone(),
-                HalationParameters {
-                    sigma: 2.,
-                    strength: 0.
-                }
-            )
-            .unwrap()
-        )
-    );
-    let root = halation(
-        input,
-        HalationParameters {
-            sigma: 2.,
-            strength: 0.2,
-        },
-    )
+    let bypass = HalationParameters {
+        sigma: 2.,
+        strength: 0.,
+    }
+    .compose(input.clone())
+    .unwrap();
+    assert!(input.same_capture(&bypass));
+
+    let root = HalationParameters {
+        sigma: 2.,
+        strength: 0.2,
+    }
+    .compose(input)
     .unwrap();
     let plan = Plan::with_policy(
         root,

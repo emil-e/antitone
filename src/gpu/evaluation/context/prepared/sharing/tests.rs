@@ -188,13 +188,11 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
     let mtf = gaussian::blur(input, 1.).unwrap();
-    let root = halation(
-        mtf,
-        crate::halation::HalationParameters {
-            sigma: 1.5,
-            strength: 0.5,
-        },
-    )
+    let root = crate::halation::HalationParameters {
+        sigma: 1.5,
+        strength: 0.5,
+    }
+    .compose(mtf)
     .unwrap();
     let region = CellRegion::new([24, 20], [8, 8]);
     let evaluation = context

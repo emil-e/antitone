@@ -15,6 +15,7 @@ pub(crate) mod execution;
 pub mod flat;
 pub mod gaussian;
 pub mod grading;
+mod halation;
 pub mod interpretation;
 pub mod lut3d;
 pub mod photograph;
