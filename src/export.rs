@@ -1,23 +1,16 @@
 use crate::export_timing::timed;
-#[cfg(feature = "ocio-reference")]
-use crate::rendering::CpuRenderer;
 use crate::{Error, rendering::OutputTarget};
-use glam::DVec3;
-use std::{
-    fs,
-    io::{BufWriter, Write},
-    path::Path,
-};
+use std::{fs, path::Path};
 use tempfile::NamedTempFile;
 mod codec;
-pub use codec::FileFormat;
+pub use codec::{FileFormat, exr, tiff_encoded};
+#[cfg(all(test, target_os = "macos"))]
+use codec::{exr_blocks, exr_blocks_checked, tiff_encoded_checked, tiff_encoded_ordered};
+#[cfg(feature = "ocio-reference")]
+pub use codec::{exr_composed, tiff, tiff_composed};
 mod samples;
 pub use samples::{FloatPrecision, FloatPrecision as ExrPrecision};
 pub(crate) use samples::{Layout, Samples, SceneEncoding};
-mod stream;
-#[cfg(all(test, target_os = "macos"))]
-mod stream_tests;
-
 #[cfg(all(test, target_os = "macos"))]
 mod publication_tests;
 #[cfg(all(test, target_os = "macos"))]
@@ -163,121 +156,8 @@ fn atomic_file(
     })
 }
 
-/// Scalar/OCIO reference adapter, not a production rendering path.
-#[cfg(feature = "ocio-reference")]
-pub fn tiff(
-    path: &Path,
-    size: ImageSize,
-    target: OutputTarget,
-    overwrite: Overwrite,
-    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
-) -> Result<()> {
-    let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, |origin, extent| {
-        let mut working = Vec::with_capacity((extent[0] * extent[1]) as usize);
-        for row in origin[1]..origin[1] + extent[1] {
-            for x in origin[0]..origin[0] + extent[0] {
-                working.push(pixel(x, row)?);
-            }
-        }
-        target.encode_u16(&renderer.render(&working)?)
-    })
-}
-
-/// Scalar/OCIO original-sample reconstruction oracle.
-#[cfg(feature = "ocio-reference")]
-pub fn tiff_composed(
-    path: &Path,
-    composition: crate::geometry::Composition,
-    target: OutputTarget,
-    overwrite: Overwrite,
-    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
-) -> Result<()> {
-    let [width, height] = composition.size();
-    let size = ImageSize { width, height };
-    if composition.is_exact() {
-        return tiff(path, size, target, overwrite, |x, y| {
-            let [sx, sy] = composition.source_pixel([x, y])?;
-            pixel(sx, sy)
-        });
-    }
-    let raster = crate::frame_raster::FrameRaster::full(composition)?;
-    let renderer = CpuRenderer::new(target)?;
-    tiff_encoded(path, size, target, overwrite, |origin, extent| {
-        let mut working = Vec::new();
-        let mut weights = Vec::new();
-        let mut groups = Vec::new();
-        for row in origin[1]..origin[1] + extent[1] {
-            for x in origin[0]..origin[0] + extent[0] {
-                let start = working.len();
-                for ([sx, sy], weight) in raster.footprint([x, row])?.pixels(composition.area())? {
-                    working.push(pixel(sx, sy)?);
-                    weights.push(weight);
-                }
-                groups.push(start..working.len());
-            }
-        }
-        // ACES is per original processed pixel; reconstruction is in linear target RGB.
-        let rendered = renderer.render(&working)?;
-        let linear = groups
-            .into_iter()
-            .map(|range| {
-                crate::sampling::weighted_mean_iter(
-                    range.map(|i| Ok((rendered[i].as_dvec3(), weights[i]))),
-                )
-                .map(|p| p.as_vec3())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        target.encode_u16(&linear)
-    })
-}
-
-/// Scalar original-sample reconstruction oracle.
-#[cfg(feature = "ocio-reference")]
-pub fn exr_composed(
-    path: &Path,
-    composition: crate::geometry::Composition,
-    precision: ExrPrecision,
-    overwrite: Overwrite,
-    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
-) -> Result<()> {
-    let [width, height] = composition.size();
-    let raster = crate::frame_raster::FrameRaster::full(composition)?;
-    exr(
-        path,
-        ImageSize { width, height },
-        precision,
-        overwrite,
-        |x, y| {
-            if composition.is_exact() {
-                let [sx, sy] = composition.source_pixel([x, y])?;
-                return pixel(sx, sy);
-            }
-            crate::sampling::weighted_mean_iter(
-                raster
-                    .footprint([x, y])?
-                    .pixels(composition.area())?
-                    .map(|([sx, sy], weight)| pixel(sx, sy).map(|p| (p, weight))),
-            )
-        },
-    )
-}
-
 // Square units avoid orientation-dependent repeated work without a large fixed workspace.
 pub(crate) const BLOCK: [u32; 2] = [128, 128];
-
-fn blocks(size: ImageSize) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
-    (0..size.height)
-        .step_by(BLOCK[1] as usize)
-        .flat_map(move |y| {
-            (0..size.width).step_by(BLOCK[0] as usize).map(move |x| {
-                (
-                    [x, y],
-                    [BLOCK[0].min(size.width - x), BLOCK[1].min(size.height - y)],
-                )
-            })
-        })
-}
 
 #[derive(Clone, Copy)]
 pub(crate) enum BlockOrder {
@@ -326,99 +206,4 @@ pub(crate) fn ordered_blocks(
                         })
                 })
         })
-}
-
-/// Encode supplied target RGB16 codes, with matching ICC and atomic destination safety.
-/// The callback receives bounded block origin/extent and returns row-major codes.
-/// This encoder performs no photographic processing or display rendering.
-pub fn tiff_encoded(
-    path: &Path,
-    size: ImageSize,
-    target: OutputTarget,
-    overwrite: Overwrite,
-    block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
-) -> Result<()> {
-    tiff_encoded_ordered(path, size, target, overwrite, BlockOrder::RowMajor, block)
-}
-
-// Only the internal GPU producer selects spatial visits. Public callbacks remain row-major;
-// both paths pack bounded RGB16 row bands with the same codec/metadata/safety policy.
-pub(crate) fn tiff_encoded_ordered(
-    path: &Path,
-    size: ImageSize,
-    target: OutputTarget,
-    overwrite: Overwrite,
-    order: BlockOrder,
-    block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
-) -> Result<()> {
-    tiff_encoded_checked(
-        (path, overwrite),
-        size,
-        target,
-        (order, BLOCK),
-        block,
-        || Ok(()),
-    )
-}
-
-pub(crate) fn tiff_encoded_checked(
-    (path, overwrite): (&Path, Overwrite),
-    size: ImageSize,
-    target: OutputTarget,
-    layout: (BlockOrder, [u32; 2]),
-    mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
-    before_publish: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    Plan::new(RenderTarget::Display(target), FileFormat::Tiff)?.write(
-        (path, overwrite),
-        size,
-        layout,
-        |origin, extent| block(origin, extent).map(Samples::Rgb16),
-        before_publish,
-    )
-}
-
-pub fn exr(
-    path: &Path,
-    size: ImageSize,
-    precision: ExrPrecision,
-    overwrite: Overwrite,
-    mut pixel: impl FnMut(u32, u32) -> Result<DVec3>,
-) -> Result<()> {
-    exr_blocks(path, size, precision, overwrite, |origin, extent| {
-        let mut values = Vec::with_capacity((extent[0] * extent[1]) as usize);
-        for row in origin[1]..origin[1] + extent[1] {
-            for x in origin[0]..origin[0] + extent[0] {
-                values.push(pixel(x, row)?);
-            }
-        }
-        Ok(values)
-    })
-}
-
-pub(crate) fn exr_blocks(
-    path: &Path,
-    size: ImageSize,
-    precision: ExrPrecision,
-    overwrite: Overwrite,
-    block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
-) -> Result<()> {
-    exr_blocks_checked((path, overwrite), size, precision, block, || Ok(()))
-}
-
-pub(crate) fn exr_blocks_checked(
-    (path, overwrite): (&Path, Overwrite),
-    size: ImageSize,
-    precision: ExrPrecision,
-    mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
-    before_publish: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    let encoding = SceneEncoding::new(precision);
-    Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Exr(precision))?.write(
-        (path, overwrite),
-        size,
-        (BlockOrder::RowMajor, BLOCK),
-        |origin, extent| encoding.pack(block(origin, extent)?.into_iter().map(Ok)),
-        before_publish,
-    )
 }

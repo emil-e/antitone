@@ -1,5 +1,6 @@
 use super::*;
 use crate::{color::ap1_to_ap0, profiles};
+use glam::DVec3;
 
 #[test]
 fn unsupported_target_and_layout_pairs_are_rejected_at_planning() {
@@ -43,7 +44,13 @@ fn spatial_block_visits_preserve_complete_files_and_public_row_major_order() {
             height: 8128,
         },
     ] {
-        let row: Vec<_> = blocks(size).collect();
+        let mut row = Vec::new();
+        for y in (0..size.height).step_by(BLOCK[1] as usize) {
+            for x in (0..size.width).step_by(BLOCK[0] as usize) {
+                let extent = [BLOCK[0].min(size.width - x), BLOCK[1].min(size.height - y)];
+                row.push(([x, y], extent));
+            }
+        }
         let public: Vec<_> = ordered_blocks(size, (BlockOrder::RowMajor, BLOCK)).collect();
         assert_eq!(row, public);
         let spatial: Vec<_> = ordered_blocks(size, (BlockOrder::Spatial2x2, BLOCK)).collect();
