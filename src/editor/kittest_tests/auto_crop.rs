@@ -205,7 +205,12 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
             crop
         )
     });
-    let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+    let timing = h.read(|editor| {
+        Arc::new(SelectionTiming::new(
+            editor.document.visit.current_source,
+            Instant::now(),
+        ))
+    });
     h.update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
     h.step();
     h.render().unwrap();
@@ -665,7 +670,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
         });
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| {
-            assert!(!editor.files.pending() && editor.document.analysis_review().is_none())
+            assert!(!editor.document.files.pending() && editor.document.analysis_review().is_none())
         });
         let mut expected = before;
         for id in [ids[0], ids[2]] {

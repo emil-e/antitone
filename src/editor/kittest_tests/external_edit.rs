@@ -414,7 +414,7 @@ fn external_session_import_history_and_departure(
         h.get_by_label("Discard changes").click();
         h.step();
         wait_for(&mut h, |editor| {
-            editor.document.project.order.is_empty() && !editor.files.pending()
+            editor.document.project.order.is_empty() && !editor.document.files.pending()
         });
         h.read(|editor| assert!(editor.document.external_edit.session.is_none()));
         assert!(weak.upgrade().is_none());

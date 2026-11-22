@@ -300,8 +300,7 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
                 .activities
                 .start(crate::editor::ActivityOptions::new("Document work").modal());
             let activity = editor.activities.view().unwrap().title;
-            let view = editor.request_id();
-            editor.replace_photo_scope(view);
+            editor.replace_photo_scope(editor.document.visit.current_source);
             assert!(editor.interaction_blocked());
             assert!(!editor.document.write.pending());
             assert_eq!(editor.activities.view().unwrap().title, activity);
@@ -352,9 +351,7 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
         start(app);
         await_native(app, &starts);
         app.update(|e| {
-            let view = e.request_id();
-            e.id = view;
-            e.replace_photo_scope(view);
+            e.replace_photo_scope(e.document.visit.current_source);
             e.status = "new visit".into();
         });
         app.pump();
@@ -407,8 +404,7 @@ fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
         start(app);
         app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() == 3);
         app.update(|e| {
-            let view = e.request_id();
-            e.replace_photo_scope(view);
+            e.replace_photo_scope(e.document.visit.current_source);
         });
         app.pump();
         assert_eq!(scheduler.waiter_count(), 2);
@@ -464,8 +460,7 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
         start(app);
         await_native(app, &at_park);
         app.update(|e| {
-            let view = e.request_id();
-            e.replace_photo_scope(view);
+            e.replace_photo_scope(e.document.visit.current_source);
         });
         app.pump();
         // Two unrelated Visible calls occupy both native owners so the unpacked
@@ -545,10 +540,9 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let (view, accepted) =
-            app.read(|e| (e.document.visit.view, e.document.state.project.clone()));
+        let (view, accepted) = app.read(|e| (e.visit_lifetime(), e.document.state.project.clone()));
         app.enter(|e, cx| e.open_project(directory.path().join("missing.antitone"), cx));
-        assert!(app.read(|e| e.files.opening() && e.interaction_blocked()));
+        assert!(app.read(|e| e.document.files.opening() && e.interaction_blocked()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| {
             !e.document.write.pending()
@@ -556,7 +550,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
                 && !e.document.visit.source.pending()
         });
         app.read(|e| {
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(e.document.visit.canvas.ready.is_some());
             assert_eq!(e.document.state.project, accepted);
             assert!(e.activities.view().is_none());
@@ -567,48 +561,73 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
 
 #[test]
 fn input_switch_retires_old_source_presentations_in_both_completion_orders() {
-    for complete_first in [false, true] {
+    for (complete_first, late_error) in [(true, false), (false, false), (false, true)] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let path = ready.path.clone();
         let accepted = editor.document.state.project.sources.clone();
         with_application(editor, |app| {
-            let old_view = app.enter(|editor, cx| {
+            let (old_view, reply) = app.enter(|editor, cx| {
                 editor.load(path, cx);
-                let view = editor.document.visit.view;
-                if complete_first {
-                    editor.source_result(view, Ok(Box::new(ready.clone())));
-                    assert!(editor.document.visit.canvas.ready.is_some());
-                }
+                let reply = super::testing::pending(editor, cx);
+                (editor.visit_lifetime(), reply)
+            });
+            let mut reply = Some(reply);
+            if complete_first {
+                assert!(
+                    reply
+                        .take()
+                        .unwrap()
+                        .send(Ok(Box::new(ready.clone())))
+                        .is_ok()
+                );
+                app.pump();
+                app.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
+            }
+            app.enter(|editor, cx| {
                 editor.request_input(crate::processing::InputSettings::Digital, cx);
                 if editor.dialogs.is_open() {
                     editor.dialogs.answer_for_test("Switch stage");
                 }
-                view
             });
             app.run_until(Duration::from_secs(5), |editor| {
                 editor.document.input_change.is_none()
             });
-            app.update(|editor| {
+            // Hold replacement completion so only the departed operation can affect publication.
+            let _current_reply = app.enter(|editor, cx| super::testing::pending(editor, cx));
+            let (view, status, current) = app.read(|editor| {
                 assert_eq!(
                     editor.document.project.input,
                     crate::processing::InputSettings::Digital
                 );
-                let view = editor.document.visit.view;
-                assert_ne!(view, old_view);
-                let status = editor.status.clone();
-                let current = editor
-                    .document
-                    .visit
-                    .canvas
-                    .ready
-                    .as_ref()
-                    .map(|ready| ready.developed.clone());
-                if !complete_first {
-                    editor.source_result(old_view, Ok(Box::new(ready)));
-                }
-                editor.source_result(old_view, Err("retired source error".into()));
-                assert_eq!(editor.document.visit.view, view);
+                assert!(old_view.upgrade().is_none());
+                (
+                    editor.visit_lifetime(),
+                    editor.status.clone(),
+                    editor
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .map(|ready| ready.developed.clone()),
+                )
+            });
+            if let Some(reply) = reply {
+                assert!(
+                    reply.is_canceled(),
+                    "the old source continuation must retire"
+                );
+                let result = if late_error {
+                    Err("retired source error".into())
+                } else {
+                    Ok(Box::new(ready))
+                };
+                assert!(reply.send(result).is_err());
+            }
+            app.pump();
+            app.read(|editor| {
+                assert!(view.upgrade().is_some());
                 assert_eq!(editor.status, status);
                 match (current, &editor.document.visit.canvas.ready) {
                     (Some(current), Some(ready)) => {
@@ -636,13 +655,13 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
         with_application(editor, |app| {
             let (view, captured) = app.enter(|e, cx| {
                 e.load(source_path, cx);
-                let view = e.document.visit.view;
+                let view = e.visit_lifetime();
                 let captured = e.document.project.clone();
                 e.save_project(path.clone(), crate::project::Save::New, None, cx);
                 assert!(e.document.write.pending());
                 e.document.project.roll.exposure = 0.5;
                 if complete_first {
-                    e.source_result(view, Ok(Box::new(ready.clone())));
+                    e.source_result(Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.canvas.ready.is_some() && e.interaction_blocked());
                 }
                 (view, captured)
@@ -652,9 +671,9 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
             app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
             app.update(|e| {
                 if !complete_first {
-                    e.source_result(view, Ok(Box::new(ready)));
+                    e.source_result(Ok(Box::new(ready)));
                 }
-                assert_eq!(e.document.visit.view, view);
+                assert!(view.upgrade().is_some());
                 assert!(e.document.visit.canvas.ready.is_some());
                 assert!(e.document.dirty());
                 assert_eq!(e.document.project.roll.exposure, 0.5);
@@ -677,7 +696,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
         let (view, selected, key) = app.read(|e| {
             assert!(e.document.visit.source.pending());
             (
-                e.document.visit.view,
+                e.visit_lifetime(),
                 e.document.visit.current_source.unwrap(),
                 e.document.visit.source.input.clone(),
             )
@@ -720,7 +739,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
                     .zip(key.as_ref())
                     .is_some_and(|(current, captured)| current.same_request(captured))
             );
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(e.document.visit.current_source, Some(selected));
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
@@ -733,7 +752,7 @@ fn correction_accepts_while_selected_native_input_is_held_and_preserves_its_visi
         app.read(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             assert!(e.source_context().unwrap().correction.prepared().is_some());
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(e.document.visit.current_source, Some(selected));
         });
     });

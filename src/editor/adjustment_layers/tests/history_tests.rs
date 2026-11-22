@@ -25,17 +25,16 @@ fn history_during_layer_drag_leaves_drop_validation_with_the_captured_layers() {
             });
             editor.commit_project(edit).unwrap();
             let cx = UiContext::render_only();
-            editor.adjustment_layer_order_input(Some(order[0]), None, false, &cx);
-            assert!(editor.document.visit.adjustment_layers.dragging());
+            editor.adjustment_layer_order_input(Some(order[0]), None, false);
+            assert!(editor.document.visit.layer_order_drag.is_some());
             editor.restore_history(history::Direction::Undo, &cx);
             let restored = editor.document.state.project.clone();
-            assert!(editor.document.visit.adjustment_layers.dragging());
+            assert!(editor.document.visit.layer_order_drag.is_some());
             let key = OrderKey {
-                loaded: editor.id,
                 source,
                 id: order[0],
             };
-            editor.adjustment_layer_order_input(None, Some((key, 2)), true, &cx);
+            editor.adjustment_layer_order_input(None, Some((key, 2)), true);
             if changed_layers {
                 assert_eq!(editor.document.state.project, restored);
                 assert_eq!(ids(&editor), order);

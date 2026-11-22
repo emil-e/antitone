@@ -348,7 +348,7 @@ fn unavailable_analysis_device_tears_down_review_and_restore_working_photo() {
                 proxy,
                 record,
             };
-            editor.source_result(editor.document.visit.view, Ok(Box::new(ready)));
+            crate::editor::source::testing::complete(editor, Ok(Box::new(ready)));
             editor.confirm_analysis_review(cx);
             assert!(editor.analysis_fitting());
             (before, first, other)
@@ -676,7 +676,7 @@ fn review_browsing_and_cancel_keep_the_displayed_photo_without_changing_multi_se
             );
             prepared(editor, cx);
             editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
-            let pending = editor.id;
+            let pending = editor.visit_lifetime();
             assert_eq!(editor.document.visit.current_source, Some(other));
             assert!(
                 editor.document.roll_selection.contains(first)
@@ -684,12 +684,12 @@ fn review_browsing_and_cancel_keep_the_displayed_photo_without_changing_multi_se
             );
             editor.finish_pick(cx);
             assert_eq!(editor.document.visit.current_source, Some(other));
-            assert_eq!(editor.document.selected, 1);
+            assert_eq!(editor.document.active_index(), Some(1));
             assert!(
                 editor.document.roll_selection.contains(first)
                     && editor.document.roll_selection.contains(other)
             );
-            assert_eq!(editor.id, pending);
+            assert!(pending.upgrade().is_some());
             assert!(
                 editor.document.analysis_review().is_none() && editor.test_pick_region().is_none()
             );

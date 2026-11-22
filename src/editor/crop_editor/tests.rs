@@ -256,7 +256,8 @@ fn photo_scope_drop_discards_crop_navigation_without_copying_it_into_the_next_vi
     assert_ne!(*h.editor.document.crop_viewport_mut().unwrap(), normal);
     let project = h.editor.document.state.project.clone();
     let status = h.editor.status.clone();
-    h.editor.replace_photo_scope(1);
+    h.editor
+        .replace_photo_scope(h.editor.document.visit.current_source);
     assert!(h.editor.document.crop_edit().is_none());
     assert_eq!(h.editor.document.visit.canvas.viewport, normal);
     assert!(h.editor.photo_crop().is_none());

@@ -415,8 +415,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         app.enter(|e, access| {
             e.select_look(Source::Loaded(chosen.clone()), access);
 
-            let view = e.request_id();
-            e.replace_photo_scope(view);
+            e.replace_photo_scope(e.document.visit.current_source);
         });
         app.pump();
         assert!(weak.upgrade().is_none());

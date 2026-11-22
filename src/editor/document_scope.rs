@@ -102,7 +102,6 @@ pub(super) struct DocumentScope {
     #[cfg(test)]
     pub auto_crop: super::auto_crop::State,
     pub source: bool,
-    pub selected: usize,
     pub roll_selection: super::RollSelection,
 
     pub export: super::export::State,
@@ -129,6 +128,7 @@ pub(super) struct DocumentScope {
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
+    pub files: super::files::State,
     pub external_edit: super::external_edit::State,
     pub lut: super::look::lut::State,
     pub film_and_paper: super::look::film_and_paper::State,
@@ -142,6 +142,11 @@ pub(super) struct DocumentScope {
 }
 
 impl DocumentScope {
+    pub(super) fn active_index(&self) -> Option<usize> {
+        let active = self.visit.current_source?;
+        self.state.project.order.iter().position(|id| *id == active)
+    }
+
     pub fn replacement(&self, state: Document) -> Self {
         let mut next: Self = state.into();
         next.thumbnails = self.thumbnails.for_document(next.cache.clone());
@@ -340,7 +345,6 @@ impl From<Document> for DocumentScope {
             correction: Default::default(),
             flat_correction: None,
             hosted_tool: Default::default(),
-            selected: 0,
             roll_selection: super::RollSelection::default(),
 
             export: Default::default(),
@@ -365,6 +369,7 @@ impl From<Document> for DocumentScope {
             embedded_preview: None,
             thumbnail_work: Default::default(),
             write: super::save::State::default(),
+            files: super::files::State::default(),
             external_edit: super::external_edit::State::default(),
             lut: Default::default(),
             film_and_paper: Default::default(),

@@ -22,7 +22,7 @@ fn add_preserves_a_changed_crop_and_context_removal_cancels_then_retires_only_on
             let (source, view, original) = h.read(|editor| {
                 (
                     editor.document.visit.current_source.unwrap(),
-                    editor.document.visit.view,
+                    editor.visit_lifetime(),
                     editor.document.state.project.clone(),
                 )
             });
@@ -37,7 +37,7 @@ fn add_preserves_a_changed_crop_and_context_removal_cancels_then_retires_only_on
             h.try_run_realtime().unwrap();
             h.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(source));
-                assert_eq!(editor.document.visit.view, view);
+                assert!(view.upgrade().is_some());
                 assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
                 assert_eq!(
                     editor.document.project.order.len(),
@@ -74,7 +74,7 @@ fn add_preserves_a_changed_crop_and_context_removal_cancels_then_retires_only_on
             h.read(|editor| {
                 assert_eq!(editor.document.state.project, imported);
                 assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
-                assert_eq!(editor.document.visit.view, view);
+                assert!(view.upgrade().is_some());
             });
             ask_remove(&mut h, "working-photo.dng");
             h.get_by_label("Remove photos").click();

@@ -19,7 +19,7 @@ fn held_lut_preparation_keeps_native_snapshots_history_browsing_and_tools_availa
                 editor.save_project(path.clone(), crate::project::Save::New, None, cx)
             });
             wait_for(&mut h, |editor| {
-                !editor.document.write.pending() && !editor.files.pending()
+                !editor.document.write.pending() && !editor.document.files.pending()
             });
             stage(&mut h, "Photo");
             workflow::enter_numeric(&mut h, "Exposure", "0.5");

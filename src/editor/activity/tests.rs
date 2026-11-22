@@ -226,7 +226,7 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.open_project("project.json".into(), cx);
-            assert!(editor.interaction_blocked() && editor.files.opening());
+            assert!(editor.interaction_blocked() && editor.document.files.opening());
             let context = egui::Context::default();
             app_frame(editor, &context, vec![]);
             assert!(
@@ -242,7 +242,7 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
                     .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
                     .is_some()
             );
-            assert!(editor.interaction_blocked() && editor.files.opening());
+            assert!(editor.interaction_blocked() && editor.document.files.opening());
         });
     });
 }
@@ -307,7 +307,7 @@ fn matching_success_retires_source_and_measurement_activity() {
                     let ready = editor.document.visit.canvas.ready.take().unwrap();
                     editor.load("current.ARW".into(), access);
                     assert!(editor.document.visit.source.pending());
-                    source_completion = Some((editor.document.visit.view, ready));
+                    source_completion = Some(ready);
                 }
                 _ => {
                     let source = editor
@@ -336,8 +336,8 @@ fn matching_success_retires_source_and_measurement_activity() {
                 app.pump();
             }
             assert!(app.read(|editor| editor.activities.view().is_some()));
-            if let Some((view, ready)) = source_completion {
-                app.update(|e| e.source_result(view, Ok(Box::new(ready))));
+            if let Some(ready) = source_completion {
+                app.update(|e| crate::editor::source::testing::complete(e, Ok(Box::new(ready))));
             }
             app.pump();
             drop(hold);
@@ -365,7 +365,7 @@ fn matching_success_retires_source_and_measurement_activity() {
 fn reference_failure_finishes_preparation_and_restores_the_view() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    let previous_visit = editor.document.visit.view;
+    let previous_visit = editor.visit_lifetime();
     let before = (
         editor.document.visit.current_source,
         editor.document.visit.canvas.viewport,
@@ -379,7 +379,7 @@ fn reference_failure_finishes_preparation_and_restores_the_view() {
         });
         app.read(|e| {
             assert!(e.activities.view().is_none());
-            assert_eq!(e.document.visit.view, previous_visit);
+            assert!(previous_visit.upgrade().is_some());
             assert_eq!(
                 (
                     e.document.visit.current_source,

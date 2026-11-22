@@ -663,8 +663,7 @@ fn retiring_a_photo_visit_does_not_retire_document_region_preparation() {
                 .clone()
         });
         app.update(|editor| {
-            let visit = editor.request_id();
-            editor.replace_photo_scope(visit);
+            editor.replace_photo_scope(editor.document.visit.current_source);
             assert_eq!(
                 editor.document.spatial_preparing.as_ref().unwrap().activity,
                 request
@@ -843,8 +842,7 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
         app.pump();
         app.update(|editor| {
             let ready = editor.document.visit.canvas.ready.clone().unwrap();
-            let visit = editor.request_id();
-            editor.replace_photo_scope(visit);
+            editor.replace_photo_scope(editor.document.visit.current_source);
             assert!(editor.document.spatial_preparing.is_some());
             editor.document.visit.canvas.ready = Some(ready);
             editor.begin_crop();

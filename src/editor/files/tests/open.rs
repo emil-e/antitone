@@ -74,7 +74,7 @@ fn all_missing_photos_open_with_intact_metadata_and_a_clean_history() {
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         app.run_until(Duration::from_secs(15), |editor| {
-            !editor.files.opening() && !editor.document.visit.source.pending()
+            !editor.document.files.opening() && !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.state.project, saved.project);
@@ -108,7 +108,7 @@ fn unreadable_malformed_and_unsupported_projects_preserve_the_current_document_a
     invalid["schema"] = serde_json::json!(u32::MAX);
     std::fs::write(&unsupported, serde_json::to_vec(&invalid).unwrap()).unwrap();
     let accepted = editor.document.state.project.clone();
-    let visit = editor.document.visit.view;
+    let visit = editor.visit_lifetime();
     let native = editor
         .document
         .visit
@@ -125,10 +125,12 @@ fn unreadable_malformed_and_unsupported_projects_preserve_the_current_document_a
             unsupported,
         ] {
             app.enter(|editor, cx| editor.open_project(path, cx));
-            app.run_until(Duration::from_secs(10), |editor| !editor.files.opening());
+            app.run_until(Duration::from_secs(10), |editor| {
+                !editor.document.files.opening()
+            });
             app.read(|editor| {
                 assert_eq!(editor.document.state.project, accepted);
-                assert_eq!(editor.document.visit.view, visit);
+                assert!(visit.upgrade().is_some());
                 assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.375));
                 assert!(Arc::ptr_eq(
                     &editor
@@ -205,11 +207,11 @@ fn startup_and_menu_open_accept_before_raw_work_and_retire_it_on_new() {
                 }
                 let visit = app.read(|editor| {
                     assert_eq!(editor.document.state.project, saved.project);
-                    assert!(!editor.document.dirty() && !editor.files.opening());
+                    assert!(!editor.document.dirty() && !editor.document.files.opening());
                     assert!(editor.document.visit.source.pending());
                     assert!(editor.document.visit.canvas.ready.is_none());
                     assert!(!editor.interaction_blocked());
-                    editor.document.visit.view
+                    editor.visit_lifetime()
                 });
                 let accepted = app.update(|editor| {
                     if retire {
@@ -232,11 +234,11 @@ fn startup_and_menu_open_accept_before_raw_work_and_retire_it_on_new() {
                 app.read(|editor| {
                     assert_eq!(editor.document.state.project, accepted);
                     if retire {
-                        assert_ne!(editor.document.visit.view, visit);
+                        assert!(visit.upgrade().is_none());
                         assert!(editor.document.visit.canvas.ready.is_none());
                         assert!(editor.document.project.sources.is_empty());
                     } else {
-                        assert_eq!(editor.document.visit.view, visit);
+                        assert!(visit.upgrade().is_some());
                         assert!(
                             editor.document.visit.canvas.ready.is_some(),
                             "{}",
@@ -285,7 +287,7 @@ fn a_bad_first_photo_does_not_roll_back_open_or_prevent_loading_another_photo() 
         with_application(editor(loader.clone(), Default::default()), |app| {
             app.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
             app.run_until(Duration::from_secs(15), |editor| {
-                !editor.files.opening() && !editor.document.visit.source.pending()
+                !editor.document.files.opening() && !editor.document.visit.source.pending()
             });
             app.read(|editor| {
                 assert_eq!(editor.document.state.project, saved.project);
@@ -346,11 +348,11 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
         app.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         let cx = app.access();
         app.run_until(Duration::from_secs(15), |editor| {
-            if !editor.files.opening() {
+            if !editor.document.files.opening() {
                 let _ = editor.correction();
                 editor.document.correction.observe(&cx);
             }
-            !editor.files.opening()
+            !editor.document.files.opening()
                 && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
         });
@@ -416,7 +418,7 @@ fn correction_resource_failure_keeps_the_enabled_map_visible_and_saveable() {
         let destination = directory.path().join("still-corrected.antitone");
         app.enter(|editor, cx| editor.save_project(destination.clone(), Save::New, None, cx));
         app.run_until(Duration::from_secs(15), |editor| {
-            !editor.files.pending() && !editor.document.write.pending()
+            !editor.document.files.pending() && !editor.document.write.pending()
         });
         let written = crate::project::Project::load(&destination).unwrap();
         assert_eq!(written.active_flat_field(), Some(&settings));
@@ -434,7 +436,7 @@ fn queued_open_cannot_replace_new_and_closed_execution_keeps_the_current_documen
     with_application(Editor::state(), |app| {
         app.enter(|editor, cx| {
             editor.open_project(saved.path.clone().unwrap(), cx);
-            assert!(editor.files.pending() && !editor.files.closing());
+            assert!(editor.document.files.pending() && !editor.document.files.closing());
         });
         app.pump();
         app.update(Editor::new_project);
@@ -444,7 +446,7 @@ fn queued_open_cannot_replace_new_and_closed_execution_keeps_the_current_documen
         app.read(|editor| {
             assert_eq!(*editor.document.project, crate::project::Project::default());
             assert!(editor.document.path.is_none());
-            assert!(!editor.files.pending() && editor.activities.view().is_none());
+            assert!(!editor.document.files.pending() && editor.activities.view().is_none());
         });
         app.close_execution();
         let accepted = app.read(|editor| editor.document.state.project.clone());
@@ -452,7 +454,7 @@ fn queued_open_cannot_replace_new_and_closed_execution_keeps_the_current_documen
         app.read(|editor| {
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.status, "Project ready");
-            assert!(!editor.files.pending() && !editor.interaction_blocked());
+            assert!(!editor.document.files.pending() && !editor.interaction_blocked());
             assert!(editor.activities.view().is_none());
         });
     });

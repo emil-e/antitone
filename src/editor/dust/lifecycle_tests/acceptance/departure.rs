@@ -41,7 +41,9 @@ fn successful_new_or_open_retires_a_running_search_without_accepting_or_waiting_
                     editor.file_action(FileAction::New, cx);
                 }
             });
-            app.run_until(Duration::from_secs(15), |editor| !editor.files.pending());
+            app.run_until(Duration::from_secs(15), |editor| {
+                !editor.document.files.pending()
+            });
             app.run_until(Duration::from_secs(5), |_| call.cancelled.is_cancelled());
             let (accepted, status) = app.read(|editor| {
                 assert!(!editor.dusting() && !editor.dust_search_pending());
@@ -105,7 +107,9 @@ fn cancelled_departure_or_failed_open_preserves_the_search_and_it_can_still_acce
                     "Cancel"
                 })
             });
-            app.run_until(Duration::from_secs(15), |editor| !editor.files.pending());
+            app.run_until(Duration::from_secs(15), |editor| {
+                !editor.document.files.pending()
+            });
             assert!(!call.cancelled.is_cancelled());
             app.read(|editor| {
                 assert_eq!(editor.document.path.as_ref(), Some(&path));
@@ -141,7 +145,7 @@ fn close_approves_before_search_cleanup_and_application_retirement_withdraws_pub
                 assert!(editor.application_menu_state().enabled(action));
             }
             editor.file_action(FileAction::Close, cx);
-            assert!(editor.allow_close && !editor.files.pending());
+            assert!(editor.allow_close && !editor.document.files.pending());
             assert!(!editor.document.write.pending());
         });
         app.close_execution();

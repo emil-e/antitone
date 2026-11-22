@@ -189,8 +189,12 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
             assert!(view.spec.frame().output.into_iter().all(|size| size > 0));
             assert!(!editor.document.source);
         });
-        let timing =
-            harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+        let timing = harness.read(|editor| {
+            Arc::new(SelectionTiming::new(
+                editor.document.visit.current_source,
+                Instant::now(),
+            ))
+        });
         harness
             .update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
         harness.step();
@@ -682,24 +686,13 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                     .unwrap()
             )
         });
-        let source_epoch = harness.read(|editor| {
-            editor
-                .source_epoch
-                .load(std::sync::atomic::Ordering::Relaxed)
-        });
+        let visit = harness.read(|editor| editor.visit_lifetime());
         let original = harness.read(|editor| editor.document.visit.canvas.original.continuation());
         harness.get_by_label("roll-1.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_ne!(editor.document.visit.current_source, first));
-        harness.read(|editor| {
-            assert_ne!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                source_epoch
-            )
-        });
+        assert!(visit.upgrade().is_none());
         harness.read(|editor| {
             assert_ne!(
                 editor.document.visit.canvas.original.continuation(),

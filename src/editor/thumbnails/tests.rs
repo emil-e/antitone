@@ -1530,10 +1530,10 @@ fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
                 editor.document.thumbnails.pending.as_ref().unwrap().0,
                 ticket
             );
-            let visit = editor.id;
+            let visit = editor.visit_lifetime();
             editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
-            assert_ne!(
-                editor.id, visit,
+            assert!(
+                visit.upgrade().is_none(),
                 "fixture must replace the active photo visit"
             );
             assert_eq!(

@@ -352,7 +352,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
             });
             let stale = gate.next(app);
             app.update(|editor| {
-                editor.replace_photo_scope(900);
+                editor.replace_photo_scope(editor.document.visit.current_source);
                 editor.status = "surviving visit".into();
             });
             app.pump();

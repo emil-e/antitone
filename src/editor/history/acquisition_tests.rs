@@ -74,18 +74,18 @@ fn grading_history_preserves_the_pending_visit_and_its_native_acquisition() {
         });
         wait_for_unpack(app, &starts);
         app.enter(|editor, cx| {
-            let view = editor.document.visit.view;
+            let view = editor.visit_lifetime();
             let viewport = editor.document.visit.canvas.viewport;
             editor.restore_history(Direction::Undo, cx);
             assert_eq!(editor.document.project.roll.exposure, 0.);
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
             assert!(editor.document.visit.source.pending());
             assert!(!editor.interaction_blocked());
             assert_eq!(editor.history_label(Direction::Redo), Some("Roll exposure"));
             editor.restore_history(Direction::Redo, cx);
             assert_eq!(editor.document.project.roll.exposure, 0.75);
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
         });
         release.now();
         app.run_until(Duration::from_secs(15), |editor| {
@@ -164,12 +164,6 @@ fn rapid_history_retires_old_photo_presentation_in_both_native_completion_orders
                 ] {
                     editor.restore_history(direction, cx);
                     assert!(!editor.interaction_blocked());
-                    assert_eq!(
-                        editor
-                            .source_epoch
-                            .load(std::sync::atomic::Ordering::Relaxed),
-                        editor.id
-                    );
                 }
                 assert_eq!(editor.document.project, original);
                 assert_eq!(editor.document.visit.current_source, Some(ids[0]));

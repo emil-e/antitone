@@ -29,7 +29,7 @@ fn save_command_respects_shared_preparation_input_without_retiring_consumers_or_
                         .enabled(crate::platform::menu::Action::Save)
                 );
                 editor.file_action(crate::editor::files::FileAction::Save, cx);
-                assert!(!editor.document.write.pending() && !editor.files.pending());
+                assert!(!editor.document.write.pending() && !editor.document.files.pending());
                 assert!(editor.document.spatial_preparing.is_some());
                 accepted
             });

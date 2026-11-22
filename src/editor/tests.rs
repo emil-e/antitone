@@ -244,7 +244,7 @@ pub(super) fn complete_document_operation(
         app.run_until(timeout, |editor| {
             !editor.document.write.pending()
                 && !editor.editing()
-                && !editor.files.opening()
+                && !editor.document.files.opening()
                 && !editor.document.visit.source.pending()
         });
         app.close_execution();
@@ -1185,7 +1185,6 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             .register_with_development(record.clone(), development.clone())
             .unwrap(),
     );
-    editor.document.visit.view = editor.id;
     editor.document.visit.canvas.ready = Some(Ready {
         reference: None,
         developed: developed_fixture(),
@@ -1207,7 +1206,7 @@ fn startup_typography_preserves_an_already_completed_source_failure() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.load("unavailable.ARW".into(), cx);
-            editor.source_result(editor.id, Err("Source unavailable".into()));
+            crate::editor::source::testing::complete(editor, Err("Source unavailable".into()));
 
             for initializing in [true, false] {
                 let mut output = context.run_ui(egui::RawInput::default(), |ui| {
@@ -2073,7 +2072,7 @@ fn reference_pick_preserves_orientation_and_keeps_manual_navigation() {
             editor.finish_pick(cx);
             assert!(!editor.document.visit.source.pending());
             assert_eq!(editor.document.visit.current_source, source_id);
-            assert_eq!(editor.document.selected, 0);
+            assert_eq!(editor.document.active_index(), Some(0));
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.project.orientation, roll_orientation);
             assert_eq!(editor.photo_orientation(), photo_orientation);
@@ -2533,8 +2532,8 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             let mut record = ready.record;
             record.id = SourceId(0);
             record.path = "new.ARW".into();
-            editor.source_result(
-                editor.id,
+            crate::editor::source::testing::complete(
+                editor,
                 Ok(Box::new(Ready {
                     reference: None,
                     developed: ready.developed,
@@ -2669,12 +2668,10 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
             )
             .unwrap();
     }
-    editor.document.selected = 1;
-    editor.document.visit.current_source =
-        Some(editor.document.state.project.order[editor.document.selected]);
+    editor.document.visit.current_source = Some(editor.document.state.project.order[1]);
     editor.set_test_pick_region(Some(patch()));
     editor.preview_picker(PickerCase::Dmin);
-    assert_eq!(editor.document.selected, 1);
+    assert_eq!(editor.document.active_index(), Some(1));
     assert!(editor.test_pick_region().is_none());
     assert!(!editor.measurement_pending());
     let value = DVec3::new(0.3, 0.2, 0.15);

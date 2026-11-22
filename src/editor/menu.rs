@@ -49,7 +49,7 @@ impl Editor {
             return host::QuitState::Approved;
         }
 
-        if self.menus.pending.contains(&Action::Quit) || self.files.closing() {
+        if self.menus.pending.contains(&Action::Quit) || self.document.files.closing() {
             host::QuitState::Pending
         } else {
             host::QuitState::Running

@@ -401,7 +401,7 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
             (e.document.visit.canvas.original.continuation(), resource)
         });
         app.pump();
-        app.update(|e| e.replace_photo_scope(8));
+        app.update(|e| e.replace_photo_scope(e.document.visit.current_source));
         app.pump();
         assert!(resource.upgrade().is_none());
         app.enter(|e, access| {
@@ -415,10 +415,15 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.canvas.original.settled().is_some()
         });
-        let image = app.read(|e| e.document.visit.canvas.original.settled().unwrap().1);
+        let (image, visit) = app.read(|e| {
+            (
+                e.document.visit.canvas.original.settled().unwrap().1,
+                e.visit_lifetime(),
+            )
+        });
         assert!(departed.receive(Err("retired".into())).is_none());
         app.read(|e| {
-            assert_eq!(e.document.visit.view, 8);
+            assert!(visit.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &image,
                 &e.document.visit.canvas.original.settled().unwrap().1

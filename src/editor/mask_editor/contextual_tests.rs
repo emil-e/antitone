@@ -108,8 +108,7 @@ fn visit_retirement_and_layer_selection_discard_only_the_unfinished_refinement()
             let history = editor.history_label(history::Direction::Undo);
             start(&mut editor);
             if depart {
-                let next = editor.request_id();
-                editor.replace_photo_scope(next);
+                editor.replace_photo_scope(editor.document.visit.current_source);
             } else {
                 editor.select_adjustment_layer(adjustment_layers::Target::None);
             }
@@ -256,7 +255,9 @@ fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
             app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
             app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
             app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
-            app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+            app.run_until(Duration::from_secs(5), |editor| {
+                !editor.document.files.pending()
+            });
             app.read(|editor| {
                 assert!(editor.masking());
                 assert_eq!(editor.document.state.project, before);
@@ -264,7 +265,9 @@ fn cancelled_new_keeps_refinement_and_actual_new_retires_it_without_applying() {
             app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
             app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
             app.update(|editor| editor.dialogs.answer_for_test("Discard changes"));
-            app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+            app.run_until(Duration::from_secs(5), |editor| {
+                !editor.document.files.pending()
+            });
             app.update(|editor| editor.finish_mask(true));
             app.read(|editor| {
                 assert!(!editor.masking());
@@ -301,7 +304,7 @@ fn snapshots_and_roll_commands_remain_available_during_private_refinement() {
             });
             app.update(Editor::open_export_dialog);
             app.read(|editor| {
-                assert!(!editor.files.pending());
+                assert!(!editor.document.files.pending());
                 assert!(editor.document.export.form.is_some());
                 assert!(editor.masking());
                 assert_eq!(editor.document.state.project, before);

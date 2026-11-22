@@ -158,7 +158,8 @@ fn composed_modal_keeps_camera_demand_and_textures_at_normal_and_narrow_sizes() 
             frame(app, next());
             app.read(|editor| {
                 assert!(editor.interaction_blocked() && editor.workspace_input.is_blocked());
-                assert_eq!(editor.document.selected, 0);
+                assert!(editor.document.visit.current_source.is_none());
+                assert_eq!(editor.document.active_index(), None);
                 assert!(
                     editor.document.visit.canvas.ready.is_none()
                         && editor.document.visit.pending_preview.is_none()
@@ -170,7 +171,8 @@ fn composed_modal_keeps_camera_demand_and_textures_at_normal_and_narrow_sizes() 
             app.read(|editor| {
                 assert!(!editor.workspace_input.is_blocked());
                 assert_eq!(
-                    editor.document.selected, 1,
+                    editor.document.active_index(),
+                    Some(1),
                     "navigation resumes after input release"
                 );
             });

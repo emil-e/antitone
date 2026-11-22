@@ -31,7 +31,9 @@ fn draft_crop(editor: &mut Editor) -> Crop {
 }
 
 fn settle(app: &mut TestApplication<'_, Editor>) {
-    app.run_until(Duration::from_secs(15), |editor| !editor.files.pending());
+    app.run_until(Duration::from_secs(15), |editor| {
+        !editor.document.files.pending()
+    });
 }
 
 #[test]
@@ -138,7 +140,7 @@ fn failed_open_after_discard_preserves_the_original_document_and_crop_proposal()
         }
         let accepted = editor.document.state.project.clone();
         let draft = draft_crop(&mut editor);
-        let view = editor.document.visit.view;
+        let view = editor.visit_lifetime();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 assert!(editor.application_menu_state().enabled(Action::Open));
@@ -156,7 +158,7 @@ fn failed_open_after_discard_preserves_the_original_document_and_crop_proposal()
             app.read(|editor| {
                 assert_eq!(editor.document.path.as_ref(), Some(&path));
                 assert_eq!(editor.document.state.project, accepted);
-                assert_eq!(editor.document.visit.view, view);
+                assert!(view.upgrade().is_some());
                 assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
                 assert_eq!(editor.document.dirty(), dirty);
                 assert!(!editor.allow_close);
@@ -305,7 +307,9 @@ fn live_edit_and_input_reservation_reject_direct_departure_without_retiring_thei
                     editor.file_action(action, cx);
                     assert_eq!(editor.document.state.project, before);
                     assert!(
-                        !editor.files.pending() && !editor.dialogs.is_open() && !editor.allow_close
+                        !editor.document.files.pending()
+                            && !editor.dialogs.is_open()
+                            && !editor.allow_close
                     );
                     assert_eq!(editor.editing(), !reserved);
                     assert_eq!(editor.workspace_input.is_blocked(), reserved);

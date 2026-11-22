@@ -182,7 +182,7 @@ fn ordinary_photo_loading_seeds_the_fresh_opened_document_cache() {
         snapshot.save(&project, crate::project::Save::New).unwrap();
         app.enter(|e, cx| e.open_project(project, cx));
         app.run_until(Duration::from_secs(15), |e| {
-            !e.files.opening() && !e.document.visit.source.pending()
+            !e.document.files.opening() && !e.document.visit.source.pending()
         });
         app.read(|e| {
             assert!(previous.upgrade().is_none());
@@ -230,7 +230,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             (
                 e.document.state.project.clone(),
                 e.document.visit.current_source,
-                e.document.visit.view,
+                e.visit_lifetime(),
             )
         });
         app.enter(|e, access| {
@@ -240,7 +240,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert_eq!(e.document.visit.current_source, selected);
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
         });
         app.enter(|e, access| {
             e.restore_history(crate::editor::history::Direction::Undo, access);
@@ -604,7 +604,7 @@ fn failed_open_preserves_the_accepted_document_history_and_pixels() {
             e.open_project(destination.clone(), access);
         });
         app.run_until(Duration::from_secs(15), |e| {
-            !e.files.opening() && !e.document.visit.source.pending()
+            !e.document.files.opening() && !e.document.visit.source.pending()
         });
         let (snapshot, visit, native, store) = app.update(|e| {
             let before = e.history_snapshot();
@@ -612,7 +612,7 @@ fn failed_open_preserves_the_accepted_document_history_and_pixels() {
             e.record_edit(before, "Exposure", None);
             (
                 e.document.state.project.clone(),
-                e.document.visit.view,
+                e.visit_lifetime(),
                 e.document
                     .visit
                     .canvas
@@ -630,7 +630,7 @@ fn failed_open_preserves_the_accepted_document_history_and_pixels() {
         app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, snapshot);
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed,
                 &native

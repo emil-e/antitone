@@ -24,7 +24,7 @@ fn opened_missing_photo_keeps_its_card_error_and_another_card_can_be_selected() 
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         wait_for(&mut harness, |editor| {
-            !editor.files.opening() && !editor.document.visit.source.pending()
+            !editor.document.files.opening() && !editor.document.visit.source.pending()
         });
         let deadline = Instant::now() + Duration::from_secs(15);
         while harness.query_by_label("Photo error").is_none() {

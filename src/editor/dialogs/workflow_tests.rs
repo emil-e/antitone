@@ -28,7 +28,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
             );
             let details = editor.dialogs.message().unwrap().details.clone();
             assert!(!details.is_empty());
-            assert!(editor.files.closing());
+            assert!(editor.document.files.closing());
             assert_eq!(editor.document.state.project, before);
             assert!(editor.document.dirty());
             editor.status = "Unrelated progress or success".into();
@@ -47,11 +47,11 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
         });
         app.pump();
         app.update(|editor| {
-            assert!(editor.dialogs.is_open() && editor.files.closing());
+            assert!(editor.dialogs.is_open() && editor.document.files.closing());
             editor.dialogs.answer_for_test("Cancel");
         });
         app.pump();
-        app.read(|editor| assert!(!editor.allow_close && !editor.files.pending()));
+        app.read(|editor| assert!(!editor.allow_close && !editor.document.files.pending()));
         assert_eq!(std::fs::read(&path).unwrap(), b"keep existing bytes");
     });
 }
@@ -104,7 +104,7 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
     add_ready_fixture(&mut editor);
     editor.document.source = false;
     let before = editor.document.state.project.clone();
-    let visit = editor.document.visit.view;
+    let visit = editor.visit_lifetime();
     let path = editor
         .document
         .visit
@@ -125,7 +125,7 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
     );
     assert!(!editor.interaction_blocked() && !editor.document.write.pending());
     assert!(editor.document.flat_edit().is_none() && editor.test_pick().is_none());
-    assert_eq!(editor.document.visit.view, visit);
+    assert!(visit.upgrade().is_some());
     assert_eq!(
         editor.document.visit.canvas.ready.as_ref().unwrap().path,
         path
@@ -324,7 +324,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         );
     }
     assert!(editor.dialogs.is_open());
-    assert!(!editor.files.pending());
+    assert!(!editor.document.files.pending());
     assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
     let point = labels
         .iter()
@@ -338,7 +338,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     assert!(!editor.dialogs.is_open());
     assert_eq!(editor.document.state.project, before);
     assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
-    assert!(!editor.files.pending());
+    assert!(!editor.document.files.pending());
     // The same command is a meaningful positive control once acknowledgement removes the blocker.
     crate::application::test_support::with_application(editor, |app| {
         app.update(|editor| {
@@ -378,7 +378,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.files.pending() && editor.dialogs.is_open());
+            assert!(editor.document.files.pending() && editor.dialogs.is_open());
             assert_eq!(editor.document.project, before);
         });
     });

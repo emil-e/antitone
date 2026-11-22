@@ -271,7 +271,6 @@ impl Proxy {
 }
 
 pub(super) struct SelectedPreview {
-    request: u64,
     key: SourceKey,
     pub(super) proxy: crate::viewer::GpuProxy,
 }
@@ -291,15 +290,6 @@ impl SelectedPreview {
                 .is_some_and(|(source, path)| {
                     SourceKey::for_document(source, document.file_key(&path), document) == self.key
                 })
-    }
-
-    pub(super) fn current(
-        &self,
-        request: u64,
-        document: &Document,
-        source: Option<SourceId>,
-    ) -> bool {
-        self.request == request && self.current_source(document, source)
     }
 }
 
@@ -468,7 +458,6 @@ impl Thumbnails {
 
     pub(super) fn selected_preview(
         &mut self,
-        request: u64,
         document: &Document,
         id: SourceId,
     ) -> Result<Option<SelectedPreview>, Error> {
@@ -497,7 +486,6 @@ impl Thumbnails {
         let targets = gpu.display.ready()?;
         // Selected and filmstrip outputs have independent mutable processing state.
         let preview = SelectedPreview {
-            request,
             key: key.clone(),
             proxy: crate::viewer::GpuProxy::new_continuous(
                 gpu.evaluation.clone(),
@@ -513,7 +501,7 @@ impl Thumbnails {
             )?
             .with_identity(crate::gpu::source::identity::Identity::proxy(&proxy))?,
         };
-        if !preview.current(request, document, Some(id)) {
+        if !preview.current_source(document, Some(id)) {
             return Ok(None);
         }
         self.selected_key = Some(native_key.clone());
@@ -521,7 +509,6 @@ impl Thumbnails {
         let _ = self.sources.get_proxy(&native_key);
         let bytes = preview.proxy.byte_len();
         log::debug!(
-            request,
             source_id = id.0,
             cache = "memory",
             width = proxy.width,

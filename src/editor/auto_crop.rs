@@ -30,7 +30,6 @@ pub(super) struct Draft {
     problems: Vec<(SourceId, String)>,
     pub(super) reveal_controls: bool,
     pub(super) show_outline: bool,
-    drag: Option<MarginDrag>,
 }
 
 impl Draft {
@@ -245,7 +244,6 @@ impl Editor {
             problems,
             reveal_controls: true,
             show_outline: true,
-            drag: None,
         })
     }
 
@@ -384,11 +382,15 @@ impl State {
     }
 }
 
+#[derive(Default)]
+pub(super) struct ReviewView {
+    pub viewport: Viewport,
+    drag: Option<MarginDrag>,
+}
+
 pub(super) struct AutoCropTool {
     review: Rc<Review>,
     preparation: Option<async_executor::Task<()>>,
-    viewport: Viewport,
-    visit: Option<u64>,
 }
 
 impl AutoCropTool {
@@ -396,12 +398,11 @@ impl AutoCropTool {
         Self {
             review: Rc::new(RefCell::new(review)),
             preparation: None,
-            viewport: Viewport::default(),
-            visit: None,
         }
     }
 
     fn install(self, editor: &mut Editor) {
+        editor.document.visit.auto_crop_view = ReviewView::default();
         #[cfg(test)]
         let state = Rc::downgrade(&self.review);
         editor
@@ -411,14 +412,6 @@ impl AutoCropTool {
         {
             editor.document.auto_crop.0 = state;
         }
-    }
-
-    fn review_viewport(&mut self, editor: &Editor) -> &mut Viewport {
-        if self.visit != Some(editor.document.visit.view) {
-            self.visit = Some(editor.document.visit.view);
-            self.viewport.fit();
-        }
-        &mut self.viewport
     }
 }
 
@@ -461,7 +454,7 @@ impl tool::Tool for AutoCropTool {
 
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
         if self.review.borrow().is_some() {
-            self.review_viewport(editor)
+            &mut editor.document.visit.auto_crop_view.viewport
         } else {
             &mut editor.document.visit.canvas.viewport
         }
@@ -895,21 +888,21 @@ impl Draft {
             || !self.editable(editor)
             || ui.input(|input| input.key_down(egui::Key::Space))
         {
-            self.drag = None;
+            editor.document.visit.auto_crop_view.drag = None;
             return (false, None);
         }
         let Some(outline) = self.outline(editor, layout) else {
-            self.drag = None;
+            editor.document.visit.auto_crop_view.drag = None;
             return (false, None);
         };
         let press = ui
             .input(|input| input.pointer.press_origin())
             .and_then(|point| hit(outline, point).map(|handle| (point, handle)));
         if response.drag_started_by(egui::PointerButton::Primary) {
-            self.drag = None;
+            editor.document.visit.auto_crop_view.drag = None;
             if let Some((point, handle)) = press {
                 let entry = self.margin_entry(editor).expect("outline retains source");
-                self.drag = Some(MarginDrag {
+                editor.document.visit.auto_crop_view.drag = Some(MarginDrag {
                     source: entry.source,
                     proposal: entry.proposal,
                     handle,
@@ -922,7 +915,7 @@ impl Draft {
                 });
             }
         }
-        let drag = self.drag.filter(|drag| {
+        let drag = editor.document.visit.auto_crop_view.drag.filter(|drag| {
             editor.document.visit.current_source == Some(drag.source)
                 && self
                     .margin_entry(editor)
@@ -949,7 +942,7 @@ impl Draft {
             response.hover_pos().and_then(|point| hit(outline, point))
         };
         if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.drag = None;
+            editor.document.visit.auto_crop_view.drag = None;
         }
         (claimed, handle.map(|handle| cursor(outline, handle)))
     }

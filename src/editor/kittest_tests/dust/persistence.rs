@@ -155,13 +155,16 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
             e.document.visit.pending_preview = Some(
                 e.document
                     .thumbnails
-                    .selected_preview(e.id, &e.document.state, source)
+                    .selected_preview(&e.document.state, source)
                     .unwrap()
                     .expect("selected camera preview is cached"),
             );
             e.document.visit.working_view.clear();
             e.document.visit.canvas.preview.clear();
-            let timing = Arc::new(SelectionTiming::new(e.id, Instant::now()));
+            let timing = Arc::new(SelectionTiming::new(
+                e.document.visit.current_source,
+                Instant::now(),
+            ));
             e.document.visit.canvas.selection_timing = Some(timing.clone());
             timing
         });
@@ -459,10 +462,15 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_sco
         });
         native_file_action(&mut h, crate::platform::menu::Action::New);
         h.run();
-        h.read(|editor| assert!(editor.files.pending(), "repair-only edits must guard New"));
+        h.read(|editor| {
+            assert!(
+                editor.document.files.pending(),
+                "repair-only edits must guard New"
+            )
+        });
         h.get_by_label("Cancel").click();
         h.run();
-        h.read(|editor| assert!(!editor.files.pending()));
+        h.read(|editor| assert!(!editor.document.files.pending()));
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         save_existing_project(&mut h);
         h.read(|editor| assert!(evaluated[0].same_definition(&editor.dust_images()[0])));
@@ -552,7 +560,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_sco
         });
         for _ in 0..5 {
             h.step();
-            h.read(|editor| assert!(editor.files.opening()));
+            h.read(|editor| assert!(editor.document.files.opening()));
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &view,

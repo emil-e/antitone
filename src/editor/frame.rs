@@ -59,7 +59,7 @@ impl Editor {
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if state.enabled(MenuAction::Close) {
                 menu = Some(MenuAction::Close);
-            } else if !self.files.pending() {
+            } else if !self.document.files.pending() {
                 self.status =
                     "Finish or cancel the current edit or modal operation before closing".into();
             }
@@ -204,7 +204,7 @@ impl Editor {
     ) {
         let adjustment_delete = self.adjustment_layer_owns_delete();
         if adjustment_delete
-            && !self.document.visit.adjustment_layers.dragging()
+            && !self.document.visit.layer_order_drag.is_some()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -214,7 +214,7 @@ impl Editor {
         }
         if !self.dusting()
             && !adjustment_delete
-            && !self.document.visit.adjustment_layers.dragging()
+            && !self.document.visit.layer_order_drag.is_some()
             && !self.editing()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -223,21 +223,22 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if !self.document.visit.adjustment_layers.dragging()
+        if !self.document.visit.layer_order_drag.is_some()
             && !self.document.state.project.order.is_empty()
         {
             let previous = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
             let next = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
+            let active = self.document.active_index().unwrap_or(0);
             let index = if previous {
-                self.document.selected.saturating_sub(1)
+                active.saturating_sub(1)
             } else if next {
-                (self.document.selected + 1).min(self.document.state.project.order.len() - 1)
+                (active + 1).min(self.document.state.project.order.len() - 1)
             } else {
-                self.document.selected
+                active
             };
-            if index != self.document.selected {
+            if index != active {
                 self.select_roll_photo(index, egui::Modifiers::NONE, cx);
             }
         }

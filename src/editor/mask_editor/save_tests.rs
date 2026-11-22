@@ -109,7 +109,7 @@ fn save_as_preserves_private_mask_intent_and_release_keeps_rebased_paths_and_lat
             let accepted = editor.document.state.project.clone();
             let locator = editor.document.source_path(source).unwrap();
             let file = editor.document.file_key(&locator);
-            let visit = editor.document.visit.view;
+            let visit = editor.visit_lifetime();
             with_application(editor, |app| {
                 app.enter(|editor, cx| {
                     editor.save_project(destination.clone(), crate::project::Save::New, None, cx)
@@ -121,7 +121,7 @@ fn save_as_preserves_private_mask_intent_and_release_keeps_rebased_paths_and_lat
                 let saved = crate::project::Project::load(&destination).unwrap();
                 app.enter(|editor, _| {
                     assert!(editor.masking());
-                    assert_eq!(editor.document.visit.view, visit);
+                    assert!(visit.upgrade().is_some());
                     assert!(!editor.document.dirty());
                     assert_ne!(
                         editor.document.project.source(source).unwrap().path,

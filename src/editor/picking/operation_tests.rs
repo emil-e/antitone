@@ -445,7 +445,7 @@ fn photo_retirement_cancels_the_picker_but_not_an_independently_owned_caller() {
     with_application(editor, |app| {
         let task = launch(app, Display::sample("Visit reading"), |_, _| Ok(42));
         app.pump();
-        app.update(|editor| editor.replace_photo_scope(editor.id));
+        app.update(|editor| editor.replace_photo_scope(editor.document.visit.current_source));
         app.run_until(LIMIT, |_| task.is_finished());
         assert_eq!(pollster::block_on(task), None);
         app.read(|editor| assert!(!editor.picking() && !editor.interaction_blocked()));

@@ -42,7 +42,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
     with_application(editor, |app| {
         let (visit, store, locator) = app.read(|e| {
             (
-                e.document.visit.view,
+                e.visit_lifetime(),
                 e.document.cache.clone(),
                 e.document
                     .source_path(e.document.visit.current_source.unwrap())
@@ -73,7 +73,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Later exposure")
             );
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert!(Arc::ptr_eq(&e.document.cache, &store));
             assert_eq!(
                 e.document
@@ -110,7 +110,7 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.dirty());
-            assert!(e.files.closing());
+            assert!(e.document.files.closing());
             assert!(!e.document.write.pending() && !e.allow_close);
             assert_eq!(
                 e.dialogs.message().unwrap().title,
@@ -171,13 +171,13 @@ fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_clos
             );
         });
         app.pump();
-        app.update(|e| e.files = Default::default());
+        app.update(|e| e.document.files = Default::default());
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert!(path.exists());
         app.read(|e| {
             assert!(!e.document.dirty());
-            assert!(!e.files.pending() && !e.allow_close);
+            assert!(!e.document.files.pending() && !e.allow_close);
             assert!(!e.document.write.pending());
         });
     });
@@ -217,7 +217,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
             assert_eq!(crate::project::Project::load(&written).unwrap(), captured);
             app.read(|e| {
                 assert!(!e.dialogs.is_open(), "{}", e.status);
-                assert!(!e.files.pending() && e.activities.view().is_none());
+                assert!(!e.document.files.pending() && e.activities.view().is_none());
                 match &transition {
                     Transition::New => {
                         assert!(

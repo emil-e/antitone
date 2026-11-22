@@ -17,7 +17,7 @@ fn adding_photos_updates_the_filmstrip_without_revisiting_the_active_photo() {
         let (selected, view, pixels) = harness.read(|editor| {
             (
                 editor.document.visit.current_source,
-                editor.document.visit.view,
+                editor.visit_lifetime(),
                 editor
                     .document
                     .visit
@@ -37,7 +37,7 @@ fn adding_photos_updates_the_filmstrip_without_revisiting_the_active_photo() {
         harness.read(|editor| {
             assert_eq!(editor.document.project.sources.len(), 2);
             assert_eq!(editor.document.visit.current_source, selected);
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &editor
                     .document
@@ -338,7 +338,6 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         // Supply a reordered roll to exercise source-owned Save/Open behavior.
         harness.update(|e| {
             e.document.state.project.order.swap(0, 1);
-            e.document.selected = 0;
             let path = directory.path().join("film.antitone");
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
         });
@@ -386,10 +385,10 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         });
         let before_open = harness.read(|editor| editor.document.state.project.clone());
         open_project(&mut harness, directory.path().join("film.antitone"));
-        harness.read(|editor| assert!(editor.files.pending()));
+        harness.read(|editor| assert!(editor.document.files.pending()));
         harness.get_by_label("Cancel").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.files.pending());
+        wait_for(&mut harness, |editor| !editor.document.files.pending());
         harness.read(|editor| assert_eq!(editor.document.state.project, before_open));
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.get_by_label("Discard changes").click();
@@ -418,8 +417,12 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             select_target(&mut harness, target);
             wait_settled(&mut harness);
-            let timing =
-                harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+            let timing = harness.read(|editor| {
+                Arc::new(SelectionTiming::new(
+                    editor.document.visit.current_source,
+                    Instant::now(),
+                ))
+            });
             harness.update(|editor| {
                 editor.document.visit.canvas.selection_timing = Some(timing.clone())
             });
@@ -523,7 +526,7 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         harness.update(|editor| editor.document.path = Some(failed));
         native_file_action(&mut harness, crate::platform::menu::Action::New);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert!(editor.files.pending()));
+        harness.read(|editor| assert!(editor.document.files.pending()));
         harness.read(|editor| assert!(editor.dialogs.message().is_none()));
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Save changes")
@@ -533,7 +536,7 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
-        harness.read(|editor| assert!(editor.files.pending()));
+        harness.read(|editor| assert!(editor.document.files.pending()));
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         harness.read(|editor| {
             assert_eq!(
@@ -544,13 +547,13 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
         harness.get_by_label("OK").click();
         harness.step();
         wait_for(&mut harness, |editor| editor.dialogs.message().is_none());
-        harness.read(|editor| assert!(editor.dialogs.is_open() && editor.files.pending()));
+        harness.read(|editor| assert!(editor.dialogs.is_open() && editor.document.files.pending()));
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.get_by_label("Cancel").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.files.pending());
+        wait_for(&mut harness, |editor| !editor.document.files.pending());
         harness.update(|editor| editor.document.path = saved_path);
-        harness.read(|editor| assert!(!editor.files.pending()));
+        harness.read(|editor| assert!(!editor.document.files.pending()));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });
 }

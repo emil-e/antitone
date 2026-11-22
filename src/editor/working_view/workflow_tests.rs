@@ -105,7 +105,6 @@ fn fixture() -> (
         &crate::editor::display::DisplayFixture::for_device(&device),
     ));
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
-    e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
 }
 
@@ -407,7 +406,7 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
             )
         });
         app.update(|e| {
-            e.replace_photo_scope(e.id);
+            e.replace_photo_scope(e.document.visit.current_source);
             e.document
                 .visit
                 .working_view
@@ -877,7 +876,7 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
         moved_frame.max.0[0] += 1.;
         spec = spec.with_frame(moved_frame).unwrap();
         app.enter(|e, access| {
-            e.replace_photo_scope(8);
+            e.replace_photo_scope(e.document.visit.current_source);
             request_working(e, spec.clone(), next, access);
         });
         app.pump();
@@ -916,7 +915,7 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
             request_working(e, spec, input, access);
         });
         app.pump();
-        app.update(|e| e.replace_photo_scope(8));
+        app.update(|e| e.replace_photo_scope(e.document.visit.current_source));
         app.pump();
         assert!(source.upgrade().is_none());
         drop(hold);
@@ -1021,7 +1020,7 @@ fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
         });
         drop(release);
         app.run_until(Duration::from_secs(15), |editor| {
-            !editor.document.write.pending() && !editor.files.pending()
+            !editor.document.write.pending() && !editor.document.files.pending()
         });
         assert!(path.is_file());
     });

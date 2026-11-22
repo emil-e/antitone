@@ -251,8 +251,7 @@ fn reinterpretation_retires_picker_and_its_captured_input_scope() {
     setup(|mut h| {
         open(&mut h, PickerCase::Wb);
         h.update(|editor| {
-            let view = editor.request_id();
-            editor.reinterpret_photo(view);
+            editor.reinterpret_photo();
         });
         h.read(|editor| assert!(!editor.picking()));
     });

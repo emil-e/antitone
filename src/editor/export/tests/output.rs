@@ -215,17 +215,27 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 cx,
             );
             assert!(editor.document.export.operation.is_some());
-            // Later accepted edits/source identity cannot change the captured file recipe.
+            // Later accepted edits and visit retirement cannot change the captured file recipe.
             editor.photo_settings_mut().exposure = 0.75;
 
-            editor.id += 7;
+            editor.reinterpret_photo();
         });
         assert!(editor.dialogs.message().is_none(), "{}", editor.status);
         acknowledge_export_summary(&mut editor);
         assert_eq!(tiff_pixels(&captured), expected);
         assert_eq!(editor.document.state.project, edited);
         assert_eq!(editor.photo_settings().exposure, 0.75);
-        // A refused destination remains intact even after the visible authority and grade change.
+        editor = complete_document_operation(editor, Duration::from_secs(30), |editor, cx| {
+            let source = editor.document.visit.current_source.unwrap();
+            let path = editor.document.source_path(source).unwrap();
+            editor.start_source_acquisition(path, cx);
+        });
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
+        // A refused destination remains intact after visit retirement and the grade change.
         let bytes = std::fs::read(&source).unwrap();
         editor = wait(editor, |editor, cx| {
             editor.export(

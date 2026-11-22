@@ -13,7 +13,7 @@ fn removal_cancel_keeps_the_crop_and_confirmation_retires_it_without_applying() 
         height: 240,
     });
     editor.document.crop_edit_mut().unwrap().draft = draft;
-    let view = editor.document.visit.view;
+    let view = editor.visit_lifetime();
     let removed = editor.document.visit.current_source.unwrap();
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
@@ -23,7 +23,7 @@ fn removal_cancel_keeps_the_crop_and_confirmation_retires_it_without_applying() 
         app.pump();
         app.read(|editor| {
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
         });
         app.enter(|editor, cx| editor.request_removal(cx));

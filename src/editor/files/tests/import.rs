@@ -130,7 +130,7 @@ fn duplicate_paths_are_no_ops_even_when_the_original_file_is_now_missing() {
     let e = authored_fixture(&[photo.to_str().unwrap()]);
     let before = e.document.project.clone();
     let key = e.document.file_key(&photo);
-    let view = e.document.visit.view;
+    let view = e.visit_lifetime();
     let pixels = e
         .document
         .visit
@@ -150,7 +150,7 @@ fn duplicate_paths_are_no_ops_even_when_the_original_file_is_now_missing() {
         app.read(|e| {
             assert_eq!(e.document.project, before);
             assert_eq!(e.document.file_key(&photo), key);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed,
                 &pixels
@@ -179,7 +179,7 @@ fn a_bad_addition_is_atomic_and_a_good_addition_keeps_the_current_visit() {
     let mut e = authored_fixture(&[first.to_str().unwrap()]);
     e.document.visit.canvas.viewport.zoom = Some(1.375);
     let before = e.document.project.clone();
-    let view = e.document.visit.view;
+    let view = e.visit_lifetime();
     let viewport = e.document.visit.canvas.viewport;
     let pixels = e
         .document
@@ -196,7 +196,7 @@ fn a_bad_addition_is_atomic_and_a_good_addition_keeps_the_current_visit() {
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.project, before);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed,
                 &pixels
@@ -215,7 +215,7 @@ fn a_bad_addition_is_atomic_and_a_good_addition_keeps_the_current_visit() {
                 before.source(before.order[0]).unwrap()
             );
             assert_eq!(e.document.visit.current_source, selected);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!(Arc::ptr_eq(
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed,
@@ -240,14 +240,14 @@ fn an_unavailable_existing_photo_does_not_veto_a_valid_addition() {
     let mut e = Editor::state();
     e.document = document.into();
     e.document.visit.current_source = Some(id);
-    let view = e.document.visit.view;
+    let view = e.visit_lifetime();
     with_application(e, |app| {
         app.enter(|e, cx| e.add_raws(vec![second], cx));
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.project.order.len(), 2);
             assert_eq!(e.document.visit.current_source, Some(id));
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(!e.document.visit.source.pending());
         });
     });
@@ -291,13 +291,12 @@ fn adding_photos_does_not_retire_a_selected_native_load() {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
-        let (view, selected) =
-            app.read(|e| (e.document.visit.view, e.document.visit.current_source));
+        let (view, selected) = app.read(|e| (e.visit_lifetime(), e.document.visit.current_source));
         app.enter(|e, cx| e.add_raws(vec![second], cx));
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.project.order.len(), 2);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(e.document.visit.current_source, selected);
             assert!(e.document.visit.source.pending());
             assert!(e.document.visit.canvas.ready.is_none());
@@ -309,7 +308,7 @@ fn adding_photos_does_not_retire_a_selected_native_load() {
         });
         app.read(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(e.document.visit.current_source, selected);
         });
     });
@@ -366,7 +365,6 @@ fn loading_completion_before_import_publication_keeps_matching_viewing_metadata(
     let mut e = authored_fixture(&[first.to_str().unwrap()]);
     let ready = e.document.visit.canvas.ready.take().unwrap();
     let id = e.document.visit.current_source.unwrap();
-    let view = e.document.visit.view;
     let white = crate::raw::SourceWhiteBalance::AsShot;
     let expected = ready
         .developed
@@ -391,7 +389,6 @@ fn loading_completion_before_import_publication_keeps_matching_viewing_metadata(
         .document
         .replacement(Document::open(saved.path.as_deref().unwrap()).unwrap());
     e.document.visit.current_source = Some(id);
-    e.document.visit.view = view;
     e.source_white_balance = white;
     assert_eq!(
         e.document
@@ -405,7 +402,7 @@ fn loading_completion_before_import_publication_keeps_matching_viewing_metadata(
         app.pump();
         // Deliver a genuinely acquired source through its production completion boundary,
         // after Import captured its private document and before it can publish.
-        app.enter(|e, _| e.source_result(view, Ok(Box::new(ready))));
+        app.enter(|e, _| crate::editor::source::testing::complete(e, Ok(Box::new(ready))));
         app.read(|e| {
             assert_eq!(
                 e.document

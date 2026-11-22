@@ -82,7 +82,7 @@ fn reviewed_fit_with_browsing(hold_source: bool) {
             assert_eq!(e.document.state.project, before);
         });
         app.update(|e| e.select_active_photo_only());
-        let view = app.read(|e| e.document.visit.view);
+        let view = app.read(|e| e.visit_lifetime());
         confirm(app);
         if hold_source {
             app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
@@ -95,7 +95,7 @@ fn reviewed_fit_with_browsing(hold_source: bool) {
                 );
                 assert!(e.document.visit.source.pending());
                 assert!(e.document.visit.canvas.ready.is_none());
-                assert_eq!(e.document.visit.view, view);
+                assert!(view.upgrade().is_some());
             });
             assert!(scheduler.waiter_count() > 0);
             release.send(()).unwrap();
@@ -107,7 +107,7 @@ fn reviewed_fit_with_browsing(hold_source: bool) {
             assert_eq!(e.document.visit.current_source, Some(other));
             let ready = e.document.visit.canvas.ready.as_ref().expect(&e.status);
             assert_eq!(ready.record.id, other);
-            assert_eq!(e.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(e.document.analysis_review().is_none());
             assert_eq!(e.tab, 0);
             assert!(e.scopes.visible);
@@ -170,7 +170,7 @@ fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
         });
         app.read(|editor| {
             assert_eq!(editor.document.visit.current_source, Some(other));
-            assert_eq!(editor.document.selected, 1);
+            assert_eq!(editor.document.active_index(), Some(1));
             assert_eq!(editor.adjustment_layer_target(), selected);
             assert_ne!(selected, Target::Layer(old_layer));
             assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(0.75));

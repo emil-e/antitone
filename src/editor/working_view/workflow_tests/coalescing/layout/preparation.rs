@@ -97,7 +97,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
             assert!(waiting.as_mut().poll(&mut task).is_pending());
             app.enter(|editor, cx| {
                 if replace_visit {
-                    editor.replace_photo_scope(8);
+                    editor.replace_photo_scope(editor.document.visit.current_source);
                 }
                 request_working(editor, next.clone(), input.clone(), cx);
             });

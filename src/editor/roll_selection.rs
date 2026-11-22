@@ -92,21 +92,7 @@ impl Editor {
             self.document.roll_selection.anchor = Some(id);
             id
         };
-        if self.document.visit.current_source != Some(active) {
-            self.document.selected = self
-                .document
-                .project
-                .order
-                .iter()
-                .position(|id| *id == active)
-                .expect("ordered active photo");
-            self.load(
-                self.document
-                    .source_path(active)
-                    .expect("active photo locator"),
-                cx,
-            );
-        }
+        self.browse_photo(active, cx);
     }
 
     pub(super) fn select_active_photo_only(&mut self) {
@@ -171,12 +157,7 @@ impl Editor {
                 return;
             }
         };
-        let index = self.document.selected;
-        let active_removed = self
-            .document
-            .visit
-            .current_source
-            .is_some_and(|id| ids.contains(&id));
+        let index = self.document.active_index().unwrap_or(0);
         draft.update(|project| {
             for id in ids {
                 project
@@ -192,36 +173,14 @@ impl Editor {
         scope
             .sampling_inputs
             .retain(&scope.state, &scope.initialization);
-        if active_removed {
-            self.document.visit.current_source = None;
-        }
         self.document.roll_selection = RollSelection::default();
         if !self.document.state.project.order.is_empty() {
-            self.document.selected = index.min(self.document.state.project.order.len() - 1);
-            let id = self.document.state.project.order[self.document.selected];
+            let index = index.min(self.document.state.project.order.len() - 1);
+            let id = self.document.state.project.order[index];
             self.document.roll_selection.only(id);
-            self.load(
-                self.document
-                    .source_path(id)
-                    .expect("remaining photo locator"),
-                cx,
-            );
+            self.browse_photo(id, cx);
         } else {
-            self.document.visit.working_view.clear();
-            self.id = self.request_id();
-            self.replace_photo_scope(self.id);
-            self.source_epoch
-                .store(self.id, std::sync::atomic::Ordering::Relaxed);
-            self.document.thumbnails.release_selected();
-            self.document.thumbnails.refresh_hidden_memory();
-            self.document.visit.current_source = None;
-            self.document.selected = 0;
-            self.document.visit.canvas.ready = None;
-            self.document.visit.pending_preview = None;
-            self.document.visit.canvas.selection_timing = None;
-            self.document.visit.canvas.last_layout = None;
-            self.document.visit.canvas.viewport.fit();
-            self.status = "No photos in this roll. Add scans to continue.".into();
+            self.activate_photo(None, cx);
         }
     }
 }

@@ -452,12 +452,15 @@ impl Editor {
     }
 }
 
+#[derive(Default)]
+pub(super) struct ReviewView {
+    pub drag: Option<PickDrag>,
+    pub viewport: Viewport,
+}
+
 pub(super) struct AnalyzeTool {
     pub operation: Operation,
     pub review: Option<Review>,
-    pub(super) drag: Option<PickDrag>,
-    pub(super) viewport: Viewport,
-    pub(super) visit: Option<u64>,
 }
 
 impl AnalyzeTool {
@@ -465,20 +468,10 @@ impl AnalyzeTool {
         Self {
             operation,
             review: None,
-            drag: None,
-            viewport: Viewport::default(),
-            visit: None,
         }
     }
     pub fn fitting(&self) -> bool {
         matches!(self.operation.phase, Phase::Fitting)
-    }
-    fn observe_visit(&mut self, editor: &Editor) {
-        if self.visit != Some(editor.document.visit.view) {
-            self.visit = Some(editor.document.visit.view);
-            self.viewport.fit();
-            self.drag = None;
-        }
     }
 }
 
@@ -552,8 +545,7 @@ impl tool::Tool for AnalyzeTool {
     }
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
         if self.review.is_some() {
-            self.observe_visit(editor);
-            &mut self.viewport
+            &mut editor.document.visit.analysis_view.viewport
         } else {
             &mut editor.document.visit.canvas.viewport
         }
@@ -573,7 +565,6 @@ impl tool::Tool for AnalyzeTool {
                 |_, surface, editor, cx| surface.photograph(editor, cx),
             );
         }
-        self.observe_visit(editor);
         viewer.show(
             self,
             editor,
@@ -617,7 +608,11 @@ impl tool::Tool for AnalyzeTool {
                             }
                         });
                         canvas.ui.ctx().set_cursor_icon(navigation::picker_cursor(
-                            layout, point, region, tool.drag, dragging,
+                            layout,
+                            point,
+                            region,
+                            editor.document.visit.analysis_view.drag,
+                            dragging,
                         ));
                     }
                 }
@@ -625,7 +620,7 @@ impl tool::Tool for AnalyzeTool {
                     .ui
                     .input(|input| input.pointer.button_down(egui::PointerButton::Primary))
                 {
-                    tool.drag = None;
+                    editor.document.visit.analysis_view.drag = None;
                 }
                 canvas.paint_source_sample(editor, layout, cx);
                 tool.paint_review_areas(editor, canvas.ui, layout, layout.canvas);
@@ -696,7 +691,7 @@ impl AnalyzeTool {
             && let Some(point) = ui.input(|input| input.pointer.press_origin())
         {
             self.select_review_area(editor, layout, point);
-            self.drag = Some(PickDrag::begin(
+            editor.document.visit.analysis_view.drag = Some(PickDrag::begin(
                 layout,
                 point,
                 editor
@@ -707,7 +702,10 @@ impl AnalyzeTool {
             ));
         }
         if response.dragged_by(egui::PointerButton::Primary)
-            && let (Some(drag), Some(point)) = (self.drag, response.interact_pointer_pos())
+            && let (Some(drag), Some(point)) = (
+                editor.document.visit.analysis_view.drag,
+                response.interact_pointer_pos(),
+            )
             && let Some(id) = editor.document.visit.current_source
         {
             self.edit_region(id, drag.update(layout, point));
@@ -918,9 +916,8 @@ impl AnalyzeTool {
                     picture: false,
                 });
                 editor.tab = 0;
-                self.visit = Some(editor.document.visit.view);
-                self.drag = None;
-                self.viewport.fit();
+                editor.document.visit.analysis_view = ReviewView::default();
+                editor.document.visit.analysis_view.viewport.fit();
                 editor.status = "Review sampling areas".into();
                 let (decision, result) = futures_channel::oneshot::channel();
                 self.operation.decision = Some(decision);
@@ -1094,7 +1091,7 @@ impl AnalyzeTool {
             && self.review.as_ref().is_some_and(|r| r.picture != picture)
         {
             self.review.as_mut().unwrap().picture = picture;
-            self.drag = None;
+            editor.document.visit.analysis_view.drag = None;
         }
     }
 

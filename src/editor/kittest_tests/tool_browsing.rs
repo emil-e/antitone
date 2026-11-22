@@ -35,12 +35,12 @@ fn filmstrip_and_arrows_retire_crop_drafts_only_when_the_active_photo_changes() 
                 stage(&mut harness, "Photo");
                 let before = harness.read(|editor| editor.document.state.project.clone());
                 let history = harness.read(|editor| editor.history_label(Direction::Undo));
-                let visit = harness.read(|editor| editor.document.visit.view);
+                let visit = harness.read(|editor| editor.visit_lifetime());
                 let draft = tools::crop_draft(&mut harness);
                 harness.get_by_label("working-photo.dng").click();
                 harness.step();
                 harness.read(|editor| {
-                    assert_eq!(editor.document.visit.view, visit);
+                    assert!(visit.upgrade().is_some());
                     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
                     assert_eq!(editor.document.state.project, before);
                 });
@@ -51,7 +51,7 @@ fn filmstrip_and_arrows_retire_crop_drafts_only_when_the_active_photo_changes() 
 
                 depart(&mut harness, keyboard);
                 harness.read(|editor| {
-                    assert_ne!(editor.document.visit.view, visit);
+                    assert!(visit.upgrade().is_none());
                     assert!(!editor.cropping());
                     assert_eq!(editor.document.state.project, before);
                     assert_eq!(editor.history_label(Direction::Undo), history);
@@ -96,11 +96,11 @@ fn filmstrip_and_arrows_retire_real_picker_callers_without_measuring_or_acceptin
                     );
                     harness.read(|editor| assert!(editor.test_pick_region().is_some()));
                     assert!(!harness.get_by_label("Apply").accesskit_node().is_disabled());
-                    let visit = harness.read(|editor| editor.document.visit.view);
+                    let visit = harness.read(|editor| editor.visit_lifetime());
                     harness.get_by_label("working-photo.dng").click();
                     harness.step();
                     harness.read(|editor| {
-                        assert_eq!(editor.document.visit.view, visit);
+                        assert!(visit.upgrade().is_some());
                         assert_eq!(editor.test_pick(), Some(kind.display()));
                     });
 

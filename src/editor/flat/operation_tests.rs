@@ -132,7 +132,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         let (before, visit, camera) = app.update(|e| {
             let camera = e.document.visit.canvas.ready.as_ref().unwrap().clone();
             e.document.visit.canvas.viewport.zoom = Some(1.375);
-            (e.history_snapshot(), e.document.visit.view, camera)
+            (e.history_snapshot(), e.visit_lifetime(), camera)
         });
         begin(app, "bare-light.dng");
         assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
@@ -151,7 +151,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
                     .map()
                     .is_none()
             );
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
         });
         apply(app);
         wait(app);
@@ -171,7 +171,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
                 e.document.visit.canvas.ready.as_ref().unwrap().path,
                 path("illuminated-patches.dng")
             );
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             assert!(Arc::ptr_eq(&camera.developed, &ready.developed));
             assert!(
@@ -382,7 +382,7 @@ fn input_rejects_an_owned_correction_without_retiring_its_work_or_visit() {
                     .unwrap()
                     .developed
                     .clone(),
-                e.document.visit.view,
+                e.visit_lifetime(),
             )
         });
         begin(app, "bare-light.dng");
@@ -410,7 +410,7 @@ fn input_rejects_an_owned_correction_without_retiring_its_work_or_visit() {
                 &pixels,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Correction")
@@ -477,10 +477,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
-            let visit = e.request_id();
-            e.id = visit;
-            e.source_epoch.store(visit, Ordering::Relaxed);
-            e.replace_photo_scope(visit);
+            e.replace_photo_scope(e.document.visit.current_source);
             assert!(e.document.visit.canvas.ready.is_none());
             assert!(e.document.flat_edit().unwrap().view.ready.is_some());
         });
@@ -575,9 +572,7 @@ fn accepted_correction_completes_after_the_display_visit_retires() {
         let publication = app.read(|e| e.document.document_preview.clone());
         app.pump();
         app.update(|e| {
-            e.id = e.request_id();
-            e.source_epoch.store(e.id, Ordering::Relaxed);
-            e.replace_photo_scope(e.id);
+            e.replace_photo_scope(e.document.visit.current_source);
             e.finish_flat_edit();
             assert!(publication.active());
             assert!(e.interaction_blocked() && !e.has_hosted_tool());
@@ -630,9 +625,7 @@ fn reference_failure_after_a_visit_change_finishes_its_own_preparation_activity(
             ))
         });
         app.update(|e| {
-            e.id = e.request_id();
-            e.source_epoch.store(e.id, Ordering::Relaxed);
-            e.replace_photo_scope(e.id);
+            e.replace_photo_scope(e.document.visit.current_source);
         });
         wait(app);
         app.read(|e| {
@@ -940,7 +933,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
             let missing = directory.path().join("missing-selected.dng");
             e.document.project.source_mut(selected).unwrap().path = missing.clone();
             e.load(missing, cx);
-            (selected, e.document.visit.view)
+            (selected, e.visit_lifetime())
         });
         app.run_until(Duration::from_secs(20), |e| {
             !e.document.visit.source.pending()
@@ -967,7 +960,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
                 assert!(e.document.visit.canvas.ready.is_none());
                 assert!(!e.document.visit.source.pending());
                 assert_eq!(e.document.visit.current_source, Some(selected));
-                assert_eq!(e.document.visit.view, visit);
+                assert!(visit.upgrade().is_some());
             });
         }
         app.enter(|e, cx| e.change_correction(None, cx));
@@ -980,7 +973,7 @@ fn correction_estimation_toggle_and_removal_do_not_load_an_unavailable_selected_
             assert!(e.document.visit.canvas.ready.is_none());
             assert!(!e.document.visit.source.pending());
             assert_eq!(e.document.visit.current_source, Some(selected));
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
         });
     });
     scheduler.close_and_wait().unwrap();

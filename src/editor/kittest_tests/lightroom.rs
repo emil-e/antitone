@@ -164,7 +164,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| {
             assert_eq!(editor.document.project.order.len(), 2);
-            assert_eq!(editor.document.selected, 1);
+            assert_eq!(editor.document.active_index(), Some(1));
             assert_eq!(editor.document.project.roll.exposure, 0.25);
             assert_eq!(editor.document.project, saved);
         });
@@ -195,7 +195,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
     let rendered_bytes = std::fs::read(&returned[0]).unwrap();
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.open_project(project.clone(), cx));
-        wait_for(&mut h, |editor| !editor.files.pending());
+        wait_for(&mut h, |editor| !editor.document.files.pending());
         h.step();
         h.read(|editor| {
             assert!(editor.document.external_edit.session.is_none());

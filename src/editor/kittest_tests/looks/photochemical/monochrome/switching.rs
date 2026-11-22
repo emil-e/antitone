@@ -47,8 +47,8 @@ fn negative_family_switch_confirms_default_paper_as_one_undoable_edit_and_cancel
         let (selected, other) = h.read(|e| {
             assert!(e.document.project.order.len() >= 2);
             (
-                e.document.selected,
-                (e.document.selected + 1) % e.document.project.order.len(),
+                e.document.active_index().unwrap(),
+                (e.document.active_index().unwrap() + 1) % e.document.project.order.len(),
             )
         });
         h.key_press(if other > selected {
@@ -57,7 +57,7 @@ fn negative_family_switch_confirms_default_paper_as_one_undoable_edit_and_cancel
             egui::Key::ArrowLeft
         });
         h.step();
-        h.read(|e| assert_eq!(e.document.selected, selected));
+        h.read(|e| assert_eq!(e.document.active_index(), Some(selected)));
         h.key_press(egui::Key::Escape);
         h.step();
         h.read(|e| {

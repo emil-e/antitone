@@ -213,6 +213,7 @@ impl WorkingView {
         let mut next = Self::default();
         next.gpu = self.gpu.clone();
         next.kernels = self.kernels.clone();
+        next.revision = self.revision;
         next
     }
 

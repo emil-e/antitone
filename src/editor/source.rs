@@ -1,8 +1,8 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
 use super::{
-    ActivityOptions, AdjustmentLayerEditor, Editor, Ready, SelectionTiming, UiContext, document,
-    source_loading, thumbnails,
+    ActivityOptions, Editor, Ready, SelectionTiming, UiContext, document, source_loading,
+    thumbnails,
 };
 use crate::{
     Error,
@@ -11,6 +11,8 @@ use crate::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+#[cfg(test)]
+pub(super) mod testing;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -472,34 +474,81 @@ impl Editor {
         }
     }
 
+    pub(super) fn activate_photo(
+        &mut self,
+        selected: Option<crate::project::SourceId>,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.document.visit.current_source == selected {
+            return;
+        }
+        let Some(selected) = selected else {
+            self.document.visit.working_view.clear();
+            self.replace_photo_scope(None);
+            self.document
+                .roll_selection
+                .reconcile(&self.document.state.project.order, None);
+            self.document.thumbnails.release_selected();
+            self.document.thumbnails.refresh_hidden_memory();
+            self.document.visit.canvas.viewport.fit();
+            self.status = "No photos in this roll. Add scans to continue.".into();
+            return;
+        };
+        let path = match self.document.source_path(selected) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        self.load_source(Some(selected), path, cx);
+    }
+
+    pub(super) fn browse_photo(
+        &mut self,
+        selected: crate::project::SourceId,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.document.visit.current_source == Some(selected) {
+            return;
+        }
+        self.activate_photo(Some(selected), cx);
+        self.document.visit.canvas.viewport.fit();
+        self.document.source =
+            !self.document.project.input.ready() || self.correction().error().is_some();
+    }
+
+    #[cfg(test)]
     pub(super) fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
+        self.load_source(self.document.find_source(&path), path, cx);
+        self.document.visit.canvas.viewport.fit();
+        self.document.source =
+            !self.document.project.input.ready() || self.correction().error().is_some();
+    }
+
+    fn load_source(
+        &mut self,
+        selected: Option<crate::project::SourceId>,
+        path: PathBuf,
+        cx: &UiContext<'_, Self>,
+    ) {
         let started = std::time::Instant::now();
         self.seed_thumbnail();
-        self.document.visit.pending_preview = None;
-        self.document.visit.canvas.selection_timing = None;
-        self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
-        self.id = self.request_id();
-        self.replace_photo_scope(self.id);
-        self.document.visit.current_source = self.document.find_source(&path);
+        self.replace_photo_scope(selected);
         self.document.roll_selection.reconcile(
             &self.document.state.project.order,
             self.document.visit.current_source,
         );
         self.document.visit.canvas.last_layout = None;
-        self.document.visit.canvas.viewport.fit();
         self.document.export.form = None;
         #[cfg(test)]
         {
             self.document.export.summary = None;
         }
         self.document.visit.return_notice = None;
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.document.visit.canvas.ready = None;
         self.document.visit.canvas.selection_timing =
-            Some(Arc::new(SelectionTiming::new(self.id, started)));
-        self.document.source =
-            !self.document.project.input.ready() || self.correction().error().is_some();
+            Some(Arc::new(SelectionTiming::new(selected, started)));
         self.status = "Developing full-resolution RAW…".into();
 
         self.start_source_acquisition(path, cx);
@@ -507,14 +556,14 @@ impl Editor {
             match self
                 .document
                 .thumbnails
-                .selected_preview(self.id, &self.document.state, source)
+                .selected_preview(&self.document.state, source)
             {
                 Ok(preview) => {
-                    log::debug!(request = self.id, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
+                    log::debug!(source_id = source.0, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
                     self.document.visit.pending_preview = preview;
                 }
                 Err(error) => {
-                    log::debug!(request = self.id, error = error.to_string().as_str(); "selected_preview_unavailable")
+                    log::debug!(source_id = source.0, error = error.to_string().as_str(); "selected_preview_unavailable")
                 }
             }
         }
@@ -526,7 +575,6 @@ impl Editor {
             .start(ActivityOptions::new("Loading photo…"));
         let request = self.source_input(path);
         self.document.visit.source.input = Some(request.source.clone());
-        let view = self.document.visit.view;
         let services = self.source_services.clone();
         let cancelled = crate::cancellation::Cancellation::default();
         let retire = cancelled.cancel_on_drop();
@@ -537,20 +585,16 @@ impl Editor {
                 None => Err("Source services unavailable".into()),
             };
             drop(activity);
-            cx.update(|editor| editor.source_result(view, result));
+            cx.update(|editor| editor.source_result(result));
         }) else {
-            self.source_result(view, Err("Application stopped".into()));
+            self.source_result(Err("Application stopped".into()));
             return;
         };
         self.document.visit.source.task = Some(task);
     }
 
-    pub(super) fn source_result(&mut self, view: u64, result: Result<Box<Ready>, String>) {
-        if self.document.visit.view != view {
-            return;
-        }
-
-        let view = self.document.visit.view;
+    fn source_result(&mut self, result: Result<Box<Ready>, String>) {
+        let source = self.document.visit.current_source.map(|source| source.0);
         self.document.visit.source = State::default();
 
         if result.is_err() {
@@ -558,7 +602,7 @@ impl Editor {
         }
         if let Some(timing) = &self.document.visit.canvas.selection_timing {
             log::debug!(
-                request = view,
+                source_id = source,
                 success = result.is_ok(),
                 boundary = "source_ready",
                 elapsed_ms = timing.started.elapsed().as_secs_f64() * 1000.;
@@ -569,7 +613,7 @@ impl Editor {
         match result {
             Ok(ready) => {
                 log::info!(
-                    request = view,
+                    source_id = source,
                     width = ready.area.width,
                     height = ready.area.height;
                     "source_ready"
@@ -601,7 +645,7 @@ impl Editor {
             }
             Err(error) => {
                 log::warn!(
-                    request = view,
+                    source_id = source,
                     error = error.as_str();
                     "source_load_failed"
                 );

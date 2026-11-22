@@ -23,8 +23,7 @@ fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it()
         .map(str::to_owned);
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
-    let next = editor.request_id();
-    editor.replace_photo_scope(next);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     assert!(editor.document.crop_edit().is_none());
     editor.hosted_action(tool::Action::Primary);
     assert_eq!(editor.document.state.project, accepted);
@@ -63,8 +62,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
             let before = editor
                 .history_label(crate::editor::history::Direction::Undo)
                 .map(str::to_owned);
-            let next = editor.request_id();
-            editor.replace_photo_scope(next);
+            editor.replace_photo_scope(editor.document.visit.current_source);
             assert!(!editor.masking());
             assert!(!editor.adjustment_layer_owns_delete());
             assert!(!editor.document.visit.adjustment_layers.show_coverage);
@@ -100,7 +98,7 @@ fn source_navigation_retires_measurement_independently_of_photographic_validatio
         let (view, path) = app.read(|editor| {
             assert!(editor.measurement_pending() && editor.interaction_blocked());
             (
-                editor.document.visit.view,
+                editor.visit_lifetime(),
                 editor
                     .document
                     .visit
@@ -119,10 +117,9 @@ fn source_navigation_retires_measurement_independently_of_photographic_validatio
         app.read(|editor| assert!(editor.document.visit.interaction_action.is_none()));
         app.pump();
         app.read(|editor| {
-            assert_ne!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_none());
             assert!(!editor.measurement_pending());
             assert!(!editor.interaction_blocked());
-            assert_eq!(editor.id, editor.document.visit.view);
             assert!(editor.document.visit.canvas.ready.is_none());
         });
     });
@@ -180,7 +177,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         );
         let (view, path, project) = app.read(|editor| {
             (
-                editor.document.visit.view,
+                editor.visit_lifetime(),
                 editor
                     .document
                     .visit
@@ -211,7 +208,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         }
         app.pump();
         app.read(|editor| {
-            assert_ne!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_none());
             assert!(!editor.measurement_pending());
             assert!(editor.document.visit.source.pending());
             assert_eq!(editor.document.state.project, project);
@@ -256,7 +253,7 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
         });
         let (view, path, project) = app.read(|editor| {
             (
-                editor.document.visit.view,
+                editor.visit_lifetime(),
                 editor
                     .document
                     .visit
@@ -275,7 +272,7 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
         assert!(app.read(|e| e.document.visit.source.pending()));
         app.pump();
         app.read(|editor| {
-            assert_ne!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_none());
             assert!(!editor.measurement_pending());
             assert_eq!(editor.document.state.project, project);
             // A cache hit can finish before the paused measurement pool is released.

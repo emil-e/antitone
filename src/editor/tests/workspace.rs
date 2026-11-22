@@ -205,7 +205,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
         app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
         app.pump();
         app.update(|editor| {
-            assert!(editor.files.pending() && editor.dialogs.is_open());
+            assert!(editor.document.files.pending() && editor.dialogs.is_open());
             assert_eq!(editor.tab, 2);
             for _ in 0..3 {
                 app_frame(editor, &context, vec![]);
@@ -226,7 +226,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
         });
         app.pump();
         app.read(|editor| {
-            assert!(!editor.files.pending());
+            assert!(!editor.document.files.pending());
             assert_eq!(editor.tab, 2);
             assert_eq!(editor.document.state.project, project);
             assert!(!editor.document.write.pending() && editor.document.export.operation.is_none());
@@ -243,7 +243,9 @@ fn failed_open_and_successful_import_preserve_the_selected_tab() {
             editor.document.state.project.clone()
         });
         app.enter(|editor, cx| editor.open_project("missing-project.antitone".into(), cx));
-        app.run_until(Duration::from_secs(10), |editor| !editor.files.opening());
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.document.files.opening()
+        });
         app.read(|editor| {
             assert_eq!(editor.tab, 2);
             assert_eq!(editor.document.state.project, before);
