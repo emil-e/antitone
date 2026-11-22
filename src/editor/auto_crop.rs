@@ -93,22 +93,6 @@ fn accepted(crop: Crop, active: Rect) -> Option<Crop> {
     (crop != Crop::from_region(active)).then_some(crop)
 }
 
-fn finish_photo_proposal(state: &mut CropEdit, proposal: Result<Crop, Error>) -> String {
-    match proposal {
-        Ok(crop) => {
-            state.install_proposal(crop);
-            state.auto_problem = None;
-            "Auto-crop proposed".into()
-        }
-        Err(error) => {
-            let problem = format!("Automatic crop unavailable: {}", reason(error));
-            let status = format!("Crop unchanged: {problem}");
-            state.auto_problem = Some(problem);
-            status
-        }
-    }
-}
-
 fn reason(error: Error) -> String {
     match error {
         Error::UnusableSample(s) => s.to_owned(),
@@ -197,26 +181,6 @@ impl Editor {
             constraints,
             spatial,
         })
-    }
-
-    pub(super) fn photo_crop_proposal(&self, photo: SourceId) -> Result<Crop, Error> {
-        let entry = self.crop_proposal(photo)?;
-        Ok(entry
-            .draft
-            .unwrap_or(Crop::from_region(entry.development.active_area.into())))
-    }
-
-    #[cfg(test)]
-    fn auto_crop_photo(&mut self, photo: SourceId) {
-        if self.interaction_blocked()
-            || !self.cropping()
-            || self.document.visit.current_source != Some(photo)
-        {
-            return;
-        }
-        let result = self.photo_crop_proposal(photo);
-        let status = finish_photo_proposal(&mut self.document.crop_edit_mut().unwrap(), result);
-        self.status = status;
     }
 
     fn capture_crop_review(&mut self, photos: Vec<SourceId>, scope: &'static str) -> Option<Draft> {
@@ -727,12 +691,12 @@ impl Draft {
     }
 }
 
-pub(super) fn propose_photo_crop(
+/// Admit the request immediately; cancelled or failed region preparation owns its own feedback.
+pub(super) fn propose_photo_crop<'scope>(
     editor: &mut Editor,
     photo: SourceId,
-    state: std::rc::Rc<std::cell::RefCell<CropEdit>>,
-    cx: &UiContext<'_, Editor>,
-) -> Option<async_executor::Task<()>> {
+    cx: &UiContext<'scope, Editor>,
+) -> Option<impl Future<Output = Option<Result<Crop, String>>> + use<'scope>> {
     if editor.interaction_blocked()
         || editor.selected_area().is_none()
         || editor.document.visit.current_source != Some(photo)
@@ -741,13 +705,15 @@ pub(super) fn propose_photo_crop(
     }
 
     let regions = editor.prepare_regions(cx)?;
-    cx.spawn(move |cx| async move {
-        if regions.await.is_none() {
-            return;
-        }
-        let result = cx.read(|editor| editor.photo_crop_proposal(photo));
-        let status = finish_photo_proposal(&mut state.borrow_mut(), result);
-        cx.update(|editor| editor.status = status);
+    let cx = cx.clone();
+    Some(async move {
+        regions.await?;
+        Some(cx.read(|editor| {
+            let entry = editor.crop_proposal(photo).map_err(reason)?;
+            Ok(entry
+                .draft
+                .unwrap_or_else(|| Crop::from_region(entry.development.active_area.into())))
+        }))
     })
 }
 

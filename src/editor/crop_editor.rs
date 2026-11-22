@@ -44,8 +44,31 @@ impl CropTool {
         photo: SourceId,
         cx: &UiContext<'_, Editor>,
     ) {
-        let state = self.edit.clone();
-        if let Some(task) = auto_crop::propose_photo_crop(editor, photo, state, cx) {
+        let Some(proposal) = auto_crop::propose_photo_crop(editor, photo, cx) else {
+            return;
+        };
+        let edit = self.edit.clone();
+        if let Some(task) = cx.spawn(move |cx| async move {
+            let Some(result) = proposal.await else {
+                return;
+            };
+            cx.update(|editor| {
+                let mut edit = edit.borrow_mut();
+                editor.status = match result {
+                    Ok(crop) => {
+                        edit.install_proposal(crop);
+                        edit.auto_problem = None;
+                        "Auto-crop proposed".into()
+                    }
+                    Err(reason) => {
+                        let problem = format!("Automatic crop unavailable: {reason}");
+                        let status = format!("Crop unchanged: {problem}");
+                        edit.auto_problem = Some(problem);
+                        status
+                    }
+                };
+            });
+        }) {
             self.auto_crop_task = Some(task);
         }
     }

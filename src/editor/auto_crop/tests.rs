@@ -1,13 +1,29 @@
 use super::*;
+use crate::{
+    application::test_support::{TestApplication, with_application},
+    editor::crop_editor::tests::request_auto_crop,
+    project::SourceAnalysis,
+    scan_regions::{Areas, PictureGeometry},
+};
 
 // Domain fixtures supply static proposals; composed tests exercise discovery and input.
 fn apply(editor: &mut Editor) {
     editor.finish_auto_crop(true);
 }
-use crate::{
-    project::SourceAnalysis,
-    scan_regions::{Areas, PictureGeometry},
-};
+
+fn suggest_photo_crop(app: &mut TestApplication<'_, Editor>) {
+    let reply = app.enter(|editor, cx| {
+        let (reply, receive) = futures_channel::oneshot::channel();
+        editor.document.spatial_reply = Some(receive);
+        request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
+        assert!(editor.document.crop_auto_crop_pending());
+        reply
+    });
+    reply.send(Ok(Some(Default::default()))).unwrap();
+    app.run_until(Duration::from_secs(5), |editor| {
+        !editor.document.crop_auto_crop_pending()
+    });
+}
 
 pub(super) fn measured_areas() -> Areas {
     Areas {
@@ -333,16 +349,20 @@ fn applying_measured_crops_does_not_consume_the_shared_analyze_picture_prior() {
 #[test]
 fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
     let (e, _directory) = fixture();
-    crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
-            let ids = e.document.state.project.order.clone();
+    with_application(e, |app| {
+        let (mut expected, active) = app.update(|e| {
             *e.photo_crop_mut() = Some(small());
-            let mut expected = e.document.state.project.clone();
-            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-            let proposed = default_crop(active, &measured_areas());
-            assert!(proposed.angle.abs() > 0.);
             e.begin_crop();
-            e.auto_crop_photo(e.document.visit.current_source.unwrap());
+            (
+                e.document.state.project.clone(),
+                e.document.visit.canvas.ready.as_ref().unwrap().area,
+            )
+        });
+        let ids = expected.order.clone();
+        let proposed = default_crop(active, &measured_areas());
+        assert!(proposed.angle.abs() > 0.);
+        suggest_photo_crop(app);
+        app.enter(|e, cx| {
             assert_eq!(e.document.state.project, expected);
             assert_eq!(e.photo_crop(), Some(small()));
             assert_eq!(e.document.crop_edit().unwrap().draft, proposed);
@@ -784,24 +804,30 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     let expected = default_crop(active, &measured_areas());
     e.begin_crop();
     e.document.crop_edit_mut().unwrap().draft = Crop::from_region(active);
-    e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    assert!(!e.document.auto_crop.reviewing());
-    assert_eq!(e.document.crop_edit().unwrap().draft, expected);
-    assert_eq!(e.photo_crop(), Some(small()));
-    assert_eq!(e.document.state.project, before);
-    e.hosted_action(tool::Action::Dismiss);
-    assert_eq!(e.document.visit.canvas.viewport, viewport);
-    assert_eq!(e.document.state.project, before);
-    e.begin_crop();
-    e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    e.hosted_action(tool::Action::Primary);
-    let mut accepted = before;
-    accepted
-        .source_mut(e.document.visit.current_source.unwrap())
-        .unwrap()
-        .crop = Some(expected);
-    assert_eq!(e.document.state.project, accepted);
-    assert!(!e.analysis_preparing() && !e.analysis_fitting());
+    with_application(e, |app| {
+        suggest_photo_crop(app);
+        app.update(|e| {
+            assert!(!e.document.auto_crop.reviewing());
+            assert_eq!(e.document.crop_edit().unwrap().draft, expected);
+            assert_eq!(e.photo_crop(), Some(small()));
+            assert_eq!(e.document.state.project, before);
+            e.hosted_action(tool::Action::Dismiss);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
+            assert_eq!(e.document.state.project, before);
+            e.begin_crop();
+        });
+        suggest_photo_crop(app);
+        app.update(|e| {
+            e.hosted_action(tool::Action::Primary);
+            let mut accepted = before;
+            accepted
+                .source_mut(e.document.visit.current_source.unwrap())
+                .unwrap()
+                .crop = Some(expected);
+            assert_eq!(e.document.state.project, accepted);
+            assert!(!e.analysis_preparing() && !e.analysis_fitting());
+        });
+    });
 }
 
 #[test]
@@ -821,44 +847,46 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
         .development
         .camera_model
         .push_str(" incompatible");
-    e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    assert_eq!(e.document.crop_edit().unwrap().draft, small());
-    assert!(!e.document.auto_crop.reviewing());
-    assert_eq!(e.document.state.project, before);
-    assert_eq!(e.document.visit.canvas.viewport, viewport);
-    assert!(e.status.contains("Crop unchanged"));
-    assert!(
-        e.source_tool_warning(e.document.visit.current_source.unwrap())
-            .unwrap()
-            .contains("Automatic crop unavailable")
-    );
-    let path = directory.path().join("photo-0.ARW");
-    e.document
-        .visit
-        .canvas
-        .ready
-        .as_mut()
-        .unwrap()
-        .record
-        .development = e
-        .document
-        .project
-        .source(e.document.visit.current_source.unwrap())
-        .unwrap()
-        .development
-        .clone();
-    e.document.visit.canvas.ready.as_mut().unwrap().file = e.document.file_key(&path);
-    e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    assert!(
-        e.source_tool_warning(e.document.visit.current_source.unwrap())
-            .is_none(),
-        "successful retry retires the cue"
-    );
-    e.hosted_action(tool::Action::Dismiss);
-    assert!(
-        e.source_tool_warning(e.document.visit.current_source.unwrap())
-            .is_none()
-    );
+    with_application(e, |app| {
+        suggest_photo_crop(app);
+        app.update(|e| {
+            let photo = e.document.visit.current_source.unwrap();
+            assert_eq!(e.document.crop_edit().unwrap().draft, small());
+            assert!(!e.document.auto_crop.reviewing());
+            assert_eq!(e.document.state.project, before);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
+            assert!(e.status.contains("Crop unchanged"));
+            assert!(
+                e.source_tool_warning(photo)
+                    .unwrap()
+                    .contains("Automatic crop unavailable")
+            );
+
+            let path = directory.path().join("photo-0.ARW");
+            let file = e.document.file_key(&path);
+            let development = e
+                .document
+                .project
+                .source(photo)
+                .unwrap()
+                .development
+                .clone();
+            let ready = e.document.visit.canvas.ready.as_mut().unwrap();
+            ready.record.development = development;
+            ready.file = file;
+        });
+        suggest_photo_crop(app);
+        app.update(|e| {
+            let photo = e.document.visit.current_source.unwrap();
+            assert_ne!(e.document.crop_edit().unwrap().draft, small());
+            assert!(
+                e.source_tool_warning(photo).is_none(),
+                "successful retry retires the cue"
+            );
+            e.hosted_action(tool::Action::Dismiss);
+            assert!(e.source_tool_warning(photo).is_none());
+        });
+    });
 }
 
 #[test]
