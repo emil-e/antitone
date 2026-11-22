@@ -33,7 +33,7 @@ fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: Assembly) -> Autho
 
 fn ready_source(
     device: &wgpu::Device,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     frame: FrameRaster,
     pipeline: Assembly,
@@ -241,7 +241,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         let renderer = if budget == 256 << 20 {
             renderer.clone()
         } else {
-            pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
+            pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(
                 &device,
                 &queue,
                 crate::gpu::evaluation::CachePolicy {

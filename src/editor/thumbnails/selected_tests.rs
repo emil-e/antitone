@@ -179,7 +179,7 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
                 editor.document.thumbnails = (Thumbnails::with_disk(
                     device.clone(),
                     queue.clone(),
-                    Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
                     None,
                 ))
                 .with_sources(editor.document.cache.clone());
@@ -319,7 +319,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = super::super::tests::fixture();
         editor.initialize_viewer(&device, &queue);
-        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
+        let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
         editor.document.thumbnails =
             (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
                 .with_sources(editor.document.cache.clone());
@@ -403,7 +403,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 editor.document.thumbnails = (Thumbnails::with_disk(
                     device.clone(),
                     queue,
-                    Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
                     None,
                 ))
                 .with_sources(editor.document.cache.clone());
@@ -454,7 +454,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                 editor.document.thumbnails = (Thumbnails::with_disk(
                     device.clone(),
                     queue,
-                    Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
                     None,
                 ))
                 .with_sources(editor.document.cache.clone());
@@ -505,7 +505,7 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                 editor.document.thumbnails = (Thumbnails::with_disk(
                     device.clone(),
                     queue,
-                    Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
                     None,
                 ))
                 .with_sources(editor.document.cache.clone());
@@ -574,7 +574,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                 editor.document.thumbnails = (Thumbnails::with_disk(
                     device.clone(),
                     queue,
-                    Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
                     None,
                 ))
                 .with_sources(editor.document.cache.clone());
@@ -665,7 +665,8 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
+                let renderers =
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
                 editor.document.thumbnails =
                     (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
                         .with_sources(editor.document.cache.clone());

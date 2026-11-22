@@ -3,7 +3,7 @@ use crate::gpu::evaluation::{Image, ImageBacking, ImageFormat, ImageLayout, Mate
 use crate::gpu::photograph::request::PhotographRequest;
 
 pub(super) fn materialize(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     queue: &crate::gpu::submission::Queue,
     scope: &Materializations,
     image: Value,

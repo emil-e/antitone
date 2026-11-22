@@ -14,7 +14,7 @@ use crate::rendering::OutputTarget;
 use glam::DVec3;
 
 fn canonical(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     request: crate::gpu::execution::test_support::OriginalControls<'_>,

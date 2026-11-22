@@ -1,6 +1,6 @@
 use super::*;
 
-fn fixture_output(format: Format, renderer: &crate::renderer::GpuRenderer) -> Output<'_> {
+fn fixture_output(format: Format, renderer: &crate::render_fixture::RenderFixture) -> Output<'_> {
     match format {
         Format::Tiff(target) => Output::Tiff {
             looks: renderer.looks(),

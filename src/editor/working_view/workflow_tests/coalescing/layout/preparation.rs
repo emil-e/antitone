@@ -61,10 +61,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
         let new_key = original.identity().unwrap().clone();
         assert_ne!(old_key, new_key);
         let services = editor.source_services.as_ref().unwrap().clone();
-        let renderer = services
-            .renderers
-            .get(&services.device, &services.queue)
-            .unwrap();
+        let renderer = services.render_fixture().unwrap();
         let scope = renderer.evaluation().materializations();
         scope.set_retention_enabled(false);
         let (started, starts) = mpsc::channel();
@@ -159,10 +156,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
 fn pressure_retires_optional_ownership_without_withdrawing_pending_frame_publication() {
     let (editor, pixels, base, scheduler) = fixture();
     let services = editor.source_services.as_ref().unwrap().clone();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let scope = renderer.evaluation().materializations();
     scope.set_test_pressure(memory::Pressure::Normal);
     let (started, starts) = mpsc::channel();
@@ -224,10 +218,7 @@ fn preparation_survives_view_change(retire_view: bool) {
     let first = make([16., 16.], [112., 88.]);
     let latest = make([24., 20.], [120., 92.]);
     let services = editor.source_services.as_ref().unwrap().clone();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let scope = renderer.evaluation().materializations();
     scope.set_test_pressure(memory::Pressure::Normal);
     let (started, starts) = mpsc::channel();

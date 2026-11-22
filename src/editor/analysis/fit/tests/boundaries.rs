@@ -12,7 +12,7 @@ fn sampled() -> (Fit, tempfile::TempDir, source_loading::SourceLoader) {
         initialization: Arc::default(),
         device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let mut fit = resources.fit(request, None).unwrap();
     fit.geometry().unwrap();
@@ -58,7 +58,7 @@ fn direct_fitting_checks_its_picture_bounds_without_a_project_wide_gate() {
         initialization: Arc::default(),
         device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let mut fit = resources.fit(request, None).unwrap();
     fit.geometry().unwrap();
@@ -221,12 +221,12 @@ fn actual_fit_and_acceptance_ignore_unrelated_look_capacity_and_replace_old_grad
         editor.document.visit.current_source = Some(editor.document.project.order[0]);
         editor.document.visit.working_view =
             crate::editor::working_view::WorkingView::new(device.clone(), queue.clone());
-        editor.source_services = Some(source::Services {
-            device: device.clone(),
-            queue: queue.clone(),
-            developments: loader.clone(),
-            renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
-        });
+        editor.source_services = Some(source::Services::fixture(
+            loader.clone(),
+            &device,
+            &queue,
+            &crate::editor::display::DisplayFixture::for_device(&device),
+        ));
         if warm {
             for id in editor.document.project.order.clone() {
                 let physical = editor.document.source_input(id).unwrap();

@@ -41,12 +41,13 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, crate::gpu::s
         .register_with_development(record.clone(), development.clone())
         .unwrap();
     editor.document.visit.current_source = Some(id);
-    let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+    let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
         .await
         .unwrap();
     let proxy = crate::viewer::GpuProxy::new(
-        renderer,
-        &device,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt.clone(),
         [7, 5],
         &[[1100, 900, 750, 0]; 35],
         glam::DMat3::IDENTITY,

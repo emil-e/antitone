@@ -3,7 +3,7 @@ use crate::gpu::{evaluation::*, grading::Grading, photograph::PhotographGraph};
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},
-    renderer::GpuRenderer,
+    render_fixture::RenderFixture,
     scan::{ImageSource, Scan},
 };
 use std::{
@@ -14,7 +14,7 @@ use std::{
 fn render(
     _device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     image: Value,
     crop: CellRegion,
     size: [u32; 2],

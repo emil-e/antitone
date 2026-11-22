@@ -35,7 +35,7 @@ impl evaluation::Source for Pixels {
 }
 
 fn pixels(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {

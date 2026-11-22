@@ -936,7 +936,7 @@ impl Acquisition {
             if stop.is_cancelled() {
                 return Ok(None);
             }
-            let renderer = services.renderers.get(&services.device, &services.queue)?;
+            let targets = services.display.ready()?;
             let pipelines = if let Some(pipelines) = kernels.get() {
                 pipelines.clone()
             } else {
@@ -944,18 +944,18 @@ impl Acquisition {
                     pollster::block_on(crate::gpu::view::ViewKernels::new(&services.device))?;
                 kernels.get_or_init(|| prepared).clone()
             };
-            Ok::<_, crate::Error>(Some((services, renderer, pipelines)))
+            Ok::<_, crate::Error>(Some((services, targets, pipelines)))
         })
         .await
         .map_err(|_| Error::Gpu("Working-source preparation worker panicked".into()))??;
-        let Some((services, renderer, kernels)) = prepared else {
+        let Some((services, targets, kernels)) = prepared else {
             return Ok(None);
         };
         Ok(acquire_images(
             &self.mailbox,
-            renderer.evaluation(),
-            renderer.looks(),
-            &renderer.drt,
+            &services.evaluation,
+            &services.looks,
+            &targets,
             &kernels,
             &services.queue,
         )

@@ -79,7 +79,7 @@ fn neighbour(left: DVec3, center: DVec3, right: DVec3, position: [f64; 2]) -> DV
 fn native(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     scan: &crate::scan::Scan,
     stages: Assembly,
 ) -> Vec<[f32; 4]> {

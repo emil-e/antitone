@@ -12,7 +12,7 @@ use crate::{
 
 pub(super) fn authored_source(
     device: &wgpu::Device,
-    renderer: Arc<crate::renderer::GpuRenderer>,
+    renderer: Arc<crate::render_fixture::RenderFixture>,
     kernels: Arc<ViewKernels>,
     values: &[[f32; 4]],
     frame: FrameRaster,

@@ -12,6 +12,9 @@ mod fixture;
 #[path = "support/fixture_path.rs"]
 mod fixture_path;
 #[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
+#[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]
 #[path = "support/working_precision.rs"]
 mod working_precision;
 use fixture::{Entry, Order, profile_tags, source};
@@ -501,7 +504,6 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         gpu::flat::GpuFlatField,
         gpu_export::Format,
         processing::{Calibration, InputSettings, RollSettings},
-        renderer::GpuRenderer,
         rendering::OutputTarget,
     };
     use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
@@ -516,7 +518,9 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     });
     let directory = tempfile::tempdir().unwrap();

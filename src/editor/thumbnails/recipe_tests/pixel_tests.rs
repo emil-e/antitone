@@ -83,7 +83,7 @@ fn assert_rendered(actual: &[[f32; 4]], expected: &[Vec3]) {
 #[test]
 fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits() {
     let (device, queue) = gpu();
-    let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
+    let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
     let native_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = native_reads.clone();
     let loader = source_loading::SourceLoader::new_observed(move |_, _, _| {

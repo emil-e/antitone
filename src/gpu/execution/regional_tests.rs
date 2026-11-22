@@ -154,7 +154,8 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
         },
     ))
     .unwrap();
-    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let renderer =
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let file = crate::dng_fixture::Fixture {
         side: 64,
         ramp: true,

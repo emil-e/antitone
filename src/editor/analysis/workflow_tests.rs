@@ -22,12 +22,12 @@ pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Edi
             .unwrap()
     });
     let initial = source_loading::SourceLoader::new();
-    editor.source_services = Some(source::Services {
-        developments: initial.clone(),
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
-        device,
-        queue,
-    });
+    editor.source_services = Some(source::Services::fixture(
+        initial.clone(),
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     editor.document.thumbnails =
         (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");

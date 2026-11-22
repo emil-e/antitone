@@ -2,6 +2,8 @@ use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+#[cfg(feature = "editor")]
+use crate::render_fixture::RenderFixture;
 
 #[cfg(feature = "editor")]
 #[test]
@@ -12,8 +14,9 @@ fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_prox
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let size = [32, 16];
     let proxy = GpuProxy::new(
-        renderer,
-        &device,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt.clone(),
         size,
         &vec![[1000, 1200, 5000, 0]; (size[0] * size[1]) as usize],
         DMat3::IDENTITY,
@@ -91,8 +94,9 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(crate::gpu::view::ViewKernels::new(&device)).unwrap();
     let proxy = GpuProxy::new(
-        renderer,
-        &device,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt.clone(),
         [2, 2],
         &[[32000, 22000, 16000, 0]; 4],
         DMat3::IDENTITY,
@@ -175,12 +179,13 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         let kernels = crate::gpu::view::ViewKernels::new(&device).await.unwrap();
         let size = [32, 16];
         let proxy = GpuProxy::new_continuous(
-            renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt.clone(),
             size,
             &vec![[4000., 5000., 6000., 0.]; (size[0] * size[1]) as usize],
             DMat3::IDENTITY,

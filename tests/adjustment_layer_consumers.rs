@@ -1,4 +1,7 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone::adjustment_layers::AdjustmentLayer;
 use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
@@ -155,7 +158,7 @@ fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
 }
 
 async fn image(
-    renderer: &Arc<antitone::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     geometry: SourceGeometry,
     size: [u32; 2],
     target: OutputTarget,
@@ -248,7 +251,7 @@ fn read_buffer(
 fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_cache() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let geometry =
@@ -458,7 +461,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
 fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correction() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let field = Arc::new(
@@ -599,7 +602,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
 fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_grade() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
@@ -724,7 +727,7 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
     };
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let field = Arc::new(

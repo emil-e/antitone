@@ -91,7 +91,7 @@ fn non_cfa_import_reopen_view_and_bounded_exports() {
 
 pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let renderers = crate::renderer::RendererCache::for_device(&device);
+    let renderers = crate::editor::display::DisplayFixture::for_device(&device);
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let directory =
         tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".cache")).unwrap();
@@ -168,7 +168,12 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             assert!(pixels.windows(2).any(|p| p[0][..3] != p[1][..3]));
             bases.push(pixels);
             let ready = developed
-                .prepare_gpu(&renderers, &device, &queue, &|| false)
+                .prepare_gpu(
+                    renderers.evaluation().clone(),
+                    renderers.looks().clone(),
+                    &renderers.warmup(&queue),
+                    &|| false,
+                )
                 .unwrap();
             assert!(ready.proxy.size().into_iter().all(|n| n > 0 && n <= 1024));
             let composition =

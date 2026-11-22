@@ -67,7 +67,7 @@ fn exercise(
         Arc::strong_count(scan.source())
     );
     let renderer = monitor.phase("renderer-infrastructure", || {
-        pollster::block_on(GpuRenderer::new(device, queue))
+        pollster::block_on(RenderFixture::new(device, queue))
     })?;
     #[cfg(feature = "ocio-reference")]
     if backends.iter().any(|b| matches!(b, Backend::Reference)) {

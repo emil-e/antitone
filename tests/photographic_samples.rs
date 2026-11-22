@@ -8,6 +8,8 @@
 ))]
 #[path = "support/output.rs"]
 mod authored_export;
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone as api;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
@@ -21,7 +23,6 @@ use antitone::{
     gpu::flat::GpuFlatField,
     gpu_export::Format,
     processing::{InputSettings, RollSettings},
-    renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
 };
@@ -83,7 +84,9 @@ fn saturation_vibrance_with_film_paper_samples() {
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     });
     let paper = std::sync::Arc::new(
@@ -178,7 +181,9 @@ fn photographic_tiff_pairs() {
                 .await
                 .unwrap();
         let start = Instant::now();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         println!(
             "photographic renderer_initialization_ms={:.3} adapter={:?}",
             start.elapsed().as_secs_f64() * 1000.,

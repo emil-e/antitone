@@ -1,8 +1,8 @@
 use super::ui::ContactSheetLayout;
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::{evaluation, lut3d::Looks, parameters::ProcessingParameters, submission::Queue};
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
 #[cfg(test)]
@@ -356,6 +356,40 @@ pub(super) struct Preview {
     pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
 }
 
+#[derive(Clone)]
+struct ThumbnailGpu {
+    evaluation: evaluation::Context,
+    queue: Queue,
+    looks: Arc<Looks>,
+    display: Arc<super::display::Warmup>,
+}
+
+#[cfg(test)]
+impl ThumbnailGpu {
+    fn fixture(
+        device: &wgpu::Device,
+        queue: &Queue,
+        resources: &crate::editor::display::DisplayFixture,
+    ) -> Self {
+        assert_eq!(resources.evaluation().device(), device);
+        Self {
+            evaluation: resources.evaluation().clone(),
+            queue: queue.clone(),
+            looks: resources.looks().clone(),
+            display: resources.warmup(queue),
+        }
+    }
+
+    fn from_source_services(services: &super::source::Services) -> Self {
+        Self {
+            evaluation: services.evaluation.clone(),
+            queue: services.queue.clone(),
+            looks: services.looks.clone(),
+            display: services.display.clone(),
+        }
+    }
+}
+
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, CachedProduct>,
     pub(super) sources: Arc<crate::source::SourceCache>,
@@ -366,11 +400,7 @@ pub(super) struct Thumbnails {
     budgets: memory::CacheBudgets,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     embedded: embedded::EmbeddedPreviews,
-    gpu: Option<(
-        wgpu::Device,
-        crate::gpu::submission::Queue,
-        Arc<crate::renderer::RendererCache>,
-    )>,
+    gpu: Option<ThumbnailGpu>,
     services: Option<Services>,
     backend: Option<Arc<dyn crate::source::SourceProvider>>,
     visible: Vec<SourceId>,
@@ -461,17 +491,18 @@ impl Thumbnails {
         if !document.project.input.is_negative() && document.reference_exposure(source).is_none() {
             return Ok(None);
         }
-        let Some((device, queue, renderers)) = &self.gpu else {
+        let Some(gpu) = &self.gpu else {
             return Ok(None);
         };
-        let renderer = renderers.get(device, queue)?;
+        let targets = gpu.display.ready()?;
         // Selected and filmstrip outputs have independent mutable processing state.
         let preview = SelectedPreview {
             request,
             key: key.clone(),
             proxy: crate::viewer::GpuProxy::new_continuous(
-                renderer,
-                device,
+                gpu.evaluation.clone(),
+                gpu.looks.clone(),
+                targets,
                 [proxy.width, proxy.height],
                 &proxy.pixels,
                 proxy.matrix,
@@ -582,7 +613,8 @@ impl Thumbnails {
 
     #[cfg(test)]
     pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
-        cache_limits::Hardware::current(self.gpu.as_ref().map(|(device, _, _)| device)).defaults()
+        cache_limits::Hardware::current(self.gpu.as_ref().map(|gpu| gpu.evaluation.device()))
+            .defaults()
     }
 
     #[cfg(test)]
@@ -593,10 +625,7 @@ impl Thumbnails {
     #[cfg(test)]
     fn apply_test_budgets(&mut self, budgets: memory::CacheBudgets) {
         let sources = self.sources.clone();
-        let evaluation = self
-            .gpu
-            .as_ref()
-            .map(|(_, _, renderers)| renderers.evaluation().clone());
+        let evaluation = self.gpu.as_ref().map(|gpu| gpu.evaluation.clone());
         memory::apply_budgets(budgets, &sources, self, evaluation.as_ref());
     }
 
@@ -683,15 +712,19 @@ impl Thumbnails {
     }
 
     pub fn new(
-        device: wgpu::Device,
-        queue: crate::gpu::submission::Queue,
-        renderers: Arc<crate::renderer::RendererCache>,
+        evaluation: evaluation::Context,
+        queue: Queue,
+        looks: Arc<Looks>,
+        display: Arc<super::display::Warmup>,
         developments: source_loading::SourceLoader,
     ) -> Self {
-        Self::with_developments(
-            device,
-            queue,
-            renderers,
+        Self::with_gpu(
+            ThumbnailGpu {
+                evaluation,
+                queue,
+                looks,
+                display,
+            },
             disk::DiskCache::default_location(),
             developments,
         )
@@ -699,13 +732,16 @@ impl Thumbnails {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn without_disk(&self, developments: source_loading::SourceLoader) -> Self {
-        let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
-        Self::with_developments(
-            device.clone(),
-            queue.clone(),
-            renderers.clone(),
+        let gpu = self.gpu.clone().expect("thumbnail GPU resources");
+        Self::with_gpu(gpu, None, developments)
+    }
+
+    #[cfg(test)]
+    pub(super) fn without_disk_for_source(services: &super::source::Services) -> Self {
+        Self::with_gpu(
+            ThumbnailGpu::from_source_services(services),
             None,
-            developments,
+            services.developments.clone(),
         )
     }
 
@@ -713,7 +749,7 @@ impl Thumbnails {
     fn with_disk(
         device: wgpu::Device,
         queue: crate::gpu::submission::Queue,
-        renderers: Arc<crate::renderer::RendererCache>,
+        renderers: Arc<crate::editor::display::DisplayFixture>,
         disk: Option<disk::DiskCache>,
     ) -> Self {
         Self::with_developments(
@@ -725,15 +761,28 @@ impl Thumbnails {
         )
     }
 
+    #[cfg(test)]
     fn with_developments(
         device: wgpu::Device,
-        queue: crate::gpu::submission::Queue,
-        renderers: Arc<crate::renderer::RendererCache>,
+        queue: Queue,
+        renderers: Arc<crate::editor::display::DisplayFixture>,
+        disk: Option<disk::DiskCache>,
+        developments: source_loading::SourceLoader,
+    ) -> Self {
+        Self::with_gpu(
+            ThumbnailGpu::fixture(&device, &queue, &renderers),
+            disk,
+            developments,
+        )
+    }
+
+    fn with_gpu(
+        gpu: ThumbnailGpu,
         disk: Option<disk::DiskCache>,
         developments: source_loading::SourceLoader,
     ) -> Self {
         let mut state = Self {
-            gpu: Some((device.clone(), queue.clone(), renderers.clone())),
+            gpu: Some(gpu.clone()),
             ..Default::default()
         };
         #[cfg(test)]
@@ -741,9 +790,7 @@ impl Thumbnails {
         state.embedded = embedded::EmbeddedPreviews::new();
         state.backend = Some(Arc::new(developments));
         state.services = Some(Services::Production(Worker::new(
-            device,
-            queue,
-            renderers,
+            gpu,
             disk,
             state.repaint.clone(),
         )));
@@ -889,9 +936,7 @@ struct ThumbnailMetrics {
 }
 
 fn make_image(
-    device: &wgpu::Device,
-    queue: &crate::gpu::submission::Queue,
-    renderers: &crate::renderer::RendererCache,
+    gpu: &ThumbnailGpu,
     job: &Job,
     proxy: &Proxy,
     active: &impl Fn() -> bool,
@@ -901,13 +946,13 @@ fn make_image(
         return Ok(None);
     }
     let tick = std::time::Instant::now();
-    let renderer = renderers.get(device, queue)?;
+    let targets = gpu.display.ready()?;
     metrics.renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
     let image = pollster::block_on(proxy.image(
-        renderer.evaluation().clone(),
-        renderer.looks().clone(),
-        renderer.drt(job.key.target),
+        gpu.evaluation.clone(),
+        gpu.looks.clone(),
+        targets.get(job.key.target),
         job.key.source.source.active_area,
     ))?;
     metrics.image_seconds = tick.elapsed().as_secs_f64();
@@ -1780,9 +1825,7 @@ struct Worker {
     ready: std::sync::Mutex<ReadyWork>,
     #[cfg(test)]
     observe: Option<Arc<dyn Fn(SourceId, bool) + Send + Sync>>,
-    device: wgpu::Device,
-    queue: crate::gpu::submission::Queue,
-    renderers: Arc<crate::renderer::RendererCache>,
+    gpu: ThumbnailGpu,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
@@ -1872,7 +1915,9 @@ impl Worker {
         Arc::make_mut(&mut recipe).neutral.source_development =
             job.physical.development().expect("photo development");
         let tick = std::time::Instant::now();
-        let renderer = self.renderers.get(&self.device, &self.queue)?;
+        let targets = self.gpu.display.ready()?;
+        let device = self.gpu.evaluation.device();
+        let transform = targets.get(job.key.target);
         metrics.renderer_seconds = tick.elapsed().as_secs_f64();
         let previous = job
             .previous
@@ -1883,12 +1928,12 @@ impl Worker {
         let view = if let Some(previous) = previous {
             let source = previous.product().expect("photographic card product");
             RenderedView::render_from_retained(
-                &self.queue,
+                &self.gpu.queue,
                 source.clone(),
                 capture,
                 job.correction.gpu()?,
-                renderer.looks(),
-                renderer.drt(job.key.target),
+                &self.gpu.looks,
+                transform,
                 &|| !self.active(job),
             )?
         } else {
@@ -1906,13 +1951,13 @@ impl Worker {
                 crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
             let kernels = self
                 .kernels
-                .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
+                .get_or_init(|| pollster::block_on(ViewKernels::new(device)))
                 .clone()?;
             let source = ViewImage::camera_preview(
-                renderer.evaluation().clone(),
-                &self.queue,
-                renderer.looks(),
-                renderer.drt(job.key.target),
+                self.gpu.evaluation.clone(),
+                &self.gpu.queue,
+                &self.gpu.looks,
+                transform,
                 kernels,
                 proxy,
                 job.correction.gpu()?,
@@ -1921,16 +1966,16 @@ impl Worker {
                 &|| !self.active(job),
             )?;
             metrics.calculation_seconds = tick.elapsed().as_secs_f64();
-            RenderedView::from_image(&self.device, source, capture, job.key.target)?
+            RenderedView::from_image(device, source, capture, job.key.target)?
         };
         metrics.camera_reused = previous.is_some();
         view.ensure_submitted(
-            &self.device,
-            &self.queue,
+            device,
+            &self.gpu.queue,
             self.repaint.get().unwrap_or(&egui::Context::default()),
         );
         while view.in_flight() {
-            self.device
+            device
                 .poll(wgpu::PollType::wait_indefinitely())
                 .map_err(|error| Error::Gpu(error.to_string()))?;
             if !self.active(job) {
@@ -2012,9 +2057,7 @@ impl Worker {
                 );
             }
             make_image(
-                &self.device,
-                &self.queue,
-                &self.renderers,
+                &self.gpu,
                 job,
                 &proxy,
                 &|| self.active(job),
@@ -2065,16 +2108,12 @@ struct ReadyWork {
 
 impl Worker {
     fn new(
-        device: wgpu::Device,
-        queue: crate::gpu::submission::Queue,
-        renderers: Arc<crate::renderer::RendererCache>,
+        gpu: ThumbnailGpu,
         disk: Option<disk::DiskCache>,
         repaint: Arc<std::sync::OnceLock<egui::Context>>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            device,
-            queue,
-            renderers,
+            gpu,
             disk,
             repaint,
             kernels: Default::default(),

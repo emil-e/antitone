@@ -1482,13 +1482,13 @@ async fn fit_and_accept(
             return work(request.clone(), cancelled.clone()).await;
         }
         let sources = sources.ok_or("Source provider unavailable")?;
-        let (device, queue, renderers) = cx
+        let (evaluation, queue, display) = cx
             .read(|editor| {
                 editor.source_services.as_ref().map(|source| {
                     (
-                        source.device.clone(),
+                        source.evaluation.clone(),
                         source.queue.clone(),
-                        source.renderers.clone(),
+                        source.display.clone(),
                     )
                 })
             })
@@ -1501,11 +1501,11 @@ async fn fit_and_accept(
             initialization,
         };
         let gpu = background::compute(&cancelled, move || {
-            let renderer = renderers.get(&device, &queue)?;
+            let targets = display.targets()?;
             Ok((
-                renderer.evaluation().clone(),
+                evaluation,
                 queue,
-                renderer.drt(crate::rendering::OutputTarget::Srgb).clone(),
+                targets.get(crate::rendering::OutputTarget::Srgb).clone(),
             ))
         })
         .await

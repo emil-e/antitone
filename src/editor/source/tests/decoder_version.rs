@@ -131,7 +131,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
     let source =
         crate::preview_fixture::append(source.path(), [32, 32], &[128; 32 * 32 * 3], true, Some(2));
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let renderers = crate::renderer::RendererCache::for_device(&device);
+    let renderers = crate::editor::display::DisplayFixture::for_device(&device);
     let directory = tempfile::tempdir().unwrap();
     for (sdk, path) in [
         (false, source.path().to_owned()),
@@ -238,7 +238,12 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                 assert_eq!(developed.context.reference, Some(baseline));
             }
             let ready = developed
-                .prepare_gpu(&renderers, &device, &queue, &|| false)
+                .prepare_gpu(
+                    renderers.evaluation().clone(),
+                    renderers.looks().clone(),
+                    &renderers.warmup(&queue),
+                    &|| false,
+                )
                 .unwrap();
             assert_eq!(ready.area, scan.area);
             let recipe = legacy.image_recipe(id).unwrap();

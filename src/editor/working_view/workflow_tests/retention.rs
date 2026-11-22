@@ -50,11 +50,8 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
             capture: PhotographRequest::Recipe(recipe),
         };
         let services = editor.source_services.as_ref().unwrap();
-        services.evaluation().set_retention_limit(128 << 20);
-        let renderer = services
-            .renderers
-            .get(&services.device, &services.queue)
-            .unwrap();
+        services.evaluation.set_retention_limit(128 << 20);
+        let renderer = services.render_fixture().unwrap();
         let store = renderer.evaluation().materializations();
         store.set_test_pressure(crate::sys::MemoryPressure::Normal);
         with_application(editor, |app| {

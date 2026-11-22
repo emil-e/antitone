@@ -169,7 +169,7 @@ fn workload(
         );
         Ok(())
     });
-    let renderers = Arc::new(crate::renderer::RendererCache::for_device(device));
+    let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(device));
     let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut editor = Editor::state();
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -196,17 +196,14 @@ fn workload(
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
 
     editor.initialize_viewer(device, queue);
-    editor.source_services = Some(source::Services {
-        developments: scheduler.clone(),
-        renderers: renderers.clone(),
-        device: device.clone(),
-        queue: queue.clone(),
-    });
+    let services = source::Services::fixture(scheduler.clone(), device, queue, &renderers);
+    editor.source_services = Some(services.clone());
     editor.output_services = Some(output::Services::new(
-        renderers.clone(),
-        device.clone(),
+        services.evaluation.clone(),
+        services.looks.clone(),
+        services.display.clone(),
         queue.clone(),
-        editor.source_services.clone().unwrap(),
+        services,
     ));
     let exercise = crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| editor.start_memory_watch(cx));

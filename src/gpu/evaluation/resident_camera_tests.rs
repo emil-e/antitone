@@ -22,7 +22,7 @@ use glam::DVec3;
 
 fn evaluated(
     queue: &crate::gpu::submission::Queue,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     root: Value,
     policy: Policy,
 ) -> (Vec<[f32; 4]>, usize) {
@@ -343,7 +343,7 @@ fn resident_camera_execution_resources() {
         let side = 1536;
         let region = SourceRegion::from([17, 29, side, side]);
         let renderer =
-            pollster::block_on(crate::renderer::GpuRenderer::new(device, queue)).unwrap();
+            pollster::block_on(crate::render_fixture::RenderFixture::new(device, queue)).unwrap();
         let matrix = crate::gpu::photograph::test_support::matrix();
         let values: Vec<_> = (0..side * side)
             .map(|i| {

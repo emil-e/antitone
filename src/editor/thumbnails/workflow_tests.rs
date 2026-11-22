@@ -37,7 +37,7 @@ fn editor(
         editor.document.thumbnails = (Thumbnails::with_developments(
             device.clone(),
             queue,
-            Arc::new(crate::renderer::RendererCache::for_device(&device)),
+            Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
             Some(disk::DiskCache::at(disk.to_owned())),
             scheduler.clone(),
         ))

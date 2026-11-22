@@ -229,12 +229,12 @@ fn a_real_devices_lut_capacity_does_not_limit_saved_json() {
     editor.document.project.output.lut = Some(asset);
     let loader = crate::source::SourceLoader::new();
     loader.close_and_wait().unwrap();
-    editor.source_services = Some(super::super::source::Services {
-        developments: loader,
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
-        device,
-        queue,
-    });
+    editor.source_services = Some(super::super::source::Services::fixture(
+        loader,
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     let expected = editor.document.project.clone();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("portable.antitone");

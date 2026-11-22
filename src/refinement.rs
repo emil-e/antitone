@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn refine(
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
@@ -37,7 +37,7 @@ pub fn refine(
 
 #[cfg(test)]
 pub(crate) fn refine_cancellable(
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),

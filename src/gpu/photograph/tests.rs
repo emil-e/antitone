@@ -48,7 +48,7 @@ impl Source for Codes {
 fn evaluate(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     root: Value,
     region: SourceRegion,
     policy: Policy,

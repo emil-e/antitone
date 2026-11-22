@@ -13,7 +13,7 @@ use std::sync::Arc;
 mod tests;
 
 pub(super) fn roll(
-    services: &super::super::source::Services,
+    gpu: super::super::measurement::Gpu<'_>,
     scan: &mut Scan,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
@@ -24,7 +24,7 @@ pub(super) fn roll(
         return Err(Error::Cancelled);
     }
     let (mut scan, input) = crate::photo_preparation::native_image(scan, &input)?;
-    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
+    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     roll_from_samples(&samples, &input, cancelled)
@@ -41,7 +41,7 @@ pub(in crate::editor) fn roll_from_samples(
 }
 
 pub(super) fn layer(
-    services: &super::super::source::Services,
+    gpu: super::super::measurement::Gpu<'_>,
     scan: &mut Scan,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
@@ -52,7 +52,7 @@ pub(super) fn layer(
         return Err(Error::Cancelled);
     }
     let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &input.recipe)?;
-    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
+    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let layer = recipe.grade.layers()[input.index];
@@ -90,7 +90,7 @@ pub(super) fn layer(
             candidate.grade = AdjustmentLayerSnapshot::new(layers)?;
             let graded = samples
                 .pipeline(&candidate)?
-                .graded(&services.device.limits())?;
+                .graded(&gpu.0.device().limits())?;
 
             let response = cones * samples.mean(graded, cancelled)?;
             if !response.is_finite() || response.min_element() <= 0. {

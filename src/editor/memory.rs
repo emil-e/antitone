@@ -68,7 +68,7 @@ impl super::Editor {
         let evaluation = self
             .source_services
             .as_ref()
-            .map(super::source::Services::evaluation);
+            .map(|services| &services.evaluation);
         apply_budgets(budgets, &sources, &mut self.document.thumbnails, evaluation);
     }
 

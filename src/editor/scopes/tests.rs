@@ -503,7 +503,7 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
             .await
             .unwrap();
         let matrix = glam::DMat3::from_cols_array(&[0.9, 0.02, 0., 0.05, 1.1, 0., 0., 0.03, 0.8]);
-        let shared_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let shared_renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let area = Rect {
@@ -522,8 +522,9 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
             area,
             analysis_support: None,
             proxy: crate::viewer::GpuProxy::new(
-                shared_renderer,
-                &device,
+                shared_renderer.evaluation().clone(),
+                shared_renderer.looks().clone(),
+                shared_renderer.drt.clone(),
                 [7, 3],
                 &[[4000, 3000, 2000, 0]; 21],
                 matrix,

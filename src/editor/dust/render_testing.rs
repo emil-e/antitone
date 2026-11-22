@@ -16,19 +16,16 @@ pub(super) fn pixels(
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&services.device, map).unwrap()));
     let base = crate::gpu::repair_source::Source::from_recipe(
         field,
-        services.evaluation(),
+        &services.evaluation,
         &services.queue,
         scan,
         recipe,
     )
     .unwrap();
     let image = crate::gpu::repairs::definition::healing_image(base.image(), repair).unwrap();
-    let mut reader = crate::gpu::repair_source::Source::from_image(
-        services.evaluation(),
-        &services.queue,
-        image,
-    )
-    .unwrap();
+    let mut reader =
+        crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, image)
+            .unwrap();
     let [x, y] = repair.support.origin();
     let [width, height] = repair.support.size();
     let values = reader
@@ -81,7 +78,7 @@ impl Image {
     pub fn pixels(&self) -> std::vec::IntoIter<([u32; 2], [f32; 3])> {
         let services = &self.services;
         let mut source = crate::gpu::repair_source::Source::from_image(
-            services.evaluation(),
+            &services.evaluation,
             &services.queue,
             self.definition.clone(),
         )

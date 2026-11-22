@@ -98,12 +98,12 @@ fn fixture() -> (
         correction: Default::default(),
     };
     let scheduler = source_loading::SourceLoader::new();
-    e.source_services = Some(source::Services {
-        device: device.clone(),
-        queue: queue.clone(),
-        developments: scheduler.clone(),
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
-    });
+    e.source_services = Some(source::Services::fixture(
+        scheduler.clone(),
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
@@ -310,10 +310,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     let small = positive_spec(frame, &input, 0.25);
     let latest = positive_spec(frame, &input, 0.75);
     let services = e.source_services.as_ref().unwrap();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let scope = renderer.evaluation().materializations();
     scope.set_retention_enabled(false);
     let (started, starts) = std::sync::mpsc::channel();

@@ -14,14 +14,14 @@ use crate::{
 use std::sync::Arc;
 
 pub(super) fn reference(
-    services: &super::super::source::Services,
+    gpu: super::super::measurement::Gpu<'_>,
     scan: &mut Scan,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<DVec3, Error> {
     let floor = f64::from(scan.effective_floor() as f32);
-    let samples = Samples::new(services, scan, field, coverage, cancelled)?;
+    let samples = Samples::new(gpu, scan, field, coverage, cancelled)?;
     let mean = samples.mean(samples.camera_light()?, cancelled)?;
     if mean.min_element() <= floor {
         return Err(Error::UnusableSample(
@@ -39,7 +39,7 @@ pub(super) struct RollBalancePick {
 }
 
 pub(super) fn roll_balance(
-    services: &super::super::source::Services,
+    gpu: super::super::measurement::Gpu<'_>,
     scan: &Scan,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
@@ -58,7 +58,7 @@ pub(super) fn roll_balance(
         ))?
         .validate()?;
     let (mut scan, mut recipe) = crate::photo_preparation::native_image(scan, &input)?;
-    let samples = Samples::new(services, &mut scan, field, coverage, cancelled)?;
+    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
     let patch = samples.mean(samples.camera_light()?, cancelled)?;

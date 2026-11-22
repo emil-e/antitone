@@ -5,7 +5,6 @@ use antitone::{
     color::Balance,
     gpu::{flat::GpuFlatField, source::SourceGeometry},
     processing::{Calibration, RollSettings},
-    renderer::GpuRenderer,
 };
 use glam::DVec3;
 
@@ -13,7 +12,9 @@ use glam::DVec3;
 fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         let presentation = antitone::viewer::Presentation::new(&device).await.unwrap();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             for viewer_first in [false, true] {

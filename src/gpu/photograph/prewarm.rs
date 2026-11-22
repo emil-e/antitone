@@ -9,7 +9,8 @@ use crate::gpu::parameters::ProcessingParameters;
 #[cfg(feature = "ui")]
 use crate::gpu::source::ProcessingSource;
 
-pub(crate) fn prewarm_viewer(
+/// Compile the common viewer paths before foreground command recording.
+pub fn prewarm_viewer(
     context: &evaluation::Context,
     drt: &crate::gpu::drt::Targets,
 ) -> Result<(), Error> {

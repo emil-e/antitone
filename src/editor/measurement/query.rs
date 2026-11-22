@@ -29,7 +29,7 @@ pub(in crate::editor) struct Samples<'a> {
 
 impl<'a> Samples<'a> {
     pub(in crate::editor) fn new(
-        services: &'a crate::editor::source::Services,
+        (context, queue): super::Gpu<'a>,
         scan: &'a mut Scan,
         field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
@@ -44,8 +44,8 @@ impl<'a> Samples<'a> {
         let source = evaluation::camera_source(scan)?;
 
         Ok(Self {
-            context: services.evaluation(),
-            queue: &services.queue,
+            context,
+            queue,
             scan,
             source,
             field,

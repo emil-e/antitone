@@ -1,6 +1,9 @@
 #![cfg(all(feature = "ui", feature = "render"))]
+
 #[path = "support/calculation.rs"]
 mod calculation;
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone::{
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
@@ -482,7 +485,7 @@ fn gpu_vector_projection_amplification_and_boundary_tolerance_match_scalar() {
 fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());

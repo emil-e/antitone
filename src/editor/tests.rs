@@ -440,12 +440,13 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let proxy = crate::viewer::GpuProxy::new(
-            renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt.clone(),
             [16, 16],
             &[[1000, 1000, 1000, 0]; 256],
             glam::DMat3::IDENTITY,
@@ -1138,10 +1139,12 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     if !editor.document.visit.working_view.enabled() {
         editor.initialize_viewer(&device, &queue);
     }
-    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let renderer =
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let proxy = crate::viewer::GpuProxy::new(
-        renderer,
-        &device,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt.clone(),
         [1, 1],
         &[[1000, 1000, 1000, 0]],
         glam::DMat3::IDENTITY,

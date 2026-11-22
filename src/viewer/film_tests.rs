@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::source::SourceGeometry;
-use crate::renderer::GpuRenderer;
+use crate::render_fixture::RenderFixture;
 
 #[test]
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
@@ -19,7 +19,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         let area = [120, 73, 1200, 1200];
         let image = GpuImage::new_shared(
             renderer.evaluation().clone(),
@@ -140,7 +140,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         let small = [0, 0, 6000, 3000].into();
         let large = [0, 0, 6000, 6000].into();
         let roll = RollSettings {

@@ -23,7 +23,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
     let thumbnails = Thumbnails::with_developments(
         device.clone(),
         queue.clone(),
-        Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
         loader.clone(),
     );
@@ -113,7 +113,7 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let mut thumbnails = Thumbnails::with_developments(
         device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
         loader.clone(),
     );
@@ -211,7 +211,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     let mut thumbnails = Thumbnails::with_developments(
         device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
         loader.clone(),
     );

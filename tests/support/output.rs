@@ -14,7 +14,6 @@ use antitone::{
         photograph::{PhotographGraph, display_output},
     },
     processing::{InputSettings, RollSettings},
-    renderer::GpuRenderer,
     scan::{ImageSource, Scan},
 };
 use std::{path::Path, sync::Arc};
@@ -36,7 +35,7 @@ pub struct Request<'a> {
 impl Request<'_> {
     pub fn calculation(
         self,
-        renderer: &GpuRenderer,
+        renderer: &crate::render_fixture::RenderFixture,
         device: &wgpu::Device,
     ) -> Result<antitone::gpu_export::Request, Error> {
         if self.scan.area != self.composition.area()
@@ -74,7 +73,7 @@ impl Request<'_> {
 }
 
 pub fn write(
-    renderer: &GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     device: &wgpu::Device,
     gpu: &antitone::gpu::submission::Queue,
     request: Request<'_>,
@@ -92,7 +91,7 @@ pub fn write(
 
 #[allow(clippy::too_many_arguments)]
 pub fn write_checked(
-    renderer: &GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     device: &wgpu::Device,
     gpu: &antitone::gpu::submission::Queue,
     request: Request<'_>,

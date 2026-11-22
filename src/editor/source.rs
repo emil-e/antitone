@@ -140,14 +140,38 @@ pub(super) struct Developed {
 #[derive(Clone)]
 pub(super) struct Services {
     pub developments: source_loading::SourceLoader,
-    pub renderers: Arc<crate::renderer::RendererCache>,
+    pub evaluation: crate::gpu::evaluation::Context,
+    pub looks: Arc<crate::gpu::lut3d::Looks>,
+    pub display: Arc<super::display::Warmup>,
     pub device: wgpu::Device,
     pub queue: crate::gpu::submission::Queue,
 }
 
 impl Services {
-    pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
-        self.renderers.evaluation()
+    #[cfg(test)]
+    pub fn fixture(
+        developments: source_loading::SourceLoader,
+        device: &wgpu::Device,
+        queue: &crate::gpu::submission::Queue,
+        resources: &crate::editor::display::DisplayFixture,
+    ) -> Self {
+        Self {
+            developments,
+            evaluation: resources.evaluation().clone(),
+            looks: resources.looks().clone(),
+            display: resources.warmup(queue),
+            device: device.clone(),
+            queue: queue.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn render_fixture(&self) -> Result<Arc<crate::render_fixture::RenderFixture>, Error> {
+        Ok(Arc::new(crate::render_fixture::RenderFixture {
+            evaluation: self.evaluation.clone(),
+            looks: self.looks.clone(),
+            drt: self.display.ready()?,
+        }))
     }
 
     pub fn provider(
@@ -183,7 +207,7 @@ impl Services {
             );
         }
         crate::background::run(move |_| {
-            developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
+            developed.prepare_gpu(self.evaluation, self.looks, &self.display, &|| {
                 cancelled.is_cancelled()
             })
         })
@@ -340,9 +364,9 @@ impl Request {
 impl Developed {
     pub fn prepare_gpu(
         self,
-        renderers: &crate::renderer::RendererCache,
-        device: &wgpu::Device,
-        queue: &crate::gpu::submission::Queue,
+        evaluation: crate::gpu::evaluation::Context,
+        looks: Arc<crate::gpu::lut3d::Looks>,
+        display: &super::display::Warmup,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Ready, Error> {
         if cancelled() {
@@ -357,13 +381,14 @@ impl Developed {
         let thumbnail = Some((self.file.clone(), proxy));
         let proxy_seconds = tick.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
-        let renderer = renderers.get(device, queue)?;
+        let targets = display.ready()?;
         let renderer_seconds = tick.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
         let a = scan.area;
         let proxy = crate::viewer::GpuProxy::new_continuous(
-            renderer,
-            device,
+            evaluation,
+            looks,
+            targets,
             [width, height],
             &pixels,
             scan.camera_to_ap1,

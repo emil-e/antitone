@@ -22,7 +22,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
     let mut original = repaired.clone();
     original.repairs.clear();
     let (device, queue, _) = super::super::super::tests::context();
-    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
+    let renderer = pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(
         &device,
         &queue,
         crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },

@@ -54,7 +54,7 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
     )
     .unwrap();
     let spec = SourceRequest::for_frame(frame).unwrap();
-    let make = |renderer: Arc<crate::renderer::GpuRenderer>, delta| {
+    let make = |renderer: Arc<crate::render_fixture::RenderFixture>, delta| {
         renderer
             .evaluation()
             .materializations()
@@ -89,7 +89,7 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
     };
     let first = make(renderer.clone(), 3.);
     let independent =
-        pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let recomputed = make(independent, 3.);
     assert!(first.same_source_definition_as(&recomputed));
     assert!(!first.same_source_as(&recomputed));

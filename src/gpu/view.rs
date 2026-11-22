@@ -196,15 +196,11 @@ impl RenderedView {
             input,
             previous.and_then(|view| view.product.as_ref()),
         )?;
-        let renderer = source
-            .fixture_renderer
+        let (looks, targets) = source
+            .fixture_display
             .as_ref()
             .expect("authored view fixture");
-        let endpoint = capture.display(
-            product.definition.clone(),
-            renderer.looks(),
-            renderer.drt(target),
-        )?;
+        let endpoint = capture.display(product.definition.clone(), looks, targets.get(target))?;
         Self::from_value(device, product, capture, target, endpoint)
     }
 

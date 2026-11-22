@@ -252,8 +252,9 @@ fn lightroom_retirement_signals_a_return_waiting_on_cold_source_before_publicati
             editor.source_services.as_mut().unwrap().developments = loader.clone();
             let services = editor.source_services.as_ref().unwrap().clone();
             editor.output_services = Some(crate::editor::output::Services::new(
-                services.renderers.clone(),
-                services.device.clone(),
+                services.evaluation.clone(),
+                services.looks.clone(),
+                services.display.clone(),
                 services.queue.clone(),
                 services,
             ));

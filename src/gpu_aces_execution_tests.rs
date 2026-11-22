@@ -104,7 +104,7 @@ pub(super) struct Executable {
 impl Executable {
     pub(super) async fn new(
         device: &wgpu::Device,
-        renderer: &GpuRenderer,
+        renderer: &RenderFixture,
         input: &wgpu::Buffer,
         size: [u32; 2],
         target: OutputTarget,
@@ -355,7 +355,7 @@ impl Executable {
     }
 }
 
-pub(super) async fn context() -> (wgpu::Device, crate::gpu::submission::Queue, Arc<GpuRenderer>) {
+pub(super) async fn context() -> (wgpu::Device, crate::gpu::submission::Queue, Arc<RenderFixture>) {
     let instance = crate::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = crate::gpu::submission::request_device(&adapter, &wgpu::DeviceDescriptor {
@@ -365,7 +365,7 @@ pub(super) async fn context() -> (wgpu::Device, crate::gpu::submission::Queue, A
         .await
         .unwrap();
     println!("aces_execution_adapter {:?}", adapter.get_info());
-    let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+    let renderer = RenderFixture::new(&device, &queue).await.unwrap();
     (device, queue, renderer)
 }
 
@@ -507,7 +507,7 @@ fn equivalent_aces_execution_preserves_signed_hdr_grid_and_both_targets() {
 fn performance_input(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     size: [u32; 2],
 ) -> wgpu::Buffer {
     #[cfg(feature = "raw")]

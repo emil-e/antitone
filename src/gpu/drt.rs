@@ -9,10 +9,10 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-pub(crate) struct Targets([Target; 2]);
+pub struct Targets([Target; 2]);
 
 impl Targets {
-    pub(crate) async fn new(
+    pub async fn new(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
     ) -> Result<Self, Error> {
@@ -29,7 +29,7 @@ impl Targets {
         targets
     }
 
-    pub(crate) fn get(&self, target: OutputTarget) -> &Target {
+    pub fn get(&self, target: OutputTarget) -> &Target {
         &self.0[target as usize]
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     geometry::Composition,
     gpu_export::authored::{self as gpu_export, Format},
     processing::{Calibration, RollSettings},
-    renderer::GpuRenderer,
+    render_fixture::RenderFixture,
     rendering::OutputTarget,
     scan::Scan,
 };
@@ -28,7 +28,7 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         )
         .await
         .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
     let scan = Scan::open(

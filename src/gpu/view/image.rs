@@ -9,7 +9,7 @@ pub struct ViewImage {
     pub spec: SourceRequest,
     pub(crate) context: e::Context,
     #[cfg(test)]
-    pub(crate) fixture_renderer: Option<Arc<crate::renderer::GpuRenderer>>,
+    pub(crate) fixture_display: Option<super::fixtures::FixtureDisplay>,
     pub(super) kernels: Arc<ViewKernels>,
     pub definition: Value,
     pub region: e::CellRegion,
@@ -128,7 +128,7 @@ impl ViewImage {
         let image = Arc::new(Self {
             context,
             #[cfg(test)]
-            fixture_renderer: None,
+            fixture_display: None,
             kernels,
             spec,
             definition,

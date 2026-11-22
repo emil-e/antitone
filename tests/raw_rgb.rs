@@ -8,6 +8,9 @@ mod fixture_path;
 #[cfg(all(feature = "gpu", feature = "export", feature = "project"))]
 #[path = "support/output.rs"]
 mod output;
+#[cfg(all(feature = "gpu", feature = "export", feature = "project"))]
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 #[path = "support/sony_ycc_fixture.rs"]
 mod sony_ycc;
 
@@ -151,7 +154,6 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
         export::{ExrPrecision, Overwrite},
         geometry::Composition,
         processing::InputSettings,
-        renderer::GpuRenderer,
     };
     use output::{self as gpu_export, Format, Request};
     let (device, queue, renderer) = pollster::block_on(async {
@@ -161,7 +163,9 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     });
     let fixture = sony_ycc::source();

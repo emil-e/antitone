@@ -202,7 +202,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             .await
             .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let renderer = api::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let mut rasters = Vec::new();

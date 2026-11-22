@@ -15,7 +15,7 @@ struct Resources {
     initialization: Arc<crate::source::Initialization>,
     device: wgpu::Device,
     queue: crate::gpu::submission::Queue,
-    renderers: Arc<crate::renderer::RendererCache>,
+    renderers: Arc<crate::editor::display::DisplayFixture>,
 }
 
 impl Resources {
@@ -159,7 +159,7 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         sources: scheduler.provider(None),
         device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured.clone()).unwrap();
@@ -288,7 +288,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
         sources: scheduler.provider(None),
         device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let cancelled = Cancellation::default();

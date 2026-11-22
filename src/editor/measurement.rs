@@ -39,10 +39,20 @@ pub(super) fn capture_input(
     })
 }
 
-pub(super) fn query_services(
-    services: Option<&crate::editor::source::Services>,
-) -> Result<&crate::editor::source::Services, Error> {
-    services.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))
+use crate::gpu::{evaluation::Context, submission::Queue};
+
+pub(super) type Gpu<'a> = (&'a Context, &'a Queue);
+pub(super) type GpuCapture = (Context, Queue);
+
+pub(super) fn capture_gpu(editor: &Editor) -> Option<GpuCapture> {
+    let services = editor.source_services.as_ref()?;
+    Some((services.evaluation.clone(), services.queue.clone()))
+}
+
+pub(super) fn query_gpu(capture: Option<&GpuCapture>) -> Result<Gpu<'_>, Error> {
+    let (context, queue) =
+        capture.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))?;
+    Ok((context, queue))
 }
 
 /// Await photographic work with cancellable measurement feedback, independently of selection.

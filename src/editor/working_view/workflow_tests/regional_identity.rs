@@ -60,8 +60,8 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
         let services = editor.source_services.as_ref().unwrap();
         let device = services.device.clone();
         let queue = services.queue.clone();
-        services.evaluation().set_retention_limit(capacity);
-        let renderer = services.renderers.get(&device, &queue).unwrap();
+        services.evaluation.set_retention_limit(capacity);
+        let renderer = services.render_fixture().unwrap();
         renderer
             .evaluation()
             .materializations()

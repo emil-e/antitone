@@ -10,6 +10,9 @@ mod fixture_path;
 #[cfg(all(feature = "gpu", feature = "export", feature = "project"))]
 #[path = "support/output.rs"]
 mod output;
+#[cfg(all(feature = "gpu", feature = "export", feature = "project"))]
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 
 const BASE: [f64; 3] = [837., 537., 133.];
 const BLACK: f64 = 512.;
@@ -237,7 +240,6 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
         export::{ExrPrecision, Overwrite},
         geometry::{Composition, SourceRegion},
         processing::{InputSettings, Response},
-        renderer::GpuRenderer,
     };
     use glam::DVec3;
     use output::{self as gpu_export, Format, Request};
@@ -250,7 +252,9 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
     let scan = open(&file);
     let (device, queue, renderer) = pollster::block_on(async {
         let (device, queue) = gpu_context();
-        let renderer = GpuRenderer::new(device, queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(device, queue)
+            .await
+            .unwrap();
         (device.clone(), queue.clone(), renderer)
     });
     let base = DVec3::from_array(BASE) / RANGE;

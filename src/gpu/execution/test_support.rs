@@ -51,7 +51,7 @@ impl OriginalControls<'_> {
     pub fn lower(
         self,
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        renderer: &crate::render_fixture::RenderFixture,
     ) -> Result<Request, Error> {
         if self.scan.area != self.composition.area()
             || self.scan.flat_field() != self.field.as_ref().map(|field| field.field())

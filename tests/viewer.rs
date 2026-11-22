@@ -1,4 +1,7 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
@@ -184,7 +187,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let area = SourceRegion {

@@ -43,7 +43,7 @@ pub(crate) use composition::RecipeGraph;
 #[cfg(feature = "render")]
 pub use composition::display_output;
 #[cfg(feature = "render")]
-pub(crate) use prewarm::prewarm_viewer;
+pub use prewarm::prewarm_viewer;
 #[cfg(all(test, feature = "editor"))]
 mod provenance_tests;
 #[cfg(feature = "editor")]
