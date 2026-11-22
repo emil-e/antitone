@@ -336,7 +336,12 @@ fn fitting_uses_each_acquired_camera_mapping_across_development_modes_and_correc
         }
         assert_eq!(
             outcome.document.project.analysis_regions,
-            request.areas.as_ref().unwrap().entries
+            request
+                .areas
+                .as_ref()
+                .unwrap()
+                .records()
+                .collect::<Vec<_>>()
         );
         scheduler.close_and_wait().unwrap();
         drop(directory);

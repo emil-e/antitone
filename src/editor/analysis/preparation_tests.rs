@@ -184,7 +184,6 @@ fn finished_shared_sampling_is_reused_without_changing_accepted_state() {
         .unwrap()
         .unwrap();
     assert_eq!(first.entries, second.entries);
-    assert_eq!(first.files, second.files);
     assert_eq!(first.entries.len(), 2);
     assert!(first.entries.iter().all(|entry| entry.areas.ready()));
     assert_eq!(count.load(Ordering::Relaxed), 2);

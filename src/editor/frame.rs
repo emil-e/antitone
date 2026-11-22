@@ -98,6 +98,14 @@ impl Editor {
         dialog_escape_available: bool,
     ) {
         self.sync_adjustment_layer_drag(ui.ctx());
+        if self.document.roll_order.drag.is_some() {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.document.roll_order.drag = None;
+                ui.ctx().stop_dragging();
+                ui.ctx().request_repaint();
+            }
+            return;
+        }
         // egui clears text focus at pass start on Escape, before tool shortcuts run.
         let text_was_focused = ui.ctx().data(|data| {
             data.get_temp::<bool>(ui.id().with("editor-text-focus"))
@@ -230,16 +238,20 @@ impl Editor {
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
             let next = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
-            let active = self.document.active_index().unwrap_or(0);
-            let index = if previous {
-                active.saturating_sub(1)
-            } else if next {
-                (active + 1).min(self.document.state.project.order.len() - 1)
-            } else {
-                active
-            };
-            if index != active {
-                self.select_roll_photo(index, egui::Modifiers::NONE, cx);
+            if previous || next {
+                let order = self.document.displayed_order();
+                let active = order
+                    .iter()
+                    .position(|id| Some(*id) == self.document.visit.current_source)
+                    .unwrap_or(0);
+                let index = if previous {
+                    active.saturating_sub(1)
+                } else {
+                    (active + 1).min(order.len() - 1)
+                };
+                if index != active {
+                    self.select_roll_photo(index, egui::Modifiers::NONE, cx);
+                }
             }
         }
     }
@@ -348,6 +360,7 @@ impl Editor {
                 .show(ui, |ui| self.controls(ui, cx))
                 .inner
         } else {
+            self.document.roll_order.drag = None;
             self.hidden_filmstrip(ui, cx);
             None
         }

@@ -89,6 +89,50 @@ fn review_uses_ordinary_selection_without_retargeting_its_roll_wide_drafts() {
 }
 
 #[test]
+fn reordering_during_review_preserves_sampling_areas_and_accepts_in_the_new_order() {
+    editor_harness(|mut h, _| {
+        let ids = calibrated_roll(&mut h);
+        show_confirmation(&mut h);
+        let reviewed: Vec<_> = h.read(|editor| {
+            editor
+                .document
+                .analysis_review()
+                .unwrap()
+                .approved
+                .records()
+                .collect()
+        });
+        let start = h.get_by_label("roll-0.dng").rect().center();
+        let end = h.get_by_label("roll-1.dng").rect().right_center() - egui::vec2(4., 0.);
+        drag(&mut h, start, end);
+        h.read(|editor| {
+            assert_eq!(editor.document.project.order, [ids[1], ids[0]]);
+            assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+            let review = editor.document.analysis_review().unwrap();
+            assert!(review.approved.records().eq(reviewed.iter().cloned()));
+        });
+        let apply = h
+            .get_all_by_role_and_label(egui::accesskit::Role::Button, "Analyze roll")
+            .find(|node| !node.accesskit_node().is_disabled())
+            .expect("enabled review confirmation");
+        apply.click();
+        h.step();
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
+        h.read(|editor| {
+            assert!(
+                editor.document.analysis_review().is_none(),
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.document.project.order, [ids[1], ids[0]]);
+            assert_eq!(editor.document.project.analysis_regions, reviewed);
+            assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+            assert_eq!(editor.history_label(Direction::Undo), Some("Analyze roll"));
+        });
+    });
+}
+
+#[test]
 fn fullscreen_keeps_source_review_editing_and_its_navigation() {
     editor_harness(|mut harness, _| {
         calibrated_roll(&mut harness);

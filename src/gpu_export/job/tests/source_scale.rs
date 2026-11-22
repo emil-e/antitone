@@ -31,6 +31,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         };
         let id = project
             .add_source(Source {
+                capture_time: None,
                 development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: file.path().into(),

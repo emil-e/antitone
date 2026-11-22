@@ -97,6 +97,7 @@ fn native_and_proxy_preparation_share_captured_reference_precedence_without_muta
     };
     let metadata = scan.source().metadata();
     let source = crate::project::Source {
+        capture_time: None,
         development_mode: crate::project::DevelopmentMode::AsShot,
         id: crate::project::SourceId(0),
         path: file.path().to_owned(),

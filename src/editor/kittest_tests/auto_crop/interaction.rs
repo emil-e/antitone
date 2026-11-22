@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn reordering_during_review_preserves_batch_crop_proposals() {
+    setup(|mut h, _| {
+        stage(&mut h, "Roll");
+        click_action(&mut h, "Auto-crop roll");
+        overlay::wait_context(&mut h);
+        workflow::enter_numeric(&mut h, "Margin", "1.5");
+        let (order, proposals) = h.read(|e| {
+            let order = e.document.project.order.clone();
+            let proposals: Vec<_> = order
+                .iter()
+                .map(|id| e.auto_crop_preview(*id).unwrap().unwrap())
+                .collect();
+            (order, proposals)
+        });
+        let start = h.get_by_label("crop-0.dng").rect().center();
+        let end = h.get_by_label("crop-2.dng").rect().right_center() - egui::vec2(4., 0.);
+        drag(&mut h, start, end);
+        h.read(|e| {
+            assert_eq!(e.document.project.order, [order[1], order[2], order[0]]);
+            assert_eq!(e.document.visit.current_source, Some(order[0]));
+            assert_eq!(e.auto_crop_margin, 1.5);
+            for (&id, &expected) in order.iter().zip(&proposals) {
+                assert_eq!(e.auto_crop_preview(id), Some(Some(expected)));
+                assert_eq!(e.document.project.source(id).unwrap().crop, None);
+            }
+        });
+        click_action(&mut h, "Apply");
+        h.read(|e| {
+            for (&id, expected) in order.iter().zip(proposals) {
+                assert_eq!(e.document.project.source(id).unwrap().crop, Some(expected));
+            }
+        });
+    });
+}
+
+#[test]
 fn batch_owns_its_global_drawer_allows_grading_and_is_replaced_by_crop_at_both_layouts() {
     for (size, width) in [
         (egui::vec2(1100., 800.), 315.),

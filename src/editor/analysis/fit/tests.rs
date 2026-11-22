@@ -124,17 +124,16 @@ fn approved(request: &mut Request) {
             let mut areas = Areas::default();
             areas.edit_opening(Coverage::rectangle(active));
             areas.edit_picture(Coverage::rectangle(rect([96, 96, 320, 320])));
-            crate::project::SourceAnalysis { source: id, areas }
+            analysis::ReviewedPhoto {
+                source: id,
+                areas,
+                file: request
+                    .document
+                    .file_key(&request.document.source_path(id).unwrap()),
+            }
         })
         .collect();
-    let files = request
-        .document
-        .project
-        .order
-        .iter()
-        .map(|&id| thumbnails::FileKey::new(&request.document.source_path(id).unwrap()))
-        .collect();
-    request.areas = Some(analysis::Approved { entries, files });
+    request.areas = Some(analysis::Approved { entries });
 }
 
 fn input(services: &Resources, request: &Request) -> Option<Arc<Correction>> {
@@ -150,6 +149,10 @@ fn input(services: &Resources, request: &Request) -> Option<Arc<Correction>> {
 fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
     let (mut request, _directory, device, queue) = request();
     approved(&mut request);
+    request.areas.as_mut().unwrap().entries[0]
+        .areas
+        .edit_picture(Coverage::rectangle(rect([360, 96, 320, 320])));
+    request.document.project.order.reverse();
     request.document.project.set_gamma(0.7);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
@@ -225,6 +228,15 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         let reused = &retained_state.owned[index];
         assert_eq!(reused.film.pixels, frame.film.pixels);
         assert_eq!(reused.picture.pixels, frame.picture.pixels);
+        let reviewed_x = if index == 0 { 96..416 } else { 360..680 };
+        assert!(!frame.picture.positions.is_empty());
+        assert!(
+            frame
+                .picture
+                .positions
+                .iter()
+                .all(|[x, _]| reviewed_x.contains(x))
+        );
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
             (MIN_PICTURE_SAMPLES..=MAX_SAMPLES_PER_FRAME).contains(&frame.picture.pixels.len())
@@ -255,7 +267,12 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
     assert_eq!(after.input.gamma(), 0.7);
     assert_eq!(
         after.analysis_regions,
-        request.areas.as_ref().unwrap().entries
+        request
+            .areas
+            .as_ref()
+            .unwrap()
+            .records()
+            .collect::<Vec<_>>()
     );
     for &id in &before.order {
         assert_eq!(

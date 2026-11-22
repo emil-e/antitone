@@ -31,6 +31,7 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
         let path = directory.join(name);
         std::fs::write(&path, b"test source bytes").unwrap();
         Source {
+            capture_time: None,
             development_mode: antitone::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: name.into(),
@@ -688,7 +689,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     value["output"]["tiff"] = "pro_photo".into();
     assert!(serde_json::from_value::<Project>(value).is_err());
     let path = dir.path().join("legacy.antitone.json");
-    for schema in 1..antitone::project::SCHEMA_VERSION {
+    for schema in 1..22 {
         let mut legacy = serde_json::to_value(&project).unwrap();
         legacy["schema"] = schema.into();
         assert!(serde_json::from_value::<Project>(legacy.clone()).is_err());
@@ -700,6 +701,35 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     assert!(serde_json::from_value::<Project>(legacy.clone()).is_err());
     std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
     assert!(Project::load(&path).is_err());
+}
+
+#[test]
+fn project_round_trips_custom_order_and_capture_time_and_opens_schema_22() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, _, _) = fixture(dir.path());
+    let id = project.order[0];
+    project.order.reverse();
+    project.source_mut(id).unwrap().capture_time = Some(20250228144433u64.try_into().unwrap());
+    let mut stored = serde_json::to_value(&project).unwrap();
+    let reopened: Project = serde_json::from_value(stored.clone()).unwrap();
+    assert_eq!(reopened, project);
+
+    stored["sources"][0]["capture_time"] = 20250230144433u64.into();
+    assert!(serde_json::from_value::<Project>(stored.clone()).is_err());
+
+    stored["sources"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("capture_time");
+    stored["schema"] = 22.into();
+    let legacy: Project = serde_json::from_value(stored).unwrap();
+    assert_eq!(legacy.order, project.order);
+    assert!(
+        legacy
+            .sources
+            .iter()
+            .all(|source| source.capture_time.is_none())
+    );
 }
 
 #[test]
@@ -897,6 +927,7 @@ fn mixed_source(path: &str, camera: &str, red_gain: f64, matrix: [[f64; 3]; 3]) 
     let path = std::path::PathBuf::from(path);
     std::fs::write(&path, b"mixed source bytes").unwrap();
     Source {
+        capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path,

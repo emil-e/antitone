@@ -21,7 +21,10 @@ use std::{
 mod json;
 mod stored;
 
-pub const SCHEMA_VERSION: u32 = 22;
+mod capture_time;
+pub use capture_time::CaptureTime;
+
+pub const SCHEMA_VERSION: u32 = 23;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
@@ -237,6 +240,7 @@ fn contains(area: [u32; 4], region: [u32; 4]) -> bool {
 pub struct Source {
     pub id: SourceId,
     pub path: PathBuf,
+    pub capture_time: Option<CaptureTime>,
     pub development: SourceDevelopment,
     /// Interpretation for which the registered development baseline was recorded.
     pub development_mode: DevelopmentMode,
@@ -333,7 +337,7 @@ pub struct Project {
     pub processing_model: ProcessingModel,
     pub next_source_id: u64,
     pub sources: Vec<Source>,
-    // Filmstrip order, containing every registered photo exactly once.
+    // Custom filmstrip order, containing every registered photo exactly once.
     pub order: Vec<SourceId>,
     pub roll: RollSettings,
     /// How source samples become a positive (per stage; owns the negative calibration).
@@ -497,6 +501,19 @@ impl Project {
         self.order.push(id);
         self.next_source_id = next;
         Ok(id)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn reorder_photos(&mut self, order: Vec<SourceId>) -> Result<()> {
+        let ids: std::collections::HashSet<_> = order.iter().copied().collect();
+        require(
+            order.len() == self.order.len()
+                && ids.len() == order.len()
+                && self.order.iter().all(|id| ids.contains(id)),
+            "photo order must contain every photo exactly once",
+        )?;
+        self.order = order;
+        Ok(())
     }
 
     /// Delete the photo and its analysis support; correction provenance is independent.

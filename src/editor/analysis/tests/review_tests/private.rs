@@ -64,8 +64,8 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             .analysis_review()
             .unwrap()
             .approved
-            .entries
-            .clone();
+            .records()
+            .collect::<Vec<_>>();
         assert_eq!(approved.len(), count);
         assert!(
             approved.iter().all(|e| e.areas.ready()),
@@ -129,7 +129,13 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             |editor, cx| editor.request_analysis(cx),
         );
         assert_eq!(
-            editor.document.analysis_review().unwrap().approved.entries,
+            editor
+                .document
+                .analysis_review()
+                .unwrap()
+                .approved
+                .records()
+                .collect::<Vec<_>>(),
             approved
         );
         editor.finish_pick(&crate::application::UiContext::render_only());

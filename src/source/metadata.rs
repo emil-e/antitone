@@ -43,6 +43,7 @@ pub(crate) fn source_metadata(
     Ok(Source {
         id: SourceId(0),
         path: absolute(path)?,
+        capture_time: metadata.capture_time(),
         development: metadata_development(metadata, white_balance)?,
         development_mode: if white_balance == crate::project::UNITY_WB {
             crate::project::DevelopmentMode::Unity

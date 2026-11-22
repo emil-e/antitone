@@ -20,6 +20,7 @@ fn fixture() -> Project {
         ..Project::default()
     };
     let source = Source {
+        capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: "photo.ARW".into(),

@@ -16,6 +16,7 @@ fn held_correction(
                 input.source.white_balance(),
             )
             .unwrap(),
+            capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             repairs: Default::default(),
             adjustment_layers: None,

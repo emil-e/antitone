@@ -6,7 +6,7 @@ New projects and Save As use the `.antitone` extension; the document contents ar
 
 ## Separate sources from the filmstrip
 
-Each registered source has a stable ID and owns its adjustment layers, composition and committed Dust repairs. Filmstrip order is a separate list of those IDs. Removing a photo deletes its source record and analysis support; adding the RAW again registers a new source. Every source is an ordinary filmstrip photo; flat-field provenance is independent of this collection. The project's optional `flat_field` owns accepted illumination correction. [Selection/removal](editor.md#select-and-remove-roll-photos) is controlled by the editor.
+Each registered source has a stable ID and owns its adjustment layers, composition and committed Dust repairs. Custom filmstrip order is a separate list of those IDs; the active sort choice belongs to the editor session. Removing a photo deletes its source record and analysis support; adding the RAW again registers a new source. Every source is an ordinary filmstrip photo; flat-field provenance is independent of this collection. The project's optional `flat_field` owns accepted illumination correction. [Selection/removal](editor.md#select-and-remove-roll-photos) is controlled by the editor.
 
 Estimating a flat field stores its numeric map and reference filename, without importing the reference as a photo. Dmin/Dmax themselves are RGB values: their continued use does not depend on reopening the photo from which they were picked. Paths locate external files — a path or stable ID is not proof of photographic capture identity.
 
@@ -46,7 +46,7 @@ New projects start in Negative, and Import preserves the selected stage and auth
 
 Switching stages accepts intent without reading RAWs or waiting for GPU resources. It discards stage-specific settings and correction; discarding authored Negative settings or an accepted correction requires confirmation. Shared grades, crops and repairs remain accepted. Each consumer acquires its captured photograph and interpretation; missing, corrupt or changed sources fail individually without rolling back the stage. Undo/Redo restores accepted settings and correction independently of source acquisition.
 
-The current format is **schema 22 with processing model 8**. This unreleased format has no migrations; unsupported schemas/models and unknown fields reject. Format identifiers are fixed tokens in the model. Parsing establishes record integrity and cross-record identity; serialization checks mutable records before publication. Builds with the former ±1 Roll WB limit reject projects saved with Roll WB outside that range. Operations check their captured inputs rather than revalidating the document.
+The current format is **schema 23 with processing model 8**. It also reads schema 22, treating absent capture timestamps as unknown. Other schemas, unsupported processing models and unknown fields reject. Parsing establishes record integrity and cross-record identity; serialization checks mutable records before publication. Operations check their captured inputs rather than revalidating the document.
 
 Reproducibility is best effort. Development stores recorded `white_balance`, an explicit LibRaw/DNG SDK backend and diagnostic pixel-producer provenance, including the decoder release and development revision. Source records also describe geometry and camera conversion. Open restores these records unchanged. Acquisition uses the current decoder and checks geometry, camera conversion and development against that photograph's recorded facts when needed; diagnostic release differences alone do not reject it. Decoder fixes and upgrades can change pixels, and runtime cache identity distinguishes current pixel producers.
 
@@ -56,7 +56,7 @@ RAWs are assumed immutable; Antitone does not hash them to establish photograph 
 
 ## Add photos
 
-[Import](../src/editor/files.rs) owns a scoped document edit while it inspects new RAW headers and validates the private batch. Acceptance adds one undo entry; failure leaves accepted state unchanged. Existing paths are ignored, including repeats within a batch. Adding photos leaves the active visit and its loading work in place. An empty document selects its first photo through ordinary nonblocking loading; subsequent pixel or GPU failures stay local to that photo.
+[Import](../src/editor/files.rs) owns a scoped document edit while it inspects new RAW headers and validates the private batch. Acceptance adds one undo entry; failure leaves accepted state unchanged. Existing paths are ignored, including repeats within a batch. The source record keeps a valid Exif `DateTimeOriginal` when available, as camera-local time at second precision. Capture Time sorting then works even if the RAW goes missing. Adding photos leaves the active visit and its loading work in place. An empty document selects its first photo through ordinary nonblocking loading; subsequent pixel or GPU failures stay local to that photo.
 
 ## Prepare before replacing
 

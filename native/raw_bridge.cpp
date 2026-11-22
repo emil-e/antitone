@@ -21,7 +21,7 @@
 #include <windows.h>
 #endif
 
-static_assert(sizeof(AntitoneRawMetadata) == 664);
+static_assert(sizeof(AntitoneRawMetadata) == 680);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
 static_assert(sizeof(AntitoneRawView) == 72);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
@@ -406,6 +406,8 @@ void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned
 struct HeaderCapture {
     PreviewRaw &raw;
     SonyLensCapture lens;
+    std::array<char, 20> capture_time{};
+    bool conflicting_time = false;
 };
 
 void header_tag(void *context, int tag, int type, int count, unsigned order, void *input,
@@ -413,6 +415,17 @@ void header_tag(void *context, int tag, int type, int count, unsigned order, voi
     auto &capture = *static_cast<HeaderCapture *>(context);
     capture.raw.capture_orientation(tag);
     sony_lens_tag(&capture.lens, tag, type, count, order, input, base);
+
+    // DateTimeOriginal in the Exif IFD, not DateTime or DateTimeDigitized.
+    if (tag == 0x9003 && type == 2 && count == 20 && !capture.conflicting_time) {
+        auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
+        std::array<char, 20> value{};
+        if (stream.read(value.data(), 1, value.size()) == value.size() && value.back() == 0) {
+            capture.conflicting_time =
+                capture.capture_time.front() != 0 && capture.capture_time != value;
+            capture.capture_time = value;
+        }
+    }
 }
 
 AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &capture) {
@@ -577,6 +590,9 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     }
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, capture.lens);
+    if (capture.conflicting_time)
+        capture.capture_time.fill(0);
+    std::memcpy(out->capture_time, capture.capture_time.data(), capture.capture_time.size());
     diagnostic.complete();
     return static_cast<LibRaw *>(raw.release());
 } catch (const std::bad_alloc &) {

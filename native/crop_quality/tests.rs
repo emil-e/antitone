@@ -11,6 +11,7 @@ fn fixture(directory: &Path) -> PathBuf {
     };
     let id = project
         .add_source(Source {
+            capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             id: SourceId(0),
             path: "unavailable.ARW".into(),

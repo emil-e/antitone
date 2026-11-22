@@ -52,6 +52,7 @@ impl SourceKey {
     #[cfg(test)]
     fn metadata_record(&self, path: &std::path::Path) -> Source {
         Source {
+            capture_time: None,
             development_mode: self.development.mode(),
             id: self.id,
             path: path.to_path_buf(),
@@ -1133,6 +1134,7 @@ impl Editor {
         let mut visible = Vec::new();
         let mut select = None;
         let mut remove = false;
+        let mut drop_slot = None;
         let height = self
             .preferences
             .filmstrip_height
@@ -1158,315 +1160,425 @@ impl Editor {
         let strip = panel.show(ui, |ui| {
             ui.take_available_height();
             let layout = ContactSheetLayout::new(ui.available_height(), height < 90.);
-            let pitch = layout.pitch();
-            let count = self.document.state.project.order.len();
-            egui::ScrollArea::horizontal().show_viewport(ui, |ui, viewport| {
-                let width = (count as f32 * pitch).max(ui.available_width());
-                let (content, _) = ui
-                    .allocate_exact_size(egui::vec2(width, layout.size().y), egui::Sense::hover());
-                let first = (viewport.min.x / pitch).floor().max(0.) as usize;
-                let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
-                let last = last.min(count);
-                for index in first.min(count)..last {
-                    visible.push(index);
-                    let id = self.document.state.project.order[index];
-                    let source = self
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                let has_capture_time = self
+                    .document
+                    .project
+                    .sources
+                    .iter()
+                    .any(|source| source.capture_time.is_some());
+                self.document.roll_order.control(ui, has_capture_time);
+                ui.add(egui::Separator::default().spacing(1.));
+                let project = self.document.state.project.clone();
+                let order = self.document.roll_order.sort.ids(&project);
+                let can_drag = ui.is_enabled() && order.len() > 1 && self.reorder_available();
+                if !can_drag
+                    || self
                         .document
-                        .state
-                        .project
-                        .source(id)
-                        .expect("filmstrip source");
-                    let path = self.document.source_path(id).expect("filmstrip locator");
-                    let active = self.document.visit.current_source == Some(id);
-                    let selected = active || self.document.roll_selection.contains(id);
-                    let response_id = ui.id().with(id.0);
-                    let card = layout.begin(
-                        ui,
-                        content.min + egui::vec2(index as f32 * pitch, 0.),
-                        response_id,
-                        selected,
-                        active,
-                        ui.is_enabled(),
-                    );
-                    let image_rect = card.image_rect;
-                    let key = self.thumbnail_key(source, &path);
-                    if let Some(key) = &key {
-                        protected.push(key.clone());
-                    }
-                    let current = key
+                        .roll_order
+                        .drag
                         .as_ref()
-                        .and_then(|key| self.document.thumbnails.cache.get(key))
-                        .cloned();
-                    let mut pending = current.is_none() && key.is_some();
-                    // Keep the previous accepted grade visible until its replacement is ready.
-                    // Exact-key failures still take precedence over navigation feedback.
-                    let entry = current.or_else(|| {
-                        key.as_ref().and_then(|key| {
-                            self.document
-                                .thumbnails
-                                .previous_product(key)
-                                .map(|(_, product)| Ok(product.clone()))
-                                .or_else(|| {
+                        .is_some_and(|drag| !drag.current(&order))
+                {
+                    self.document.roll_order.drag = None;
+                }
+                let pitch = layout.pitch();
+                let count = order.len();
+                egui::ScrollArea::horizontal()
+                    .animated(false)
+                    .show_viewport(ui, |ui, viewport| {
+                        let width = (count as f32 * pitch).max(ui.available_width());
+                        let (content, _) = ui.allocate_exact_size(
+                            egui::vec2(width, layout.size().y),
+                            egui::Sense::hover(),
+                        );
+                        let first = (viewport.min.x / pitch).floor().max(0.) as usize;
+                        let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
+                        let last = last.min(count);
+                        for (index, &id) in order.iter().enumerate().take(last).skip(first) {
+                            visible.push(id);
+                            let source = self
+                                .document
+                                .state
+                                .project
+                                .source(id)
+                                .expect("filmstrip source");
+                            let path = self.document.source_path(id).expect("filmstrip locator");
+                            let active = self.document.visit.current_source == Some(id);
+                            let selected = active || self.document.roll_selection.contains(id);
+                            let response_id = ui.id().with(id.0);
+                            let card = layout.begin(
+                                ui,
+                                content.min + egui::vec2(index as f32 * pitch, 0.),
+                                response_id,
+                                selected,
+                                active,
+                                ui.is_enabled().then(|| {
+                                    if can_drag {
+                                        egui::Sense::click_and_drag()
+                                    } else {
+                                        egui::Sense::click()
+                                    }
+                                }),
+                            );
+                            let image_rect = card.image_rect;
+                            let key = self.thumbnail_key(source, &path);
+                            if let Some(key) = &key {
+                                protected.push(key.clone());
+                            }
+                            let current = key
+                                .as_ref()
+                                .and_then(|key| self.document.thumbnails.cache.get(key))
+                                .cloned();
+                            let mut pending = current.is_none() && key.is_some();
+                            // Keep the previous accepted grade visible until its replacement is ready.
+                            // Exact-key failures still take precedence over navigation feedback.
+                            let entry = current.or_else(|| {
+                                key.as_ref().and_then(|key| {
                                     self.document
                                         .thumbnails
-                                        .cache
-                                        .entries
-                                        .iter()
-                                        .rev()
-                                        .find_map(|(old, value)| {
-                                            (key.same_presentation(old) && value.is_err())
-                                                .then(|| value.clone())
+                                        .previous_product(key)
+                                        .map(|(_, product)| Ok(product.clone()))
+                                        .or_else(|| {
+                                            self.document
+                                                .thumbnails
+                                                .cache
+                                                .entries
+                                                .iter()
+                                                .rev()
+                                                .find_map(|(old, value)| {
+                                                    (key.same_presentation(old) && value.is_err())
+                                                        .then(|| value.clone())
+                                                })
                                         })
                                 })
-                        })
-                    });
-                    let previous = pending && entry.as_ref().is_some_and(Result::is_ok);
-                    let mut available = false;
-                    let camera_preview = key.as_ref().is_some_and(|key| {
-                        self.document.thumbnails.embedded.get(&key.source).is_some()
-                    });
-                    let parameters = if entry
-                        .as_ref()
-                        .and_then(|entry| entry.as_ref().ok())
-                        .is_some_and(|product| product.positive.is_none())
-                    {
-                        self.thumbnail_request(source).map(Some)
-                    } else {
-                        Ok(None)
-                    };
-                    let correction = self.correction();
-                    let awaiting_correction =
-                        parameters.as_ref().is_ok_and(Option::is_some) && correction.pending();
-                    if awaiting_correction {
-                        self.document.correction.observe(cx);
-                        pending = true;
-                    }
-                    let mut error = None;
-                    match (entry, parameters) {
-                        (Some(Ok(image)), Ok(parameters)) => {
-                            available = true;
-                            let composition = self.thumbnail_composition(source);
-                            let dimensions = composition.size();
-                            let aspect = dimensions[0] as f32 / dimensions[1] as f32;
-                            let size = egui::vec2(
-                                (image_rect.height() * aspect).min(image_rect.width()),
-                                (image_rect.width() / aspect).min(image_rect.height()),
-                            );
-                            let full = egui::Rect::from_center_size(image_rect.center(), size);
-                            let draw = full.intersect(ui.clip_rect());
-                            // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds instead of squeezing the whole image.
-                            let scale = ui.ctx().pixels_per_point();
-                            let min = (full.min.to_vec2() * scale).round();
-                            let extent = (full.max.to_vec2() * scale).round() - min;
-                            let draw_min = (draw.min.to_vec2() * scale).round();
-                            let draw_max = (draw.max.to_vec2() * scale).round();
-                            if draw_max.x > draw_min.x && draw_max.y > draw_min.y {
-                                let frame_point = |point: egui::Vec2| {
-                                    let fraction = (point - min) / extent;
-                                    crate::geometry::FramePoint([
-                                        f64::from(fraction.x) * f64::from(dimensions[0]),
-                                        f64::from(fraction.y) * f64::from(dimensions[1]),
-                                    ])
-                                };
-                                let mapping = composition.texture_mapping(
-                                    frame_point(draw_min),
-                                    frame_point(draw_max),
-                                    composition.area(),
-                                );
-                                if !awaiting_correction {
-                                    let field = match parameters.as_ref() {
-                                        Some(request)
-                                            if request.is_inspection()
-                                                && correction.error().is_some() =>
+                            });
+                            let previous = pending && entry.as_ref().is_some_and(Result::is_ok);
+                            let mut available = false;
+                            let camera_preview = key.as_ref().is_some_and(|key| {
+                                self.document.thumbnails.embedded.get(&key.source).is_some()
+                            });
+                            let parameters = if entry
+                                .as_ref()
+                                .and_then(|entry| entry.as_ref().ok())
+                                .is_some_and(|product| product.positive.is_none())
+                            {
+                                self.thumbnail_request(source).map(Some)
+                            } else {
+                                Ok(None)
+                            };
+                            let correction = self.correction();
+                            let awaiting_correction =
+                                parameters.as_ref().is_ok_and(Option::is_some)
+                                    && correction.pending();
+                            if awaiting_correction {
+                                self.document.correction.observe(cx);
+                                pending = true;
+                            }
+                            let mut error = None;
+                            match (entry, parameters) {
+                                (Some(Ok(image)), Ok(parameters)) => {
+                                    available = true;
+                                    let composition = self.thumbnail_composition(source);
+                                    let dimensions = composition.size();
+                                    let aspect = dimensions[0] as f32 / dimensions[1] as f32;
+                                    let size = egui::vec2(
+                                        (image_rect.height() * aspect).min(image_rect.width()),
+                                        (image_rect.width() / aspect).min(image_rect.height()),
+                                    );
+                                    let full =
+                                        egui::Rect::from_center_size(image_rect.center(), size);
+                                    let draw = full.intersect(ui.clip_rect());
+                                    // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds instead of squeezing the whole image.
+                                    let scale = ui.ctx().pixels_per_point();
+                                    let min = (full.min.to_vec2() * scale).round();
+                                    let extent = (full.max.to_vec2() * scale).round() - min;
+                                    let draw_min = (draw.min.to_vec2() * scale).round();
+                                    let draw_max = (draw.max.to_vec2() * scale).round();
+                                    if draw_max.x > draw_min.x && draw_max.y > draw_min.y {
+                                        let frame_point = |point: egui::Vec2| {
+                                            let fraction = (point - min) / extent;
+                                            crate::geometry::FramePoint([
+                                                f64::from(fraction.x) * f64::from(dimensions[0]),
+                                                f64::from(fraction.y) * f64::from(dimensions[1]),
+                                            ])
+                                        };
+                                        let mapping = composition.texture_mapping(
+                                            frame_point(draw_min),
+                                            frame_point(draw_max),
+                                            composition.area(),
+                                        );
+                                        if !awaiting_correction {
+                                            let field = match parameters.as_ref() {
+                                                Some(request)
+                                                    if request.is_inspection()
+                                                        && correction.error().is_some() =>
+                                                {
+                                                    Ok(None)
+                                                }
+                                                Some(_) => correction.gpu(),
+                                                None => Ok(None),
+                                            };
+                                            match field.and_then(|field| {
+                                                processing::image_paint(
+                                                    self.presentation
+                                                        .as_ref()
+                                                        .map_err(Clone::clone)?,
+                                                    image.image.clone(),
+                                                    parameters,
+                                                    field,
+                                                    mapping,
+                                                )
+                                            }) {
+                                                Ok(paint) => {
+                                                    ui.painter().with_clip_rect(draw).add(
+                                                        egui_wgpu::Callback::new_paint_callback(
+                                                            draw, paint,
+                                                        ),
+                                                    );
+                                                }
+                                                Err(message) => {
+                                                    error = Some(message.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Some((_, q)) = self
+                                        .document
+                                        .thumbnails
+                                        .preview
+                                        .outlines
+                                        .iter()
+                                        .find(|(source, _)| *source == id)
+                                    {
+                                        let a = source.development.active_area;
+                                        let points = q.map(|p| {
+                                            full.min
+                                                + egui::vec2(
+                                                    ((p[0] - f64::from(a[0])) / f64::from(a[2]))
+                                                        as f32
+                                                        * full.width(),
+                                                    ((p[1] - f64::from(a[1])) / f64::from(a[3]))
+                                                        as f32
+                                                        * full.height(),
+                                                )
+                                        });
+                                        ui.painter().with_clip_rect(draw).add(
+                                            egui::Shape::closed_line(
+                                                points.to_vec(),
+                                                ui.visuals().selection.stroke,
+                                            ),
+                                        );
+                                    }
+                                }
+                                (Some(Err(message)), _) => {
+                                    error = Some(message);
+                                }
+                                (_, Err(message)) => {
+                                    error = Some(message.to_string());
+                                }
+                                (None, Ok(_)) => {
+                                    if let Some(key) = &key {
+                                        if let Some(texture) =
+                                            self.document.thumbnails.embedded.get(&key.source)
                                         {
-                                            Ok(None)
-                                        }
-                                        Some(_) => correction.gpu(),
-                                        None => Ok(None),
-                                    };
-                                    match field.and_then(|field| {
-                                        processing::image_paint(
-                                            self.presentation.as_ref().map_err(Clone::clone)?,
-                                            image.image.clone(),
-                                            parameters,
-                                            field,
-                                            mapping,
-                                        )
-                                    }) {
-                                        Ok(paint) => {
-                                            ui.painter().with_clip_rect(draw).add(
-                                                egui_wgpu::Callback::new_paint_callback(
-                                                    draw, paint,
-                                                ),
+                                            available = true;
+                                            let dimensions = texture.size_vec2();
+                                            let scale = (image_rect.width() / dimensions.x)
+                                                .min(image_rect.height() / dimensions.y);
+                                            let rect = egui::Rect::from_center_size(
+                                                image_rect.center(),
+                                                dimensions * scale,
                                             );
+                                            let painter = ui.painter().with_clip_rect(
+                                                image_rect.intersect(ui.clip_rect()),
+                                            );
+                                            painter.image(
+                                                texture.id(),
+                                                rect,
+                                                egui::Rect::from_min_max(
+                                                    egui::Pos2::ZERO,
+                                                    egui::pos2(1., 1.),
+                                                ),
+                                                egui::Color32::WHITE,
+                                            );
+                                            card.camera_badge(ui);
+                                        } else {
+                                            card.loading(ui);
                                         }
-                                        Err(message) => {
-                                            error = Some(message.to_string());
-                                        }
+                                        camera_wanted.push((index, key.clone(), path.clone()));
                                     }
                                 }
                             }
-                            if let Some((_, q)) = self
+                            if error.is_some() {
+                                card.error(ui);
+                            }
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            card.caption(ui, &name);
+                            use ui::{ContextualStatus, StatusLevel};
+                            let mut status = if let Some(error) = &error {
+                                Some(ContextualStatus::new(
+                                    StatusLevel::Error,
+                                    format!("Thumbnail unavailable: {error}"),
+                                ))
+                            } else if pending && !camera_preview && (!available || previous) {
+                                Some(ContextualStatus::new(
+                                    StatusLevel::Activity,
+                                    "Preparing thumbnail; navigation preview may differ.",
+                                ))
+                            } else {
+                                None
+                            };
+                            if let Some(reason) = self
                                 .document
                                 .thumbnails
                                 .preview
-                                .outlines
+                                .warnings
                                 .iter()
                                 .find(|(source, _)| *source == id)
+                                .map(|(_, reason)| reason.clone())
+                                .or_else(|| self.source_tool_warning(id))
                             {
-                                let a = source.development.active_area;
-                                let points = q.map(|p| {
-                                    full.min
-                                        + egui::vec2(
-                                            ((p[0] - f64::from(a[0])) / f64::from(a[2])) as f32
-                                                * full.width(),
-                                            ((p[1] - f64::from(a[1])) / f64::from(a[3])) as f32
-                                                * full.height(),
-                                        )
-                                });
-                                ui.painter()
-                                    .with_clip_rect(draw)
-                                    .add(egui::Shape::closed_line(
-                                        points.to_vec(),
-                                        ui.visuals().selection.stroke,
-                                    ));
+                                let warning = ContextualStatus::new(StatusLevel::Warning, reason);
+                                status = Some(
+                                    status
+                                        .map_or(warning.clone(), |status| status.combine(warning)),
+                                );
                             }
-                        }
-                        (Some(Err(message)), _) => {
-                            error = Some(message);
-                        }
-                        (_, Err(message)) => {
-                            error = Some(message.to_string());
-                        }
-                        (None, Ok(_)) => {
-                            if let Some(key) = key {
-                                if let Some(texture) =
-                                    self.document.thumbnails.embedded.get(&key.source)
-                                {
-                                    available = true;
-                                    let dimensions = texture.size_vec2();
-                                    let scale = (image_rect.width() / dimensions.x)
-                                        .min(image_rect.height() / dimensions.y);
-                                    let rect = egui::Rect::from_center_size(
-                                        image_rect.center(),
-                                        dimensions * scale,
-                                    );
-                                    let painter = ui
-                                        .painter()
-                                        .with_clip_rect(image_rect.intersect(ui.clip_rect()));
-                                    painter.image(
-                                        texture.id(),
-                                        rect,
-                                        egui::Rect::from_min_max(
-                                            egui::Pos2::ZERO,
-                                            egui::pos2(1., 1.),
-                                        ),
-                                        egui::Color32::WHITE,
-                                    );
-                                    card.camera_badge(ui);
-                                } else {
-                                    card.loading(ui);
-                                }
-                                camera_wanted.push((index, key.clone(), path.clone()));
+                            if let Some(status) = status {
+                                card.status(ui, &status);
                             }
-                        }
-                    }
-                    if error.is_some() {
-                        card.error(ui);
-                    }
-                    let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    card.caption(ui, &name);
-                    use ui::{ContextualStatus, StatusLevel};
-                    let mut status = if let Some(error) = &error {
-                        Some(ContextualStatus::new(
-                            StatusLevel::Error,
-                            format!("Thumbnail unavailable: {error}"),
-                        ))
-                    } else if pending && !camera_preview && (!available || previous) {
-                        Some(ContextualStatus::new(
-                            StatusLevel::Activity,
-                            "Preparing thumbnail; navigation preview may differ.",
-                        ))
-                    } else {
-                        None
-                    };
-                    if let Some(reason) = self
-                        .document
-                        .thumbnails
-                        .preview
-                        .warnings
-                        .iter()
-                        .find(|(source, _)| *source == id)
-                        .map(|(_, reason)| reason.clone())
-                        .or_else(|| self.source_tool_warning(id))
-                    {
-                        let warning = ContextualStatus::new(StatusLevel::Warning, reason);
-                        status =
-                            Some(status.map_or(warning.clone(), |status| status.combine(warning)));
-                    }
-                    if let Some(status) = status {
-                        card.status(ui, &status);
-                    }
-                    if card.response.clicked() {
-                        select = Some((index, ui.input(|input| input.modifiers)));
-                    }
-                    if card.response.secondary_clicked() && !selected {
-                        select = Some((index, egui::Modifiers::NONE));
-                    }
-                    if card.response.enabled()
-                        && card.response.has_focus()
-                        && !egui::Popup::is_any_open(ui.ctx())
-                    {
-                        self.select_active_shortcut(ui.ctx());
-                        if !self.editing()
-                            && ui.input_mut(|input| {
-                                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                                    || input
-                                        .consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-                            })
-                        {
-                            remove = true;
-                        }
-                    }
-                    card.response.context_menu(|ui| {
-                        // Popup UIs do not inherit the card's disabled parent.
-                        if !card.response.enabled() {
-                            ui.disable();
-                        }
-                        if ui
-                            .add_enabled(
-                                self.auto_crop_entry_available() && selected,
-                                egui::Button::new("Auto-crop selected photos"),
-                            )
-                            .clicked()
-                        {
-                            let photos = self
+                            if can_drag
+                                && card.response.drag_started_by(egui::PointerButton::Primary)
+                            {
+                                let preview = key
+                                    .as_ref()
+                                    .and_then(|key| {
+                                        self.document.thumbnails.embedded.get(&key.source)
+                                    })
+                                    .cloned();
+                                self.document.roll_order.drag = Some(super::roll_order::Drag::new(
+                                    order.to_vec(),
+                                    id,
+                                    &self.document.roll_selection,
+                                    name.into_owned(),
+                                    preview,
+                                ));
+                            } else if card.response.clicked()
+                                && self.document.roll_order.drag.is_none()
+                            {
+                                select = Some((index, ui.input(|input| input.modifiers)));
+                            }
+                            if self
                                 .document
-                                .project
-                                .order
-                                .iter()
-                                .copied()
-                                .filter(|id| self.document.roll_selection.contains(*id))
-                                .collect();
-                            self.review_crop_proposals(photos, "Entry selection", cx);
-                            ui.close();
+                                .roll_order
+                                .drag
+                                .as_ref()
+                                .is_some_and(|drag| drag.contains(id))
+                            {
+                                ui.painter().rect_filled(
+                                    card.response.rect,
+                                    4.,
+                                    egui::Color32::from_black_alpha(100),
+                                );
+                            }
+                            if self.document.roll_order.drag.is_none()
+                                && card.response.secondary_clicked()
+                                && !selected
+                            {
+                                select = Some((index, egui::Modifiers::NONE));
+                            }
+                            if self.document.roll_order.drag.is_none()
+                                && card.response.enabled()
+                                && card.response.has_focus()
+                                && !egui::Popup::is_any_open(ui.ctx())
+                            {
+                                self.select_active_shortcut(ui.ctx());
+                                if !self.editing()
+                                    && ui.input_mut(|input| {
+                                        input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                                            || input.consume_key(
+                                                egui::Modifiers::NONE,
+                                                egui::Key::Backspace,
+                                            )
+                                    })
+                                {
+                                    remove = true;
+                                }
+                            }
+                            card.response.context_menu(|ui| {
+                                // Popup UIs do not inherit the card's disabled parent.
+                                if !card.response.enabled()
+                                    || self.document.roll_order.drag.is_some()
+                                {
+                                    ui.disable();
+                                }
+                                if ui
+                                    .add_enabled(
+                                        self.auto_crop_entry_available() && selected,
+                                        egui::Button::new("Auto-crop selected photos"),
+                                    )
+                                    .clicked()
+                                {
+                                    let photos = self
+                                        .document
+                                        .project
+                                        .order
+                                        .iter()
+                                        .copied()
+                                        .filter(|id| self.document.roll_selection.contains(*id))
+                                        .collect();
+                                    self.review_crop_proposals(photos, "Entry selection", cx);
+                                    ui.close();
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !self.editing() && selected,
+                                        egui::Button::new("Remove selected photos…"),
+                                    )
+                                    .clicked()
+                                {
+                                    remove = true;
+                                    ui.close();
+                                }
+                            });
+                            if self.document.roll_order.drag.is_none() {
+                                let help = error.unwrap_or_else(|| path.display().to_string());
+                                card.response
+                                    .on_hover_text(&help)
+                                    .on_disabled_hover_text(help);
+                            }
                         }
-                        if ui
-                            .add_enabled(
-                                !self.editing() && selected,
-                                egui::Button::new("Remove selected photos…"),
-                            )
-                            .clicked()
-                        {
-                            remove = true;
-                            ui.close();
+                        if let Some(drag) = &self.document.roll_order.drag {
+                            let (focused, released, held) = ui.input(|input| {
+                                (
+                                    input.focused,
+                                    input.pointer.button_released(egui::PointerButton::Primary),
+                                    input.pointer.primary_down(),
+                                )
+                            });
+                            if focused
+                                && (released || held)
+                                && let Some(slot) = drag.position(ui, content, pitch)
+                            {
+                                if released {
+                                    drop_slot = Some(slot);
+                                } else {
+                                    drag.paint(
+                                        ui,
+                                        content,
+                                        pitch,
+                                        slot,
+                                        self.document.roll_order.sort,
+                                    );
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                }
+                            }
+                            if drop_slot.is_none() && (!held || !focused) {
+                                self.document.roll_order.drag = None;
+                            }
                         }
                     });
-                    let help = error.unwrap_or_else(|| path.display().to_string());
-                    card.response
-                        .on_hover_text(&help)
-                        .on_disabled_hover_text(help);
-                }
             });
         });
         if (strip.response.rect.height() - height).abs() > 0.5 {
@@ -1475,10 +1587,11 @@ impl Editor {
         if remove {
             self.request_removal(cx);
         }
-        self.document.thumbnails.visible = visible
-            .iter()
-            .map(|index| self.document.state.project.order[*index])
-            .collect();
+        if let Some(slot) = drop_slot {
+            self.drop_photo_order(slot);
+            ui.ctx().request_repaint();
+        }
+        self.document.thumbnails.visible = visible;
         self.document.thumbnails.visible_keys = protected
             .iter()
             .filter_map(|key| key.source.store_key())

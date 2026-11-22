@@ -64,6 +64,7 @@ pub struct NativeMetadata {
     pub vendor: VendorMetadata,
     lens_disabled: u32,
     as_shot_wb_applied: u32,
+    capture_time: [u8; 20],
 }
 
 /// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
@@ -127,6 +128,11 @@ impl Metadata {
             );
         }
         None
+    }
+
+    #[cfg(feature = "project")]
+    pub fn capture_time(&self) -> Option<crate::project::CaptureTime> {
+        crate::project::CaptureTime::from_exif(self.native.capture_time.first_chunk()?)
     }
 
     #[cfg(feature = "project")]
@@ -1334,6 +1340,24 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "project")]
+    #[test]
+    fn capture_time_comes_from_valid_exif_original_not_digitization() {
+        let original = fixture::bayer_dng_with_exif_date(0x9003, b"2024:02:29 15:07:18\0");
+        let digitized = fixture::bayer_dng_with_exif_date(0x9004, b"2024:02:29 15:07:18\0");
+        let invalid = fixture::bayer_dng_with_exif_date(0x9003, b"2023:02:29 15:07:18\0");
+        let time = |file: &fixture::FixturePath| {
+            RawFile::open(file.path())
+                .unwrap()
+                .metadata
+                .capture_time()
+                .map(u64::from)
+        };
+        assert_eq!(time(&original), Some(20240229150718));
+        assert_eq!(time(&digitized), None);
+        assert_eq!(time(&invalid), None);
+    }
+
     fn metadata_fixture() -> Metadata {
         // All fields are numeric or char arrays, so zero is a valid fixture representation.
         let mut m = Metadata::from_native(unsafe { std::mem::zeroed() });
@@ -1489,7 +1513,7 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<NativeMetadata>(), 664);
+        assert_eq!(size_of::<NativeMetadata>(), 680);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<NativeView>(), 72);
         #[cfg(feature = "editor")]

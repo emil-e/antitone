@@ -85,6 +85,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .add_source(Source {
             id: SourceId(0),
             path: file.path().into(),
+            capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             development: SourceDevelopment::from_metadata(
                 &scan.source().metadata(),
@@ -314,6 +315,7 @@ fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sa
         .add_source(Source {
             id: SourceId(0),
             path: file.path().into(),
+            capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             development: SourceDevelopment::from_metadata(
                 &scan.source().metadata(),

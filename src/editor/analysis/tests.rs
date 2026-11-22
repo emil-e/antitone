@@ -223,6 +223,7 @@ fn state() -> Editor {
         .document
         .register_with_development(
             Source {
+                capture_time: None,
                 development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: "scene.ARW".into(),

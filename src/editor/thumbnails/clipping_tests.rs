@@ -27,7 +27,7 @@ fn frame(editor: &mut Editor, context: &egui::Context, time: f64, scroll: f32) -
     output
 }
 
-fn cards(output: &egui::FullOutput) -> Vec<egui::Rect> {
+fn cards(output: &egui::FullOutput) -> Vec<(egui::Rect, egui::Rect)> {
     output
         .shapes
         .iter()
@@ -37,7 +37,7 @@ fn cards(output: &egui::FullOutput) -> Vec<egui::Rect> {
                 && rect.rect.width() >= 64.
                 && rect.stroke.width > 0.
             {
-                Some(rect.rect)
+                Some((rect.rect, shape.clip_rect))
             } else {
                 None
             }
@@ -236,7 +236,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     }
                     let output = frame(&mut editor, &context, 3. / 60., 0.);
                     let reference_rect = callbacks(&output)[0].0;
-                    let reference_card = cards(&output)[0];
+                    let (reference_card, _) = cards(&output)[0];
                     let reference_shape = output
                         .shapes
                         .iter()
@@ -266,15 +266,28 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     let width = (WIDTH * scale) as usize;
                     let y = (reference_rect.center().y * scale).floor() as usize;
                     let mut edges = [false; 2];
-                    assert_eq!(cells.len(), draws.len());
-                    for (card, (draw, clip)) in cells.iter().zip(draws.iter()) {
+                    let mut draws = draws.iter();
+                    for (card, strip_clip) in &cells {
                         let full = reference_rect
                             .translate(egui::vec2(card.left() - reference_card.left(), 0.));
-                        let visible = full.intersect(*clip);
+                        let visible = full.intersect(*strip_clip);
+                        let pixel_min = (visible.min.to_vec2() * scale).round();
+                        let pixel_max = (visible.max.to_vec2() * scale).round();
+                        // A scrolled card can expose only its border or padding.
+                        if pixel_min.x >= pixel_max.x || pixel_min.y >= pixel_max.y {
+                            continue;
+                        }
+                        let (draw, _) = draws.next().expect("visible image must get a GPU draw");
+                        assert_eq!((draw.min.to_vec2() * scale).round(), pixel_min);
+                        assert_eq!((draw.max.to_vec2() * scale).round(), pixel_max);
                         if visible.width() >= full.width() {
                             continue;
                         }
-                        let edge = if full.left() < clip.left() { 0 } else { 1 };
+                        let edge = if full.left() < strip_clip.left() {
+                            0
+                        } else {
+                            1
+                        };
                         edges[edge] = true;
                         let pixel_left = (full.left() * scale).round() as isize;
                         let pixel_width = (full.right() * scale).round() as isize - pixel_left;
@@ -320,6 +333,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                             );
                         }
                     }
+                    assert!(draws.next().is_none(), "draw outside a visible image");
                     assert_eq!(
                         edges,
                         [true, true],

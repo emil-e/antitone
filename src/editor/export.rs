@@ -204,9 +204,7 @@ impl Draft {
 impl Editor {
     pub(super) fn export_ids(&self, scope: Scope) -> Vec<SourceId> {
         self.document
-            .state
-            .project
-            .order
+            .displayed_order()
             .iter()
             .copied()
             .filter(|id| scope == Scope::All || self.document.roll_selection.contains(*id))

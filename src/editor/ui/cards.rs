@@ -47,11 +47,11 @@ impl ContactSheetLayout {
         id: Id,
         selected: bool,
         active: bool,
-        enabled: bool,
+        sense: Option<egui::Sense>,
     ) -> ContactSheetCard {
         let cell = Rect::from_min_size(origin, self.size);
-        let response = ui.add_enabled(enabled, |ui: &mut Ui| {
-            ui.interact(cell, id, egui::Sense::click())
+        let response = ui.add_enabled(sense.is_some(), |ui: &mut Ui| {
+            ui.interact(cell, id, sense.unwrap_or_else(egui::Sense::click))
         });
         let hovered = response.hovered();
         let fill = Color32::from_gray(if active {

@@ -34,11 +34,20 @@ a macOS fullscreen Space.
   settings; graded thumbnails stay positive. Inspection settings are not saved and do
   not affect calibration, grades or export.
 
-## Selecting photos (filmstrip)
+## Sorting and selecting photos (filmstrip)
 
 - **Cmd-click** toggles a photo in the selection; **Shift-click** selects a range.
 - **Shift–Cmd–A** selects only the active photo.
 - Selection drives export scope ("Selected photos") and bulk actions like auto-crop.
+
+Use **Sort photos** at the left of the filmstrip to browse by **File name**, **Capture time**
+or **Custom**. Capture time is the camera's recorded time (for scans, when they were
+photographed); photos without a date appear last in either direction. Export follows the
+order you see.
+
+Drag a thumbnail to a new slot to save the resulting sequence as **Custom**, even when
+browsing by file name or capture time. Dragging a selected thumbnail moves the selection
+together. Undo restores the previous Custom order; Escape cancels a drag.
 
 ## Scopes
 

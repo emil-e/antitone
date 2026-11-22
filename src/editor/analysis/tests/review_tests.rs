@@ -1,6 +1,6 @@
 use super::*;
 mod private;
-use crate::{project::SourceAnalysis, scan_regions::Areas};
+use crate::scan_regions::Areas;
 
 // Review-only cases install prepared areas; operation cases exercise the preceding workers.
 fn approved(request: &Request) -> analysis::Approved {
@@ -22,8 +22,11 @@ fn approved(request: &Request) -> analysis::Approved {
             let picture = Coverage::rectangle(request.picture.unwrap_or_else(|| suggest(active)))
                 .corners()
                 .map(|p| p.0);
-            SourceAnalysis {
+            analysis::ReviewedPhoto {
                 source: id,
+                file: request
+                    .document
+                    .file_key(&request.document.source_path(id).unwrap()),
                 areas: Areas {
                     opening: Some(opening),
                     picture: Some(picture),
@@ -34,14 +37,7 @@ fn approved(request: &Request) -> analysis::Approved {
             }
         })
         .collect();
-    let files = request
-        .document
-        .project
-        .order
-        .iter()
-        .map(|&id| thumbnails::FileKey::new(&request.document.source_path(id).unwrap()))
-        .collect();
-    analysis::Approved { entries, files }
+    analysis::Approved { entries }
 }
 
 pub(super) fn prepared(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
