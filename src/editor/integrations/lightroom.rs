@@ -294,7 +294,11 @@ impl external_edit::Destination for Destination {
                 Ok((id, folder.to_path_buf()))
             })
             .collect::<Result<HashMap<_, _>, Error>>()?;
-        let mut options = output::Options::new(target, output::Folders::PerPhoto(folders));
+        let plan = crate::export::Plan::new(
+            crate::export::RenderTarget::Display(target),
+            crate::export::FileFormat::Tiff,
+        )?;
+        let mut options = output::Options::new(plan, output::Folders::PerPhoto(folders));
         options.suffix = "-Antitone".into();
         Ok(options)
     }

@@ -5,10 +5,13 @@ use crate::application::UiContext;
 use crate::color::Balance;
 use crate::coverage::Coverage;
 use crate::crop::Crop;
+#[cfg(test)]
 use crate::export::ExrPrecision;
 use crate::geometry::Composition;
 use crate::geometry::PhotoOrientation;
 use crate::geometry::RollOrientation;
+#[cfg(test)]
+use crate::gpu_export::authored::Format as OutputFormat;
 use crate::grain::GrainPreset;
 use crate::grain::GrainSettings;
 use crate::platform::host;
@@ -145,12 +148,6 @@ impl Ready {
     fn development(&self) -> &crate::project::Development {
         &self.record.development.decode
     }
-}
-
-#[derive(Clone, Copy)]
-enum OutputFormat {
-    Tiff(OutputTarget),
-    Exr(ExrPrecision),
 }
 
 #[cfg(test)]
@@ -1407,14 +1404,13 @@ impl Editor {
                     };
                     self.look_controls(ui, cx, lut_lead);
                     ui.add_enabled_ui(!self.interaction_blocked(), |ui| {
-                        let changed = grade.output.tiff != crate::project::TiffTarget::DisplayP3;
+                        let changed = grade.output.display_target != OutputTarget::DisplayP3;
                         let (_, action) = ui::section(
                             ui,
                             "rendering-target",
                             "Target",
                             SectionHeader {
-                                summary: if grade.output.tiff
-                                    == crate::project::TiffTarget::DisplayP3
+                                summary: if grade.output.display_target == OutputTarget::DisplayP3
                                 {
                                     "Display P3 · 100 nit"
                                 } else {
@@ -1430,19 +1426,19 @@ impl Editor {
                                     ui,
                                     "rendering-target",
                                     "Target",
-                                    if grade.output.tiff == crate::project::TiffTarget::DisplayP3 {
+                                    if grade.output.display_target == OutputTarget::DisplayP3 {
                                         "Display P3"
                                     } else {
                                         "sRGB"
                                     },
                                     |ui| {
                                         for (target, label) in [
-                                            (crate::project::TiffTarget::DisplayP3, "Display P3"),
-                                            (crate::project::TiffTarget::Srgb, "sRGB"),
+                                            (OutputTarget::DisplayP3, "Display P3"),
+                                            (OutputTarget::Srgb, "sRGB"),
                                         ] {
                                             if ui
                                                 .selectable_label(
-                                                    grade.output.tiff == target,
+                                                    grade.output.display_target == target,
                                                     label,
                                                 )
                                                 .clicked()
@@ -1452,7 +1448,7 @@ impl Editor {
                                                         ui.make_persistent_id("target"),
                                                         true,
                                                     ),
-                                                    |output| output.tiff = target,
+                                                    |output| output.display_target = target,
                                                 );
                                             }
                                         }
@@ -1468,7 +1464,7 @@ impl Editor {
                                     ui.make_persistent_id("reset-target"),
                                     true,
                                 ),
-                                |output| output.tiff = crate::project::TiffTarget::DisplayP3,
+                                |output| output.display_target = OutputTarget::DisplayP3,
                             );
                         }
                     });

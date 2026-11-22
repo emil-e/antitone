@@ -120,7 +120,7 @@ fn export_cancellation_reaches_the_real_healer_after_its_inputs_arrive_and_prese
         crate::gpu_export::Request {
             definition,
             composition: recipe.composition,
-            format: Format::Exr(crate::export::ExrPrecision::Full),
+            plan: Format::Exr(crate::export::ExrPrecision::Full).plan(),
         },
         &path,
         Overwrite::Confirmed,

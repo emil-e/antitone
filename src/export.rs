@@ -1,7 +1,7 @@
 use crate::export_timing::timed;
 #[cfg(feature = "ocio-reference")]
 use crate::rendering::CpuRenderer;
-use crate::{Error, color::ap1_to_ap0, profiles, rendering::OutputTarget};
+use crate::{Error, rendering::OutputTarget};
 use glam::DVec3;
 use std::{
     fs,
@@ -9,6 +9,11 @@ use std::{
     path::Path,
 };
 use tempfile::NamedTempFile;
+mod codec;
+pub use codec::FileFormat;
+mod samples;
+pub use samples::{FloatPrecision, FloatPrecision as ExrPrecision};
+pub(crate) use samples::{Layout, Samples, SceneEncoding};
 mod stream;
 #[cfg(all(test, target_os = "macos"))]
 mod stream_tests;
@@ -41,10 +46,79 @@ impl ImageSize {
     }
 }
 
+/// Selects the photographic endpoint, independent of the file settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExrPrecision {
-    Half,
-    Full,
+pub enum RenderTarget {
+    Display(OutputTarget),
+    /// Render working AP1; convert to linear AP0 after reconstruction.
+    SceneLinearAp0,
+}
+
+/// A supported pairing of rendering target and file settings.
+#[derive(Debug, Clone, Copy)]
+pub struct Plan {
+    target: RenderTarget,
+    format: FileFormat,
+}
+
+impl Plan {
+    pub fn new(target: RenderTarget, format: FileFormat) -> Result<Self> {
+        match (target, format.layout()) {
+            (RenderTarget::Display(_), Layout::Rgb16)
+            | (RenderTarget::SceneLinearAp0, Layout::Float(_)) => Ok(Self { target, format }),
+            _ => Err(Error::InvalidParameter(
+                "file layout does not support the render target",
+            )),
+        }
+    }
+
+    pub fn target(self) -> RenderTarget {
+        self.target
+    }
+
+    pub fn format(self) -> FileFormat {
+        self.format
+    }
+
+    pub(crate) fn write(
+        self,
+        (path, overwrite): (&Path, Overwrite),
+        size: ImageSize,
+        order: BlockOrder,
+        mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Samples>,
+        before_publish: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        size.count()?;
+        #[cfg(test)]
+        let before_publish = {
+            let mut before_publish = Some(before_publish);
+            if let (RenderTarget::Display(target), Layout::Rgb16) =
+                (self.target, self.format.layout())
+                && let Some(result) = crate::export_timing::pixels::intercept(
+                    size,
+                    target,
+                    order,
+                    &mut |origin, extent| match block(origin, extent)? {
+                        Samples::Rgb16(codes) => Ok(codes),
+                        _ => Err(Error::InvalidParameter("expected RGB16 samples")),
+                    },
+                    || before_publish.take().expect("one completion check")(),
+                )
+            {
+                return result;
+            }
+            before_publish.expect("uncaptured completion check")
+        };
+        atomic_file(
+            path,
+            overwrite,
+            |file| {
+                self.format
+                    .encode(file, size, self.target, order, &mut block)
+            },
+            before_publish,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -52,21 +126,6 @@ pub enum Overwrite {
     #[default]
     Refuse,
     Confirmed,
-}
-
-struct Icc(&'static [u8]);
-
-impl tiff::encoder::TiffValue for Icc {
-    const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: tiff::tags::Type = tiff::tags::Type::UNDEFINED;
-
-    fn count(&self) -> usize {
-        self.0.len()
-    }
-
-    fn data(&self) -> std::borrow::Cow<'_, [u8]> {
-        std::borrow::Cow::Borrowed(self.0)
-    }
 }
 
 fn failure(error: impl std::fmt::Display) -> Error {
@@ -294,28 +353,11 @@ pub(crate) fn tiff_encoded_checked(
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    size.count()?;
-    #[cfg(test)]
-    let mut before_publish = Some(before_publish);
-    #[cfg(test)]
-    if let Some(result) =
-        crate::export_timing::pixels::intercept(size, target, order, &mut block, || {
-            before_publish.take().expect("one completion check")()
-        })
-    {
-        return result;
-    }
-    #[cfg(test)]
-    let before_publish = before_publish.expect("uncaptured completion check");
-    let rows = match order {
-        BlockOrder::RowMajor => BLOCK[1],
-        BlockOrder::Spatial2x2 => BLOCK[1] * 2,
-    };
-    stream::workspace(size, rows, 6, u64::from(size.height.div_ceil(8)) * 8)?;
-    atomic_file(
-        path,
-        overwrite,
-        |file| stream::tiff(file, size, target, order, &mut block),
+    Plan::new(RenderTarget::Display(target), FileFormat::Tiff)?.write(
+        (path, overwrite),
+        size,
+        order,
+        |origin, extent| block(origin, extent).map(Samples::Rgb16),
         before_publish,
     )
 }
@@ -355,19 +397,12 @@ pub(crate) fn exr_blocks_checked(
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    stream::workspace(
+    let encoding = SceneEncoding::new(precision);
+    Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Exr(precision))?.write(
+        (path, overwrite),
         size,
-        BLOCK[1],
-        match precision {
-            ExrPrecision::Half => 6,
-            ExrPrecision::Full => 12,
-        },
-        u64::from(size.height.div_ceil(16)) * 16,
-    )?;
-    atomic_file(
-        path,
-        overwrite,
-        |file| stream::exr(file, size, precision, &mut block),
+        BlockOrder::RowMajor,
+        |origin, extent| encoding.pack(block(origin, extent)?.into_iter().map(Ok)),
         before_publish,
     )
 }

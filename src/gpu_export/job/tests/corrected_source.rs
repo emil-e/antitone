@@ -74,7 +74,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
                     scan: &scan,
                     field: Some(gpu_field.clone()),
                     recipe: &recipe,
-                    output: fixture_output(Format::Tiff(target), &renderer),
+                    render: fixture_render(Format::Tiff(target), &renderer),
                 },
                 (&path, Overwrite::Refuse),
                 &mut Execution::default(),

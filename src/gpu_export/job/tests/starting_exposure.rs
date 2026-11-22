@@ -88,7 +88,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                     scan: &scan,
                     field: None,
                     recipe: &recipe,
-                    output: fixture_output(format, &renderer),
+                    render: fixture_render(format, &renderer),
                 },
                 (&output, Overwrite::Refuse),
                 &mut Execution::default(),

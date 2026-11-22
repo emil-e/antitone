@@ -24,7 +24,7 @@ mod stored;
 mod capture_time;
 pub use capture_time::CaptureTime;
 
-pub const SCHEMA_VERSION: u32 = 23;
+pub const SCHEMA_VERSION: u32 = 24;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 pub const OUTPUT_CONTRACT: &str = "ocio-2.6.0-aces2-100nit-antitone-srgb-displayp3-v2";
@@ -272,25 +272,10 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TiffTarget {
-    DisplayP3,
-    Srgb,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExrPrecision {
-    Half,
-    Full,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Output {
     pub contract: OutputContract,
-    pub tiff: TiffTarget,
-    pub exr: ExrPrecision,
+    pub display_target: crate::color::OutputTarget,
     pub grain: crate::grain::GrainSettings,
     pub halation: crate::halation::HalationSettings,
     pub lut: Option<std::sync::Arc<crate::looks::LookAsset>>,
@@ -310,8 +295,7 @@ impl Default for Output {
     fn default() -> Self {
         Self {
             contract: OutputContract,
-            tiff: TiffTarget::DisplayP3,
-            exr: ExrPrecision::Half,
+            display_target: crate::color::OutputTarget::DisplayP3,
             grain: Default::default(),
             halation: Default::default(),
             lut: None,

@@ -486,8 +486,8 @@ fn rendering_target_and_reset_preserve_grading_and_the_live_crop_draft() {
     }
     assert_eq!(editor.document.target(), OutputTarget::Srgb);
     assert_eq!(
-        editor.document.state.project.output.tiff,
-        crate::project::TiffTarget::Srgb
+        editor.document.state.project.output.display_target,
+        OutputTarget::Srgb
     );
     assert_eq!(
         (

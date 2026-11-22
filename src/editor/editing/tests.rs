@@ -125,12 +125,12 @@ fn an_existing_owner_rejects_another_acquisition_until_commit_or_drop() {
     editor.commit_project(first).unwrap();
     assert!(!reader.active());
     let mut second = editor.edit_project("Target").unwrap();
-    second.update(|project| project.output.tiff = crate::project::TiffTarget::Srgb);
+    second.update(|project| project.output.display_target = OutputTarget::Srgb);
     editor.commit_project(second).unwrap();
     assert_eq!(editor.document.project.roll.exposure, 1.25);
     assert_eq!(
-        editor.document.project.output.tiff,
-        crate::project::TiffTarget::Srgb
+        editor.document.project.output.display_target,
+        OutputTarget::Srgb
     );
     assert_eq!(
         editor.history_label(history::Direction::Undo),
@@ -202,7 +202,7 @@ fn roll_controls_reject_nonfinite_values_and_output_controls_accept_target_edits
             app.enter(|editor, cx| {
                 editor.output_control(
                     ui::ControlResponse::action(egui::Id::new("target"), true),
-                    |output| output.tiff = crate::project::TiffTarget::Srgb,
+                    |output| output.display_target = OutputTarget::Srgb,
                 );
                 assert_eq!(editor.document.target(), OutputTarget::Srgb);
                 let accepted = editor.document.project.clone();

@@ -14,7 +14,7 @@ fn acknowledge_export_summary(editor: &mut Editor) {
         editor.dialogs.message().is_none(),
         "expected an export summary, not a failure"
     );
-    editor.dialogs.answer_for_test("OK");
+    editor.dialogs.answer_for_test("Done");
     assert!(
         !editor.dialogs.is_open(),
         "each operation must account for all its dialogs"

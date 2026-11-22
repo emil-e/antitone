@@ -328,11 +328,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     assert!(editor.document.visit.canvas.original.settled().is_none())
                 });
                 let mut expected = project.clone();
-                expected.output.tiff = if target == OutputTarget::Srgb {
-                    crate::project::TiffTarget::Srgb
-                } else {
-                    crate::project::TiffTarget::DisplayP3
-                };
+                expected.output.display_target = target;
                 harness.read(|editor| assert_eq!(editor.document.state.project, expected));
             }
             wait_for(&mut harness, |e| {
@@ -436,11 +432,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
                 );
             }
             let mut expected = project.clone();
-            expected.output.tiff = if target == OutputTarget::Srgb {
-                crate::project::TiffTarget::Srgb
-            } else {
-                crate::project::TiffTarget::DisplayP3
-            };
+            expected.output.display_target = target;
             harness.read(|editor| assert_eq!(editor.document.state.project, expected));
             save_capture(
                 &png,

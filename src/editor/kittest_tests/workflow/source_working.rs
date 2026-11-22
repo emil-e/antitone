@@ -663,7 +663,7 @@ fn uncalibrated_source_keeps_coherent_detail_and_inspection_through_zero_retenti
             harness.step();
             if index == 1 {
                 select_target(&mut harness, OutputTarget::Srgb);
-                project.output.tiff = crate::project::TiffTarget::Srgb;
+                project.output.display_target = OutputTarget::Srgb;
             }
             wait_for(&mut harness, |e| {
                 e.document.visit.working_view.support_ready()

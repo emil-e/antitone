@@ -3,6 +3,7 @@ use super::*;
 use super::{Error, Result};
 use exr::{
     block::{UncompressedBlock, writer::ChunksWriter},
+    io::Data,
     meta::{
         BlockDescription,
         attribute::{ChannelDescription, Chromaticities, SampleType},
@@ -19,6 +20,21 @@ use tiff::{
         CompressionMethod, PhotometricInterpretation, Predictor, ResolutionUnit, SampleFormat, Tag,
     },
 };
+
+struct Icc(&'static [u8]);
+
+impl tiff::encoder::TiffValue for Icc {
+    const BYTE_LEN: u8 = 1;
+    const FIELD_TYPE: tiff::tags::Type = tiff::tags::Type::UNDEFINED;
+
+    fn count(&self) -> usize {
+        self.0.len()
+    }
+
+    fn data(&self) -> std::borrow::Cow<'_, [u8]> {
+        std::borrow::Cow::Borrowed(self.0)
+    }
+}
 
 const STRIP_ROWS: u32 = 8;
 const MAX_WORKSPACE: u64 = 1 << 30;
@@ -38,7 +54,7 @@ pub(super) fn workspace(size: ImageSize, rows: u32, bytes: u64, metadata: u64) -
 pub(super) fn tiff(
     file: &mut fs::File,
     size: ImageSize,
-    target: OutputTarget,
+    profile: &'static [u8],
     order: BlockOrder,
     block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
@@ -98,7 +114,7 @@ pub(super) fn tiff(
         .write_tag(Tag::ResolutionUnit, ResolutionUnit::None)
         .map_err(failure)?;
     directory
-        .write_tag(Tag::Unknown(34675), Icc(profiles::icc(target)))
+        .write_tag(Tag::Unknown(34675), Icc(profile))
         .map_err(failure)?;
     directory
         .write_tag(Tag::Software, "Antitone 0.1")
@@ -176,43 +192,40 @@ pub(super) fn tiff(
     timed!(FileFlush, buffered.flush().map_err(failure))
 }
 
-pub(super) fn exr(
+pub(super) trait FloatSample: Data + Copy {
+    const KIND: SampleType;
+}
+
+impl FloatSample for half::f16 {
+    const KIND: SampleType = SampleType::F16;
+}
+
+impl FloatSample for f32 {
+    const KIND: SampleType = SampleType::F32;
+}
+
+pub(super) fn exr<T: FloatSample>(
     file: &mut fs::File,
     size: ImageSize,
-    precision: ExrPrecision,
-    block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
+    colour: (&str, Chromaticities),
+    block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[T; 3]>>,
 ) -> Result<()> {
-    let bytes = match precision {
-        ExrPrecision::Half => 6,
-        ExrPrecision::Full => 12,
-    };
     let count = workspace(
         size,
         BLOCK[1],
-        bytes,
+        3 * T::BYTE_SIZE as u64,
         u64::from(size.height.div_ceil(16)) * 16,
     )?;
-    let mut samples: [FlatSamples; 3] = timed!(
+    let mut samples: [Vec<T>; 3] = timed!(
         FrameAllocation,
-        std::array::from_fn(|_| match precision {
-            ExrPrecision::Half => FlatSamples::F16(vec![half::f16::ZERO; count]),
-            ExrPrecision::Full => FlatSamples::F32(vec![0.; count]),
-        })
+        std::array::from_fn(|_| vec![T::default(); count])
     );
     let channels = ["B", "G", "R"]
         .into_iter()
-        .map(|name| {
-            ChannelDescription::named(
-                name,
-                match precision {
-                    ExrPrecision::Half => SampleType::F16,
-                    ExrPrecision::Full => SampleType::F32,
-                },
-            )
-        })
+        .map(|name| ChannelDescription::named(name, T::KIND))
         .collect();
     let mut header = Header::new(
-        "scene-linear AP0".into(),
+        colour.0.into(),
         (size.width as usize, size.height as usize),
         channels,
     )
@@ -221,13 +234,7 @@ pub(super) fn exr(
         BlockDescription::ScanLines,
         LineOrder::Increasing,
     );
-    header.shared_attributes.chromaticities = Some(Chromaticities {
-        red: Vec2(0.7347, 0.2653),
-        green: Vec2(0., 1.),
-        blue: Vec2(0.0001, -0.0770),
-        white: Vec2(0.32168, 0.33767),
-    });
-    let conversion = ap1_to_ap0();
+    header.shared_attributes.chromaticities = Some(colour.1);
     let mut producer_error = None;
     let mut buffered = BufWriter::new(file);
     let result = timed!(
@@ -264,31 +271,11 @@ pub(super) fn exr(
                                         let x = origin[0] as usize + i % extent[0] as usize;
                                         let y = (origin[1] - top) as usize + i / extent[0] as usize;
                                         let pixel = y * size.width as usize + x;
-                                        for (channel, value) in
-                                            (conversion * value).to_array().into_iter().enumerate()
-                                        {
-                                            if !value.is_finite() {
-                                                return Err(Error::NonFinitePixel { channel });
-                                            }
-                                            match &mut samples[channel] {
-                                                FlatSamples::F16(values) => {
-                                                    if value.abs() > 65504. {
-                                                        return Err(Error::Export("AP0 output exceeds finite half-float range; choose full-float EXR".into()));
-                                                    }
-                                                    values[pixel] = half::f16::from_f64(value);
-                                                }
-                                                FlatSamples::F32(values) => {
-                                                    if value.abs() > f64::from(f32::MAX) {
-                                                        return Err(Error::NumericalOverflow);
-                                                    }
-                                                    values[pixel] = value as f32;
-                                                }
-                                                _ => unreachable!(),
-                                            }
+                                        for (channel, value) in value.into_iter().enumerate() {
+                                            samples[channel][pixel] = value;
                                         }
                                     }
-                                    Ok::<_, Error>(())
-                                })?;
+                                });
                             }
                             Ok(())
                         })();
@@ -306,15 +293,9 @@ pub(super) fn exr(
                             let channel = 2 - line.location.channel;
                             let row =
                                 (line.location.position.y() - top as usize) * size.width as usize;
-                            let result = match &samples[channel] {
-                                FlatSamples::F16(values) => line.write_samples_from_slice(
-                                    &values[row..row + size.width as usize],
-                                ),
-                                FlatSamples::F32(values) => line.write_samples_from_slice(
-                                    &values[row..row + size.width as usize],
-                                ),
-                                _ => unreachable!(),
-                            };
+                            let result = line.write_samples_from_slice(
+                                &samples[channel][row..row + size.width as usize],
+                            );
                             if let Err(error) = result {
                                 line_error = Some(error);
                             }

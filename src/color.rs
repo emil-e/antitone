@@ -4,6 +4,15 @@ use glam::{DMat3, DVec2, DVec3};
 
 use crate::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(rename_all = "snake_case"))]
+#[repr(u32)]
+pub enum OutputTarget {
+    Srgb = 0,
+    DisplayP3 = 1,
+}
+
 pub const AP0_TO_XYZ: DMat3 = DMat3::from_cols(
     DVec3::new(0.9525523959381857, 0.3439664497650751, 0.0),
     DVec3::new(0.0, 0.7281660966134857, 0.0),

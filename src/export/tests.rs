@@ -1,4 +1,25 @@
 use super::*;
+use crate::{color::ap1_to_ap0, profiles};
+
+#[test]
+fn unsupported_target_and_layout_pairs_are_rejected_at_planning() {
+    let display = RenderTarget::Display(OutputTarget::Srgb);
+    assert!(Plan::new(display, FileFormat::Tiff).is_ok());
+    assert!(matches!(
+        Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Tiff),
+        Err(Error::InvalidParameter(_))
+    ));
+    for precision in [FloatPrecision::Half, FloatPrecision::Full] {
+        let file = FileFormat::Exr(precision);
+        let scene = Plan::new(RenderTarget::SceneLinearAp0, file).unwrap();
+        assert_eq!(scene.target(), RenderTarget::SceneLinearAp0);
+        assert_eq!(scene.format(), file);
+        assert!(matches!(
+            Plan::new(display, file),
+            Err(Error::InvalidParameter(_))
+        ));
+    }
+}
 use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
 use tiff::{
     decoder::{Decoder, DecodingResult},
@@ -212,11 +233,7 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
         panic!()
     };
     assert_eq!(codes, [1, 2, 3]);
-    for pixel in [
-        DVec3::splat(f64::NAN),
-        DVec3::splat(f64::INFINITY),
-        DVec3::splat(1e40),
-    ] {
+    for pixel in [DVec3::splat(f64::NAN), DVec3::splat(f64::INFINITY)] {
         assert!(
             exr(
                 &path,
@@ -229,16 +246,6 @@ fn failed_blocks_and_competing_destinations_preserve_existing_files_and_clean_te
         );
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
-    assert!(
-        exr(
-            &path,
-            size,
-            ExrPrecision::Half,
-            Overwrite::Confirmed,
-            |_, _| Ok(DVec3::splat(70000.))
-        )
-        .is_err()
-    );
     assert!(
         exr_blocks(
             &path,

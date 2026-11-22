@@ -1,8 +1,8 @@
 # Rendering and export
 
 **Rendering** decides what the finished photograph looks like; **File → Export…** writes
-it to disk. The preview is rendered through the same pipeline as the export — what you
-see is what the file contains.
+it to disk. A display-rendered export uses the same look as the preview. Match the
+preview's target to preserve its display colour.
 
 ## The Rendering panel
 
@@ -27,21 +27,16 @@ working positive before the film/paper response. Switching between colour and B&
 before clearing the negative or choosing a matching default paper. Changing a stock
 prepares a new treatment in the background; Cancel keeps the accepted choices.
 
-## TIFF or EXR?
+## Display-rendered or scene-linear?
 
-The two formats serve different purposes:
-
-| | TIFF | EXR |
-| --- | --- | --- |
-| What it is | A finished, rendered photograph | The graded image in scene-linear form |
-| Colour | sRGB or Display P3, with an ICC profile | Scene-linear AP0, always |
-| Negative/Paper/LUT colour treatment and display rendering | Applied | Not applied |
-| Use it for | Viewing, printing, delivery, further work in a colour-managed app | Further grading or compositing in HDR/scene-referred tools |
-| Precision | 16-bit RGB, lossless Deflate | Half (16-bit) or full float (32-bit) |
-
-Export TIFF when you want the photograph you see in Antitone. Export EXR when another
-program will continue the grade — it retains normal source inversion, grading and grain,
-but skips the Negative/Paper/LUT colour treatment and display rendering.
+- **Display-rendered** output is the finished photograph, with LUT and Film & paper
+  applied. Use it for viewing, printing or delivery. The TIFF preset writes it in sRGB
+  or Display P3 with an ICC profile.
+- **Scene-linear** output is for continuing a grade or compositing in a scene-referred
+  tool. It keeps source inversion, grading and Film texture, and skips LUT, Film & paper
+  and display rendering. The EXR preset writes linear AP0 and declares that colour space
+  in the file. It preserves values below black and above white within the selected
+  float precision's range.
 
 ## Exporting
 
@@ -69,8 +64,5 @@ exports use your applied settings.
 
 - Exports read your **original scans** at full resolution — never the preview — so keep
   the RAW files available.
-- Everything is colour-managed end to end: the preview, the TIFF (which carries its ICC
-  profile) and the scopes all follow the chosen Target.
-- EXR output keeps headroom (values above white and below black survive), so a later
-  grade in another tool has room to work. The file declares its own colour space, so
-  the receiving application does not have to guess one.
+- Changing the export target does not change the preview or scopes, which continue to
+  use the project's Rendering target.

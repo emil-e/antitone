@@ -1,13 +1,10 @@
 use super::*;
 
-fn fixture_output(format: Format, renderer: &crate::render_fixture::RenderFixture) -> Output<'_> {
-    match format {
-        Format::Tiff(target) => Output::Tiff {
-            looks: renderer.looks(),
-            target: renderer.drt(target),
-        },
-        Format::Exr(precision) => Output::Exr(precision),
-    }
+fn fixture_render(format: Format, renderer: &crate::render_fixture::RenderFixture) -> Render<'_> {
+    Render::resolve(format.plan(), || {
+        Ok::<_, Error>((renderer.looks().as_ref(), renderer.drt.clone()))
+    })
+    .unwrap()
 }
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
@@ -237,7 +234,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         scan: &scan,
         field: None,
         recipe,
-        output: fixture_output(Format::Tiff(OutputTarget::Srgb), &renderer),
+        render: fixture_render(Format::Tiff(OutputTarget::Srgb), &renderer),
     };
     let before = project.clone();
     {
@@ -345,7 +342,7 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
                 scan: &scan,
                 field: None,
                 recipe: &recipe,
-                output: fixture_output(format, &renderer),
+                render: fixture_render(format, &renderer),
             },
             (&directory.path().join(name), Overwrite::Refuse),
             &mut Execution::default(),

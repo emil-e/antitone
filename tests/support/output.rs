@@ -1,11 +1,10 @@
 //! Test-side operation authoring; the production file writer receives only the resulting node.
 #![allow(dead_code)]
-pub use antitone::gpu_export::Format;
 use antitone::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::Repair,
-    export::Overwrite,
+    export::{FileFormat, FloatPrecision, Overwrite, Plan, RenderTarget},
     geometry::Composition,
     gpu::{
         evaluation::Value,
@@ -15,9 +14,27 @@ use antitone::{
         source::camera_source,
     },
     processing::{InputSettings, RollSettings},
+    rendering::OutputTarget,
     scan::{ImageSource, Scan},
 };
 use std::{path::Path, sync::Arc};
+
+// Presets for tests that compare reopened outputs, not a production routing type.
+#[derive(Clone, Copy, Debug)]
+pub enum Format {
+    Tiff(OutputTarget),
+    Exr(FloatPrecision),
+}
+
+impl Format {
+    pub fn plan(self) -> Plan {
+        let (target, file) = match self {
+            Self::Tiff(target) => (RenderTarget::Display(target), FileFormat::Tiff),
+            Self::Exr(precision) => (RenderTarget::SceneLinearAp0, FileFormat::Exr(precision)),
+        };
+        Plan::new(target, file).unwrap()
+    }
+}
 
 pub type Calculation = dyn Fn(Value) -> Result<Value, Error> + Send + Sync;
 
@@ -56,19 +73,20 @@ impl Request<'_> {
             Some(compose) => compose(photograph)?,
             None => photograph,
         };
-        let definition = match self.format {
-            Format::Tiff(target) => display_output(
+        let plan = self.format.plan();
+        let definition = match plan.target() {
+            RenderTarget::Display(target) => display_output(
                 photograph,
                 &self.luts,
                 renderer.looks(),
                 renderer.drt(target),
             )?,
-            Format::Exr(_) => photograph,
+            RenderTarget::SceneLinearAp0 => photograph,
         };
         Ok(antitone::gpu_export::Request {
             definition,
             composition: self.composition,
-            format: self.format,
+            plan,
         })
     }
 }

@@ -5,10 +5,10 @@
     target_os = "macos"
 ))]
 use antitone::{
-    export::{ExrPrecision, Overwrite},
+    export::{FileFormat, FloatPrecision, Overwrite, Plan, RenderTarget},
     geometry::Composition,
     gpu::evaluation::{self, CellRegion, Domain, Grid, Source},
-    gpu_export::{Format, Request},
+    gpu_export::Request,
     rendering::OutputTarget,
 };
 use glam::DVec3;
@@ -76,7 +76,7 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
             pixels: vec![[0.001 * gain, 0.002 * gain, 0.003 * gain, 0.]; 2],
         })),
         composition: composition(2),
-        format: Format::Tiff(OutputTarget::Srgb),
+        plan: Plan::new(RenderTarget::Display(OutputTarget::Srgb), FileFormat::Tiff).unwrap(),
     };
     // Below the sRGB knee, transfer is exactly 12.92*x, followed by nearest RGB16.
     for (gain, expected) in [(1., [847, 1693, 2540]), (0.5, [423, 847, 1270])] {
@@ -98,7 +98,7 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
 }
 
 #[test]
-fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precision() {
+fn one_authored_value_exports_to_both_scene_linear_sample_layouts() {
     use exr::prelude::{FlatSamples, Vec2, read_first_flat_layer_from_file};
 
     let (context, queue) = context();
@@ -113,18 +113,21 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
         [-0.125, -0.125, -0.125, 0.],
         [4., 4., 4., 0.],
         [0.5001, 0.10003, -0.2501, 0.],
+        [70000., 70000., 70000., 0.],
+        [-70000., -70000., -70000., 0.],
     ];
-    for precision in [ExrPrecision::Half, ExrPrecision::Full] {
+    let definition = evaluation::source(Arc::new(Linear {
+        pixels: pixels.clone(),
+    }));
+    for precision in [FloatPrecision::Half, FloatPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));
         antitone::gpu_export::write(
             &context,
             &queue,
             Request {
-                definition: evaluation::source(Arc::new(Linear {
-                    pixels: pixels.clone(),
-                })),
+                definition: definition.clone(),
                 composition: composition(pixels.len() as u32),
-                format: Format::Exr(precision),
+                plan: Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Exr(precision)).unwrap(),
             },
             &path,
             Overwrite::Refuse,
@@ -149,10 +152,11 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
                 let supplied = DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64);
                 let expected = (antitone::color::ap1_to_ap0() * supplied)[c];
                 match (&channel.sample_data, precision) {
-                    (FlatSamples::F16(samples), ExrPrecision::Half) => {
-                        assert_eq!(samples[i], half::f16::from_f64(expected));
+                    (FlatSamples::F16(samples), FloatPrecision::Half) => {
+                        let bounded = expected.clamp(-65504., 65504.);
+                        assert_eq!(samples[i], half::f16::from_f64(bounded));
                     }
-                    (FlatSamples::F32(samples), ExrPrecision::Full) => {
+                    (FlatSamples::F32(samples), FloatPrecision::Full) => {
                         assert_eq!(samples[i], expected as f32);
                     }
                     _ => panic!("wrong EXR channel storage precision"),

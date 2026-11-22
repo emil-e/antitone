@@ -80,10 +80,8 @@ fn native_output_resources() {
         let write = || {
             if std::env::var_os("ANTITONE_NATIVE_GPU_ONLY").is_some() {
                 use crate::gpu::execution;
-                let encoding = match format {
-                    Format::Tiff(target) => execution::SampleEncoding::Rgb16(target),
-                    _ => execution::SampleEncoding::LinearFloat,
-                };
+                let plan = format.plan();
+                let encoding = super::area::sample_encoding(plan);
                 let photograph = crate::gpu::photograph::PhotographGraph::authored_original(
                     &device.limits(),
                     crate::gpu::source::camera_source(&scan)?,
@@ -105,9 +103,11 @@ fn native_output_resources() {
                         (1 << 60) + 17,
                     )?,
                 )?;
-                let definition = match format {
-                    Format::Tiff(target) => renderer.drt.get(target).apply(photograph.processed)?,
-                    _ => photograph.processed,
+                let definition = match plan.target() {
+                    RenderTarget::Display(target) => {
+                        renderer.drt.get(target).apply(photograph.processed)?
+                    }
+                    RenderTarget::SceneLinearAp0 => photograph.processed,
                 };
                 return execution::execute(
                     renderer.evaluation(),

@@ -16,7 +16,7 @@ fn rgb16_late_status_errors_preserve_destination_and_remove_temporary() {
         let mut published = false;
         let result = encode_with_checked(
             composition,
-            Format::Tiff(OutputTarget::Srgb),
+            Format::Tiff(OutputTarget::Srgb).plan(),
             (&path, Overwrite::Confirmed),
             |origin, extent| {
                 blocks += 1;
@@ -46,7 +46,7 @@ fn rgb16_late_status_errors_preserve_destination_and_remove_temporary() {
     }
     let result = encode_with_checked(
         composition,
-        Format::Tiff(OutputTarget::Srgb),
+        Format::Tiff(OutputTarget::Srgb).plan(),
         (&path, Overwrite::Confirmed),
         |_, extent| {
             Ok(OutputBlock::Rgb16 {

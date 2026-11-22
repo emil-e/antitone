@@ -303,10 +303,13 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             )
             .unwrap();
             for (extension, format) in [
-                ("tif", crate::gpu_export::Format::Tiff(OutputTarget::Srgb)),
+                (
+                    "tif",
+                    crate::gpu_export::authored::Format::Tiff(OutputTarget::Srgb),
+                ),
                 (
                     "exr",
-                    crate::gpu_export::Format::Exr(crate::export::ExrPrecision::Full),
+                    crate::gpu_export::authored::Format::Exr(crate::export::ExrPrecision::Full),
                 ),
             ] {
                 let output = output_root.join(format!("{index}-{mode}.{extension}"));

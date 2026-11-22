@@ -174,18 +174,12 @@ impl DocumentScope {
     }
 
     pub(super) fn target(&self) -> super::OutputTarget {
-        match self.project_snapshot().output.tiff {
-            crate::project::TiffTarget::Srgb => super::OutputTarget::Srgb,
-            crate::project::TiffTarget::DisplayP3 => super::OutputTarget::DisplayP3,
-        }
+        self.project_snapshot().output.display_target
     }
 
     #[cfg(test)]
     pub(super) fn set_target(&mut self, target: super::OutputTarget) {
-        self.state.project.output.tiff = match target {
-            super::OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
-            super::OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
-        };
+        self.state.project.output.display_target = target;
     }
 
     pub(super) fn effective_document(&self) -> Document {

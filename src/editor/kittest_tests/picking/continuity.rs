@@ -173,7 +173,7 @@ fn cropping_replaces_the_working_image_while_picking() {
 fn output_target_replaces_the_working_image_while_picking() {
     changed_inputs(|editor| {
         let mut edit = editor.edit_project("Output target").unwrap();
-        edit.update(|project| project.output.tiff = crate::project::TiffTarget::Srgb);
+        edit.update(|project| project.output.display_target = OutputTarget::Srgb);
         editor.commit_project(edit).unwrap();
     });
 }
