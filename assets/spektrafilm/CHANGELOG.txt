@@ -19,8 +19,9 @@ Antitone modifications:
   authoring DRT, storing ACEScct/AP1 values.
 - Form the paper-only reference through calibrated exposure and effective-dye
   matrices around the shared forward characteristic. Fit standardized colours,
-  not photographs, with a CIEDE2000 chroma/hue objective and equal weighting of
-  Portra Endura, Crystal Archive Type II and Ektacolor Edge. Preserve the signed,
+  not photographs, matching common-luminance hue directions and group-mean
+  colour strength with equal weighting of Portra Endura, Crystal Archive Type II
+  and Ektacolor Edge. Preserve the signed,
   peak-normalized 250D dye basis and base spectrum; add fixed neutral filtration
   with reciprocal lamp scaling to define a passive hypothetical filter over the
   authored input cube. Fixed per-medium printing exposure/balance anchors gray.
