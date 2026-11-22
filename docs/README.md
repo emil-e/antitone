@@ -12,7 +12,7 @@ Before changing application code, read [architecture](architecture.md) and [deve
 | How does Analyze choose its starting grade? | [Roll analysis](roll-analysis.md) |
 | What does the bare-light reference correct? | [Flat-field correction](flat-field.md) |
 | Where do image MTF and grain enter the picture? | [Film texture](processing.md#film-texture) |
-| Why do preview, TIFF and EXR differ? | [Colour and output](colour-and-output.md) |
+| How do display and scene-linear output differ? | [Colour and output](colour-and-output.md) |
 | How are film/paper components generated? | [Spektrafilm](../assets/spektrafilm/README.md) and [independent B&W materials](../assets/papers/README.md) |
 | Which pixels does a crop, pick or export represent? | [Geometry](geometry.md) |
 | How can features share film and picture locations? | [Spatial metadata](spatial-metadata.md) |

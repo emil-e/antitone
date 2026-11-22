@@ -3,9 +3,8 @@ use antitone::{
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu_export::Format,
 };
-use authored_export::Request;
+use authored_export::{Format, Request};
 
 #[test]
 fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {

@@ -89,7 +89,10 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
                 scan: &scan,
                 field: None,
                 recipe: &recipe,
-                output: Output::Exr(ExrPrecision::Full),
+                render: Render::resolve::<Error>(Format::Exr(ExrPrecision::Full).plan(), || {
+                    panic!("scene rendering must not acquire display resources")
+                })
+                .unwrap(),
             },
             (&path, Overwrite::Refuse),
             &mut Execution::default(),

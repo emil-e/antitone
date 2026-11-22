@@ -8,7 +8,7 @@ use antitone::{
 };
 use exr::prelude::*;
 use glam::DVec3;
-use std::{fs, path::Path};
+use std::fs;
 use tiff::{
     decoder::{Decoder, DecodingResult},
     tags::{CompressionMethod, Tag},
@@ -189,34 +189,49 @@ fn export_errors_cancel_partial_output_and_never_replace_without_confirmation() 
 }
 
 #[test]
-fn exr_refuses_nonfinite_half_overflow_and_full_overflow_without_final_files() {
+fn scene_linear_export_saturates_finite_storage_overflow_but_rejects_nonfinite_input() {
     let directory = tempfile::tempdir().unwrap();
     let size = ImageSize {
         width: 1,
         height: 1,
     };
-    for (precision, ap0) in [
-        (ExrPrecision::Half, DVec3::splat(70000.0)),
-        (ExrPrecision::Full, DVec3::splat(f64::from(f32::MAX) * 2.0)),
-        (ExrPrecision::Half, DVec3::splat(f64::NAN)),
+    for (precision, limit) in [
+        (ExrPrecision::Half, 65504.),
+        (ExrPrecision::Full, f64::from(f32::MAX)),
     ] {
-        let path = directory.path().join("failed.exr");
-        assert!(
-            export::exr(&path, size, precision, Overwrite::Refuse, |_, _| Ok(
-                ap0_to_ap1() * ap0
-            ))
-            .is_err()
-        );
-        assert!(!path.exists());
+        let path = directory.path().join(format!("{precision:?}.exr"));
+        let ap0 = DVec3::new(2. * limit, -2. * limit, limit * 0.5);
+        export::exr(&path, size, precision, Overwrite::Refuse, |_, _| {
+            Ok(ap0_to_ap1() * ap0)
+        })
+        .unwrap();
+        let image = read_first_flat_layer_from_file(&path).unwrap();
+        assert_eq!(image.layer_data.channel_data.list.len(), 3);
+        for channel in &image.layer_data.channel_data.list {
+            let expected = match channel.name.to_string().as_str() {
+                "R" => limit,
+                "G" => -limit,
+                "B" => limit * 0.5,
+                name => panic!("unexpected channel {name}"),
+            };
+            let actual = match (&channel.sample_data, precision) {
+                (FlatSamples::F16(data), ExrPrecision::Half) => data[0].to_f64(),
+                (FlatSamples::F32(data), ExrPrecision::Full) => f64::from(data[0]),
+                _ => panic!("wrong precision"),
+            };
+            assert_eq!(actual, expected);
+        }
+
+        let before = fs::read(&path).unwrap();
+        for bad in [f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                export::exr(&path, size, precision, Overwrite::Confirmed, |_, _| {
+                    Ok(DVec3::new(0., 1., bad))
+                }),
+                Err(Error::NonFinitePixel { .. })
+            ));
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
     }
-    let path = directory.path().join("full.exr");
-    export::exr(
-        &path,
-        size,
-        ExrPrecision::Full,
-        Overwrite::Refuse,
-        |_, _| Ok(DVec3::splat(70000.0)),
-    )
-    .unwrap();
-    assert!(Path::new(&path).exists());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
 }

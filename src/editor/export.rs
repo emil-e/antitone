@@ -1,9 +1,12 @@
 use super::output::filename;
-pub(super) use super::output::{Collision, Kind, Outcome, Request, Summary};
+pub(super) use super::output::{Collision, Outcome, Request, Summary};
 #[cfg(test)]
 use super::output::{Input, Photo, PhotoRequest, Services, destination, numbered, require_safe};
 use super::*;
-use crate::cancellation::Cancellation;
+use crate::{
+    cancellation::Cancellation,
+    export::{FileFormat, FloatPrecision, Plan, RenderTarget},
+};
 
 #[cfg(test)]
 use std::{
@@ -157,12 +160,18 @@ impl Form {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Tiff,
+    Exr,
+}
+
 pub(super) struct Draft {
     pub scope: Scope,
     pub folder: PathBuf,
     pub kind: Kind,
     pub target: OutputTarget,
-    pub precision: ExrPrecision,
+    pub precision: FloatPrecision,
     pub suffix: String,
     pub collision: Collision,
 
@@ -176,7 +185,7 @@ impl Draft {
             folder,
             kind: Kind::Tiff,
             target,
-            precision: ExrPrecision::Half,
+            precision: FloatPrecision::Half,
             suffix: String::new(),
             collision: Collision::KeepBoth,
 
@@ -184,19 +193,23 @@ impl Draft {
         }
     }
 
-    fn output(&self) -> output::Options {
-        output::Options {
+    fn output(&self) -> Result<output::Options, Error> {
+        let target = match self.kind {
+            Kind::Tiff => RenderTarget::Display(self.target),
+            Kind::Exr => RenderTarget::SceneLinearAp0,
+        };
+        Ok(output::Options {
             folders: output::Folders::One(self.folder.clone()),
-            format: self.format(),
+            plan: Plan::new(target, self.file_format())?,
             suffix: self.suffix.clone(),
             collision: self.collision,
-        }
+        })
     }
 
-    pub fn format(&self) -> OutputFormat {
+    fn file_format(&self) -> FileFormat {
         match self.kind {
-            Kind::Tiff => OutputFormat::Tiff(self.target),
-            Kind::Exr => OutputFormat::Exr(self.precision),
+            Kind::Tiff => FileFormat::Tiff,
+            Kind::Exr => FileFormat::Exr(self.precision),
         }
     }
 }
@@ -212,7 +225,7 @@ impl Editor {
     }
 
     pub(super) fn capture_export(&self, draft: &Draft) -> Result<Request, Error> {
-        self.capture_output(&draft.output(), self.export_ids(draft.scope))
+        self.capture_output(&draft.output()?, self.export_ids(draft.scope))
     }
 }
 
@@ -314,18 +327,18 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
                 .width(ui.available_width().min(240.))
                 .truncate()
                 .selected_text(match draft.precision {
-                    ExrPrecision::Half => "Half float · 16-bit",
-                    ExrPrecision::Full => "Full float · 32-bit",
+                    FloatPrecision::Half => "Half float · 16-bit",
+                    FloatPrecision::Full => "Full float · 32-bit",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
                         &mut draft.precision,
-                        ExrPrecision::Half,
+                        FloatPrecision::Half,
                         "Half float · 16-bit",
                     );
                     ui.selectable_value(
                         &mut draft.precision,
-                        ExrPrecision::Full,
+                        FloatPrecision::Full,
                         "Full float · 32-bit",
                     );
                 })
@@ -353,7 +366,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
     if let Ok(name) = filename(
         std::path::Path::new("DSC01234.RAW"),
         &draft.suffix,
-        draft.kind,
+        draft.file_format(),
     ) {
         ui.small(format!("Example: {}", name.display()));
     }

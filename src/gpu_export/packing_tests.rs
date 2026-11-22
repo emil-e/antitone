@@ -57,7 +57,7 @@ fn readback_validation_retains_marker_priority_and_format_range_boundaries() {
                 encode_readback(OutputTarget::Srgb, vec![pixel]),
                 Err(Error::Gpu(_))
             ));
-            assert!(matches!(working_readback(vec![pixel]), Err(Error::Gpu(_))));
+            assert!(matches!(linear_readback(&pixel), Err(Error::Gpu(_))));
         }
     }
     let invalid_marker = [0.25, 0.5, 0.75, -1.];
@@ -67,7 +67,7 @@ fn readback_validation_retains_marker_priority_and_format_range_boundaries() {
         Err(Error::Gpu(_))
     ));
     assert!(matches!(
-        working_readback(vec![invalid_marker]),
+        linear_readback(&invalid_marker),
         Err(Error::Gpu(_))
     ));
     for value in [-f32::from_bits(1), f32::from_bits(1_f32.to_bits() + 1)] {
@@ -77,7 +77,11 @@ fn readback_validation_retains_marker_priority_and_format_range_boundaries() {
         ));
     }
     let scene = vec![[-0.25, 2., -0., 0.], [f32::MAX, f32::MIN_POSITIVE, 1., 0.]];
-    let actual = working_readback(scene.clone()).unwrap();
+    let actual = scene
+        .iter()
+        .map(linear_readback)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     for (pixel, expected) in actual.iter().zip(&scene) {
         for (channel, value) in pixel.to_array().into_iter().enumerate() {
             assert_eq!(value.to_bits(), f64::from(expected[channel]).to_bits());
@@ -100,7 +104,7 @@ fn invalid_readback_preserves_existing_destination_for_tiff_and_both_exr_precisi
         let mut published = false;
         let result = encode_with_checked(
             composition,
-            format,
+            format.plan(),
             (&path, Overwrite::Confirmed),
             |_, extent| {
                 assert_eq!(extent, [2, 1]);

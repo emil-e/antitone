@@ -503,10 +503,10 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
         gpu::flat::GpuFlatField,
-        gpu_export::Format,
         processing::{Calibration, InputSettings, RollSettings},
         rendering::OutputTarget,
     };
+    use authored_export::Format;
     use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
     use std::sync::Arc;
     let (device, queue, renderer) = pollster::block_on(async {

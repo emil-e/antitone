@@ -14,13 +14,12 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu_export::Format,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::Scan,
 };
-use authored_export::Request;
+use authored_export::{Format, Request};
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
 fn context() -> (

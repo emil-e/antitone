@@ -12,7 +12,7 @@ This guide teaches the workflow. It is organised by what you want to do:
 | Set up the scan: orientation, illumination, calibration | [The Roll panel](roll.md) |
 | Let Antitone find a starting grade for the roll | [Analyze](analyze.md) |
 | Grade, crop and clean up one photograph | [Grading a photograph](grading.md) |
-| Choose a look and export TIFF or EXR | [Rendering and export](rendering-and-export.md) |
+| Choose a look and export photographs | [Rendering and export](rendering-and-export.md) |
 | Understand saving and project files | [Projects and saving](projects.md) |
 | Navigate the viewer, use inspection and scopes | [The viewer](viewer.md) |
 
@@ -39,8 +39,8 @@ Antitone organises the work into three tabs, matching the order you use them:
 - **Photo** — everything about one photograph: crop and straighten, dust repair, and
   your photographic grade through ordered adjustment layers (exposure, white balance,
   contrast and saturation with global or gradient coverage).
-- **Rendering** — the creative look and the output colour space used for the preview and
-  TIFF export.
+- **Rendering** — the creative look and the display target used for the preview and
+  as the starting target for display-rendered exports.
 
 Changes in Roll affect every photograph in the project; changes in Photo affect only the
 one you are working on. Rendering is a project-wide output choice.

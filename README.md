@@ -19,7 +19,7 @@ positive first, in a scene-referred, colour-managed workflow.
 
 What that means in practice: **exposure acts like exposure, white balance acts like white
 balance.** A stop is a stop across the roll, photographs from one roll match each other
-before you touch them, and the exported TIFF is what you saw on screen.
+before you touch them, and a display-rendered export preserves the look you saw on screen.
 
 **[The user guide](guide/README.md) teaches the workflow end to end** — add scans, let
 Analyze establish the roll's starting grade, refine each photograph, export. It is written

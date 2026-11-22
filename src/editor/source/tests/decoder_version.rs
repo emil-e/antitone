@@ -273,10 +273,14 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     scan: &scan,
                     field: correction.as_ref().map(|field| field.gpu.clone()),
                     recipe: &recipe,
-                    output: crate::gpu_export::job::Output::Tiff {
-                        looks: renderer.looks(),
-                        target: renderer.drt(crate::rendering::OutputTarget::Srgb),
-                    },
+                    render: crate::gpu_export::job::Render::resolve(
+                        crate::gpu_export::authored::Format::Tiff(
+                            crate::rendering::OutputTarget::Srgb,
+                        )
+                        .plan(),
+                        || Ok::<_, Error>((renderer.looks().as_ref(), renderer.drt.clone())),
+                    )
+                    .unwrap(),
                 },
                 (&output, crate::export::Overwrite::Refuse),
                 &mut crate::dust_repair::Execution::default(),

@@ -4,6 +4,14 @@ pub(super) use super::authored_area as write;
 use super::*;
 use crate::gpu::execution::{self, SampleEncoding};
 
+pub(super) fn sample_encoding(plan: Plan) -> SampleEncoding {
+    match (plan.target(), plan.format().layout()) {
+        (RenderTarget::Display(target), Layout::Rgb16) => SampleEncoding::Rgb16(target),
+        (RenderTarget::SceneLinearAp0, Layout::Float(_)) => SampleEncoding::LinearFloat,
+        _ => unreachable!("the export plan admits only supported target and layout pairs"),
+    }
+}
+
 pub(super) fn write_calculation(
     context: &evaluation::Context,
     gpu: &crate::gpu::submission::Queue,
@@ -14,21 +22,17 @@ pub(super) fn write_calculation(
     let Request {
         definition,
         composition,
-        format,
+        plan,
     } = request;
-    let encoding = match format {
-        Format::Tiff(target) => SampleEncoding::Rgb16(target),
-        Format::Exr(_) => SampleEncoding::LinearFloat,
-    };
     execution::execute(
         context,
         gpu,
         execution::Request {
             definition,
             composition,
-            encoding,
+            encoding: sample_encoding(plan),
         },
-        |render, complete| encode_with_checked(composition, format, destination, render, complete),
+        |render, complete| encode_with_checked(composition, plan, destination, render, complete),
         check,
     )
 }

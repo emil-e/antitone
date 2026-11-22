@@ -86,7 +86,7 @@ fn export(
 ) -> Summary {
     run_export(app, draft);
     let summary = app.read(|editor| editor.document.export.summary.clone().unwrap());
-    app.update(|editor| editor.dialogs.answer_for_test("OK"));
+    app.update(|editor| editor.dialogs.answer_for_test("Done"));
     summary
 }
 

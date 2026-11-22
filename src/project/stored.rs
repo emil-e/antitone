@@ -28,26 +28,12 @@ macro_rules! fixed_field {
     };
 }
 
-impl Serialize for SchemaVersion {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        SCHEMA_VERSION.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for SchemaVersion {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        match u32::deserialize(deserializer)? {
-            // Schema 22 did not record capture times; the source field defaults to None.
-            22 | SCHEMA_VERSION => Ok(Self),
-            _ => Err(serde::de::Error::custom("unsupported project schema")),
-        }
-    }
-}
+fixed_field!(
+    SchemaVersion,
+    u32,
+    SCHEMA_VERSION,
+    "unsupported project schema"
+);
 fixed_field!(
     ProcessingModel,
     u32,
@@ -84,8 +70,7 @@ struct SourceRecord {
 #[serde(remote = "Output", deny_unknown_fields)]
 struct OutputRecord {
     contract: OutputContract,
-    tiff: TiffTarget,
-    exr: ExrPrecision,
+    display_target: crate::color::OutputTarget,
     #[serde(
         default,
         skip_serializing_if = "crate::grain::GrainSettings::is_default"

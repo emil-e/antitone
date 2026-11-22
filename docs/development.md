@@ -62,7 +62,7 @@ Justify numerical expectations independently; test exact supplied-sample seriali
 
 #### Export checks
 
-Check captured recipes, source-specific output, cold acquisition, failure continuation, collision races, atomic publication and preservation of completed files. [Original-processing comparisons](../src/gpu/execution/photographic_tests.rs) check scalar/OCIO correspondence at linear GPU readback, independently of file storage. Their negative fixture measures calibration from the authored native-camera patches; nominal sensor ratios can introduce a near-base mismatch amplified by inversion and grading. [Writer checks](../tests/gpu_export.rs) and [encoder checks](../tests/export.rs) instead verify serialization of supplied samples and colour metadata. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns those contracts; [editor](editor.md#export-photographs) owns the composed interaction.
+Check captured recipes, source-specific output, cold acquisition, failure continuation, collision races, atomic publication and preservation of completed files. [Original-processing comparisons](../src/gpu/execution/photographic_tests.rs) check scalar/OCIO correspondence at linear GPU readback, independently of file storage. Their negative fixture measures calibration from the authored native-camera patches; nominal sensor ratios can introduce a near-base mismatch amplified by inversion and grading. [Writer checks](../tests/gpu_export.rs) and [encoder checks](../tests/export.rs) instead verify serialization of supplied samples and colour metadata. [Output](colour-and-output.md#render-and-encode-a-file) owns those contracts; [editor](editor.md#export-photographs) owns the composed interaction.
 
 #### Roll analysis
 

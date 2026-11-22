@@ -1,6 +1,10 @@
 //! Captured photographic file output shared by application workflows.
 use super::*;
-use crate::{cancellation::Cancellation, export::Overwrite, image_recipe::ImageRecipe};
+use crate::{
+    cancellation::Cancellation,
+    export::{FileFormat, Overwrite, Plan},
+    image_recipe::ImageRecipe,
+};
 use std::{
     collections::HashSet,
     ops::ControlFlow,
@@ -11,7 +15,7 @@ use std::{
 pub(super) struct PhotoRequest {
     pub input: source::Context,
     pub path: PathBuf,
-    pub format: OutputFormat,
+    pub plan: Plan,
     pub recipe: ImageRecipe,
     pub overwrite: Overwrite,
 }
@@ -95,7 +99,7 @@ impl Services {
             let prepared = self
                 .prepare_photo(
                     photo,
-                    request.format,
+                    request.plan,
                     request.collision,
                     &request.protected,
                     &published,
@@ -139,7 +143,7 @@ impl Services {
     async fn prepare_photo(
         &self,
         photo: Photo,
-        format: OutputFormat,
+        plan: Plan,
         policy: Collision,
         protected: &[PathBuf],
         published: &[PathBuf],
@@ -199,7 +203,7 @@ impl Services {
         ControlFlow::Continue(PhotoRequest {
             input,
             path: photo.path,
-            format,
+            plan,
             recipe: photo.recipe,
             overwrite: if policy == Collision::Replace {
                 Overwrite::Confirmed
@@ -240,7 +244,7 @@ impl Services {
                     PhotoRequest {
                         input: photo.input.clone(),
                         path: path.clone(),
-                        format: photo.format,
+                        plan: photo.plan,
                         recipe: photo.recipe.clone(),
                         overwrite: photo.overwrite,
                     },
@@ -300,20 +304,13 @@ impl Services {
                 return Err(WriteFailure::Photo(crate::Error::Cancelled));
             }
             let scan = request.input.scan()?;
-            let targets;
-            let output = match request.format {
-                OutputFormat::Tiff(target) => {
-                    targets = self
-                        .display
-                        .targets()
-                        .map_err(WriteFailure::Infrastructure)?;
-                    crate::gpu_export::job::Output::Tiff {
-                        looks: &self.looks,
-                        target: targets.get(target),
-                    }
-                }
-                OutputFormat::Exr(precision) => crate::gpu_export::job::Output::Exr(precision),
-            };
+            let render = crate::gpu_export::job::Render::resolve(request.plan, || {
+                let targets = self
+                    .display
+                    .targets()
+                    .map_err(WriteFailure::Infrastructure)?;
+                Ok::<_, WriteFailure>((self.looks.as_ref(), targets))
+            })?;
             let stopped = || cancelled.load(Ordering::Relaxed);
             crate::gpu_export::job::write(
                 &self.evaluation,
@@ -322,7 +319,7 @@ impl Services {
                     scan: &scan,
                     field: request.input.correction.gpu()?,
                     recipe: &request.recipe,
-                    output,
+                    render,
                 },
                 (&request.path, request.overwrite),
                 &mut crate::dust_repair::Execution {
@@ -374,21 +371,6 @@ pub(super) enum Collision {
     Refuse,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
-    Tiff,
-    Exr,
-}
-
-impl Kind {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Tiff => "tif",
-            Self::Exr => "exr",
-        }
-    }
-}
-
 pub(super) enum Input {
     Ready(source::Context),
     Acquire(Box<source::Request>),
@@ -403,7 +385,7 @@ pub(super) struct Photo {
 
 pub(super) struct Request {
     pub photos: Vec<Photo>,
-    pub format: OutputFormat,
+    pub plan: Plan,
     pub collision: Collision,
     pub protected: Vec<PathBuf>,
 }
@@ -455,7 +437,7 @@ impl Summary {
     }
 }
 
-pub(super) fn filename(source: &Path, suffix: &str, kind: Kind) -> Result<PathBuf, Error> {
+pub(super) fn filename(source: &Path, suffix: &str, format: FileFormat) -> Result<PathBuf, Error> {
     if suffix
         .chars()
         .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
@@ -471,7 +453,7 @@ pub(super) fn filename(source: &Path, suffix: &str, kind: Kind) -> Result<PathBu
         .to_os_string();
     name.push(suffix);
     name.push(".");
-    name.push(kind.extension());
+    name.push(format.extension());
     Ok(PathBuf::from(name))
 }
 
@@ -550,25 +532,18 @@ pub(super) enum Folders {
 
 pub(super) struct Options {
     pub folders: Folders,
-    pub format: OutputFormat,
+    pub plan: Plan,
     pub suffix: String,
     pub collision: Collision,
 }
 
 impl Options {
-    pub fn new(target: OutputTarget, folders: Folders) -> Self {
+    pub fn new(plan: Plan, folders: Folders) -> Self {
         Self {
             folders,
-            format: OutputFormat::Tiff(target),
+            plan,
             suffix: String::new(),
             collision: Collision::KeepBoth,
-        }
-    }
-
-    fn kind(&self) -> Kind {
-        match self.format {
-            OutputFormat::Tiff(_) => Kind::Tiff,
-            OutputFormat::Exr(_) => Kind::Exr,
         }
     }
 }
@@ -619,7 +594,11 @@ impl Editor {
                     "choose an existing destination folder",
                 ));
             }
-            let base = folder.join(filename(&source_path, &options.suffix, options.kind())?);
+            let base = folder.join(filename(
+                &source_path,
+                &options.suffix,
+                options.plan.format(),
+            )?);
             // Duplicate basenames must never replace an earlier file from this batch.
             let mut path = base.clone();
             let mut number = 2;
@@ -648,7 +627,7 @@ impl Editor {
         }
         Ok(Request {
             photos,
-            format: options.format,
+            plan: options.plan,
             collision: options.collision,
             protected,
         })

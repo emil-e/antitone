@@ -168,11 +168,7 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
     stage(harness, "Rendering");
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         select_target(harness, target);
-        project.output.tiff = if target == OutputTarget::Srgb {
-            crate::project::TiffTarget::Srgb
-        } else {
-            crate::project::TiffTarget::DisplayP3
-        };
+        project.output.display_target = target;
         super::workflow::wait_settled(harness);
         harness.read(|editor| {
             let view = editor

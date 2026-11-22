@@ -42,8 +42,8 @@ During the Auto-crop draft the viewed frame is the uncropped oriented source, se
 
 Nonlinear processing does not commute with averaging: averaging two negative samples and then inverting them generally gives a different result from inverting each and averaging the positives. The same issue applies to display rendering:
 
-- Original-sample tool reconstruction and TIFF process/render original pixels first, then average **linear target RGB**, before output encoding.
-- EXR averages the signed/HDR working positives and converts to AP0, without display rendering.
+- Display-referred export and original-sample display reconstruction render original pixels first, then average **linear target RGB** before output encoding.
+- Scene-linear export averages the signed/HDR working positives and converts to AP0, without display rendering.
 
 A destination pixel inverse-maps to a source footprint, and exact intersection areas provide its reconstruction weights. Exact turns and integer framing retain simple permutation/rectangular paths; arbitrary-angle framing uses polygon coverage. Full-resolution export computes straightened footprints from absolute output indices and packs whole source cells separately from fractional offsets. The source window limits which cells are read; moving its origin does not change the footprint weights.
 

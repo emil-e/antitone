@@ -76,7 +76,7 @@ fn exr_size(path: &Path) -> [usize; 2] {
 #[test]
 fn filenames_preserve_dotted_stems_and_do_not_accept_path_injection() {
     assert_eq!(
-        filename(Path::new("frame.v2.DNG"), "_positive", Kind::Tiff).unwrap(),
+        filename(Path::new("frame.v2.DNG"), "_positive", FileFormat::Tiff).unwrap(),
         PathBuf::from("frame.v2_positive.tif")
     );
     assert_eq!(
@@ -84,7 +84,14 @@ fn filenames_preserve_dotted_stems_and_do_not_accept_path_injection() {
         PathBuf::from("frame.v2 (2).exr")
     );
     for suffix in ["/escape", "\\escape", ":escape", "\n"] {
-        assert!(filename(Path::new("frame.dng"), suffix, Kind::Exr).is_err());
+        assert!(
+            filename(
+                Path::new("frame.dng"),
+                suffix,
+                FileFormat::Exr(FloatPrecision::Half)
+            )
+            .is_err()
+        );
     }
 }
 

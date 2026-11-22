@@ -1,12 +1,11 @@
 use super::*;
-use authored_export::Request;
+use authored_export::{Format, Request};
 #[path = "../support/working_precision.rs"]
 mod working_precision;
 use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu_export::Format,
     processing::{Calibration, InputSettings},
     rendering::OutputTarget,
 };

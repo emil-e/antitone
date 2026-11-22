@@ -44,7 +44,7 @@ impl Editor {
         Ok(Some(PhotoRequest {
             input: self.source_context().expect("ready export source"),
             path,
-            format,
+            plan: format.plan(),
             recipe,
             overwrite,
         }))
@@ -98,7 +98,7 @@ impl Editor {
                     recipe: request.recipe,
                     path: request.path,
                 }],
-                format,
+                plan: request.plan,
                 collision: if matches!(overwrite, Overwrite::Confirmed) {
                     Collision::Replace
                 } else {
@@ -553,7 +553,7 @@ fn successful_export_does_not_dismiss_the_unread_failure_and_summary() {
                 editor.dialogs.is_open() && editor.dialogs.message().is_none(),
                 "successful export summary needs its own acknowledgement"
             );
-            editor.dialogs.answer_for_test("OK");
+            editor.dialogs.answer_for_test("Done");
             assert!(!editor.dialogs.is_open());
         });
         verify_tiff(&path);

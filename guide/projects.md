@@ -25,7 +25,7 @@ move them together with the project.
 | Your RAW scans | Their original location, untouched |
 | Calibration, grades, crops, dust repairs | The `.antitone` project |
 | The creative look | Embedded in the project (saved appearance doesn't depend on the LUT file's path) |
-| Exported TIFF/EXR | The folders you exported to |
+| Exported photographs | The folders you exported to |
 
 Dust repairs are part of the project and apply consistently to views, thumbnails and
 exports.

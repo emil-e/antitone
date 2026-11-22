@@ -44,7 +44,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
                     scan: &scan,
                     field: None,
                     recipe,
-                    output: fixture_output(format, &renderer),
+                    render: fixture_render(format, &renderer),
                 },
                 (path, Overwrite::Refuse),
                 &mut Execution::default(),

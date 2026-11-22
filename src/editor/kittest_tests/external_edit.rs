@@ -48,7 +48,7 @@ impl external::Destination for HostDestination {
         target: OutputTarget,
     ) -> Result<crate::editor::output::Options, Error> {
         Ok(crate::editor::output::Options::new(
-            target,
+            OutputFormat::Tiff(target).plan(),
             output::Folders::One(self.folder.clone()),
         ))
     }

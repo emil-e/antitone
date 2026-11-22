@@ -30,7 +30,7 @@ fn codecs_emit_compressed_data_before_requesting_later_bands_and_preserve_produc
         let error = stream::tiff(
             &mut file,
             size,
-            OutputTarget::Srgb,
+            crate::profiles::icc(OutputTarget::Srgb),
             order,
             &mut |origin, extent| {
                 visited += 1;
@@ -50,31 +50,38 @@ fn codecs_emit_compressed_data_before_requesting_later_bands_and_preserve_produc
         assert!(matches!(error, Error::Cancelled));
         assert!(visited > 1);
     }
-    for precision in [ExrPrecision::Half, ExrPrecision::Full] {
+    fn check_exr<T: stream::FloatSample>(size: ImageSize, sample: impl Fn(u16) -> T) {
         let mut file = tempfile::tempfile().unwrap();
         let observer = file.try_clone().unwrap();
-        let error = stream::exr(&mut file, size, precision, &mut |origin, extent| {
-            if origin[1] >= 128 {
-                assert!(
-                    observer.metadata().unwrap().len() > 32768,
-                    "completed ZIP16 chunks must precede the next input band"
-                );
-                return Err(Error::Cancelled);
-            }
-            Ok((origin[1]..origin[1] + extent[1])
-                .flat_map(|y| {
-                    (origin[0]..origin[0] + extent[0]).map(move |x| {
-                        DVec3::from_array(noise(x, y).map(|v| f64::from(v) / 4096. - 4.))
+        let error = stream::exr(
+            &mut file,
+            size,
+            codec::ap0_metadata(),
+            &mut |origin, extent| {
+                if origin[1] >= 128 {
+                    assert!(
+                        observer.metadata().unwrap().len() > 32768,
+                        "completed ZIP16 chunks must precede the next input band"
+                    );
+                    return Err(Error::Cancelled);
+                }
+                Ok((origin[1]..origin[1] + extent[1])
+                    .flat_map(|y| {
+                        let sample = &sample;
+                        (origin[0]..origin[0] + extent[0]).map(move |x| noise(x, y).map(sample))
                     })
-                })
-                .collect())
-        })
+                    .collect())
+            },
+        )
         .unwrap_err();
         assert!(
             matches!(error, Error::Cancelled),
             "producer errors must survive the EXR callback boundary"
         );
     }
+
+    check_exr(size, |v| half::f16::from_f32(f32::from(v) / 4096. - 4.));
+    check_exr(size, |v| f32::from(v) / 4096. - 4.);
 }
 
 #[test]

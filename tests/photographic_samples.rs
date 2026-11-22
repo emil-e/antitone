@@ -21,12 +21,11 @@ use antitone::{
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
     gpu::flat::GpuFlatField,
-    gpu_export::Format,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::Scan,
 };
-use authored_export::Request;
+use authored_export::{Format, Request};
 use glam::DVec3;
 use std::{
     path::{Path, PathBuf},

@@ -680,16 +680,34 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
 }
 
 #[test]
+fn project_persists_display_target_without_codec_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, _, _) = fixture(dir.path());
+    project.output.display_target = antitone::color::OutputTarget::Srgb;
+
+    let value = serde_json::to_value(&project).unwrap();
+    let output = value["output"].as_object().unwrap();
+    assert_eq!(output["display_target"], "srgb");
+    assert!(!output.contains_key("tiff"));
+    assert!(!output.contains_key("exr"));
+    let restored: Project = serde_json::from_value(value).unwrap();
+    assert_eq!(restored, project);
+}
+
+#[test]
 fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     let dir = tempfile::tempdir().unwrap();
     let (project, _, _) = fixture(dir.path());
-    assert_eq!(project.output.tiff, TiffTarget::DisplayP3);
+    assert_eq!(
+        project.output.display_target,
+        antitone::color::OutputTarget::DisplayP3
+    );
     let mut value = serde_json::to_value(&project).unwrap();
-    assert_eq!(value["output"]["tiff"], "display_p3");
-    value["output"]["tiff"] = "pro_photo".into();
+    assert_eq!(value["output"]["display_target"], "display_p3");
+    value["output"]["display_target"] = "pro_photo".into();
     assert!(serde_json::from_value::<Project>(value).is_err());
     let path = dir.path().join("legacy.antitone.json");
-    for schema in 1..22 {
+    for schema in 1..antitone::project::SCHEMA_VERSION {
         let mut legacy = serde_json::to_value(&project).unwrap();
         legacy["schema"] = schema.into();
         assert!(serde_json::from_value::<Project>(legacy.clone()).is_err());
@@ -704,7 +722,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
 }
 
 #[test]
-fn project_round_trips_custom_order_and_capture_time_and_opens_schema_22() {
+fn project_round_trips_custom_order_and_optional_capture_time() {
     let dir = tempfile::tempdir().unwrap();
     let (mut project, _, _) = fixture(dir.path());
     let id = project.order[0];
@@ -721,11 +739,10 @@ fn project_round_trips_custom_order_and_capture_time_and_opens_schema_22() {
         .as_object_mut()
         .unwrap()
         .remove("capture_time");
-    stored["schema"] = 22.into();
-    let legacy: Project = serde_json::from_value(stored).unwrap();
-    assert_eq!(legacy.order, project.order);
+    let reopened: Project = serde_json::from_value(stored).unwrap();
+    assert_eq!(reopened.order, project.order);
     assert!(
-        legacy
+        reopened
             .sources
             .iter()
             .all(|source| source.capture_time.is_none())
