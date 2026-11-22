@@ -6,13 +6,13 @@ use crate::{
     Error,
     export::{self, ExrPrecision, ImageSize, Overwrite},
     geometry::Composition,
-    renderer::GpuRenderer,
     rendering::OutputTarget,
 };
 #[cfg(test)]
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},
+    renderer::GpuRenderer,
     scan::Scan,
 };
 use glam::{DVec3, Vec3};
@@ -26,7 +26,7 @@ pub(crate) mod authored;
 pub(crate) mod job;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 mod native_resources;
-use crate::gpu::{execution::OutputBlock, rgb16};
+use crate::gpu::{evaluation, execution::OutputBlock, rgb16};
 
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod observation_clock;
@@ -47,45 +47,32 @@ pub enum Format {
 
 /// An authored original-cell calculation in its chosen linear output representation.
 pub struct Request {
-    pub definition: crate::gpu::evaluation::Value,
+    pub definition: evaluation::Value,
     pub composition: Composition,
     pub format: Format,
 }
 
 /// Render, reconstruct and encode an already captured calculation.
 pub fn write(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
+    context: &evaluation::Context,
     gpu: &crate::gpu::submission::Queue,
     request: Request,
     path: &Path,
     overwrite: Overwrite,
 ) -> Result<(), Error> {
-    write_checked(renderer, device, gpu, request, path, overwrite, || Ok(()))
+    write_checked(context, gpu, request, path, overwrite, || Ok(()))
 }
 
 /// Execute with cooperative stop checks before bounded work and destination publication.
-#[allow(clippy::too_many_arguments)]
 pub fn write_checked(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
+    context: &evaluation::Context,
     gpu: &crate::gpu::submission::Queue,
     request: Request,
     path: &Path,
     overwrite: Overwrite,
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<(), Error> {
-    area::write_calculation(
-        renderer,
-        device,
-        gpu,
-        request.definition,
-        request.composition,
-        request.format,
-        (path, overwrite),
-        check,
-    )
-    .map(|_| ())
+    area::write_calculation(context, gpu, request, (path, overwrite), check).map(|_| ())
 }
 
 #[cfg(test)]
@@ -98,16 +85,7 @@ fn authored_area(
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<crate::gpu::execution::Stats, Error> {
     let request = request.calculation(renderer, device)?;
-    area::write_calculation(
-        renderer,
-        device,
-        gpu,
-        request.definition,
-        request.composition,
-        request.format,
-        destination,
-        check,
-    )
+    area::write_calculation(renderer.evaluation(), gpu, request, destination, check)
 }
 
 fn default_order(composition: Composition) -> export::BlockOrder {

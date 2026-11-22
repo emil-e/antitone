@@ -87,8 +87,7 @@ fn native(
     let size = [area.width, area.height];
     let mut result = vec![[0.; 4]; (size[0] * size[1]) as usize];
     crate::gpu::execution::execute(
-        renderer,
-        device,
+        renderer.evaluation(),
         queue,
         crate::gpu::execution::test_support::OriginalControls {
             scan,

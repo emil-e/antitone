@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::execution::test_support::OutputReference;
+use crate::renderer::GpuRenderer;
 use std::sync::Arc;
 
 use crate::gpu::execution::test_support::OriginalControls as Request;
@@ -14,8 +15,7 @@ fn execute(
 ) -> Result<Stats, Error> {
     check()?;
     super::execute(
-        renderer,
-        device,
+        renderer.evaluation(),
         gpu,
         request.lower(device, renderer)?,
         sink,

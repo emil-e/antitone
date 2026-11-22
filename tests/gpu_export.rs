@@ -9,7 +9,6 @@ use antitone::{
     geometry::Composition,
     gpu::evaluation::{self, CellRegion, Domain, Grid, Source},
     gpu_export::{Format, Request},
-    renderer::GpuRenderer,
     rendering::OutputTarget,
 };
 use glam::DVec3;
@@ -36,11 +35,7 @@ impl Source for Linear {
     }
 }
 
-fn context() -> (
-    wgpu::Device,
-    antitone::gpu::submission::Queue,
-    Arc<GpuRenderer>,
-) {
+fn context() -> (evaluation::Context, antitone::gpu::submission::Queue) {
     pollster::block_on(async {
         let adapter = antitone::gpu::instance()
             .request_adapter(&Default::default())
@@ -50,8 +45,7 @@ fn context() -> (
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
-        (device, queue, renderer)
+        (evaluation::Context::new(&device, Default::default()), queue)
     })
 }
 
@@ -74,7 +68,7 @@ fn tiff(path: &Path) -> Vec<u16> {
 
 #[test]
 fn file_writer_executes_already_authored_linear_nodes_without_photographic_reinterpretation() {
-    let (device, queue, renderer) = context();
+    let (context, queue) = context();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("authored.tif");
     let request = |gain: f32| Request {
@@ -86,21 +80,13 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
     };
     // Below the sRGB knee, transfer is exactly 12.92*x, followed by nearest RGB16.
     for (gain, expected) in [(1., [847, 1693, 2540]), (0.5, [423, 847, 1270])] {
-        antitone::gpu_export::write(
-            &renderer,
-            &device,
-            &queue,
-            request(gain),
-            &path,
-            Overwrite::Confirmed,
-        )
-        .unwrap();
+        antitone::gpu_export::write(&context, &queue, request(gain), &path, Overwrite::Confirmed)
+            .unwrap();
         assert_eq!(tiff(&path), expected.repeat(2));
     }
     let published = std::fs::read(&path).unwrap();
     let stopped = antitone::gpu_export::write_checked(
-        &renderer,
-        &device,
+        &context,
         &queue,
         request(1.),
         &path,
@@ -115,7 +101,7 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
 fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precision() {
     use exr::prelude::{FlatSamples, Vec2, read_first_flat_layer_from_file};
 
-    let (device, queue, renderer) = context();
+    let (context, queue) = context();
     let directory = tempfile::tempdir().unwrap();
     // Basis colours expose a missing/doubled matrix or channel permutation;
     // signed/HDR and non-half-exact values expose clipping or premature packing.
@@ -131,8 +117,7 @@ fn exr_writer_converts_supplied_ap1_to_ap0_and_preserves_declared_storage_precis
     for precision in [ExrPrecision::Half, ExrPrecision::Full] {
         let path = directory.path().join(format!("{precision:?}.exr"));
         antitone::gpu_export::write(
-            &renderer,
-            &device,
+            &context,
             &queue,
             Request {
                 definition: evaluation::source(Arc::new(Linear {

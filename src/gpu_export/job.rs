@@ -1,7 +1,7 @@
 //! Immutable, source-validated preparation for the shared TIFF/EXR engine.
 use super::*;
-use crate::gpu::flat::GpuFlatField;
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
+use crate::{gpu::flat::GpuFlatField, renderer::GpuRenderer};
 
 pub(crate) struct Job<'a> {
     pub scan: &'a Scan,
@@ -43,12 +43,13 @@ pub(crate) fn write(
         Format::Exr(_) => pipeline.processed(&limits),
     }?;
     super::area::write_calculation(
-        renderer,
-        device,
+        renderer.evaluation(),
         gpu,
-        definition,
-        recipe.composition,
-        job.format,
+        Request {
+            definition,
+            composition: recipe.composition,
+            format: job.format,
+        },
         destination,
         check,
     )

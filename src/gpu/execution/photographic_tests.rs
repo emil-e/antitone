@@ -132,8 +132,7 @@ fn capture(
     let request = controls.lower(device, renderer).unwrap();
     let mut pixels = vec![[f32::NAN; 4]; (size[0] * size[1]) as usize];
     execute(
-        renderer,
-        device,
+        renderer.evaluation(),
         queue,
         request,
         |render, complete| {

@@ -110,8 +110,7 @@ fn native_output_resources() {
                     _ => photograph.processed,
                 };
                 return execution::execute(
-                    &renderer,
-                    &device,
+                    renderer.evaluation(),
                     &queue,
                     execution::Request {
                         definition,

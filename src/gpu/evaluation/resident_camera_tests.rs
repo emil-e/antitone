@@ -415,7 +415,7 @@ fn resident_camera_execution_resources() {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let prepared = if common {
                     crate::gpu::execution::raster::Request::new(&source, &input, Some(&plan),raster.size())
-                        .encode(&renderer, device, &mut encoder, &output)
+                        .encode(renderer.evaluation(), &mut encoder, &output)
                         .unwrap()
                 } else {
                     let prepared = crate::gpu::recorded_image::Prepared::with_context(

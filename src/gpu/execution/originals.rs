@@ -5,7 +5,7 @@ use crate::gpu::evaluation;
 use crate::gpu::rgb16;
 #[cfg(all(test, target_os = "macos"))]
 use crate::scan::Scan;
-use crate::{Error, renderer::GpuRenderer, rendering::OutputTarget};
+use crate::{Error, rendering::OutputTarget};
 
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
@@ -300,8 +300,7 @@ pub(crate) struct Stats {
 pub(crate) struct Stats {}
 
 pub(crate) fn execute(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
+    context: &evaluation::Context,
     queue: &crate::gpu::submission::Queue,
     request: Request,
     sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
@@ -315,6 +314,7 @@ pub(crate) fn execute(
             "original calculation and output source grid differ",
         ));
     }
+    let device = context.device();
     let checks = std::cell::RefCell::new(check);
     let check = || (checks.borrow_mut())();
     #[cfg(all(test, target_os = "macos"))]
@@ -339,7 +339,7 @@ pub(crate) fn execute(
         },
     };
     let root = evaluation::reconstruct_complete(original, domain)?;
-    let mut executor = renderer.evaluation.executor();
+    let mut executor = context.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
         look_payload_bytes,
@@ -369,8 +369,7 @@ pub(crate) fn execute(
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(
                 CoveragePlan,
-                renderer
-                    .evaluation
+                context
                     .request(
                         root.clone(),
                         evaluation::Region {
@@ -396,7 +395,7 @@ pub(crate) fn execute(
             }
             let interrupted = std::cell::RefCell::new(None);
             let receiver = std::cell::RefCell::new(None);
-            let executed = renderer.evaluation.run_sink(
+            let executed = context.run_sink(
                 &mut executor,
                 queue,
                 &plan,
