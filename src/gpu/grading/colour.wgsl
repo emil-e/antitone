@@ -55,8 +55,21 @@ fn colour_tone(x: f32, da: f32, pivot: f32) -> f32 {
     return colour_decode(z);
 }
 
+fn tonal_exposure(rgb: array<f32, 3>, shadows_ev: f32, highlights_ev: f32) -> f32 {
+    if shadows_ev == 0.0 && highlights_ev == 0.0 {
+        return 0.0;
+    }
+    let y = dot(adjustment_layer_context.ap1_luminance, vec3f(rgb[0], rgb[1], rgb[2]));
+    let distance =
+        (colour_encode(max(y, 0.0)) - adjustment_layer_context.encoded_middle_grey) * COLOUR_SCALE
+        * adjustment_layer_context.inverse_tonal_width;
+    let amount = select(highlights_ev, shadows_ev, distance < 0.0);
+    let t = abs(distance) * inverseSqrt(1.0 + distance * distance);
+    return amount * (t * t * (3.0 - 2.0 * t));
+}
+
 fn colour_oklab_roots(rgb: array<f32, 3>) -> vec3f {
-    let cones = matrix_product(adjustment_layer_context.oklab_cones.columns, rgb);
+    let cones = matrix_product(adjustment_layer_context.ap1_to_oklab_lms.columns, rgb);
     let lms = vec3f(cones[0], cones[1], cones[2]);
     return sign(lms) * pow(abs(lms), vec3f(1.0 / 3.0));
 }
@@ -64,12 +77,13 @@ fn colour_oklab_roots(rgb: array<f32, 3>) -> vec3f {
 fn colour_preserve(original: array<f32, 3>, after: vec3f, amount: f32) -> vec3f {
     let difference = colour_oklab_roots(original) - after;
     // Inverse OKLab's L column is (1,1,1): subtract only that component of the difference.
-    let lightness = dot(adjustment_layer_context.oklab_lightness.xyz, difference);
+    let lightness = dot(adjustment_layer_context.oklab_lightness, difference);
     return fma(vec3f(amount), difference - vec3f(lightness), after);
 }
 
 fn colour_apply(
     input: array<f32, 3>,
+    tonal_ev: f32,
     da: f32,
     pivot: f32,
     colour: f32,
@@ -77,12 +91,18 @@ fn colour_apply(
     vibrance: f32,
 ) -> array<f32, 3> {
     var rgb = input;
+    if tonal_ev != 0.0 {
+        let gain = exp2(tonal_ev);
+        for(var c = 0u; c < 3u; c++) {
+            rgb[c] = photographic_finite(rgb[c] * gain);
+        }
+    }
     if da != 0.0 {
         for(var c = 0u; c < 3u; c++) {
             rgb[c] = colour_tone(rgb[c], da, pivot);
         }
     }
-    let preserve = da != 0.0 && colour != 0.0;
+    let preserve = (tonal_ev != 0.0 || da != 0.0) && colour != 0.0;
     if (!preserve && ds == 0.0 && vibrance == 0.0)
         || (input[0] == input[1] && input[1] == input[2]) {
         return rgb;
@@ -95,7 +115,7 @@ fn colour_apply(
     }
     var adjusted = roots;
     if ds != 0.0 || vibrance != 0.0 {
-        let lightness = dot(adjustment_layer_context.oklab_lightness.xyz, roots);
+        let lightness = dot(adjustment_layer_context.oklab_lightness, roots);
         var gain = 1.0 + ds;
         if vibrance != 0.0 {
             let a = dot(vec3f(1.977998539071675, -2.4285922502018127, 0.4505937111301374), roots);
@@ -116,5 +136,5 @@ fn colour_apply(
     for(var c = 0u; c < 3u; c++) {
         cubes[c] = photographic_finite(adjusted[c] * adjusted[c] * adjusted[c]);
     }
-    return matrix_product(adjustment_layer_context.oklab_inverse.columns, cubes);
+    return matrix_product(adjustment_layer_context.oklab_lms_to_ap1.columns, cubes);
 }

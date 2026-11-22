@@ -2,7 +2,7 @@
 //! Positive branches follow https://docs.acescentral.com/encodings/acescc/.
 
 pub(super) const FOOT: f64 = 1. / 32768.;
-const SCALE: f64 = 17.52;
+pub(super) const SCALE: f64 = 17.52;
 const LOG_SCALE: f64 = SCALE * std::f64::consts::LN_2;
 const SLOPE: f64 = 1. / (FOOT * LOG_SCALE);
 const CUT: f64 = 1. / SCALE;

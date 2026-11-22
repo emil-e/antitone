@@ -153,9 +153,11 @@ fn delete_selected(harness: &mut Harness<'_, Editor>) {
 #[test]
 fn photographic_rows_keep_their_ranges_and_reset_only_the_edited_value() {
     type SetValue = fn(&mut AdjustmentLayerSettings, f64);
-    let cases: [(&str, [f64; 2], f64, SetValue); 5] = [
-        ("Contrast", [0.4, 1.6], 1., |p, v| p.contrast = v),
+    let cases: [(&str, [f64; 2], f64, SetValue); 7] = [
+        ("Contrast", [0.4, 2.], 1., |p, v| p.contrast = v),
         ("Pivot", [0.01, 1.], 0.18, |p, v| p.pivot = v),
+        ("Shadows", [-3., 3.], 0., |p, v| p.shadows = v),
+        ("Highlights", [-3., 3.], 0., |p, v| p.highlights = v),
         ("Preserve", [0., 1.], 0., |p, v| p.contrast_colour_mix = v),
         ("Saturation", [0., 2.], 1., |p, v| p.saturation = v),
         ("Vibrance", [-1., 1.], 0., |p, v| p.vibrance = v),

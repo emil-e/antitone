@@ -307,6 +307,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 contrast_colour_mix: [0., 0.432156, 1.][case % 3],
                 saturation: [0., 0.71234567, 2.][case % 3],
                 vibrance: [-1., 0.21345678, 1.][case / 3 % 3],
+                ..Default::default()
             };
             let mut local = adjustment(mask, photo);
             local.invert = case % 4 == 0;

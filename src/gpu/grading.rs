@@ -1,39 +1,63 @@
 mod graph;
 #[cfg(all(test, feature = "editor"))]
 mod graph_tests;
+#[cfg(test)]
+mod layout_tests;
 
 use crate::gpu::{
-    parameters::{CameraMatrix, ProcessingParameters, packed_constants},
+    parameters::{CameraMatrix, ProcessingParameters},
     source::SourceGeometry,
 };
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
-    color::{Balance, ap1_to_cones, oklab},
+    color::{AP1_TO_XYZ, Balance, ap1_to_cones, oklab},
     geometry::SourceRegion,
-    photographic::Grade,
+    photographic::{Grade, TONAL_WIDTH, encoded_grey},
     processing::RollSettings,
 };
 use bytemuck::Zeroable;
-use glam::{DVec2, DVec3, Vec4};
+use glam::{DVec2, Vec2, Vec3};
 
-#[repr(C)]
+// Host layouts for grading/bindings.wgsl; shader layout tests check the member offsets.
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct AdjustmentLayerParameters {
-    values: [Vec4; 5],
-    flags: [u32; 4],
+    mask_origin: Vec2,
+    mask_x_axis: Vec2,
+    mask_y_axis: Vec2,
+    mask_radii: Vec2,
+    wb_log_cone_offsets: Vec3,
+    log_exposure_gain: f32,
+    mask_feather: f32,
+    strength: f32,
+    contrast: f32,
+    encoded_pivot: f32,
+    preserve: f32,
+    saturation: f32,
+    vibrance: f32,
+    shadows_ev: f32,
+    highlights_ev: f32,
+    mask_kind: u32,
+    invert_mask: u32,
+    has_wb: u32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct AdjustmentLayerContext {
-    cones: CameraMatrix,
-    inverse: CameraMatrix,
-    oklab_cones: CameraMatrix,
-    oklab_inverse: CameraMatrix,
-    oklab_lightness: Vec4,
-    area: [u32; 4],
-    count: [u32; 4],
+    ap1_to_bradford: CameraMatrix,
+    bradford_to_ap1: CameraMatrix,
+    ap1_to_oklab_lms: CameraMatrix,
+    oklab_lms_to_ap1: CameraMatrix,
+    oklab_lightness: Vec3,
+    inverse_tonal_width: f32,
+    ap1_luminance: Vec3,
+    encoded_middle_grey: f32,
+    source_origin: [u32; 2],
+    source_extent: [u32; 2],
+    layer_count: u32,
+    _padding: [u32; 3],
 }
 
 /// Prepared Roll/layer controls and image operations, independent of source interpretation.
@@ -73,7 +97,7 @@ impl Grading {
         let packed = prepare_layers(limits, &snapshot, area)?;
         let active = snapshot.layers().iter().filter(|a| a.is_active()).count() as u32;
         let layers = bytemuck::cast_slice(&packed).into();
-        let context = context_parameters(active, [area.x, area.y, area.width, area.height])?;
+        let context = context_parameters(active, area)?;
         let spatial = snapshot
             .layers()
             .iter()
@@ -252,48 +276,55 @@ impl AdjustmentLayerParameters {
             supported(delta.dot(axis.abs()))?;
             supported(delta.dot(axis.abs()) / radius)?;
         }
-        let offsets = adjustment.photo.wb.offsets()?;
-        let qp = Grade::new(adjustment.photo)?.qp;
-        let rows = [
-            [origin.x, origin.y, x_axis.x, x_axis.y],
-            [y_axis.x, y_axis.y, feather, adjustment.strength],
-            [
-                adjustment.photo.exposure * std::f64::consts::LN_2,
-                offsets.x,
-                offsets.y,
-                offsets.z,
-            ],
-            [
-                adjustment.photo.contrast,
-                qp,
-                adjustment.photo.contrast_colour_mix,
-                adjustment.photo.saturation,
-            ],
-            [adjustment.photo.vibrance, radii[0], radii[1], 0.],
-        ];
-        let mut result = Self::zeroed();
-        for (i, row) in rows.into_iter().enumerate() {
-            result.values[i] = packed_constants(DVec3::new(row[0], row[1], row[2]), row[3])?;
+        let mask_radii = DVec2::from_array(radii).as_vec2();
+        if !mask_radii.is_finite() {
+            return Err(Error::Gpu(
+                "adjustment mask radii exceed the f32 range".into(),
+            ));
         }
-        result.flags = [
-            kind,
-            u32::from(adjustment.invert),
-            u32::from(adjustment.photo.wb != Balance::default()),
-            0,
-        ];
-        Ok(result)
+
+        let photo = adjustment.photo;
+        let grade = Grade::new(photo)?;
+        Ok(Self {
+            mask_origin: origin.as_vec2(),
+            mask_x_axis: x_axis.as_vec2(),
+            mask_y_axis: y_axis.as_vec2(),
+            mask_radii,
+            wb_log_cone_offsets: photo.wb.offsets()?.as_vec3(),
+            log_exposure_gain: (photo.exposure * std::f64::consts::LN_2) as f32,
+            mask_feather: feather as f32,
+            strength: adjustment.strength as f32,
+            contrast: photo.contrast as f32,
+            encoded_pivot: grade.qp as f32,
+            preserve: photo.contrast_colour_mix as f32,
+            saturation: photo.saturation as f32,
+            vibrance: photo.vibrance as f32,
+            shadows_ev: photo.shadows as f32,
+            highlights_ev: photo.highlights as f32,
+            mask_kind: kind,
+            invert_mask: u32::from(adjustment.invert),
+            has_wb: u32::from(photo.wb != Balance::default()),
+        })
     }
 }
 
-fn context_parameters(count: u32, area: [u32; 4]) -> Result<AdjustmentLayerContext, Error> {
+fn context_parameters(
+    layer_count: u32,
+    area: SourceRegion,
+) -> Result<AdjustmentLayerContext, Error> {
     let cones = ap1_to_cones();
     Ok(AdjustmentLayerContext {
-        cones: CameraMatrix::new(cones)?,
-        inverse: CameraMatrix::new(cones.inverse())?,
-        oklab_cones: CameraMatrix::new(*oklab::AP1_TO_LMS)?,
-        oklab_inverse: CameraMatrix::new(*oklab::LMS_TO_AP1)?,
-        oklab_lightness: oklab::LIGHTNESS.as_vec3().extend(0.),
-        area,
-        count: [count, 0, 0, 0],
+        ap1_to_bradford: CameraMatrix::new(cones)?,
+        bradford_to_ap1: CameraMatrix::new(cones.inverse())?,
+        ap1_to_oklab_lms: CameraMatrix::new(*oklab::AP1_TO_LMS)?,
+        oklab_lms_to_ap1: CameraMatrix::new(*oklab::LMS_TO_AP1)?,
+        oklab_lightness: oklab::LIGHTNESS.as_vec3(),
+        inverse_tonal_width: 1. / TONAL_WIDTH as f32,
+        ap1_luminance: AP1_TO_XYZ.row(1).as_vec3(),
+        encoded_middle_grey: encoded_grey() as f32,
+        source_origin: [area.x, area.y],
+        source_extent: [area.width, area.height],
+        layer_count,
+        _padding: [0; 3],
     })
 }

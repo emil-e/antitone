@@ -11,7 +11,7 @@ developed camera RGB
   → camera-to-AP1 conversion, including fixed Digital brightness normalization
   → normalized, ungraded working positive (optional source-owned dust repair here)
   → Roll exposure and photographic white balance
-  → ordered adjustment layers: exposure, white balance, contrast and saturation
+  → ordered adjustment layers: exposure, white balance, tone and saturation
   → optional emulation: image MTF → halation → grain
   → working positive, ready for rendering or EXR
 ```
@@ -94,7 +94,7 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 
 The **Gamma & balance** eyedropper estimates relative channel gammas from the log attenuation of the area's mean corrected camera light relative to Dmin. It then inverts the individual original samples with that candidate balance and the measured Dmin and Dmax, and fits a replacement Roll WB to make the area's mean neutral in AP1 before Photo grading. Both fits must succeed for the editor to accept one undoable edit. The inferred Dmax in the readout is a diagnostic, not an inversion anchor. One patch constrains its own colour, not neutrality at other densities.
 
-Standalone WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
+Standalone WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its tone and saturation controls, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
 
 ### Picked-colour gamma pivot
 
@@ -146,19 +146,21 @@ Execution acquires enclosing source windows or aligned view slices with real-edg
 
 A [run](../src/gpu/evaluation/working.rs) owns deduplicated physical resources through GPU completion. GPU-only submissions can overlap within a bounded queue; CPU readback and worker completion wait for required work. Cancellation and unwinding preserve completion-owned cleanup. Active storage follows outputs, state, phase inputs and outstanding submissions rather than an application byte allowance. Its size still depends on source dimensions and declared support: cache limits control optional retention, not total GPU memory.
 
-### Photo contrast and saturation
+### Photo tone and saturation
+
+Shadows and Highlights apply one exposure gain per pixel before Contrast. AP1 luminance in the Contrast ACEScc coordinate selects the side of fixed middle grey (0.18), independently of Pivot. Each slider acts only on its side of grey. Its offset starts at zero with zero slope and grows toward the set EV without a hard cutoff. Zero is identity, and the gain leaves black at zero and retains RGB ratios and signed channel values.
 
 Contrast scales an ACEScc coordinate around a pivot. Nonnegative inputs use the published encoding; negative inputs follow its tangent at zero, with matching inverse decoding and no interchange ceiling. This signed extension retains negative working values; reducing contrast still lifts black.
 
-Preserve blends contrasted OKLab a/b toward the original a/b while retaining contrasted L. AP1/D60 is Bradford-adapted to D65 for OKLab, with signed cube roots and no gamut clipping. Zero selects per-channel contrast; one restores original OKLab hue/chroma, not necessarily perceived saturation. Neutral greys retain the same contrast curve throughout.
+Preserve blends the combined Shadows, Highlights and Contrast result's OKLab a/b toward pre-Tone a/b while retaining its L. AP1/D60 is Bradford-adapted to D65 for OKLab, with signed cube roots and no gamut clipping. One restores pre-Tone OKLab hue and chroma, not necessarily perceived saturation. Neutral greys retain the same tone curve throughout.
 
 Saturation scales OKLab a/b uniformly, retaining L and hue. Vibrance adds a selective chroma gain, strongest in muted colours: `gain = saturation * (1 + vibrance * w)`, with `w = (L/4)² / ((L/4)² + a² + b²)`. This smooth, exposure-independent weighting is half-strength at `C/|L| = 1/4`; black remains unchanged. Vibrance spans −1 to +1, with zero as identity. Exact neutrals stay neutral, and zero Saturation stays grey at every Vibrance setting. Neither control clips the working gamut or applies skin-tone protection. Preserved OKLab lightness is not constant AP1 luminance; downstream colour treatments and ACES can change the displayed relationship.
 
 ### Adjustment layers change controls, not rendered pixels
 
-Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure and Bradford WB in AP1, then contrast and OKLab saturation/Vibrance before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
+Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure and Bradford WB in AP1, then Tone and OKLab Saturation/Vibrance before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
 
-Coverage, inversion and strength produce a weight between zero and one: exposure, WB and Vibrance scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. Grading consumes immutable snapshots. Control domains, packed constants and GPU resource sizes are validated before execution; extreme pixel arithmetic is bounded locally.
+Coverage, inversion and strength produce a weight between zero and one: exposure, WB, Shadows, Highlights and Vibrance scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. Grading consumes immutable snapshots. Control domains, packed constants and GPU resource sizes are validated before execution; extreme pixel arithmetic is bounded locally.
 
 ### Film texture
 
@@ -206,7 +208,7 @@ The current model is **8**. Negative inversion requires finite references satisf
 
 - [Processing](../src/processing.rs): calibration, input interpretation and Roll adjustments.
 - [Colour](../src/color.rs): working-space matrices, balance coordinates and Bradford WB.
-- [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
+- [Photographic grading](../src/photographic.rs): tone, saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.
 - [Photographic composition](../src/gpu/photograph/composition.rs): stage order, reusable prefixes and quality variants.
 - [Adjustment layers](../src/adjustment_layers.rs) and [GPU grading](../src/gpu/grading.rs): coverage, shared control settings and complete ordered snapshots.

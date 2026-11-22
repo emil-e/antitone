@@ -192,6 +192,8 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
         contrast: 1.6,
         pivot: 0.11,
         contrast_colour_mix: 0.7,
+        shadows: 1.5,
+        highlights: -1.,
         saturation: 0.,
         vibrance: 0.3,
     };
@@ -206,6 +208,8 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
         }
     );
     assert_eq!(half.contrast, 1.3);
+    assert_eq!(half.shadows, 0.75);
+    assert_eq!(half.highlights, -0.5);
     assert_eq!(half.saturation, 0.5);
     assert_eq!(half.pivot, photo.pivot);
     assert_eq!(half.contrast_colour_mix, photo.contrast_colour_mix);
@@ -218,7 +222,7 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
             ..AdjustmentLayerSettings::default()
         }
     );
-    for contrast in [0.4, 1.6] {
+    for contrast in [0.4, 2.] {
         let photo = AdjustmentLayerSettings { contrast, ..photo };
         assert_eq!(weighted_settings(photo, 1.).unwrap(), photo);
         for w in [0., 1e-12, 0.25, 0.5, 0.75, 1. - f64::EPSILON, 1.] {
@@ -337,6 +341,7 @@ fn full_weight_matches_existing_photographic_operators() {
         contrast_colour_mix: 0.7,
         saturation: 1.3,
         vibrance: 0.6,
+        ..Default::default()
     };
     let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
     let matrix = wb_matrix(photo.wb).unwrap() * photo.exposure.exp2();
@@ -367,6 +372,7 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                     contrast_colour_mix: blend,
                     saturation,
                     vibrance: blend,
+                    ..Default::default()
                 };
                 let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
                 for (x, w) in [
@@ -673,7 +679,7 @@ fn invalid_geometry_settings_and_strength_are_rejected_even_when_disabled() {
         );
     }
     let invalid = AdjustmentLayerSettings {
-        contrast: 2.,
+        contrast: 2_f64.next_up(),
         ..AdjustmentLayerSettings::default()
     };
     assert!(weighted_settings(invalid, 0.).is_err());

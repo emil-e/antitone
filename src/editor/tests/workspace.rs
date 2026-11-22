@@ -359,6 +359,8 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "EV",
                     "Contrast",
                     "Pivot",
+                    "Shadows",
+                    "Highlights",
                     "Preserve",
                     "Saturation",
                     "Vibrance",

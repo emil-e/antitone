@@ -276,7 +276,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
     if id.x >= arrayLength(&grade_input) { return; }
     let input = grade_input[id.x];
     let rgb = colour_apply(array<f32, 3>(input.x, input.y, input.z),
-        primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.vibrance.x);
+        0.0, primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.vibrance.x);
     grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
 }
 "#.to_owned(),
@@ -374,7 +374,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let mut contrast_effect = 0_f64;
-        for contrast in [0.4_f64, 0.5, 0.8, 1., 1.2, 1.5, 1.6] {
+        for contrast in [0.4_f64, 0.5, 0.8, 1., 1.2, 1.5, 1.6, 2.] {
             for pivot in [0.01, 0.03, 0.18, 1.] {
                 let mut baseline_lab = vec![DVec3::ZERO; inputs.len()];
                 for (mix, vibrance) in [

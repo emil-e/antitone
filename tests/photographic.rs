@@ -131,7 +131,7 @@ fn preserve_interpolates_oklab_opponents_without_changing_contrasted_lightness()
 
 #[test]
 fn acescc_log_branches_give_power_contrast_and_keep_the_pivot() {
-    for contrast in [0.4_f64, 0.8, 1.2, 1.6] {
+    for contrast in [0.4_f64, 0.8, 1.2, 1.6, 2.] {
         let grade = Grade::new(AdjustmentLayerSettings {
             contrast,
             ..AdjustmentLayerSettings::default()
@@ -268,8 +268,86 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
 }
 
 #[test]
+fn tonal_ranges_stay_independent_and_pin_grey_with_bounded_monotonic_response() {
+    for shadows in [-3., -2., -1., 0., 1., 2., 3.] {
+        for highlights in [-3., -2., -1., 0., 1., 2., 3.] {
+            let photo = AdjustmentLayerSettings {
+                shadows,
+                highlights,
+                // The tone-range anchor must not follow the contrast pivot.
+                pivot: 0.5,
+                ..Default::default()
+            };
+            let grade = Grade::new(photo).unwrap();
+            let shadows_only = Grade::new(AdjustmentLayerSettings {
+                highlights: 0.,
+                ..photo
+            })
+            .unwrap();
+            let highlights_only = Grade::new(AdjustmentLayerSettings {
+                shadows: 0.,
+                ..photo
+            })
+            .unwrap();
+
+            near(grade.apply(DVec3::splat(0.18)).unwrap(), DVec3::splat(0.18));
+            assert_eq!(grade.apply(DVec3::ZERO).unwrap(), DVec3::ZERO);
+            let mut previous = 0.;
+            for third_stop in -120..=54 {
+                let y = 0.18 * (f64::from(third_stop) / 3.).exp2();
+                let input = DVec3::splat(y);
+                let out = grade.apply(input).unwrap();
+                let standalone = if third_stop < 0 {
+                    shadows_only
+                } else {
+                    highlights_only
+                };
+                assert_eq!(out, standalone.apply(input).unwrap());
+                assert!(out.x > previous, "{shadows}, {highlights}, {third_stop}");
+                previous = out.x;
+                let ev = (out.x / y).log2();
+                let amount = if third_stop < 0 { shadows } else { highlights };
+                assert!(ev >= amount.min(0.) - 1e-12 && ev <= amount.max(0.) + 1e-12);
+                if amount == 0. {
+                    assert_eq!(out, DVec3::splat(y));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn preserve_keeps_pre_tone_opponents_and_final_tone_lightness() {
+    let input = DVec3::new(2.4, 1.2, -0.1);
+    let before = reference::to_oklab(input);
+    for contrast in [1., 0.8] {
+        let photo = AdjustmentLayerSettings {
+            contrast,
+            highlights: -1.5,
+            ..Default::default()
+        };
+        let toned = Grade::new(photo).unwrap().apply(input).unwrap();
+        assert!(toned.z < 0., "tone must retain signed working channels");
+        let after = reference::to_oklab(toned);
+        assert!((after - before).abs().max_element() > 0.01);
+        assert!((after.y - before.y).abs() > 0.005);
+        let preserved = Grade::new(AdjustmentLayerSettings {
+            contrast_colour_mix: 1.,
+            ..photo
+        })
+        .unwrap()
+        .apply(input)
+        .unwrap();
+        near(
+            reference::to_oklab(preserved),
+            DVec3::new(after.x, before.y, before.z),
+        );
+    }
+}
+
+#[test]
 fn invalid_parameters_and_overflow_reject_without_clamps() {
-    for bad in [0.4 - f64::EPSILON, 1.6 + f64::EPSILON] {
+    for bad in [0.4_f64.next_down(), 2_f64.next_up()] {
         assert!(
             Grade::new(AdjustmentLayerSettings {
                 contrast: bad,
@@ -298,6 +376,30 @@ fn invalid_parameters_and_overflow_reject_without_clamps() {
             assert!(photo.validate().is_err());
         }
     }
+    for bad in [
+        f64::NAN,
+        f64::INFINITY,
+        (-3_f64).next_down(),
+        3_f64.next_up(),
+    ] {
+        let base = AdjustmentLayerSettings::default();
+        assert!(
+            AdjustmentLayerSettings {
+                shadows: bad,
+                ..base
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            AdjustmentLayerSettings {
+                highlights: bad,
+                ..base
+            }
+            .validate()
+            .is_err()
+        );
+    }
     assert!(
         Grade::new(AdjustmentLayerSettings {
             contrast: 1.5,
@@ -320,6 +422,9 @@ fn invalid_parameters_and_overflow_reject_without_clamps() {
 fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
     let old = r#"{"exposure":1.25,"wb":{"warmth":0.1,"tint":-0.2}}"#;
     let loaded: AdjustmentLayerSettings = serde_json::from_str(old).unwrap();
+    let unchanged = serde_json::to_value(loaded).unwrap();
+    assert!(unchanged.get("shadows").is_none());
+    assert!(unchanged.get("highlights").is_none());
     assert_eq!(loaded.contrast_colour_mix, 0.);
     assert_eq!(loaded.vibrance, 0.);
     assert_eq!(
@@ -337,6 +442,8 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
         contrast: 1.123456789012345,
         pivot: 0.123456789012345,
         contrast_colour_mix: 0.23456789012345,
+        shadows: -1.23456789012345,
+        highlights: 0.456789012345,
         saturation: 1.23456789012345,
         vibrance: 0.3456789012345,
         ..loaded
