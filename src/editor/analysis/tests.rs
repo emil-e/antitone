@@ -243,8 +243,6 @@ fn state() -> Editor {
             Development::new(crate::raw::version(), [1.; 4]),
         )
         .unwrap();
-    editor.id = 5;
-    editor.next_request = 5;
     editor.document.visit.current_source = Some(id);
     editor.set_gamma(0.9);
     editor.document.project.roll.exposure = 0.;

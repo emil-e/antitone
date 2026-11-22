@@ -28,7 +28,12 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
                         && v.spec.frame().composition.crop() == Crop::from_region(ready.area)
                 })
     });
-    let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+    let timing = h.read(|editor| {
+        Arc::new(SelectionTiming::new(
+            editor.document.visit.current_source,
+            Instant::now(),
+        ))
+    });
     h.update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
     h.step();
     h.render().unwrap();
@@ -215,9 +220,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 h.query_by_label("Tool warning").is_none(),
                 "outside the captured set is not a metadata failure"
             );
-            let request = h.read(|editor| editor.id);
+            let request = h.read(|editor| editor.visit_lifetime());
             workflow::enter_numeric(&mut h, "Margin", "2");
-            h.read(|editor| assert_eq!(editor.id, request));
+            assert!(request.upgrade().is_some());
             h.read(|editor| assert!(editor.auto_crop_preview(ids[1]).is_none()));
             h.read(|editor| assert_eq!(editor.document.state.project, before));
             let mut expected = before;

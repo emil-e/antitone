@@ -163,7 +163,7 @@ fn a_retired_photo_owner_cannot_publish_into_a_new_scope() {
     crate::editor::tests::add_ready_fixture(&mut editor);
     let original = editor.document.project.clone();
     let mut old = editor.edit_photo("Old photo").unwrap();
-    editor.replace_photo_scope(editor.document.visit.view + 1);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     old.update(|project| project.roll.exposure = 0.75);
     let current = editor.edit_photo("Current photo").unwrap();
     assert!(editor.commit_project(old).is_err());
@@ -324,7 +324,7 @@ fn photo_project_draft_contains_layer_strength_and_grade_and_retires_with_the_vi
     assert_eq!(editor.photo_settings().exposure, 0.75);
     assert_eq!(editor.document.project, accepted);
     assert!(!editor.document_command_available());
-    editor.replace_photo_scope(editor.document.visit.view + 1);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     assert!(!editor.editing());
     assert!(editor.commit_project(edit).is_err());
     assert_eq!(editor.photo_settings().exposure, 0.);

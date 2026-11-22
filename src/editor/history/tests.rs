@@ -266,7 +266,7 @@ fn same_visit_replay_leaves_the_current_source_toggle_alone() {
     for source in [true, false] {
         let mut editor = controller();
         let before = editor.history_snapshot();
-        let visit = editor.document.visit.view;
+        let visit = editor.visit_lifetime();
         let pixels = editor
             .document
             .visit
@@ -287,7 +287,7 @@ fn same_visit_replay_leaves_the_current_source_toggle_alone() {
             editor.document.source, source,
             "Undo leaves the current toggle alone"
         );
-        assert_eq!(editor.document.visit.view, visit);
+        assert!(visit.upgrade().is_some());
         assert!(Arc::ptr_eq(
             &editor
                 .document
@@ -307,7 +307,7 @@ fn same_visit_replay_leaves_the_current_source_toggle_alone() {
             editor.document.source, !source,
             "Redo does not restore an earlier toggle"
         );
-        assert_eq!(editor.document.visit.view, visit);
+        assert!(visit.upgrade().is_some());
         assert!(Arc::ptr_eq(
             &editor
                 .document
@@ -529,7 +529,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         Duration::from_secs(60),
         |editor, cx| {
             editor.open_project("missing.antitone".into(), cx);
-            assert!(editor.interaction_blocked() && editor.files.opening());
+            assert!(editor.interaction_blocked() && editor.document.files.opening());
         },
     );
     assert_eq!(editor.document.history.undo.len(), 1);

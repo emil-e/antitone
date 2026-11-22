@@ -200,15 +200,7 @@ fn fullscreen_keeps_source_review_editing_and_its_navigation() {
                     editor.document.analysis_review().unwrap().approved.entries,
                     edited
                 );
-                assert!(
-                    editor
-                        .document
-                        .analyze_tool()
-                        .unwrap()
-                        .viewport
-                        .zoom
-                        .is_none()
-                );
+                assert!(editor.document.visit.analysis_view.viewport.zoom.is_none());
                 assert_eq!(editor.document.visit.canvas.viewport, normal);
                 assert_eq!(editor.document.project, project);
                 assert_eq!(editor.preferences, preferences);
@@ -277,7 +269,7 @@ fn review_and_fitting_cancel_during_observed_loading_keep_the_photo_request_and_
                 assert_eq!(editor.document.visit.current_source, Some(ids[1]));
                 assert_eq!(editor.document.source, ordinary_source);
                 (
-                    editor.id,
+                    editor.visit_lifetime(),
                     editor
                         .document
                         .analysis_operation()
@@ -339,7 +331,7 @@ fn review_and_fitting_cancel_during_observed_loading_keep_the_photo_request_and_
                 assert!(stopped.is_cancelled());
                 assert!(editor.current_tool().is_none());
                 assert!(!editor.interaction_blocked() && editor.document.visit.source.pending());
-                assert_eq!(editor.document.visit.view, request);
+                assert!(request.upgrade().is_some());
                 assert_eq!(editor.activities.view().unwrap().title, "Loading photo…");
                 assert_eq!(editor.document.project, before);
                 assert_eq!(editor.document.source, ordinary_source);

@@ -3,7 +3,7 @@ use egui_wgpu::CallbackTrait;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) struct SelectionTiming {
-    pub id: u64,
+    pub source: Option<SourceId>,
     pub started: std::time::Instant,
     pending_painted: AtomicBool,
     ready_painted: AtomicBool,
@@ -20,9 +20,9 @@ impl SelectionTiming {
         self.ready_painted.load(Ordering::Relaxed)
     }
 
-    pub fn new(id: u64, started: std::time::Instant) -> Self {
+    pub fn new(source: Option<SourceId>, started: std::time::Instant) -> Self {
         Self {
-            id,
+            source,
             started,
             pending_painted: AtomicBool::new(false),
             ready_painted: AtomicBool::new(false),
@@ -75,7 +75,7 @@ impl CallbackTrait for SelectionPaint {
             };
             if !painted.swap(true, Ordering::Relaxed) {
                 log::debug!(
-                    request = timing.id,
+                    source_id = timing.source.map(|source| source.0),
                     stage = if self.pending { "pending" } else { "ready" },
                     boundary = "paint_callback",
                     elapsed_ms = timing.started.elapsed().as_secs_f64() * 1000.;

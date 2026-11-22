@@ -373,7 +373,7 @@ fn departing_visit_keeps_reusable_values_only_through_common_budgeted_ownership(
             let image = values.find_ready::<ImageLayout>(&key, |_| true).unwrap();
             (key, Arc::downgrade(&image.image))
         });
-        app.update(|editor| editor.replace_photo_scope(8));
+        app.update(|editor| editor.replace_photo_scope(editor.document.visit.current_source));
         let cached = values.find_ready::<ImageLayout>(&key, |_| true).unwrap();
         assert!(Arc::ptr_eq(&cached.image, &weak.upgrade().unwrap()));
         values.set_retention_enabled(false);

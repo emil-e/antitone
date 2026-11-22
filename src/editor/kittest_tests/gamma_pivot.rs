@@ -318,7 +318,9 @@ fn save_captures_accepted_values_during_gamma_calculation_and_source_preparation
         let solve = gamma.next(&mut h.application);
         native_file_action(&mut h, crate::platform::menu::Action::Save);
         wait_for(&mut h, |editor| {
-            destination.exists() && !editor.document.write.pending() && !editor.files.pending()
+            destination.exists()
+                && !editor.document.write.pending()
+                && !editor.document.files.pending()
         });
         let first_saved = crate::project::Project::load(&destination).unwrap();
         assert_eq!(
@@ -614,7 +616,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
             assert_eq!(editor.document.project.input, before.input);
         });
         wait_for(&mut h, |editor| {
-            path.exists() && !editor.document.write.pending() && !editor.files.pending()
+            path.exists() && !editor.document.write.pending() && !editor.document.files.pending()
         });
         let frozen = crate::project::Project::load(&path).unwrap();
         assert_eq!(

@@ -470,13 +470,13 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
     assert!(!egui::Popup::is_any_open(&harness.ctx));
     harness.read(|editor| {
         assert!(
-            editor.files.pending(),
+            editor.document.files.pending(),
             "popover Escape also cancelled the decision"
         )
     });
     harness.event(super::ui::test_support::key(egui::Key::Escape).remove(0));
     harness.step();
-    wait_for(&mut harness, |editor| !editor.files.pending());
+    wait_for(&mut harness, |editor| !editor.document.files.pending());
     for (layout, size) in [
         ("normal", egui::vec2(1100., 800.)),
         ("narrow", egui::vec2(800., 600.)),
@@ -542,7 +542,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             }
             harness.read(|editor| {
                 assert!(
-                    !editor.files.pending()
+                    !editor.document.files.pending()
                         && !editor.dialogs.is_open()
                         && editor.document.export.form.is_none()
                 )
@@ -728,7 +728,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
             harness.run();
             harness.read(|editor| assert!(editor.dialogs.message().is_none()));
             if kind == FailureCase::Save {
-                harness.read(|editor| assert!(editor.files.closing()));
+                harness.read(|editor| assert!(editor.document.files.closing()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
                 harness.read(|editor| assert!(!editor.allow_close));
@@ -783,10 +783,10 @@ fn wait_for_with_timeout(
         harness.read(|editor| {
             assert!(
                 Instant::now() < deadline,
-                "Editor wait timed out at {caller}: {}; working updating={} error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}, crop layout={}, kernels={}, preview={}, source view={}",
+                "Editor wait timed out at {caller}: {}; working updating={} error={:?}, evaluations={:?}, original pending={:?}, active photo={:?}, crop layout={}, kernels={}, preview={}, source view={}",
                 editor.status, editor.document.visit.working_view.updating, editor.document.visit.working_view.error,
                 editor.dust_signature().map(|_| editor.dust_images().len()), editor.document.visit.canvas.original.refining(),
-                editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id,
+                editor.document.visit.current_source,
                 editor.document.crop_edit().is_some_and(|edit| edit.layout.is_some()),
                 editor.document.visit.working_view.kernels.get().is_some(), editor.active_canvas().preview.rendered().is_some(), editor.document.source
             )
@@ -956,7 +956,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             assert!(editor.preference_store.is_none());
         });
         let timing = Arc::new(SelectionTiming::new(
-            harness.read(|editor| editor.id),
+            harness.read(|editor| editor.document.visit.current_source),
             Instant::now(),
         ));
         harness
@@ -1140,7 +1140,9 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
         }))
     });
     native_file_action(harness, crate::platform::menu::Action::Save);
-    wait_for(harness, |e| !e.interaction_blocked() && !e.files.pending());
+    wait_for(harness, |e| {
+        !e.interaction_blocked() && !e.document.files.pending()
+    });
     assert_eq!(
         publications.load(std::sync::atomic::Ordering::Acquire),
         1,
@@ -1157,7 +1159,7 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
 // Consumer fixtures wait for the initial visit too; metadata acceptance has separate coverage.
 fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |editor| {
-        !editor.files.pending()
+        !editor.document.files.pending()
             && !editor.interaction_blocked()
             && !editor.document.visit.source.pending()
             && !editor.correction().pending()
@@ -1168,7 +1170,7 @@ fn wait_opened_photo(harness: &mut Harness<'_, Editor>) {
 fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
     harness.enter(|editor, cx| editor.guard_transition(files::Transition::Open(path), cx));
     harness.run_until(Duration::from_secs(60), |editor| {
-        !editor.files.pending() || editor.dialogs.is_open()
+        !editor.document.files.pending() || editor.dialogs.is_open()
     });
     if harness.read(|editor| editor.dialogs.is_open()) {
         wait_dialog_layout(harness);
@@ -1371,8 +1373,12 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                     assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
                     true
                 });
-                let timing = harness
-                    .read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+                let timing = harness.read(|editor| {
+                    Arc::new(SelectionTiming::new(
+                        editor.document.visit.current_source,
+                        Instant::now(),
+                    ))
+                });
                 harness.update(|editor| {
                     editor.document.visit.canvas.selection_timing = Some(timing.clone())
                 });

@@ -42,7 +42,7 @@ fn import_failure_success_and_duplicates_preserve_the_active_visit_and_private_t
                     }
                 }
                 (
-                    editor.document.visit.view,
+                    editor.visit_lifetime(),
                     editor.document.visit.current_source.unwrap(),
                     editor.document.state.project.clone(),
                     crop,
@@ -70,7 +70,7 @@ fn import_failure_success_and_duplicates_preserve_the_active_visit_and_private_t
                 wait(app);
                 app.read(|editor| {
                     assert_eq!(editor.document.project.order.len(), count);
-                    assert_eq!(editor.document.visit.view, view);
+                    assert!(view.upgrade().is_some());
                     assert_eq!(editor.document.visit.current_source, Some(source));
                     assert_eq!(
                         editor.document.project.source(source).unwrap(),
@@ -112,7 +112,7 @@ fn mixed_camera_import_preserves_the_input_stage_visit_and_crop_draft() {
     std::fs::write(&second, bytes).unwrap();
     let mut editor = authored_fixture(&[first.to_str().unwrap()]);
     let selected = editor.document.visit.current_source;
-    let view = editor.document.visit.view;
+    let view = editor.visit_lifetime();
     let input = editor.document.project.input;
     assert!(input.is_negative());
     editor.begin_crop();
@@ -131,7 +131,7 @@ fn mixed_camera_import_preserves_the_input_stage_visit_and_crop_draft() {
             assert_eq!(editor.document.project.order.len(), 2);
             assert_eq!(editor.document.project.input, input);
             assert_eq!(editor.document.visit.current_source, selected);
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(editor.cropping());
             assert_eq!(editor.document.crop_edit().unwrap().draft, crop);
             assert_eq!(

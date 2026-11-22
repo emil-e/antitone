@@ -154,17 +154,14 @@ impl Editor {
                 } else {
                     None
                 };
-                if let Some(id) = load
-                    && let Ok(path) = editor.document.source_path(id)
-                {
-                    editor.load(path, &cx);
+                if let Some(id) = load {
+                    editor.browse_photo(id, &cx);
                 }
             });
         });
     }
 
     pub(super) fn new_project(&mut self) {
-        self.files.open = None;
         self.install_project(Document::default());
         self.tab = 0;
         self.preferences
@@ -177,7 +174,7 @@ impl Editor {
             .activities
             .start(ActivityOptions::new("Opening project…").modal());
         let block = self.workspace_input.block();
-        self.files.open = cx.spawn(move |cx| async move {
+        self.document.files.open = cx.spawn(move |cx| async move {
             let _workspace = block;
             let result = crate::background::run(move |_| Document::open(&path))
                 .await
@@ -202,7 +199,7 @@ impl Editor {
     }
 
     pub(super) fn guard_transition(&mut self, transition: Transition, cx: &UiContext<'_, Self>) {
-        if self.files.pending() {
+        if self.document.files.pending() {
             return;
         }
         if !self.document.dirty() {
@@ -210,12 +207,11 @@ impl Editor {
             return;
         }
         let closing = transition == Transition::Close;
-        let id = self.id;
         let block = self.workspace_input.block();
-        self.files.action = cx
+        self.document.files.action = cx
             .spawn(move |cx| async move {
                 let _workspace = block;
-                guarded_transition(&cx, id, transition).await;
+                guarded_transition(&cx, transition).await;
             })
             .map(|task| Pending { closing, task });
     }
@@ -227,10 +223,9 @@ impl Editor {
         after: Option<Transition>,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.files.pending() {
+        if self.document.files.pending() {
             return;
         }
-        let id = self.id;
         let Some(response) = self.start_save(
             save::Write {
                 document: self.document.capture(),
@@ -243,15 +238,15 @@ impl Editor {
         };
         let closing = after == Some(Transition::Close);
         let block = self.workspace_input.block();
-        self.files.action = cx
+        self.document.files.action = cx
             .spawn(move |cx| async move {
                 let _workspace = block;
                 let Ok(success) = response.await else { return };
                 if let Some(transition) = after {
                     if success && cx.read(|editor| !editor.document.dirty()) {
-                        finish_transition(&cx, id, transition).await;
+                        finish_transition(&cx, transition).await;
                     } else {
-                        guarded_transition(&cx, id, transition).await;
+                        guarded_transition(&cx, transition).await;
                     }
                 }
             })
@@ -288,7 +283,7 @@ impl Editor {
     }
 
     fn save_dialog(&mut self, save_as: bool, cx: &UiContext<'_, Self>) {
-        if self.files.pending() || self.workspace_input.is_blocked() || self.editing() {
+        if self.document.files.pending() || self.workspace_input.is_blocked() || self.editing() {
             return;
         }
         let Some(destination) = self.save_destination(save_as) else {
@@ -303,7 +298,7 @@ impl Editor {
         after: Option<Transition>,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.files.pending() {
+        if self.document.files.pending() {
             return;
         }
         if !destination.confirm_replace {
@@ -311,25 +306,24 @@ impl Editor {
             return;
         }
 
-        let id = self.id;
         let closing = after == Some(Transition::Close);
         let block = self.workspace_input.block();
-        self.files.action = cx
+        self.document.files.action = cx
             .spawn(move |cx| async move {
                 let _workspace = block;
-                match save_to(&cx, id, destination).await {
+                match save_to(&cx, destination).await {
                     Some(true) => {
                         if let Some(transition) = after {
                             if cx.read(|editor| editor.document.dirty()) {
-                                guarded_transition(&cx, id, transition).await;
+                                guarded_transition(&cx, transition).await;
                             } else {
-                                finish_transition(&cx, id, transition).await;
+                                finish_transition(&cx, transition).await;
                             }
                         }
                     }
                     Some(false) => {
                         if let Some(transition) = after {
-                            guarded_transition(&cx, id, transition).await;
+                            guarded_transition(&cx, transition).await;
                         }
                     }
                     None => {}
@@ -339,7 +333,7 @@ impl Editor {
     }
 
     pub(super) fn file_action(&mut self, action: FileAction, cx: &UiContext<'_, Self>) {
-        if self.files.pending() {
+        if self.document.files.pending() {
             return;
         }
         match action {
@@ -385,36 +379,29 @@ impl Editor {
     }
 }
 
-async fn guarded_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Transition) {
+async fn guarded_transition(cx: &UiContext<'_, Editor>, transition: Transition) {
     loop {
         let response = cx.update(|editor| {
-            if editor.id != id { return None; }
             let explanation = match &transition {
                 Transition::New => "Creating a new project without saving will discard unsaved edits in this project.",
                 Transition::Open(_) => "Opening another project without saving will discard unsaved edits in this project.",
                 Transition::Close => "Closing Antitone without saving will discard unsaved edits in this project.",
             };
-            Some(editor.dialogs.show(move |context, dialog, escape| {
+            editor.dialogs.show(move |context, dialog, escape| {
                 DecisionDialog::new("Save changes to this project?", explanation, "Save changes")
                     .detail("Your RAW files are not changed.").alternative("Discard changes")
                     .show(context, dialog, escape)
-            }))
-        }).flatten();
+            })
+        });
         let Some(response) = response else { return };
         match response.await {
             Ok(DialogChoice::Alternative) => {}
             Ok(DialogChoice::Confirm) => {
-                let destination = cx
-                    .update(|editor| {
-                        (editor.id == id)
-                            .then(|| editor.save_destination(false))
-                            .flatten()
-                    })
-                    .flatten();
+                let destination = cx.update(|editor| editor.save_destination(false)).flatten();
                 let Some(destination) = destination else {
                     return;
                 };
-                match save_to(cx, id, destination).await {
+                match save_to(cx, destination).await {
                     Some(true) if cx.read(|editor| !editor.document.dirty()) => {}
                     Some(true) | Some(false) => continue,
                     None => return,
@@ -422,31 +409,24 @@ async fn guarded_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Tra
             }
             _ => return,
         }
-        finish_transition(cx, id, transition).await;
+        finish_transition(cx, transition).await;
         return;
     }
 }
 
-async fn finish_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Transition) {
+async fn finish_transition(cx: &UiContext<'_, Editor>, transition: Transition) {
     let changes = cx.read(|editor| editor.dialogs.changes());
     loop {
         let changed = changes.listen();
-        if cx.read(|editor| editor.id != id) {
-            return;
-        }
         if !cx.read(|editor| editor.dialogs.is_open()) {
             break;
         }
         changed.await;
     }
-    cx.update(|editor| {
-        if editor.id == id {
-            editor.perform_transition(transition, cx);
-        }
-    });
+    cx.update(|editor| editor.perform_transition(transition, cx));
 }
 
-async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) -> Option<bool> {
+async fn save_to(cx: &UiContext<'_, Editor>, destination: Destination) -> Option<bool> {
     if destination.confirm_replace {
         let detail = destination.path.display().to_string();
         let response = cx.update(|editor| editor.dialogs.show(move |context, dialog, escape| {
@@ -460,10 +440,6 @@ async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) 
     }
     let response = cx
         .update(|editor| {
-            if editor.id != id {
-                return None;
-            }
-
             editor.start_save(
                 save::Write {
                     document: editor.document.capture(),

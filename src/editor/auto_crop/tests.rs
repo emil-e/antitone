@@ -111,7 +111,7 @@ fn browse(editor: &mut Editor, index: usize, cx: &UiContext<'_, Editor>) {
     ready.path = editor.document.source_path(id).unwrap();
     ready.file = thumbnails::FileKey::new(&ready.path);
     ready.area = source.development.active_area.into();
-    editor.source_result(editor.document.visit.view, Ok(Box::new(ready)));
+    crate::editor::source::testing::complete(editor, Ok(Box::new(ready)));
 }
 
 #[test]
@@ -686,7 +686,9 @@ fn cancelling_new_preserves_batch_proposals_and_discarding_retires_them_without_
         app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
         assert!(review.upgrade().is_some());
         app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
-        app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.document.files.pending()
+        });
         app.read(|editor| {
             assert!(editor.document.auto_crop.reviewing());
             assert_eq!(editor.document.state.project, before);
@@ -694,7 +696,9 @@ fn cancelling_new_preserves_batch_proposals_and_discarding_retires_them_without_
         app.enter(|editor, cx| editor.file_action(FileAction::New, cx));
         app.run_until(Duration::from_secs(5), |editor| editor.dialogs.is_open());
         app.update(|editor| editor.dialogs.answer_for_test("Discard changes"));
-        app.run_until(Duration::from_secs(5), |editor| !editor.files.pending());
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.document.files.pending()
+        });
         assert!(review.upgrade().is_none());
         app.read(|editor| {
             assert!(!editor.has_hosted_tool());

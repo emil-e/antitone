@@ -170,7 +170,6 @@ fn workload(
         Ok(())
     });
     let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(device));
-    let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut editor = Editor::state();
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     editor.document.thumbnails = (thumbnails::Thumbnails::with_developments(
@@ -187,7 +186,6 @@ fn workload(
     editor.apply_cache_budgets();
     *editor.document = document;
     editor.developments = Some(scheduler.clone());
-    editor.source_epoch = epoch.clone();
     editor.set_cache_limits(cache_limits::CacheLimits {
         cpu_bytes: 1100 * cache_limits::MIB,
         gpu_bytes: 16 * cache_limits::MIB,
@@ -210,7 +208,6 @@ fn workload(
         let exercise = (|| -> Result<()> {
             let mut paint = Paint::new(device);
             app.enter(|editor, access| {
-                editor.document.selected = 0;
                 let path = editor
                     .document
                     .source_path(editor.document.state.project.order[0])
@@ -246,7 +243,7 @@ fn workload(
                     all_ui.push(ui);
                     all_frame.push(total);
                     if app.read(|e| {
-                        e.document.selected != selected
+                        e.document.active_index() != Some(selected)
                             || e.document.visit.current_source
                                 != e.document.project.order.get(selected).copied()
                             || e.interaction_blocked()
@@ -282,7 +279,7 @@ fn workload(
                                 "DSC04378.ARW"
                             },
                         )?;
-                        let request = app.read(|e| e.id);
+                        let request = app.read(Editor::visit_lifetime);
                         let (_, ui, total) =
                             paint.frame(app, device, queue, pointer(point, true))?;
                         all_ui.push(ui);
@@ -291,8 +288,10 @@ fn workload(
                             paint.frame(app, device, queue, pointer(point, false))?;
                         all_ui.push(ui);
                         all_frame.push(total);
-                        let replaced = app.read(|e| e.id);
-                        if disabled || replaced == request || app.read(|e| e.document.selected != 1)
+                        let replaced = app.read(Editor::visit_lifetime);
+                        if disabled
+                            || request.upgrade().is_some()
+                            || app.read(|e| e.document.active_index() != Some(1))
                         {
                             return Err("pending selection did not accept replacement".into());
                         }
@@ -308,12 +307,16 @@ fn workload(
                             paint.frame(app, device, queue, pointer(point, false))?;
                         all_ui.push(ui);
                         all_frame.push(total);
-                        if app.read(|e| e.id == replaced || e.document.selected != 0) {
+                        if replaced.upgrade().is_some()
+                            || app.read(|e| e.document.active_index() != Some(0))
+                        {
                             return Err("latest selection did not replace pending work".into());
                         }
                         println!(
-                            "switch_pending_input step={step} disabled=false request_before={request} replaced={replaced} returned={} native_developments={}",
-                            app.read(|e| e.id),
+                            "switch_pending_input step={step} disabled=false departed_retired={} replacement_retired={} returned_source={:?} native_developments={}",
+                            request.upgrade().is_none(),
+                            replaced.upgrade().is_none(),
+                            app.read(|e| e.document.visit.current_source.map(|source| source.0)),
                             count.load(Ordering::Relaxed)
                         );
                         pending_probe = true;
@@ -373,7 +376,6 @@ fn workload(
         })();
         app.update(|editor| {
             editor.document.visit.working_view.clear();
-            editor.source_epoch.fetch_add(1, Ordering::Relaxed);
             editor.document = super::document::Document::default().into();
             editor.document.thumbnails.cancel();
             editor.document.thumbnails.services.take();

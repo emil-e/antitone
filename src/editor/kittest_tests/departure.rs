@@ -5,7 +5,7 @@ fn save_baseline(h: &mut Harness<'_, Editor>, directory: &std::path::Path) -> Pa
     let path = directory.join("departure.antitone");
     h.enter(|editor, cx| editor.save_project(path.clone(), crate::project::Save::New, None, cx));
     wait_for(h, |editor| {
-        !editor.files.pending() && !editor.document.write.pending()
+        !editor.document.files.pending() && !editor.document.write.pending()
     });
     h.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
     path
@@ -46,7 +46,7 @@ fn native_new_keeps_a_changed_crop_on_cancel_then_saves_only_accepted_changes_be
                 cancel[0].click();
             }
             h.step();
-            wait_for(&mut h, |editor| !editor.files.pending());
+            wait_for(&mut h, |editor| !editor.document.files.pending());
             h.read(|editor| {
                 assert_eq!(editor.document.state.project, accepted);
                 assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
@@ -56,7 +56,7 @@ fn native_new_keeps_a_changed_crop_on_cancel_then_saves_only_accepted_changes_be
             wait_for(&mut h, |editor| editor.dialogs.is_open());
             h.get_by_label("Save changes").click();
             h.step();
-            wait_for(&mut h, |editor| !editor.files.pending());
+            wait_for(&mut h, |editor| !editor.document.files.pending());
             h.read(|editor| {
                 assert!(editor.document.project.sources.is_empty());
                 assert!(!editor.has_hosted_tool());
@@ -95,7 +95,7 @@ fn system_quit_with_a_clean_project_and_armed_mask_needs_no_extra_draft_prompt()
                     Some(host::QuitState::Approved)
                 );
                 assert!(editor.allow_close);
-                assert!(!editor.dialogs.is_open() && !editor.files.pending());
+                assert!(!editor.dialogs.is_open() && !editor.document.files.pending());
                 assert!(!editor.document.write.pending());
                 assert_eq!(editor.document.state.project, accepted);
             });

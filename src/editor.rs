@@ -256,8 +256,6 @@ pub struct Editor {
     fullscreen: Option<Fullscreen>,
     canvas_frame: canvas::Frame,
     presentation: Result<Presentation, Error>,
-    // Running physical work outlives logical cancellation.
-    id: u64,
     look: look::Session,
     status: String,
     workspace_input: workspace_input::WorkspaceInput,
@@ -277,13 +275,10 @@ pub struct Editor {
     memory_watch: Option<async_executor::Task<()>>,
     document: DocumentScope,
 
-    next_request: u64,
     output_services: Option<output::Services>,
-    files: files::State,
     allow_close: bool,
     developments: Option<source_loading::SourceLoader>,
     source_services: Option<source::Services>,
-    source_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Editor {
@@ -314,7 +309,6 @@ impl Editor {
             display.clone(),
             developments.clone(),
         );
-        let source_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let scopes = Scopes::new(device);
         let device = device.clone();
         let queue = queue.clone();
@@ -341,7 +335,6 @@ impl Editor {
                 .expect("source services initialized"),
         ));
         editor.developments = Some(developments);
-        editor.source_epoch = source_epoch;
         editor.document.cache = thumbnails.sources.clone();
         editor.document.thumbnails = thumbnails;
         editor.set_cache_limits(cache_limits);
@@ -353,10 +346,6 @@ impl Editor {
         self.cancel_active_tool();
         self.document = self.document.replacement(document);
         self.apply_cache_budgets();
-        self.id = self.request_id();
-        self.document.visit.view = self.id;
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.canvas_frame = Default::default();
         self.remember_imported_look();
         self.status = "Project ready".into();
@@ -369,18 +358,8 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         self.install_project(document);
-        if let Some(id) = selected.or_else(|| self.document.project.order.first().copied())
-            && let Ok(path) = self.document.source_path(id)
-        {
-            self.document.selected = self
-                .document
-                .project
-                .order
-                .iter()
-                .position(|source| *source == id)
-                .expect("ordered photograph");
-            self.document.visit.current_source = Some(id);
-            self.load(path, cx);
+        if let Some(id) = selected.or_else(|| self.document.project.order.first().copied()) {
+            self.browse_photo(id, cx);
         }
     }
 
@@ -435,14 +414,12 @@ impl Editor {
         let mut editor = Self {
             developments: None,
             source_services: None,
-            source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             scopes: Scopes::default(),
             fullscreen: None,
             canvas_frame: Default::default(),
             presentation: Err(Error::Gpu("viewer presentation not initialized".into())),
             started: false,
             menus: menu::Menus::default(),
-            id: 0,
             look: Default::default(),
             status: "Add scans to begin".into(),
             activities: Activities::new(workspace_input.clone()),
@@ -465,9 +442,7 @@ impl Editor {
             memory_watch: None,
 
             document,
-            next_request: 0,
             output_services: None,
-            files: Default::default(),
             allow_close: false,
         };
         editor.apply_cache_budgets();
@@ -480,7 +455,7 @@ impl Editor {
                 self.apply_preferences(preferences);
                 self.preference_store = Some(store);
                 self.persist_preferences();
-                if !self.files.opening() {
+                if !self.document.files.opening() {
                     self.preferences
                         .sections
                         .insert("roll-calibration".into(), true);
@@ -913,12 +888,9 @@ impl Editor {
         let Some(id) = self.document.visit.current_source else {
             return;
         };
-        let source = self
-            .document
-            .state
-            .project
-            .source(id)
-            .expect("accepted source");
+        let Ok(source) = self.document.state.project.source(id) else {
+            return;
+        };
         // Flat-field editing displays a reference while retaining the working source ID.
         let path = self
             .document
@@ -1027,20 +999,12 @@ impl Editor {
             .capture_initialization(&self.document.initialization);
         self.cancel_spatial();
         self.document.hosted_tool = Default::default();
-        self.id = self.request_id();
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
-        self.reinterpret_photo(self.id);
+        self.reinterpret_photo();
         if let Some(id) = self.document.visit.current_source
             && let Ok(path) = self.document.source_path(id)
         {
             self.start_source_acquisition(path, cx);
         }
-    }
-
-    fn request_id(&mut self) -> u64 {
-        self.next_request += 1;
-        self.next_request
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {
@@ -1578,11 +1542,12 @@ impl host::App for Editor {
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {
+        let source = self.document.visit.current_source?;
         self.document
             .visit
             .working_view
             .revision()
-            .map(|revision| (self.id, revision))
+            .map(|revision| (source.0, revision))
     }
 
     fn on_exit(&mut self) {

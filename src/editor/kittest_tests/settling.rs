@@ -79,7 +79,7 @@ fn open_fixture_returns_accepted_metadata_before_selected_photo_finishes() {
         open_project(&mut harness, path);
         held.wait_entered(&mut harness);
         harness.read(|editor| {
-            assert!(!editor.files.pending() && !editor.interaction_blocked());
+            assert!(!editor.document.files.pending() && !editor.interaction_blocked());
             assert_eq!(editor.document.project, project);
             assert!(!editor.document.dirty());
         });
@@ -167,7 +167,7 @@ fn open_fixture_presents_an_actionable_decision_during_independent_photo_loading
             open_project(&mut harness, path.clone());
             wait_for(&mut harness, |editor| editor.dialogs.is_open());
             harness.read(|editor| {
-                assert!(editor.files.pending() && editor.dialogs.is_open());
+                assert!(editor.document.files.pending() && editor.dialogs.is_open());
                 assert!(editor.document.visit.source.pending());
             });
             let cancel = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel");
@@ -175,7 +175,7 @@ fn open_fixture_presents_an_actionable_decision_during_independent_photo_loading
             assert!(harness.ctx.content_rect().contains_rect(cancel.rect()));
             cancel.click();
             harness.step();
-            wait_for(&mut harness, |editor| !editor.files.pending());
+            wait_for(&mut harness, |editor| !editor.document.files.pending());
             harness.read(|editor| {
                 assert!(!editor.dialogs.is_open());
                 assert_eq!(editor.document.project, before);

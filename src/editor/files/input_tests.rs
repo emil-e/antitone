@@ -12,11 +12,11 @@ fn guarded_transition_reserves_input_before_poll_and_releases_an_abandoned_conti
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.guard_transition(Transition::Close, cx);
-            assert!(editor.files.pending());
+            assert!(editor.document.files.pending());
             assert!(!editor.dialogs.is_open());
             assert!(editor.workspace_input.is_blocked());
             assert!(!editor.tool_start_available());
-            editor.files.action = None;
+            editor.document.files.action = None;
         });
         app.pump();
         app.read(|editor| {
@@ -29,13 +29,48 @@ fn guarded_transition_reserves_input_before_poll_and_releases_an_abandoned_conti
         app.enter(|editor, cx| editor.guard_transition(Transition::Close, cx));
         app.run_until(LIMIT, |editor| editor.dialogs.is_open());
         app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
-        app.run_until(LIMIT, |editor| !editor.files.pending());
+        app.run_until(LIMIT, |editor| !editor.document.files.pending());
         app.read(|editor| {
             assert!(!editor.workspace_input.is_blocked());
             assert!(!editor.allow_close);
             assert_eq!(editor.document.state.project, accepted);
         });
     });
+}
+
+#[test]
+fn document_replacement_cancels_close_before_poll_while_waiting_and_after_a_ready_answer() {
+    for phase in 0..3 {
+        let editor = crate::editor::tests::fixture();
+        assert!(editor.document.dirty());
+        with_application(editor, |app| {
+            app.enter(|editor, cx| editor.guard_transition(Transition::Close, cx));
+            if phase > 0 {
+                app.run_until(LIMIT, |editor| editor.dialogs.is_open());
+            }
+            if phase == 2 {
+                app.update(|editor| editor.dialogs.answer_for_test("Discard changes"));
+            }
+            app.update(Editor::new_project);
+            app.pump();
+            app.read(|editor| {
+                assert!(!editor.allow_close);
+                assert!(!editor.document.files.pending());
+                assert!(editor.document.project.order.is_empty());
+                assert_eq!(editor.dialogs.is_open(), phase == 1);
+                assert_eq!(editor.workspace_input.is_blocked(), phase == 1);
+            });
+            if phase == 1 {
+                app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
+                app.pump();
+                app.read(|editor| {
+                    assert!(!editor.allow_close);
+                    assert!(!editor.workspace_input.is_blocked());
+                    assert!(editor.document.project.order.is_empty());
+                });
+            }
+        });
+    }
 }
 
 #[test]
@@ -61,7 +96,7 @@ fn failed_save_retains_input_across_the_notice_and_dirty_transition_reprompt() {
             !editor.document.write.pending() && editor.dialogs.is_open()
         });
         app.read(|editor| {
-            assert!(editor.files.pending());
+            assert!(editor.document.files.pending());
             assert!(editor.workspace_input.is_blocked());
             assert!(!editor.tool_start_available());
             assert_eq!(editor.document.state.project, accepted);
@@ -69,11 +104,11 @@ fn failed_save_retains_input_across_the_notice_and_dirty_transition_reprompt() {
         app.update(|editor| editor.dialogs.answer_for_test("OK"));
         app.pump();
         app.read(|editor| {
-            assert!(editor.files.pending() && editor.dialogs.is_open());
+            assert!(editor.document.files.pending() && editor.dialogs.is_open());
             assert!(editor.workspace_input.is_blocked());
         });
         app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
-        app.run_until(LIMIT, |editor| !editor.files.pending());
+        app.run_until(LIMIT, |editor| !editor.document.files.pending());
         app.read(|editor| {
             assert!(!editor.workspace_input.is_blocked());
             assert!(editor.tool_start_available());
@@ -104,7 +139,7 @@ fn a_completed_save_keeps_the_transition_reserved_until_an_unread_notice_is_answ
         });
         app.run_until(LIMIT, |editor| !editor.document.write.pending());
         app.read(|editor| {
-            assert!(editor.files.pending() && editor.dialogs.is_open());
+            assert!(editor.document.files.pending() && editor.dialogs.is_open());
             assert!(editor.workspace_input.is_blocked());
             assert!(!editor.tool_start_available());
             assert!(!editor.allow_close);
@@ -114,7 +149,7 @@ fn a_completed_save_keeps_the_transition_reserved_until_an_unread_notice_is_answ
 
         app.update(|editor| editor.dialogs.answer_for_test("OK"));
         app.run_until(LIMIT, |editor| {
-            editor.allow_close && !editor.files.pending()
+            editor.allow_close && !editor.document.files.pending()
         });
         app.read(|editor| {
             assert!(!editor.workspace_input.is_blocked());

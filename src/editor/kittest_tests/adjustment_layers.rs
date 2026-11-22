@@ -604,7 +604,7 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
                     ),
                     before
                 );
-                assert!(!editor.document.visit.adjustment_layers.dragging());
+                assert!(!editor.document.visit.layer_order_drag.is_some());
                 assert!(editor.mask_preview_geometry().is_none());
             });
         }

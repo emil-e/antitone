@@ -351,9 +351,9 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
                 "retirement cannot leave reference navigation metadata"
             );
             e.begin_crop();
-            let request = e.id;
+            let request = e.visit_lifetime();
             e.begin_flat_edit("another-light.ARW".into(), None, cx);
-            assert_eq!(e.id, request);
+            assert!(request.upgrade().is_some());
             assert!(e.document.crop_edit().is_none() && e.document.flat_edit().is_some());
             e.finish_flat_edit();
         });
@@ -525,11 +525,11 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             assert!(!app.read(|e| e.document.dirty()));
             app.enter(|e, cx| e.open_project(path, cx));
             app.run_until(Duration::from_secs(60), |e| {
-                if !e.files.opening() {
+                if !e.document.files.opening() {
                     let _ = e.correction();
                     e.document.correction.observe(&correction_observer);
                 }
-                !e.files.opening()
+                !e.document.files.opening()
                     && !e.correction().pending()
                     && !e.document.visit.source.pending()
             });
@@ -546,11 +546,11 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             missing.save(&path, crate::project::Save::New).unwrap();
             app.enter(|e, cx| e.open_project(path, cx));
             app.run_until(Duration::from_secs(60), |e| {
-                if !e.files.opening() {
+                if !e.document.files.opening() {
                     let _ = e.correction();
                     e.document.correction.observe(&correction_observer);
                 }
-                !e.files.opening()
+                !e.document.files.opening()
                     && !e.correction().pending()
                     && !e.document.visit.source.pending()
             });

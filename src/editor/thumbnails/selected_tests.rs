@@ -413,16 +413,15 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 let b_id = add_source(editor, b.clone());
 
                 editor.load(a, cx);
-                let first = editor.id;
+                let obsolete = crate::editor::source::testing::pending(editor, cx);
                 editor.load(b.clone(), cx);
-                let second = editor.id;
-                editor.source_result(first, Err("obsolete".into()));
+                let _ = obsolete.send(Err("obsolete".into()));
                 assert_eq!(editor.document.visit.current_source, Some(b_id));
                 assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.document.visit.canvas.ready.is_none());
 
-                editor.source_result(second, Err("current load failed".into()));
+                crate::editor::source::testing::complete(editor, Err("current load failed".into()));
                 assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.pending_preview.is_none());
                 assert!(editor.document.visit.canvas.selection_timing.is_none());
@@ -437,6 +436,11 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                         && editor.document.visit.canvas.selection_timing.is_none()
                 );
                 assert!(!editor.interaction_blocked());
+                assert!(editor.document.project.sources.is_empty());
+            });
+            app.pump();
+            app.read(|editor| {
+                assert_eq!(editor.status, "Project ready");
                 assert!(editor.document.project.sources.is_empty());
             });
         });
@@ -610,7 +614,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                         .clone(),
                     record: editor.document.state.project.source(id).unwrap().clone(),
                 };
-                editor.source_result(editor.id, Ok(Box::new(ready)));
+                crate::editor::source::testing::complete(editor, Ok(Box::new(ready)));
                 assert!(editor.document.visit.canvas.ready.is_some());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(!editor.interaction_blocked());

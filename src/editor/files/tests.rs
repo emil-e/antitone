@@ -137,7 +137,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .center();
         click(app, &context, cancel);
         app.read(|e| {
-            assert!(!e.files.pending() && !e.document.write.pending());
+            assert!(!e.document.files.pending() && !e.document.write.pending());
             assert_eq!(e.document.state.project, before);
         });
         app.enter(|e, cx| e.guard_transition(Transition::New, cx));
@@ -150,7 +150,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .1
             .center();
         click(app, &context, discard);
-        app.run_until(Duration::from_secs(15), |e| !e.files.pending());
+        app.run_until(Duration::from_secs(15), |e| !e.document.files.pending());
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(!e.dialogs.is_open() && !e.document.dirty());
@@ -309,7 +309,7 @@ fn numeric_save(route: SaveInput) {
             );
             assert!(e.application_menu_state().enabled(Action::Save));
             assert!(e.application_menu_state().enabled(Action::Quit));
-            assert!(!e.files.pending() && !e.document.write.pending());
+            assert!(!e.document.files.pending() && !e.document.write.pending());
             assert!(!e.allow_close);
             assert_eq!(e.photo_settings().exposure, 0.);
         });
@@ -367,7 +367,7 @@ fn numeric_save(route: SaveInput) {
         ui_frame(app, &context, events);
         if matches!(route, SaveInput::PasteThenSystemQuit) {
             app.read(|e| {
-                assert!(e.files.closing());
+                assert!(e.document.files.closing());
                 assert_eq!(host::App::quit_state(e), Some(host::QuitState::Pending));
                 assert!(!e.allow_close);
             });
@@ -442,7 +442,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
                     .contains(&egui::ViewportCommand::CancelClose)
             );
             app.read(|editor| {
-                assert!(editor.files.closing());
+                assert!(editor.document.files.closing());
                 assert!(!editor.allow_close);
                 assert!(
                     !editor.document.write.pending() && editor.document.export.operation.is_none()
@@ -506,7 +506,9 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 ui_frame(app, &context, vec![]);
                 click(app, &context, egui::pos2(30., 15.));
                 app.read(|editor| {
-                    assert!(editor.files.pending() || editor.document.export.form.is_some());
+                    assert!(
+                        editor.document.files.pending() || editor.document.export.form.is_some()
+                    );
                     assert!(
                         !editor.document.write.pending()
                             && editor.document.export.operation.is_none()
@@ -516,7 +518,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 app.read(|editor| {
                     assert!(
                         !editor.dialogs.is_open()
-                            && !editor.files.pending()
+                            && !editor.document.files.pending()
                             && editor.document.export.form.is_none()
                     );
                     assert!(
@@ -557,7 +559,7 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         click(app, &context, point);
         app.read(|e| {
             assert!(!e.dialogs.is_open() && !e.allow_close);
-            assert!(e.files.closing());
+            assert!(e.document.files.closing());
             assert!(e.document.write.pending());
         });
         app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
@@ -577,7 +579,7 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         );
         app.read(|e| {
             assert!(e.allow_close && !e.document.dirty() && !e.dialogs.is_open());
-            assert!(!e.files.pending());
+            assert!(!e.document.files.pending());
         });
     });
 }
@@ -614,7 +616,7 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
         click(app, &context, point);
         app.read(|e| {
             assert!(!e.dialogs.is_open() && e.document.write.pending());
-            assert!(e.files.pending());
+            assert!(e.document.files.pending());
         });
         app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
         assert_eq!(
@@ -633,7 +635,7 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
         );
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
-            assert!(!e.dialogs.is_open() && !e.files.pending());
+            assert!(!e.dialogs.is_open() && !e.document.files.pending());
         });
     });
 }
@@ -915,7 +917,7 @@ fn input_rejects_a_conflicting_photo_edit_without_retiring_it_or_changing_accept
     let mut editor = fixture();
     editor.photo_settings_mut().exposure = 7.123456789012345;
     let before = editor.document.state.project.clone();
-    let active = editor.id;
+    let active = editor.visit_lifetime();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             let edit = editor.edit_photo("Active photo edit").unwrap();
@@ -929,13 +931,7 @@ fn input_rejects_a_conflicting_photo_edit_without_retiring_it_or_changing_accept
             assert!(!editor.document.write.pending());
             assert!(!editor.dialogs.is_open());
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.id, active);
-            assert_eq!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                active
-            );
+            assert!(active.upgrade().is_some());
             assert_eq!(editor.photo_settings().exposure, 7.123456789012345);
             assert!(editor.document.dirty());
             drop(edit);
@@ -964,11 +960,7 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.document.dirty() && !e.interaction_blocked());
-            assert!(e.files.pending());
-            assert_eq!(
-                e.source_epoch.load(std::sync::atomic::Ordering::Relaxed),
-                e.id
-            );
+            assert!(e.document.files.pending());
             assert_eq!(
                 e.dialogs.message().unwrap().title,
                 FailureCase::Save.title()
@@ -1038,7 +1030,7 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
 #[test]
 fn new_resets_development_and_replaces_the_previous_document() {
     let editor = fixture();
-    let previous = editor.id;
+    let previous = editor.visit_lifetime();
     with_application(editor, |app| {
         app.enter(|e, _| e.new_project());
         app.run_until(Duration::from_secs(15), |e| !e.document.write.pending());
@@ -1050,7 +1042,7 @@ fn new_resets_development_and_replaces_the_previous_document() {
             );
             assert!(!e.document.dirty());
             assert!(e.dmin().is_none());
-            assert!(e.id > previous);
+            assert!(previous.upgrade().is_none());
         });
     });
 }
@@ -1100,8 +1092,11 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
             app.enter(|editor, cx| editor.guard_transition(transition.clone(), cx));
             app.pump();
             app.read(|editor| {
-                assert!(editor.files.pending() && editor.dialogs.is_open());
-                assert_eq!(editor.files.closing(), transition == Transition::Close);
+                assert!(editor.document.files.pending() && editor.dialogs.is_open());
+                assert_eq!(
+                    editor.document.files.closing(),
+                    transition == Transition::Close
+                );
                 assert!(
                     !editor.document.write.pending() && editor.document.export.operation.is_none()
                 );

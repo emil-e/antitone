@@ -39,6 +39,74 @@ fn request(name: &str) -> (DocumentScope, Request) {
 }
 
 #[test]
+fn source_scope_cancellation_retires_the_continuation_before_publication() {
+    for polled in [false, true] {
+        for reply_ready in [false, true] {
+            for retirement in 0..4 {
+                let editor = crate::editor::tests::fixture();
+                let published = Arc::new(AtomicBool::new(false));
+                let cancelled = crate::cancellation::Cancellation::default();
+                let (reply, result) = futures_channel::oneshot::channel();
+                crate::application::test_support::with_application(editor, |app| {
+                    app.enter(|editor, cx| {
+                        let published = published.clone();
+                        let retire = cancelled.cancel_on_drop();
+                        editor.document.visit.source.task = cx.spawn(move |cx| async move {
+                            let _retire = retire;
+                            let result = result.await.expect("source reply retained");
+                            published.store(true, Ordering::SeqCst);
+                            cx.update(|editor| editor.source_result(result));
+                        });
+                    });
+                    if polled {
+                        app.pump();
+                    }
+                    let mut reply = Some(reply);
+                    if reply_ready {
+                        assert!(
+                            reply
+                                .take()
+                                .unwrap()
+                                .send(Err("completed source request".into()))
+                                .is_ok()
+                        );
+                    }
+                    app.update(|editor| match retirement {
+                        0 => {}
+                        1 => {
+                            editor.replace_photo_scope(editor.document.visit.current_source);
+                        }
+                        2 => {
+                            editor.reinterpret_photo();
+                        }
+                        3 => editor.new_project(),
+                        _ => unreachable!(),
+                    });
+                    if let Some(reply) = reply {
+                        let _ = reply.send(Err("completed source request".into()));
+                    }
+                    app.pump();
+                    assert_eq!(
+                        published.load(Ordering::SeqCst),
+                        retirement == 0,
+                        "polled={polled}, reply_ready={reply_ready}, retirement={retirement}"
+                    );
+                    assert!(cancelled.is_cancelled());
+                    app.read(|editor| {
+                        assert!(!editor.document.visit.source.pending());
+                        if retirement == 0 {
+                            assert_eq!(editor.status, "completed source request");
+                        } else {
+                            assert_ne!(editor.status, "completed source request");
+                        }
+                    });
+                });
+            }
+        }
+    }
+}
+
+#[test]
 fn acquisition_preserves_source_identity_and_pixels_without_editor_or_gpu() {
     let (document, mut request) = request("patches.dng");
     let scheduler = source_loading::SourceLoader::new();

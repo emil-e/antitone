@@ -60,8 +60,12 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
                 assert!(view.capture.is_inspection());
                 assert_eq!(editor.document.project, before);
             });
-            let timing =
-                harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+            let timing = harness.read(|editor| {
+                Arc::new(SelectionTiming::new(
+                    editor.document.visit.current_source,
+                    Instant::now(),
+                ))
+            });
             harness.update(|editor| {
                 editor.document.flat_edit_mut().unwrap().view.paint_observer = Some(timing.clone())
             });

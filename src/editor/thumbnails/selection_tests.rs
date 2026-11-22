@@ -95,10 +95,6 @@ fn truncate_filmstrip(editor: &mut Editor, keep: usize) {
     {
         editor.document.visit.current_source = None;
     }
-    editor.document.selected = editor
-        .document
-        .selected
-        .min(editor.document.state.project.order.len().saturating_sub(1));
     editor.document.roll_selection.reconcile(
         &editor.document.state.project.order,
         editor.document.visit.current_source,
@@ -189,7 +185,6 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
                 .source_mut(selected)
                 .unwrap()
                 .path = name.into();
-            editor.document.selected = 1;
             editor.load(editor.document.source_path(selected).unwrap(), cx);
             assert!(editor.document.visit.source.pending());
             assert!(
@@ -215,7 +210,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
                     && editor.document.visit.pending_preview.is_none()
             );
             assert_eq!(editor.document.state.project, before);
-            editor.source_result(editor.id, Err("RAW unavailable".into()));
+            crate::editor::source::testing::complete(editor, Err("RAW unavailable".into()));
             assert!(
                 !editor.interaction_blocked()
                     && editor.document.visit.canvas.ready.is_none()
@@ -245,7 +240,6 @@ fn modal_input_blocks_filmstrip_mouse_and_keyboard_and_releases_existing_focus()
             *editor.document = super::tests::fixture();
             truncate_filmstrip(editor, 2);
             crate::editor::tests::add_ready_fixture(editor);
-            editor.document.selected = 2;
             let before = editor.document.state.project.clone();
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
@@ -313,7 +307,7 @@ fn modal_input_blocks_filmstrip_mouse_and_keyboard_and_releases_existing_focus()
                     .ends_with("photo-0.ARW")
             );
             assert!(editor.document.visit.source.pending());
-            assert_eq!(editor.document.selected, 0);
+            assert_eq!(editor.document.active_index(), Some(0));
         });
     });
 }
@@ -438,7 +432,6 @@ fn filmstrip_departure_retires_each_picker_without_accepting_a_measurement() {
                 *editor.document = super::tests::fixture();
                 truncate_filmstrip(editor, 2);
                 crate::editor::tests::add_ready_fixture(editor);
-                editor.document.selected = 2;
 
                 (
                     editor.document.state.project.clone(),
@@ -481,7 +474,7 @@ fn filmstrip_departure_retires_each_picker_without_accepting_a_measurement() {
                     editor.document.visit.current_source,
                     Some(editor.document.project.order[0])
                 );
-                assert_eq!(editor.document.selected, 0);
+                assert_eq!(editor.document.active_index(), Some(0));
                 assert!(editor.test_pick().is_none());
                 assert!(editor.document.visit.interaction_action.is_none());
                 assert!(!editor.measurement_pending());
@@ -505,7 +498,8 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 let first = editor.document.state.project.order[0];
                 let second = editor.document.state.project.order[1];
                 editor.load(editor.document.source_path(first).unwrap(), cx);
-                let original = editor.id;
+                let original = editor.visit_lifetime();
+                let obsolete = crate::editor::source::testing::pending(editor, cx);
                 assert!(editor.document.visit.source.pending());
                 let context = egui::Context::default();
                 frame(editor, &context, vec![], cx);
@@ -531,13 +525,13 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                     frame(editor, &context, pointer(point, false), cx);
                 }
                 assert_eq!(editor.document.visit.current_source, Some(second));
-                assert_eq!(editor.document.selected, 1);
+                assert_eq!(editor.document.active_index(), Some(1));
                 assert!(
                     !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_none()
                 );
-                assert!(editor.id > original);
+                assert!(original.upgrade().is_none());
                 assert!(editor.document.visit.source.pending());
-                editor.source_result(original, Err("obsolete failure".into()));
+                let _ = obsolete.send(Err("obsolete failure".into()));
                 assert!(
                     !editor.interaction_blocked()
                         && editor.document.visit.current_source == Some(second)
@@ -547,6 +541,12 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 assert!(editor.cropping());
                 assert!(editor.document.visit.source.pending());
                 assert!(editor.document.visit.canvas.ready.is_none());
+            });
+            app.pump();
+            app.read(|editor| {
+                assert_eq!(editor.document.active_index(), Some(1));
+                assert!(editor.cropping());
+                assert_ne!(editor.status, "obsolete failure");
             });
         });
     }
@@ -609,7 +609,7 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
                 editor.document.visit.current_source,
                 Some(editor.document.state.project.order[2])
             );
-            editor.source_result(editor.id, Err("fixture unavailable".into()));
+            crate::editor::source::testing::complete(editor, Err("fixture unavailable".into()));
             click(editor, 2, Modifiers::COMMAND);
             assert!(
                 !editor.document.visit.source.pending(),

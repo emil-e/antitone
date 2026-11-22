@@ -103,7 +103,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     }
                 });
             }
-            let request = harness.read(|editor| editor.id);
+            let request = harness.read(|editor| editor.visit_lifetime());
             let viewport = harness.read(|editor| editor.document.visit.canvas.viewport);
             harness.key_press_modifiers(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -111,9 +111,10 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             );
             harness.step();
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[2])));
-            harness.read(|editor| {
-                assert_eq!(editor.id, request, "shortcut does not dispatch a reload")
-            });
+            assert!(
+                request.upgrade().is_some(),
+                "shortcut does not dispatch a reload"
+            );
             harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             assert_eq!(
                 harness
@@ -187,7 +188,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             .retain(|entry| entry.source != ids[0] && entry.source != ids[2]);
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[4])));
-        harness.read(|editor| assert_eq!(editor.document.selected, 2));
+        harness.read(|editor| assert_eq!(editor.document.active_index(), Some(2)));
         harness.read(|editor| assert!(editor.document.dirty()));
         assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);
         save_existing_project(&mut harness);

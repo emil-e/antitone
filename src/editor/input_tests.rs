@@ -340,12 +340,12 @@ fn input_accepts_while_old_native_work_is_held_and_only_the_new_wb_can_present()
             );
             std::thread::sleep(Duration::from_millis(1));
         }
-        let old_view = app.read(|editor| editor.document.visit.view);
+        let old_view = app.read(|editor| editor.visit_lifetime());
         app.enter(|editor, cx| editor.request_input(InputSettings::Digital, cx));
         let accepted_while_held = app.read(|editor| {
             held.load(Ordering::SeqCst)
                 && editor.document.project.input == InputSettings::Digital
-                && editor.document.visit.view != old_view
+                && old_view.upgrade().is_none()
                 && editor.history_label(history::Direction::Undo) == Some("Input stage")
         });
         release.send(()).unwrap();

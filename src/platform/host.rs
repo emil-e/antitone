@@ -43,7 +43,7 @@ pub trait App: Sized {
         None
     }
     fn request_quit(&mut self) {}
-    /// Requested source and processing/view generations, not accepted GPU output.
+    /// Requested photograph identity and view-intent revision, not accepted GPU output.
     /// Queried only by opt-in latency tracing.
     fn processing_revision(&self) -> Option<(u64, u64)> {
         None

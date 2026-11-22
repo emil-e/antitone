@@ -346,8 +346,12 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             select_target(&mut harness, target);
             wait_settled(&mut harness);
-            let timing =
-                harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+            let timing = harness.read(|editor| {
+                Arc::new(SelectionTiming::new(
+                    editor.document.visit.current_source,
+                    Instant::now(),
+                ))
+            });
             harness.update(|editor| {
                 editor.document.visit.canvas.selection_timing = Some(timing.clone())
             });
@@ -384,8 +388,12 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         let working = metadata.camera_to_ap1().unwrap() * DVec3::splat(8. * 3000. / 4031.);
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             select_target(&mut harness, target);
-            let timing =
-                harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+            let timing = harness.read(|editor| {
+                Arc::new(SelectionTiming::new(
+                    editor.document.visit.current_source,
+                    Instant::now(),
+                ))
+            });
             harness.update(|editor| {
                 editor.document.visit.canvas.selection_timing = Some(timing.clone())
             });

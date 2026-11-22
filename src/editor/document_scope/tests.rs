@@ -152,12 +152,12 @@ fn cancelling_input_confirmation_preserves_the_visit_source_and_history() {
         .unwrap()
         .developed
         .clone();
-    let view = editor.document.visit.view;
+    let view = editor.visit_lifetime();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_input(crate::processing::InputSettings::Digital, cx));
         app.read(|editor| {
             assert!(editor.dialogs.is_open());
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &editor
                     .document
@@ -175,7 +175,7 @@ fn cancelling_input_confirmation_preserves_the_visit_source_and_history() {
             editor.document.input_change.is_none()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &editor
                     .document
@@ -202,7 +202,7 @@ fn installing_same_document_preserves_visit_but_opening_the_same_data_replaces_i
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
 
-        let view = editor.document.visit.view;
+        let view = editor.visit_lifetime();
         let store = Arc::downgrade(&editor.document.cache);
         let selected = editor.document.visit.current_source;
         let candidate = editor.document.capture();
@@ -218,17 +218,17 @@ fn installing_same_document_preserves_visit_but_opening_the_same_data_replaces_i
                 }
             });
             app.run_until(Duration::from_secs(10), |editor| {
-                !editor.files.opening() && !editor.document.visit.source.pending()
+                !editor.document.files.opening() && !editor.document.visit.source.pending()
             });
             app.read(|editor| {
                 if replace {
-                    assert_ne!(editor.document.visit.view, view);
+                    assert!(view.upgrade().is_none());
                     assert!(
                         editor.document.visit.canvas.ready.is_none(),
                         "fixture has no source services"
                     );
                 } else {
-                    assert_eq!(editor.document.visit.view, view);
+                    assert!(view.upgrade().is_some());
                     assert!(editor.document.visit.canvas.ready.is_some());
                 }
                 assert_eq!(store.upgrade().is_none(), replace);
@@ -260,7 +260,7 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
     let before = editor.history_snapshot();
     editor.document.project.roll.exposure = 0.5;
     editor.record_edit(before, "Later exposure", None);
-    let view = editor.document.visit.view;
+    let view = editor.visit_lifetime();
     let store = editor.document.cache.clone();
     editor.document.accept_save(saved);
     assert_eq!(editor.document.state.project.roll.exposure, 0.5);
@@ -269,6 +269,6 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
         editor.history_label(crate::editor::history::Direction::Undo),
         Some("Later exposure")
     );
-    assert_eq!(editor.document.visit.view, view);
+    assert!(view.upgrade().is_some());
     assert!(Arc::ptr_eq(&editor.document.cache, &store));
 }

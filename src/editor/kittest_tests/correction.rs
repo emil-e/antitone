@@ -46,7 +46,7 @@ fn reopened_correction_resource_failure_shows_its_error_and_a_source_fallback() 
         });
         harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         wait_for(&mut harness, |editor| {
-            !editor.files.opening()
+            !editor.document.files.opening()
                 && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
         });
@@ -192,7 +192,7 @@ fn reopened_photographic_overflow_keeps_the_map_and_recovers_when_correction_is_
         });
         harness.enter(|editor, cx| editor.open_project(saved.path.clone().unwrap(), cx));
         wait_for(&mut harness, |editor| {
-            !editor.files.opening()
+            !editor.document.files.opening()
                 && !editor.correction().pending()
                 && !editor.document.visit.source.pending()
                 && editor.document.visit.working_view.error.is_some()
@@ -272,7 +272,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
                     .image
                     .clone(),
                 canvas.original.continuation(),
-                e.document.visit.view,
+                e.visit_lifetime(),
             )
         });
         assert!(!mode);
@@ -283,7 +283,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
             let canvas = &e.document.visit.canvas;
             assert_eq!(canvas.viewport, viewport);
             assert_eq!(e.document.source, mode);
-            assert_eq!(e.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert!(Arc::ptr_eq(
                 &photo,
                 &canvas.ready.as_ref().unwrap().developed
@@ -833,8 +833,12 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             });
             let geometry = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
-            let timing =
-                harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+            let timing = harness.read(|editor| {
+                Arc::new(SelectionTiming::new(
+                    editor.document.visit.current_source,
+                    Instant::now(),
+                ))
+            });
             harness.update(|editor| {
                 editor.document.visit.canvas.selection_timing = Some(timing.clone())
             });
@@ -959,7 +963,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             directory.path().join("correction.antitone.json"),
         );
         wait_for(&mut harness, |editor| {
-            editor.files.pending() && editor.dialogs.is_open()
+            editor.document.files.pending() && editor.dialogs.is_open()
         });
         harness.get_by_label("Discard changes").click();
         harness.step();
@@ -1051,7 +1055,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             directory.path().join("correction.antitone.json"),
         );
         wait_for(&mut harness, |editor| {
-            editor.files.pending() && editor.dialogs.is_open()
+            editor.document.files.pending() && editor.dialogs.is_open()
         });
         harness.get_by_label("Discard changes").click();
         harness.step();

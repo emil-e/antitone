@@ -82,7 +82,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
                 );
                 (Arc::downgrade(frame), images)
             });
-            app.update(|editor| editor.replace_photo_scope(8));
+            app.update(|editor| editor.replace_photo_scope(editor.document.visit.current_source));
             assert!(
                 owner.upgrade().is_none(),
                 "retained frames must not masquerade as cache reuse"
@@ -118,7 +118,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
                 images.iter().all(|(_, _, weak)| weak.upgrade().is_some()),
                 "live views survive optional eviction"
             );
-            app.update(|editor| editor.replace_photo_scope(9));
+            app.update(|editor| editor.replace_photo_scope(editor.document.visit.current_source));
             assert!(
                 images.iter().all(|(_, _, weak)| weak.upgrade().is_none()),
                 "no image retention may hide outside the common store"

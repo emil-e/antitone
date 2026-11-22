@@ -55,7 +55,9 @@ fn successful_new_or_open_retires_pending_publication_while_physical_inputs_surv
                     editor.file_action(FileAction::New, cx);
                 }
             });
-            app.run_until(Duration::from_secs(15), |editor| !editor.files.opening());
+            app.run_until(Duration::from_secs(15), |editor| {
+                !editor.document.files.opening()
+            });
             app.read(|editor| {
                 assert!(editor.document.lut.pending.is_none());
                 assert!(editor.document.project.output.lut.is_none());
@@ -105,7 +107,9 @@ fn failed_open_preserves_the_pending_request_and_its_original_document() {
                 cx,
             )
         });
-        app.run_until(Duration::from_secs(15), |editor| !editor.files.opening());
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.files.opening()
+        });
         app.read(|editor| {
             assert_eq!(editor.document.path.as_ref(), Some(&old));
             assert_eq!(
@@ -148,13 +152,17 @@ fn cancelling_a_dirty_transition_preserves_pending_or_newly_accepted_choice_unde
                 app.run_until(Duration::from_secs(15), |editor| {
                     editor.document.lut.pending.is_none()
                 });
-                app.read(|editor| assert!(editor.dialogs.is_open() && editor.files.pending()));
+                app.read(|editor| {
+                    assert!(editor.dialogs.is_open() && editor.document.files.pending())
+                });
                 None
             } else {
                 Some(call)
             };
             app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
-            app.run_until(Duration::from_secs(15), |editor| !editor.files.pending());
+            app.run_until(Duration::from_secs(15), |editor| {
+                !editor.document.files.pending()
+            });
             if let Some(call) = call {
                 assert!(!call.cancelled.is_cancelled());
                 call.finish();

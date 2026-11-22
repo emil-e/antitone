@@ -200,6 +200,7 @@ impl Editor {
         if self.document.history.entry(direction).is_none() {
             return;
         }
+        let previous_index = self.document.active_index().unwrap_or(0);
         let Restored {
             before,
             label,
@@ -225,11 +226,7 @@ impl Editor {
                 self.document
                     .project
                     .order
-                    .get(
-                        self.document
-                            .selected
-                            .min(self.document.project.order.len().saturating_sub(1)),
-                    )
+                    .get(previous_index.min(self.document.project.order.len().saturating_sub(1)))
                     .copied()
             });
         let next = selected.and_then(|id| self.document.source_input(id).ok());
@@ -250,35 +247,22 @@ impl Editor {
                 (None, _) => true,
             };
         if !same_visit {
-            self.id = self.request_id();
-            self.source_epoch
-                .store(self.id, std::sync::atomic::Ordering::Relaxed);
             if self.document.visit.current_source == selected {
-                self.reinterpret_photo(self.id);
+                self.reinterpret_photo();
+                if let Some(input) = next {
+                    self.start_source_acquisition(input.path().to_owned(), cx);
+                }
             } else {
-                self.replace_photo_scope(self.id);
+                self.activate_photo(selected, cx);
             }
         }
         if stage_changed {
             self.document.hosted_tool = Default::default();
             self.cancel_spatial();
         }
-        self.document.visit.current_source = selected;
         self.document
             .roll_selection
             .reconcile(&self.document.state.project.order, selected);
-        self.document.selected = selected
-            .and_then(|id| {
-                self.document
-                    .project
-                    .order
-                    .iter()
-                    .position(|candidate| *candidate == id)
-            })
-            .unwrap_or(0);
-        if !same_visit && let Some(input) = next {
-            self.start_source_acquisition(input.path().to_owned(), cx);
-        }
         self.acquire_working(cx);
         self.status = format!("{} {label}", direction.verb());
     }

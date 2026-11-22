@@ -140,7 +140,7 @@ fn native_quit_and_close_wait_for_the_document_decision() {
             });
             frame(app, &context);
             app.read(|editor| {
-                assert!(editor.files.closing() && editor.dialogs.is_open());
+                assert!(editor.document.files.closing() && editor.dialogs.is_open());
                 assert!(!editor.allow_close);
                 assert!(editor.document.export.operation.is_none());
             });
@@ -161,7 +161,7 @@ fn queued_native_import_revalidates_modal_availability_without_requiring_tool_re
     host::App::menu_action(&mut editor, Action::AddScans);
     frame(&mut editor, &context);
     assert!(editor.document.export.operation.is_none());
-    assert!(!editor.files.pending());
+    assert!(!editor.document.files.pending());
     assert!(editor.cropping());
     drop(block);
     for action in [
@@ -197,7 +197,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     }
     assert!(editor.menus.panel.is_none());
     assert!(!editor.allow_close);
-    assert!(!editor.files.pending());
+    assert!(!editor.document.files.pending());
     assert_eq!(editor.document.state.project, before);
     crate::application::test_support::with_application(editor, |app| {
         app.update(|editor| host::App::menu_action(editor, Action::Settings));
@@ -207,7 +207,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
         frame(app, &context);
         app.read(|editor| {
             assert!(editor.menus.panel.is_none());
-            assert!(editor.files.closing() && editor.dialogs.is_open());
+            assert!(editor.document.files.closing() && editor.dialogs.is_open());
             assert!(!editor.allow_close);
             assert!(editor.document.export.operation.is_none());
         });

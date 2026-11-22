@@ -5,7 +5,7 @@ fn save_initial(h: &mut Harness<'_, Editor>, directory: &std::path::Path) {
     let path = directory.join("snapshots.antitone");
     h.enter(|editor, cx| editor.save_project(path.clone(), crate::project::Save::New, None, cx));
     wait_for(h, |editor| {
-        !editor.document.write.pending() && !editor.files.pending()
+        !editor.document.write.pending() && !editor.document.files.pending()
     });
     assert!(path.exists());
     h.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));

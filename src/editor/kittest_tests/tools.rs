@@ -74,7 +74,12 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
         assert!(rect.left() >= 0. && rect.right() <= size.x);
         assert!(rect.top() >= 0. && rect.bottom() <= size.y);
     }
-    let timing = harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
+    let timing = harness.read(|editor| {
+        Arc::new(SelectionTiming::new(
+            editor.document.visit.current_source,
+            Instant::now(),
+        ))
+    });
     harness.update(|editor| {
         if let Some(mut state) = editor.document.flat_edit_mut() {
             state.view.paint_observer = Some(timing.clone());

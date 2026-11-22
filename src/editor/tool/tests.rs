@@ -288,7 +288,7 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
         Placement::Document,
         Box::new(Probe::new(&dropped, &actions))
     ));
-    editor.replace_photo_scope(1);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     assert!(editor.current_tool().is_some());
     assert_eq!(dropped.get(), 0);
 
@@ -304,7 +304,7 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
         height: 100,
     });
     assert_eq!(configured.get(), Some(1));
-    editor.replace_photo_scope(2);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     assert_eq!(dropped.get(), 2);
     assert!(
         editor.current_tool().is_none(),
@@ -347,10 +347,12 @@ fn photo_departure_retires_only_its_owned_activity_while_document_work_survives(
 
                 if executing {
                     editor
-                        .with_current_tool(|_, editor| editor.replace_photo_scope(1))
+                        .with_current_tool(|_, editor| {
+                            editor.replace_photo_scope(editor.document.visit.current_source)
+                        })
                         .unwrap();
                 } else {
-                    editor.replace_photo_scope(1);
+                    editor.replace_photo_scope(editor.document.visit.current_source);
                 }
                 assert_eq!(observer.view().is_some(), document_owned);
                 assert_eq!(editor.interaction_blocked(), overlapping);
@@ -463,7 +465,7 @@ fn scope_replacement_during_callback_cannot_restore_into_the_new_owner() {
         editor
             .with_current_tool(|_, editor| {
                 if matches!(placement, Placement::Photo) {
-                    editor.replace_photo_scope(42);
+                    editor.replace_photo_scope(editor.document.visit.current_source);
                 } else {
                     editor.document = DocumentScope::from(document::Document::default());
                 }

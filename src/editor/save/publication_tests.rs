@@ -119,7 +119,7 @@ fn file_workflow_retirement_does_not_disown_an_already_published_save() {
         });
         wait_for(app, &starts);
         let bytes = std::fs::read(&path).unwrap();
-        app.update(|editor| editor.files = Default::default());
+        app.update(|editor| editor.document.files = Default::default());
         app.pump();
         app.read(|editor| {
             assert!(editor.document.write.pending());
@@ -155,14 +155,11 @@ fn selected_native_acquisition_can_finish_under_a_held_save_without_restarting_t
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("during-load.antitone");
     with_application(editor, |app| {
-        let (view, epoch) = app.enter(|editor, cx| {
+        let view = app.enter(|editor, cx| {
             editor.load(source.clone(), cx);
-            let view = editor.document.visit.view;
-            let epoch = editor
-                .source_epoch
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let view = editor.visit_lifetime();
             editor.save_project(path.clone(), Save::New, None, cx);
-            (view, epoch)
+            view
         });
         wait_for(app, &starts);
         app.run_until(Duration::from_secs(15), |editor| {
@@ -175,13 +172,7 @@ fn selected_native_acquisition_can_finish_under_a_held_save_without_restarting_t
             );
             assert!(editor.document.write.pending() && editor.interaction_blocked());
             assert!(editor.workspace_input.is_blocked());
-            assert_eq!(editor.document.visit.view, view);
-            assert_eq!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                epoch
-            );
+            assert!(view.upgrade().is_some());
         });
         release.now();
         published.recv_timeout(Duration::from_secs(15)).unwrap();
@@ -189,7 +180,7 @@ fn selected_native_acquisition_can_finish_under_a_held_save_without_restarting_t
             !editor.document.write.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert!(!editor.document.dirty());
         });
     });
@@ -285,7 +276,9 @@ fn an_after_save_close_reprompts_for_accepted_edits_that_were_not_in_the_written
         });
         app.pump();
         app.read(|editor| {
-            assert!(!editor.files.pending() && !editor.allow_close && editor.document.dirty())
+            assert!(
+                !editor.document.files.pending() && !editor.allow_close && editor.document.dirty()
+            )
         });
     });
 }
@@ -312,7 +305,7 @@ fn a_conflicting_edit_declines_save_without_retiring_the_edit_or_queueing_a_tran
         app.read(|editor| {
             assert!(preview.active());
             assert_eq!(editor.document.project.roll.exposure, 0.75);
-            assert!(!editor.document.write.pending() && !editor.files.pending());
+            assert!(!editor.document.write.pending() && !editor.document.files.pending());
             assert!(!editor.allow_close && !editor.dialogs.is_open());
         });
         assert!(!path.exists());

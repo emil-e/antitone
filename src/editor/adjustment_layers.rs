@@ -11,7 +11,6 @@ pub(super) enum Target {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct OrderKey {
-    loaded: u64,
     source: SourceId,
     id: AdjustmentLayerId,
 }
@@ -33,8 +32,6 @@ pub(super) struct AdjustmentLayerEditor {
     reveal: bool,
     rename_focus: bool,
     creation: Option<bool>,
-
-    order_drag: Option<OrderDrag>,
 }
 
 impl AdjustmentLayerEditor {
@@ -44,10 +41,6 @@ impl AdjustmentLayerEditor {
             ..Default::default()
         }
     }
-
-    pub(super) fn dragging(&self) -> bool {
-        self.order_drag.is_some()
-    }
 }
 
 pub(super) enum Action {
@@ -55,7 +48,6 @@ pub(super) enum Action {
     Overlay(bool),
     Edit(AdjustmentLayerId),
     Enable(AdjustmentLayerId, bool),
-    Reorder(OrderDrag, usize),
     RenameStart(AdjustmentLayerId),
     RenameCancel,
     Rename(AdjustmentLayerId, String),
@@ -185,7 +177,7 @@ impl Editor {
         self.finish_mask(false);
         self.document.visit.adjustment_layers.rename = None;
         self.document.visit.adjustment_layers.owns_delete = false;
-        self.document.visit.adjustment_layers.order_drag = None;
+        self.document.visit.layer_order_drag = None;
         self.document.visit.adjustment_layers.creation = None;
         self.document.visit.adjustment_layers.reveal_controls = false;
     }
@@ -235,11 +227,14 @@ impl Editor {
         start: Option<AdjustmentLayerId>,
         drop: Option<(OrderKey, usize)>,
         finish: bool,
-        cx: &UiContext<'_, Self>,
     ) {
+        if !self.adjustment_layer_actions_available() || self.tab != 1 {
+            self.document.visit.layer_order_drag = None;
+            return;
+        }
         if let Some(id) = start {
             match self.order_drag(id) {
-                Ok(drag) => self.document.visit.adjustment_layers.order_drag = Some(drag),
+                Ok(drag) => self.document.visit.layer_order_drag = Some(drag),
                 Err(error) => self.status = format!("Adjustment drag rejected: {error}"),
             }
         }
@@ -247,15 +242,15 @@ impl Editor {
             && let Some(drag) = self
                 .document
                 .visit
-                .adjustment_layers
-                .order_drag
+                .layer_order_drag
                 .take()
                 .filter(|drag| drag.key == key)
+            && let Err(error) = self.reorder_adjustment(drag, slot)
         {
-            self.apply_adjustment_layer_action(Action::Reorder(drag, slot), cx);
+            self.status = format!("Adjustment edit rejected: {error}");
         }
         if finish {
-            self.document.visit.adjustment_layers.order_drag = None;
+            self.document.visit.layer_order_drag = None;
         }
     }
 
@@ -277,18 +272,13 @@ impl Editor {
             return Err(Error::InvalidParameter("unknown adjustment-layer ID"));
         }
         Ok(OrderDrag {
-            key: OrderKey {
-                loaded: self.id,
-                source,
-                id,
-            },
+            key: OrderKey { source, id },
             layers,
         })
     }
 
     fn reorder_adjustment(&mut self, drag: OrderDrag, slot: usize) -> Result<(), Error> {
-        if drag.key.loaded != self.id || Some(drag.key.source) != self.document.visit.current_source
-        {
+        if Some(drag.key.source) != self.document.visit.current_source {
             return Err(Error::InvalidParameter(
                 "adjustment source changed during drag",
             ));
@@ -400,7 +390,6 @@ impl Editor {
                 record_mut(layers, id)?.adjustment.enabled = enabled;
                 Ok(())
             }),
-            Action::Reorder(drag, slot) => self.reorder_adjustment(drag, slot),
             Action::Rename(id, name) => {
                 let result = self.edit_adjustment_layers(|layers| {
                     record_mut(layers, id)?.name = name;
@@ -421,12 +410,10 @@ impl Editor {
         if self
             .document
             .visit
-            .adjustment_layers
-            .order_drag
+            .layer_order_drag
             .as_ref()
             .is_some_and(|drag| {
-                drag.key.loaded != self.id
-                    || Some(drag.key.source) != self.document.visit.current_source
+                Some(drag.key.source) != self.document.visit.current_source
                     || self.tab != 1
                     || self.fullscreen.is_some()
                     || !(self.tab == 1)
@@ -434,7 +421,7 @@ impl Editor {
                     || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx)
             })
         {
-            self.document.visit.adjustment_layers.order_drag = None;
+            self.document.visit.layer_order_drag = None;
             egui::DragAndDrop::take_payload::<OrderKey>(ctx);
         }
     }
@@ -446,7 +433,7 @@ impl Editor {
     }
 
     pub(super) fn delete_selected_adjustment_layer(&mut self, cx: &UiContext<'_, Self>) {
-        if !self.document.visit.adjustment_layers.dragging()
+        if self.document.visit.layer_order_drag.is_none()
             && let Target::Layer(id) = self.adjustment_layer_target()
         {
             self.apply_adjustment_layer_action(Action::Delete(id), cx);
@@ -849,7 +836,6 @@ impl Editor {
                                     }
 
                                     let key = OrderKey {
-                                        loaded: self.id,
                                         source: self.document.visit.current_source.unwrap(),
                                         id: record.id,
                                     };
@@ -868,7 +854,8 @@ impl Editor {
                                     if available
                                         && let Some(payload) =
                                             destination.dnd_hover_payload::<OrderKey>()
-                                        && payload.loaded == self.id
+                                        && self.document.visit.layer_order_drag.as_ref()
+                                            .is_some_and(|drag| drag.key == *payload)
                                         && Some(payload.source) == self.document.visit.current_source
                                     {
                                         let below = ui.input(|input| {
@@ -1011,9 +998,9 @@ impl Editor {
             || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ui.ctx());
         if start_drag.is_some()
             || drop.is_some()
-            || finish && self.document.visit.adjustment_layers.dragging()
+            || finish && self.document.visit.layer_order_drag.is_some()
         {
-            self.adjustment_layer_order_input(start_drag, drop, finish, cx);
+            self.adjustment_layer_order_input(start_drag, drop, finish);
             ui.ctx().request_repaint();
         }
 

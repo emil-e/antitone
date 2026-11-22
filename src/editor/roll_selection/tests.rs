@@ -33,7 +33,6 @@ fn fixture(index: usize) -> Editor {
             .unwrap();
     }
     editor.document.visit.current_source = Some(editor.document.state.project.order[index]);
-    editor.document.selected = index;
     editor
         .document
         .roll_selection
@@ -43,7 +42,7 @@ fn fixture(index: usize) -> Editor {
 
 fn settle(editor: &mut Editor) {
     if editor.document.visit.source.pending() {
-        editor.source_result(editor.id, Err("fixture RAW unavailable".into()));
+        crate::editor::source::testing::complete(editor, Err("fixture RAW unavailable".into()));
     }
 }
 
@@ -135,12 +134,12 @@ fn plain_command_and_shift_keep_active_selected_and_last_plain_anchor() {
             editor.select_roll_photo(4, egui::Modifiers::SHIFT, cx);
             assert_eq!(editor.document.roll_selection.ids, ids[1..]);
             assert_eq!(editor.document.visit.current_source, Some(ids[1]));
-            let request = editor.id;
+            let request = editor.visit_lifetime();
             editor.select_active_photo_only();
             assert_eq!(editor.document.roll_selection.ids, vec![ids[1]]);
             assert_eq!(editor.document.roll_selection.anchor, Some(ids[1]));
             assert_eq!(editor.document.visit.current_source, Some(ids[1]));
-            assert_eq!(editor.id, request);
+            assert!(request.upgrade().is_some());
             assert!(
                 !editor.document.visit.source.pending(),
                 "reducing selection does not reload the photo"
@@ -168,7 +167,8 @@ fn pending_photo_navigation_and_removal_use_metadata_without_waiting_for_pixels(
         app.enter(|editor, cx| {
             let ids = editor.document.state.project.order.clone();
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
-            let first = editor.id;
+            let first = editor.visit_lifetime();
+            let obsolete = crate::editor::source::testing::pending(editor, cx);
             assert!(editor.document.visit.source.pending());
             assert!(
                 !editor.interaction_blocked()
@@ -183,25 +183,21 @@ fn pending_photo_navigation_and_removal_use_metadata_without_waiting_for_pixels(
             editor.dialogs.answer_for_test("Cancel");
             editor.select_roll_photo(4, egui::Modifiers::NONE, cx);
             assert!(editor.document.visit.source.pending());
-            assert_ne!(editor.id, first);
-            assert_eq!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                editor.id
-            );
+            assert!(first.upgrade().is_none());
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
             assert_eq!(editor.document.visit.current_source, Some(ids[4]));
-            editor.source_result(first, Err("obsolete source".into()));
+            let _ = obsolete.send(Err("obsolete source".into()));
             assert!(
                 !editor.interaction_blocked()
                     && editor.document.visit.current_source == Some(ids[4])
             );
-            editor.source_result(editor.id, Err("fixture unavailable".into()));
+            crate::editor::source::testing::complete(editor, Err("fixture unavailable".into()));
             editor.request_removal(cx);
             assert!(editor.dialogs.is_open());
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
         });
+        app.pump();
+        app.read(|editor| assert_ne!(editor.status, "obsolete source"));
     });
 }
 
@@ -250,14 +246,14 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
                 editor.request_removal(cx);
                 editor.export_failed("Unrelated notice queued after the question".into());
                 editor.dialogs.answer_for_test("Remove photos");
-                editor.id
+                editor.visit_lifetime()
             });
             app.pump();
             app.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(ids[expected]));
                 assert_eq!(
-                    editor.document.selected,
-                    index.min(editor.document.project.order.len() - 1)
+                    editor.document.active_index(),
+                    Some(index.min(editor.document.project.order.len() - 1))
                 );
                 assert_eq!(editor.document.roll_selection.ids, vec![ids[expected]]);
                 let mut expected_project = before.clone();
@@ -275,14 +271,8 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
                     "Unrelated notice queued after the question"
                 );
                 assert!(
-                    editor.id > previous,
+                    previous.upgrade().is_none(),
                     "removal must request its selected successor"
-                );
-                assert_eq!(
-                    editor
-                        .source_epoch
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                    editor.id
                 );
             });
             app.update(|editor| editor.dialogs.answer_for_test("OK"));
@@ -295,14 +285,14 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
 fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_basis() {
     let editor = fixture(2);
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
+        let (source, expected) = app.enter(|editor, cx| {
             crate::editor::tests::add_ready_fixture(editor);
             editor.document.roll_selection.ids = editor.document.state.project.order.clone();
             let mut expected = editor.document.state.project.clone();
             expected.order.clear();
             expected.sources.clear();
             expected.analysis_regions.clear();
-            let old_id = editor.id;
+            let obsolete = crate::editor::source::testing::pending(editor, cx);
             let ready = editor.document.visit.canvas.ready.take().unwrap();
             let source = Arc::downgrade(&ready.developed);
             editor.remove_selected_photos(editor.document.roll_selection.ids.clone(), cx);
@@ -318,21 +308,11 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
                     && editor.document.visit.canvas.original.wanted.is_none()
             );
             assert!(editor.document.roll_selection.ids.is_empty());
-            assert_eq!(
-                editor
-                    .source_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                editor.id
-            );
             assert!(!editor.document.visit.source.pending());
-            editor.source_result(old_id, Ok(Box::new(ready)));
+            let _ = obsolete.send(Ok(Box::new(ready)));
             assert!(
                 editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.current_source.is_none()
-            );
-            assert!(
-                source.upgrade().is_none(),
-                "the retired source must be released after stale delivery"
             );
             assert_eq!(editor.document.state.project, expected);
             serde_json::to_value(&editor.document.project).unwrap();
@@ -348,6 +328,17 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
             let reopened = Document::open(&path).unwrap();
             assert_eq!(reopened.project, saved.project);
             std::fs::remove_file(path).unwrap();
+            (source, expected)
+        });
+        app.pump();
+        assert!(
+            source.upgrade().is_none(),
+            "the retired source must be released after stale delivery"
+        );
+        app.read(|editor| {
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(editor.document.visit.current_source.is_none());
+            assert_eq!(editor.document.state.project, expected);
         });
     });
 }
@@ -358,7 +349,6 @@ fn an_ordinary_picker_preserves_multiselection_and_anchor() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             crate::editor::tests::add_ready_fixture(editor);
-            editor.document.selected = editor.document.state.project.order.len() - 1;
             let active = editor.document.visit.current_source.unwrap();
             editor.document.roll_selection.only(active);
             editor.select_roll_photo(0, egui::Modifiers::COMMAND, cx);
@@ -391,7 +381,7 @@ fn selecting_the_active_photo_preserves_pending_and_failed_acquisition_and_its_c
             editor.load(editor.document.source_path(ids[0]).unwrap(), cx);
             editor.begin_crop();
             assert!(editor.cropping() && editor.document.visit.source.pending());
-            let visit = editor.document.visit.view;
+            let visit = editor.visit_lifetime();
             editor.document.crop_edit_mut().unwrap().draft.size = [240, 160];
 
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
@@ -401,14 +391,14 @@ fn selecting_the_active_photo_preserves_pending_and_failed_acquisition_and_its_c
             assert_eq!(editor.document.roll_selection.ids, ids[..=2]);
             editor.select_active_photo_only();
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0]]);
-            assert_eq!(editor.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert!(editor.document.visit.source.pending());
             assert_eq!(editor.document.crop_edit().unwrap().draft.size, [240, 160]);
 
-            editor.source_result(visit, Err("fixture source failure".into()));
+            crate::editor::source::testing::complete(editor, Err("fixture source failure".into()));
             assert!(!editor.document.visit.source.pending());
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
-            assert_eq!(editor.document.visit.view, visit);
+            assert!(visit.upgrade().is_some());
             assert!(
                 !editor.document.visit.source.pending(),
                 "same-photo selection does not retry"
@@ -418,13 +408,13 @@ fn selecting_the_active_photo_preserves_pending_and_failed_acquisition_and_its_c
 
             editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
             assert_eq!(editor.document.visit.current_source, Some(ids[1]));
-            assert_ne!(editor.document.visit.view, visit);
+            assert!(visit.upgrade().is_none());
             assert!(!editor.cropping());
             assert!(editor.document.visit.source.pending());
-            let other_visit = editor.document.visit.view;
+            let other_visit = editor.visit_lifetime();
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
             assert_eq!(editor.document.visit.current_source, Some(ids[0]));
-            assert_ne!(editor.document.visit.view, other_visit);
+            assert!(other_visit.upgrade().is_none());
             assert!(
                 editor.document.visit.source.pending(),
                 "returning starts a fresh acquisition"

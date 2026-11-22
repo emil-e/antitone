@@ -102,7 +102,7 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
     crate::application::test_support::with_application(editor, |app| {
         frame(app, &context, vec![]);
         app.update(|editor| {
-            assert!(editor.files.closing());
+            assert!(editor.document.files.closing());
             host::App::request_quit(editor);
             assert!(
                 editor.menus.pending.is_empty(),

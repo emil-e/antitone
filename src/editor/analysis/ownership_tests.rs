@@ -44,7 +44,7 @@ fn review_projection_is_read_only_and_retirement_preserves_normal_navigation_wit
                     .entries
                     .clone();
                 editor.with_tool_viewport(|viewport| viewport.zoom = Some(2.25));
-                let draft_viewport = editor.document.analyze_tool().unwrap().viewport;
+                let draft_viewport = editor.document.visit.analysis_view.viewport;
                 for area in [
                     active.into(),
                     Rect {
@@ -79,10 +79,7 @@ fn review_projection_is_read_only_and_retirement_preserves_normal_navigation_wit
                     approved
                 );
                 assert_eq!(editor.test_pick_region(), Some(region));
-                assert_eq!(
-                    editor.document.analyze_tool().unwrap().viewport,
-                    draft_viewport
-                );
+                assert_eq!(editor.document.visit.analysis_view.viewport, draft_viewport);
                 assert_eq!(editor.document.visit.canvas.viewport, normal_viewport);
                 assert_eq!(editor.document.source, source);
                 assert_eq!(editor.document.project, before);

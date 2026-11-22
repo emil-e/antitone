@@ -24,7 +24,7 @@ fn import_keeps_the_dust_owner_and_normal_edit_authority_decides_completion_conf
     for finish_first in [false, true] {
         let (editor, _directory, second) = photos();
         let source = editor.document.visit.current_source.unwrap();
-        let view = editor.document.visit.view;
+        let view = editor.visit_lifetime();
         with_search(editor, |app, gate| {
             app.enter(|editor, cx| {
                 queue(editor, [80, 80], cx);
@@ -74,7 +74,7 @@ fn import_keeps_the_dust_owner_and_normal_edit_authority_decides_completion_conf
             app.read(|editor| {
                 assert!(editor.dusting());
                 assert_eq!(editor.document.visit.current_source, Some(source));
-                assert_eq!(editor.document.visit.view, view);
+                assert!(view.upgrade().is_some());
                 assert_eq!(editor.document.project.order.len(), 2);
                 assert_eq!(
                     editor
@@ -96,7 +96,7 @@ fn import_keeps_the_dust_owner_and_normal_edit_authority_decides_completion_conf
 fn search_held_through_import_can_publish_after_import_releases_edit_authority() {
     let (editor, _directory, second) = photos();
     let source = editor.document.visit.current_source.unwrap();
-    let view = editor.document.visit.view;
+    let view = editor.visit_lifetime();
     with_search(editor, |app, gate| {
         app.enter(|editor, cx| {
             queue(editor, [80, 80], cx);
@@ -116,7 +116,7 @@ fn search_held_through_import_can_publish_after_import_releases_edit_authority()
         settled(app);
         app.read(|editor| {
             assert!(editor.dusting());
-            assert_eq!(editor.document.visit.view, view);
+            assert!(view.upgrade().is_some());
             assert_eq!(editor.document.visit.current_source, Some(source));
             assert_eq!(editor.document.project.order.len(), 2);
             assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1);

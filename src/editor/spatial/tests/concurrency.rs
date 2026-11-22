@@ -64,8 +64,7 @@ fn held_preparation(
         editor.status
     );
     editor.document.cache.set_budget(0);
-    let visit = editor.request_id();
-    editor.replace_photo_scope(visit);
+    editor.replace_photo_scope(editor.document.visit.current_source);
     let first = Arc::new(Gate::default());
     let other = Arc::new(Gate::default());
     let a = first.clone();
