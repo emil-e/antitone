@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
+use crate::gpu::gaussian;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod prefetch;
@@ -108,8 +109,8 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
         } else {
             None
         };
-        let first = value::gaussian(input, 1.).unwrap();
-        let expanded = value::gaussian(first.clone(), 1.5).unwrap();
+        let first = gaussian::blur(input, 1.).unwrap();
+        let expanded = gaussian::blur(first.clone(), 1.5).unwrap();
         let root = Value::from_operation(first.domain(), [first, expanded], Combine);
         let region = CellRegion::new([24, 20], [8, 8]);
         let evaluation = context
@@ -186,14 +187,12 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
-    let mtf = value::gaussian(input, 1.).unwrap();
-    let root = halation(
-        mtf,
-        crate::halation::HalationParameters {
-            sigma: 1.5,
-            strength: 0.5,
-        },
-    )
+    let mtf = gaussian::blur(input, 1.).unwrap();
+    let root = crate::halation::HalationParameters {
+        sigma: 1.5,
+        strength: 0.5,
+    }
+    .compose(mtf)
     .unwrap();
     let region = CellRegion::new([24, 20], [8, 8]);
     let evaluation = context
@@ -289,7 +288,7 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
         ),
     )
     .unwrap();
-    let second = value::gaussian(first.clone(), 1.5).unwrap();
+    let second = gaussian::blur(first.clone(), 1.5).unwrap();
     let root = Value::from_operation(first.domain(), [first, second], Combine);
     let region = CellRegion::new([24, 20], [8, 8]);
     let request = context
@@ -364,8 +363,8 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
             .unwrap(),
     )
     .unwrap();
-    let first = value::gaussian(input, 1.).unwrap();
-    let second = value::gaussian(first.clone(), 1.5).unwrap();
+    let first = gaussian::blur(input, 1.).unwrap();
+    let second = gaussian::blur(first.clone(), 1.5).unwrap();
     let root = Value::from_operation(first.domain(), [first, second], Combine);
     let region = CellRegion::new([24, 20], [8, 8]);
     let request = context

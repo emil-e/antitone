@@ -13,7 +13,9 @@ pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
 pub mod flat;
+pub mod gaussian;
 pub mod grading;
+mod halation;
 pub mod interpretation;
 pub mod lut3d;
 pub mod photograph;

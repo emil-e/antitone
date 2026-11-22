@@ -105,13 +105,7 @@ impl Assembly {
 
 impl crate::image_mtf::ImageMtfParameters {
     pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        gaussian(input, self.sigma)
-    }
-}
-
-impl crate::halation::HalationParameters {
-    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        crate::gpu::evaluation::halation(input, *self)
+        crate::gpu::gaussian::blur(input, self.sigma)
     }
 }
 

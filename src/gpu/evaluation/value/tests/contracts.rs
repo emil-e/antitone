@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::gaussian;
 
 #[test]
 fn value_identity_uses_semantic_precision_but_not_requested_coverage() {
@@ -28,12 +29,12 @@ fn anonymous_output_descriptions_survive_compiler_and_value_retirement() {
     let region = domain.finite().unwrap();
     let input = super::super::super::resident::borrowed_input(domain);
     let input_owner = input.downgrade();
-    let group = gaussian(input.clone(), 0.75).unwrap();
+    let group = gaussian::blur(input.clone(), 0.75).unwrap();
     let group_owner = group.downgrade();
-    let equivalent = gaussian(input.clone(), 0.75).unwrap();
+    let equivalent = gaussian::blur(input.clone(), 0.75).unwrap();
     let different_input =
-        gaussian(super::super::super::resident::borrowed_input(domain), 0.75).unwrap();
-    let different_sigma = gaussian(input.clone(), 0.75f64.next_up()).unwrap();
+        gaussian::blur(super::super::super::resident::borrowed_input(domain), 0.75).unwrap();
+    let different_sigma = gaussian::blur(input.clone(), 0.75f64.next_up()).unwrap();
     assert_eq!(0.75f64 as f32, 0.75f64.next_up() as f32);
     let (output, created) = testing::observe(0, || group.output(region).unwrap());
     assert_eq!(created, 0);

@@ -59,9 +59,6 @@ mod fusion_tests;
 
 mod grain;
 
-mod halation;
-pub(crate) use halation::halation;
-
 mod materializations;
 mod materialized;
 mod supplied;
@@ -120,7 +117,7 @@ use crate::Error;
 pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use grain::grain;
-pub(crate) use operators::{gaussian, window};
+pub(crate) use operators::window;
 #[cfg(all(test, feature = "editor"))]
 use operators::{grade, interpret};
 pub use value::Value;

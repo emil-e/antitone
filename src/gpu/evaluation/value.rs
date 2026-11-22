@@ -15,7 +15,7 @@ pub(crate) use graph::{MAX_UNIT_VALUES, compile as compile_gpu_graph, retire as 
 #[cfg(test)]
 pub(crate) mod testing;
 
-pub use nodes::{gaussian, pointwise, source};
+pub use nodes::{pointwise, source};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;

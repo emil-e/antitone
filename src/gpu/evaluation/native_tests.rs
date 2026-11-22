@@ -76,7 +76,7 @@ fn case(
         Arc::new(Grading::new(&device.limits(), roll, snapshot, area).unwrap()),
     )
     .unwrap();
-    node = gaussian(node, sigma).unwrap();
+    node = crate::gpu::gaussian::blur(node, sigma).unwrap();
     node = renderer.drt.get(OutputTarget::Srgb).apply(node).unwrap();
     node = reconstruct(node.clone(), super::tests::reduced(node.domain, size)).unwrap();
     Case {

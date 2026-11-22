@@ -117,8 +117,8 @@ fn identity(p: vec4f, xy: vec2f) -> vec4f {
             bindings: vec![],
         },
     );
-    assert!(gaussian(graded.clone(), 1e100).is_err());
-    assert!(gaussian(graded, 1e20).is_err());
+    assert!(crate::gpu::gaussian::blur(graded.clone(), 1e100).is_err());
+    assert!(crate::gpu::gaussian::blur(graded, 1e20).is_err());
 }
 
 #[test]

@@ -36,6 +36,7 @@ pub mod exposure_reference;
 pub mod flat_field;
 mod float_hash;
 pub mod frame_raster;
+mod gaussian;
 pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;

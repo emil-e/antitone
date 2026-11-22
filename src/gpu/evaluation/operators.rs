@@ -136,7 +136,3 @@ pub fn interpret(device: &wgpu::Device, input: Value, matrix: glam::DMat3) -> Re
 pub fn grade(input: Value, _device: &wgpu::Device, grade: Arc<Grading>) -> Result<Value, Error> {
     grade.for_grid(input.domain.grid.coverage).compose(input)
 }
-
-pub fn gaussian(input: Value, sigma: f64) -> Result<Value, Error> {
-    value::gaussian(input, sigma)
-}
