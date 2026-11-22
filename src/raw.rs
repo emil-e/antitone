@@ -12,7 +12,7 @@ use crate::sampling::mean;
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
 #[cfg(feature = "gpu")]
-mod demosaic;
+pub mod demosaic;
 #[cfg(all(test, feature = "editor"))]
 mod highlights_observation;
 mod lens_source;
@@ -530,7 +530,7 @@ pub struct RawFile {
     share: usize,
     camera_view: Option<NativeView>,
     #[cfg(feature = "gpu")]
-    demosaicer: Option<std::sync::Arc<crate::gpu::demosaic::Demosaicer>>,
+    demosaicer: Option<std::sync::Arc<demosaic::Demosaicer>>,
     correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
@@ -755,10 +755,7 @@ impl RawFile {
     }
 
     #[cfg(feature = "gpu")]
-    pub fn set_demosaicer(
-        &mut self,
-        demosaicer: Option<std::sync::Arc<crate::gpu::demosaic::Demosaicer>>,
-    ) {
+    pub fn set_demosaicer(&mut self, demosaicer: Option<std::sync::Arc<demosaic::Demosaicer>>) {
         self.demosaicer = demosaicer;
     }
 

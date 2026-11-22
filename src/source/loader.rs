@@ -316,7 +316,7 @@ impl SourceLoader {
         // hardware memory gives zero admission and retains native CPU development.
         let working_bytes = (crate::sys::physical_memory() / 4).min(3 << 30);
         let demosaicer = Arc::new(
-            crate::gpu::demosaic::Demosaicer::new(device, queue, working_bytes)
+            crate::raw::demosaic::Demosaicer::new(device, queue, working_bytes)
                 .with_system_pressure(),
         );
         Self::start_native(
@@ -346,7 +346,7 @@ impl SourceLoader {
 
     fn start_native(
         #[cfg(test)] observe: NativeObserver,
-        #[cfg(feature = "gpu")] demosaicer: Option<Arc<crate::gpu::demosaic::Demosaicer>>,
+        #[cfg(feature = "gpu")] demosaicer: Option<Arc<crate::raw::demosaic::Demosaicer>>,
     ) -> Self {
         Self::start_workers(2, move |_, shared| {
             #[cfg(feature = "gpu")]

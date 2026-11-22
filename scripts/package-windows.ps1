@@ -144,7 +144,7 @@ foreach ($name in @('RawSpeed-LGPL.txt', 'RawSpeed-credits.txt', 'cameras.xml', 
 }
 $dhtNotices = Join-Path $notices 'DHT'
 New-Item -ItemType Directory -Force $dhtNotices | Out-Null
-foreach ($path in @('native/dht/README.md', 'native/dht/LICENSE.LGPL-2.1', 'src/gpu/demosaic/dht.wgsl')) {
+foreach ($path in @('native/dht/README.md', 'native/dht/LICENSE.LGPL-2.1', 'src/raw/demosaic/dht.wgsl')) {
     Copy-Item (Join-Path $root $path) $dhtNotices
 }
 Copy-Item (Join-Path $root 'native/rawspeed/pins.txt') $rsNotices

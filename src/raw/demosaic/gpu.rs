@@ -231,7 +231,7 @@ impl Demosaicer {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Bayer DHT"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("demosaic/dht.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!("dht.wgsl").into()),
             });
         let pipelines = STAGES
             .iter()

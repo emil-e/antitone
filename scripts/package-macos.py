@@ -207,7 +207,7 @@ def copy_dht_notices(notices):
     for path in [
         "native/dht/README.md",
         "native/dht/LICENSE.LGPL-2.1",
-        "src/gpu/demosaic/dht.wgsl",
+        "src/raw/demosaic/dht.wgsl",
     ]:
         copy_notice(path, notices / "DHT")
 

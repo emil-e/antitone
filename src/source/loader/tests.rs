@@ -420,7 +420,7 @@ fn native_source_acquisition_submits_bayer_work_through_the_shared_gpu_gate() {
     gate.observe_submissions(Arc::new(move || {
         observed.fetch_add(1, Ordering::Relaxed);
     }));
-    let demosaicer = Arc::new(crate::gpu::demosaic::Demosaicer::new(
+    let demosaicer = Arc::new(crate::raw::demosaic::Demosaicer::new(
         &device,
         &queue,
         4 << 20,

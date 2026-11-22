@@ -116,7 +116,7 @@ class NoticeCollection(unittest.TestCase):
             paths = [
                 "native/dht/README.md",
                 "native/dht/LICENSE.LGPL-2.1",
-                "src/gpu/demosaic/dht.wgsl",
+                "src/raw/demosaic/dht.wgsl",
             ]
             for path in paths:
                 source = root / path

@@ -10,7 +10,7 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 - This software is based in part on the work of the Independent JPEG Group.
 - XMP includes the RSA Data Security, Inc. MD5 Message-Digest Algorithm and UUID support with their retained notices.
 - LibRaw 0.22.3: dual LGPL/CDDL licensing. Original copyright and license files accompany packages.
-- GPU DHT shader: derived from Anton Petrusevich's DHT, copyright 2013, with LGPL 2.1 selected. Source, modifications and license are retained in `src/gpu/demosaic/dht.wgsl` and `native/dht/`; packages include these materials.
+- GPU DHT shader: derived from Anton Petrusevich's DHT, copyright 2013, with LGPL 2.1 selected. Source, modifications and license are retained in `src/raw/demosaic/dht.wgsl` and `native/dht/`; packages include these materials.
 - RawSpeed, revision [`804ae3bcc70c`](https://github.com/darktable-org/rawspeed/tree/804ae3bcc70c9362518dab8a039310d26516af1d): LGPL; original license and credits accompany packages. The embedded camera database is retained unmodified under CC BY-SA 3.0, with attribution to RawSpeed contributors and its original license declaration.
 - pugixml 1.15: MIT, copyright Arseny Kapoulkine; the original license accompanies packages.
 - LLVM OpenMP 22.1.8: the original LLVM OpenMP license accompanies the bundled runtime.
