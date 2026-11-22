@@ -33,6 +33,7 @@ pub(super) fn controls(
     ui: &mut egui::Ui,
     id: &str,
     value: &mut Balance,
+    kind: ui::ColorControl,
     editable: bool,
     can_pick: bool,
 ) -> ([ui::ControlResponse; 4], bool) {
@@ -53,7 +54,7 @@ pub(super) fn controls(
         },
         |ui| {
             ui.add_enabled_ui(editable, |ui| {
-                ui::BalanceControl::new("balance", ui::ColorControl::WhiteBalance).show(ui, value)
+                ui::BalanceControl::new("balance", kind).show(ui, value)
             })
             .inner
         },
@@ -219,7 +220,7 @@ pub(super) fn set_roll(editor: &mut Editor, value: Balance) -> Result<(), String
         ..editor.document.project.roll
     };
     value
-        .validate()
+        .validate_roll_wb()
         .map_err(|error| format!("Pick rejected: {error}"))?;
     draft.update(|project| project.roll = candidate);
     editor

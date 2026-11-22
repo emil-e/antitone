@@ -341,6 +341,7 @@ fn document_fields_accept_each_value_before_starting_the_next_in_both_paint_orde
             h.try_run_realtime().unwrap();
             h.get_by_role_and_label(role, second).click();
             h.step();
+            wait_for(&mut h, |e| !e.document.gamma_pivot.calculating());
             let first_accepted = h.read(|editor| {
                 if first == "Gamma" {
                     assert_eq!(editor.document.project.input.gamma(), 1.1);
@@ -360,8 +361,14 @@ fn document_fields_accept_each_value_before_starting_the_next_in_both_paint_orde
             h.read(|editor| assert_eq!(editor.document.project, first_accepted));
             h.key_press(egui::Key::Enter);
             h.step();
+            wait_for(&mut h, |e| !e.document.gamma_pivot.calculating());
             h.read(|editor| {
-                assert_eq!(editor.document.project.input.gamma(), 1.1);
+                assert_eq!(
+                    editor.document.project.input.gamma(),
+                    1.1,
+                    "{}",
+                    editor.status
+                );
                 assert_eq!(editor.document.project.roll.exposure, 0.75);
                 assert_eq!(editor.document.project.sources, original.sources);
             });

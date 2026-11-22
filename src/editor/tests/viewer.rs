@@ -226,7 +226,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     PickerCase::Dmin,
                     PickerCase::Dmax,
                     PickerCase::Gamma,
-                    PickerCase::GammaPivot,
                     PickerCase::RollWb,
                     PickerCase::Wb,
                 ] {
@@ -275,7 +274,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             PickerCase::Dmin => "Dmin",
                             PickerCase::Dmax => "Dmax",
                             PickerCase::Gamma => calibration::GAMMA.label,
-                            PickerCase::GammaPivot => "Gamma colour pivot",
                             PickerCase::RollWb => "Roll WB neutral",
                             PickerCase::Wb => "WB neutral",
                         };

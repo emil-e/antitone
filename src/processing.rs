@@ -1,7 +1,7 @@
 use glam::{DMat3, DVec3};
 
 use crate::Error;
-use crate::color::{Balance, wb_matrix};
+use crate::color::{Balance, roll_wb_matrix};
 
 pub const CAMERA_INPUT_FLOOR: f64 = 1. / 65535.;
 /// Continuous-source admission envelope, covering the full signed Sony shading table (< 2^8).
@@ -651,7 +651,7 @@ pub struct RollPipeline {
 
 impl RollPipeline {
     pub fn new(roll: RollSettings) -> Result<Self, Error> {
-        let transform = wb_matrix(roll.wb)? * exposure_multiplier(roll.exposure)?;
+        let transform = roll_wb_matrix(roll.wb)? * exposure_multiplier(roll.exposure)?;
         if !transform.is_finite() {
             return Err(Error::NumericalOverflow);
         }

@@ -61,7 +61,6 @@ pub(super) enum PickerCase {
     Dmin,
     Dmax,
     Gamma,
-    GammaPivot,
     RollWb,
     Wb,
 }
@@ -72,7 +71,6 @@ impl PickerCase {
             Self::Dmin => calibration::DMIN,
             Self::Dmax => calibration::DMAX,
             Self::Gamma => calibration::GAMMA,
-            Self::GammaPivot => gamma_pivot::DISPLAY,
             Self::RollWb => white_balance::ROLL,
             Self::Wb => white_balance::LAYER,
         }
@@ -82,7 +80,6 @@ impl PickerCase {
             Self::Dmin => |cx| Box::pin(calibration::pick_dmin(cx)),
             Self::Dmax => |cx| Box::pin(calibration::pick_dmax(cx)),
             Self::Gamma => |cx| Box::pin(calibration::pick_gamma(cx)),
-            Self::GammaPivot => |cx| Box::pin(gamma_pivot::pick(cx)),
             Self::RollWb => |cx| Box::pin(white_balance::pick_roll(cx)),
             Self::Wb => |cx| Box::pin(white_balance::pick_layer(cx)),
         }

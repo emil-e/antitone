@@ -5,7 +5,8 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
     workflow::calibrated_workflow(|mut harness, _, directory| {
         stage(&mut harness, "Roll");
         workflow::enter_numeric(&mut harness, "Gamma", "0.6");
-        harness.read(|editor| assert_eq!(editor.gamma(), 0.6));
+        wait_for(&mut harness, |e| !e.document.gamma_pivot.calculating());
+        harness.read(|editor| assert_eq!(editor.gamma(), 0.6, "{}", editor.status));
         stage(&mut harness, "Photo");
         let selected = harness.read(|editor| editor.document.visit.current_source.unwrap());
         for (radial, exposure) in [(false, "0.35"), (true, "-0.125")] {

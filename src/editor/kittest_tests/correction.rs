@@ -512,8 +512,10 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         );
         harness.key_press(egui::Key::Enter);
         harness.step();
-        wait_for(&mut harness, |e| !e.editing());
-        harness.read(|e| assert!((e.gamma() - desired).abs() < 1e-12));
+        wait_for(&mut harness, |e| {
+            !e.editing() && !e.document.gamma_pivot.calculating()
+        });
+        harness.read(|e| assert!((e.gamma() - desired).abs() < 1e-12, "{}", e.status));
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Reset Flat-field correction")
             .click();

@@ -33,6 +33,7 @@ fn controls_and_layers_remain_authorable_until_calibration_can_render() {
             let roll_exposure = if missing { 1.25 } else { 1.5 };
             enter_numeric(&mut h, "Exposure", &roll_exposure.to_string());
             enter_numeric(&mut h, "Gamma", "0.9");
+            wait_for(&mut h, |e| !e.document.gamma_pivot.calculating());
             h.read(|editor| {
                 assert_eq!(
                     editor.document.project.roll.exposure, roll_exposure,

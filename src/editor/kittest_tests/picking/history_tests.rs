@@ -12,7 +12,6 @@ fn native_and_keyboard_history_keep_each_real_picker_and_its_selected_region() {
                 PickerCase::Dmin,
                 PickerCase::Dmax,
                 PickerCase::Gamma,
-                PickerCase::GammaPivot,
                 PickerCase::RollWb,
                 PickerCase::Wb,
             ] {

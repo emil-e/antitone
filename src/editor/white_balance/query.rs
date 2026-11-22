@@ -37,7 +37,7 @@ pub(in crate::editor) fn roll_from_samples(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Balance, Error> {
     let roll = samples.pipeline(input)?.roll()?;
-    crate::color::neutral_wb(samples.mean(roll, cancelled)?)
+    crate::color::neutral_roll_wb(samples.mean(roll, cancelled)?)
 }
 
 pub(super) fn layer(

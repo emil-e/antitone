@@ -18,7 +18,6 @@ fn measurement_pickers_keep_the_selected_look_without_reframing_the_photo() {
                 PickerCase::Dmin,
                 PickerCase::Dmax,
                 PickerCase::Gamma,
-                PickerCase::GammaPivot,
                 PickerCase::RollWb,
                 PickerCase::Wb,
             ] {

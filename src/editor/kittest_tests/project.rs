@@ -238,6 +238,8 @@ fn interpretation_numeric_edits_accept_extreme_valid_processing_and_reject_inval
                 .unwrap();
         });
         stage(&mut harness, "Roll");
+        // Exercise the control domain without imposing an independent Roll WB limit.
+        harness.update(Editor::toggle_gamma_pivot);
         let before = harness.read(|editor| editor.document.project.clone());
         enter_numeric(&mut harness, "Gamma", "0.1");
         harness.read(|editor| {
