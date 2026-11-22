@@ -68,14 +68,13 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let (result, pixels) = crate::export_timing::pixels::capture(|| {
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 Job {
                     scan: &scan,
                     field: Some(gpu_field.clone()),
                     recipe: &recipe,
-                    format: Format::Tiff(target),
+                    output: fixture_output(Format::Tiff(target), &renderer),
                 },
                 (&path, Overwrite::Refuse),
                 &mut Execution::default(),

@@ -301,19 +301,22 @@ impl Services {
                 .renderers
                 .get(&self.device, &self.queue)
                 .map_err(WriteFailure::Infrastructure)?;
+            let output = match request.format {
+                OutputFormat::Tiff(target) => crate::gpu_export::job::Output::Tiff {
+                    looks: renderer.looks(),
+                    target: renderer.drt(target),
+                },
+                OutputFormat::Exr(precision) => crate::gpu_export::job::Output::Exr(precision),
+            };
             let stopped = || cancelled.load(Ordering::Relaxed);
             crate::gpu_export::job::write(
-                &renderer,
-                &self.device,
+                renderer.evaluation(),
                 &self.queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: request.input.correction.gpu()?,
                     recipe: &request.recipe,
-                    format: match request.format {
-                        OutputFormat::Tiff(target) => crate::gpu_export::Format::Tiff(target),
-                        OutputFormat::Exr(precision) => crate::gpu_export::Format::Exr(precision),
-                    },
+                    output,
                 },
                 (&request.path, request.overwrite),
                 &mut crate::dust_repair::Execution {

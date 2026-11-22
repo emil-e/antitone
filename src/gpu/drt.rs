@@ -48,7 +48,10 @@ pub struct Target {
 }
 
 impl Target {
-    #[cfg(feature = "editor")]
+    #[cfg(any(
+        feature = "editor",
+        all(feature = "project", feature = "raw", feature = "export")
+    ))]
     pub(crate) fn output_target(&self) -> OutputTarget {
         self.target
     }

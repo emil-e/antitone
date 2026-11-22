@@ -38,14 +38,13 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
         let actual = directory.path().join(format!("failed-{name}"));
         for (path, recipe) in [(&expected, &original), (&actual, &repaired)] {
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 Job {
                     scan: &scan,
                     field: None,
                     recipe,
-                    format,
+                    output: fixture_output(format, &renderer),
                 },
                 (path, Overwrite::Refuse),
                 &mut Execution::default(),

@@ -262,14 +262,16 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             let composition = recipe.composition;
             let output = directory.path().join(format!("legacy-{sdk}-{digital}.tif"));
             crate::gpu_export::job::write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: correction.as_ref().map(|field| field.gpu.clone()),
                     recipe: &recipe,
-                    format: crate::gpu_export::Format::Tiff(crate::rendering::OutputTarget::Srgb),
+                    output: crate::gpu_export::job::Output::Tiff {
+                        looks: renderer.looks(),
+                        target: renderer.drt(crate::rendering::OutputTarget::Srgb),
+                    },
                 },
                 (&output, crate::export::Overwrite::Refuse),
                 &mut crate::dust_repair::Execution::default(),

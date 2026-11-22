@@ -3,7 +3,16 @@ use crate::processing::InputSettings;
 
 #[test]
 fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero_ev() {
-    let (device, queue, renderer) = super::super::super::tests::context();
+    let (device, queue) = pollster::block_on(async {
+        let adapter = crate::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
+    });
+    let context = evaluation::Context::new(&device, Default::default());
     let directory = tempfile::tempdir().unwrap();
     for (rgb, expected) in [
         ([2949, 11796, 5898], 0.18_f32),
@@ -73,14 +82,13 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         }
         let path = directory.path().join(format!("{expected}.exr"));
         write(
-            &renderer,
-            &device,
+            &context,
             &queue,
             Job {
                 scan: &scan,
                 field: None,
                 recipe: &recipe,
-                format: Format::Exr(crate::export::ExrPrecision::Full),
+                output: Output::Exr(ExrPrecision::Full),
             },
             (&path, Overwrite::Refuse),
             &mut Execution::default(),
