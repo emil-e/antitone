@@ -754,7 +754,10 @@ impl PhotographGraph {
         presentation: crate::frame_raster::FrameRaster,
     ) -> Result<Value, Error> {
         let output = view_domain(presentation, neutral.domain().grid.coverage);
-        window(inspect(neutral, parameters)?, output.finite()?)
+        window(
+            crate::gpu::interpretation::inspect_filtered(neutral, parameters)?,
+            output.finite()?,
+        )
     }
 }
 

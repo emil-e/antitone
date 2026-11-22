@@ -84,6 +84,8 @@ impl PhotographGraph {
         context: &evaluation::Context,
         drt: &crate::gpu::drt::Targets,
     ) -> Result<(), Error> {
+        use crate::gpu::interpretation::inspect_filtered;
+
         let domain = Domain {
             bounds: Some([0, 0, 1, 1].into()),
             grid: Grid {
@@ -92,7 +94,7 @@ impl PhotographGraph {
             },
         };
         let mut images = Grading::warmup_values(context.device(), domain)?;
-        images.push(inspect(
+        images.push(inspect_filtered(
             borrowed_input(domain),
             ProcessingParameters::source(),
         )?);
