@@ -72,4 +72,4 @@ Only after both jobs succeed does publication download the artifacts, verify eac
 
 ## Before public distribution
 
-Packaged ZIPs and CI artifacts are verification outputs; public distribution requires the review below. [NOTICE.md](../NOTICE.md) describes license/asset and release boundaries. Native dependencies need review alongside Cargo dependencies; the generated inventory is not a legal-compatibility checker. Public release work still includes a fresh dependency/asset license review, outstanding asset clearance, Developer ID signing/notarization if chosen, clean-machine execution and platform-specific acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.
+Before publishing, use [NOTICE.md](../NOTICE.md#local-packages-versus-public-releases) to review the terms of bundled native and Cargo dependencies and check for source-specific asset restrictions. The generated inventory lists declared licenses; it does not verify compliance. Run the packages on clean machines and complete platform-specific acceptance. If distributing with Developer ID, sign and notarize the macOS package.

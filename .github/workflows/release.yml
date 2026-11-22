@@ -104,8 +104,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          source_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+          rawspeed_revision=$(awk -F= '$1 == "revision" {print $2}' native/rawspeed/pins.txt)
+          notes=$(cat <<EOF
+          Windows CI builds the x64 ZIP and verifies command-line startup; it does not test the editor interactively.
+
+          ### Source and rebuilding
+
+          - [Antitone source for this build]($source_url)
+          - [Pinned RawSpeed source](https://github.com/darktable-org/rawspeed/archive/$rawspeed_revision.tar.gz)
+          - [Build and relink instructions]($source_url/docs/build-and-run.md#rebuild-with-modified-rawspeed)
+          EOF
+          )
           gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
             --title "Antitone $GITHUB_REF_NAME" \
+            --notes "$notes" \
             --generate-notes \
             .cache/release/Antitone-macos-arm64.zip \
             .cache/release/Antitone-windows-x64.zip \
