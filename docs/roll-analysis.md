@@ -88,11 +88,11 @@ Faint/off-image or scene-confounded boundaries can defeat area suggestions; hold
 
 ## Working on this area
 
-- [Original camera evidence](../src/scan/analysis/input.rs), [GPU camera sampling](../src/gpu/analysis/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
+- [Original camera evidence](../src/scan/analysis/input.rs), [GPU camera sampling](../src/roll_analysis/gpu/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
 - [Anchor span estimator](../src/roll_analysis/anchor_spans.rs) and [roll analysis](../src/roll_analysis.rs): the editor proposal and shared anchor/EV measurements.
 - [Spatial hypotheses](../src/scan_regions.rs), [shared preparation](../src/editor/spatial/preparation.rs) and [document retention](../src/editor/document_scope.rs): reusable source-owned support and original sampling inputs.
 - [Editor Analyze](../src/editor/analysis.rs): tool interaction, review assembly, awaited preparation, cancellation acknowledgement and atomic installation of reviewed areas with grade.
 - [Captured sampling/fitting](../src/editor/analysis/fit.rs): original-site eligibility, GPU measurements and validated numerical proposals.
-- [Scalar seed tests](../tests/roll_analysis.rs), [GI tests](../src/roll_analysis/gi/tests.rs), [spatial GPU sampling tests](../src/gpu/analysis/sampling/spatial/tests.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, abstention, original-coordinate eligibility and transaction behavior.
+- [Scalar seed tests](../tests/roll_analysis.rs), [GI tests](../src/roll_analysis/gi/tests.rs), [spatial GPU sampling tests](../src/roll_analysis/gpu/sampling/spatial/tests.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, abstention, original-coordinate eligibility and transaction behavior.
 
 Use [development checks](development.md#roll-analysis) for changes and [diagnostics](diagnostics.md#analyze-roll) for real-RAW exercises.
