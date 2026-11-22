@@ -24,7 +24,7 @@ pub(crate) fn original_chain(
     } else {
         scan.camera_to_ap1
     };
-    let node = camera_source(scan)?;
+    let node = crate::gpu::source::camera_source(scan)?;
     let photograph = PhotographGraph::authored(limits, node, field, input, matrix, stages)?;
     display_output(photograph.processed, input.luts(), looks, target)
 }

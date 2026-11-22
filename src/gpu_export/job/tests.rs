@@ -154,7 +154,7 @@ fn repair_demand(
     use crate::gpu::evaluation::{self as ev, CellRegion, Domain, Grid, Tiling};
     let photo = crate::gpu::photograph::PhotographGraph::from_recipe(
         &device.limits(),
-        ev::camera_source(scan).unwrap(),
+        crate::gpu::source::camera_source(scan).unwrap(),
         None,
         recipe,
     )

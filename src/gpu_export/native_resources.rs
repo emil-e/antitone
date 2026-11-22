@@ -86,7 +86,7 @@ fn native_output_resources() {
                 };
                 let photograph = crate::gpu::photograph::PhotographGraph::authored_original(
                     &device.limits(),
-                    crate::gpu::evaluation::camera_source(&scan)?,
+                    crate::gpu::source::camera_source(&scan)?,
                     None,
                     crate::gpu::interpretation::InputTransform::for_scan(
                         &scan,

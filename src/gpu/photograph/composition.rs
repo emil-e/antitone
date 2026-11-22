@@ -605,7 +605,7 @@ impl PhotographGraph {
                 "physical-view source authority differs from originals".into(),
             ));
         }
-        let source = crate::gpu::evaluation::camera_source(scan)?;
+        let source = crate::gpu::source::camera_source(scan)?;
         if frame.composition.area() != source.domain().finite()?.source()? {
             return Err(Error::InvalidParameter(
                 "frame belongs to a different source grid",

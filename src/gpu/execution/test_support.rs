@@ -7,7 +7,7 @@ use crate::{
     geometry::Composition,
     gpu::photograph::assembly::Assembly,
     gpu::{
-        evaluation, flat::GpuFlatField, grading::Grading, interpretation::InputTransform,
+        flat::GpuFlatField, grading::Grading, interpretation::InputTransform,
         photograph::PhotographGraph,
     },
     processing::{InputSettings, RollSettings},
@@ -60,7 +60,7 @@ impl OriginalControls<'_> {
         }
         let photograph = PhotographGraph::authored_original(
             &device.limits(),
-            evaluation::camera_source(self.scan)?,
+            crate::gpu::source::camera_source(self.scan)?,
             self.field,
             InputTransform::for_scan(self.scan, self.input)?,
             Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,

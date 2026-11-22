@@ -73,9 +73,6 @@ mod native_tests;
 
 mod operators;
 
-#[cfg(all(feature = "raw", feature = "render"))]
-mod original;
-
 mod plan;
 
 #[cfg(all(test, feature = "editor"))]
@@ -113,8 +110,6 @@ use operators::{grade, interpret};
 pub use value::Value;
 mod reconstruction;
 pub use operators::{pointwise, source};
-#[cfg(all(feature = "raw", feature = "render"))]
-pub use original::camera_source;
 pub(crate) use plan::{Job, Plan, Policy, Tile};
 #[cfg(test)]
 pub(crate) use reconstruction::{

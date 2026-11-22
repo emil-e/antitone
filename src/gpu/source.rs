@@ -1,4 +1,4 @@
-//! Resident camera samples and their source-coordinate geometry.
+//! Developed camera samples, native acquisition and resident source geometry.
 
 use crate::gpu::parameters::CameraMatrix;
 use crate::{Error, geometry::SourceRaster};
@@ -7,6 +7,10 @@ use wgpu::util::DeviceExt;
 
 #[cfg(feature = "editor")]
 pub(crate) mod identity;
+#[cfg(all(feature = "raw", feature = "render"))]
+mod native;
+#[cfg(all(feature = "raw", feature = "render"))]
+pub use native::camera_source;
 
 /// Validated source mapping: a nearest-centre raster or two concatenated original rectangles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -4,6 +4,7 @@ use super::*;
 use crate::gpu::interpretation::InputTransform;
 use crate::gpu::interpretation::InspectionView;
 use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::camera_source;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
@@ -117,15 +118,11 @@ impl PhotographRequest {
                         "recipe interpretation differs from captured source".into(),
                     ));
                 }
-                super::RecipeGraph::originals(
-                    crate::gpu::evaluation::camera_source(scan)?,
-                    field,
-                    recipe,
-                )?
-                .processed(limits)?
+                super::RecipeGraph::originals(camera_source(scan)?, field, recipe)?
+                    .processed(limits)?
             }
             Self::Inspection(view) => super::PhotographGraph::inspection_original(
-                crate::gpu::evaluation::camera_source(scan)?,
+                camera_source(scan)?,
                 field,
                 scan.camera_to_ap1,
                 *view,
@@ -459,7 +456,7 @@ impl PhotographRequest {
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
         specs: &[crate::gpu::view::request::SourceRequest],
     ) -> Result<Vec<crate::gpu::evaluation::Value>, Error> {
-        let source = crate::gpu::evaluation::camera_source(scan)?;
+        let source = camera_source(scan)?;
         specs
             .iter()
             .map(|spec| {
@@ -607,7 +604,7 @@ impl PhotographRequest {
             Self::Fixture(input) if input.is_positive() => {
                 let (graph, plan) = PhotographGraph::preview_with_input(
                     limits,
-                    crate::gpu::evaluation::camera_source(scan)?,
+                    camera_source(scan)?,
                     field,
                     input,
                     spec.frame(),

@@ -6,7 +6,7 @@ fn camera_images(
     editor: &Editor,
 ) -> Vec<crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout>> {
     let scan = editor.source_context().unwrap().scan().unwrap();
-    let camera = crate::gpu::evaluation::camera_source(&scan).unwrap();
+    let camera = crate::gpu::source::camera_source(&scan).unwrap();
     let services = editor.source_services.as_ref().unwrap();
     let renderer = services.render_fixture().unwrap();
     renderer

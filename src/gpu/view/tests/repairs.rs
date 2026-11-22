@@ -494,7 +494,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             captured.replacements = patches.clone();
             let (definition, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
                 &device.limits(),
-                crate::gpu::evaluation::camera_source(&scan).unwrap(),
+                crate::gpu::source::camera_source(&scan).unwrap(),
                 None,
                 &captured,
                 acquired.spec.frame(),

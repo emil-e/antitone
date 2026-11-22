@@ -41,7 +41,7 @@ impl<'a> Samples<'a> {
 
         coverage.bounds(scan.area)?;
 
-        let source = evaluation::camera_source(scan)?;
+        let source = crate::gpu::source::camera_source(scan)?;
 
         Ok(Self {
             context,
