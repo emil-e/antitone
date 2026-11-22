@@ -1,4 +1,6 @@
-use super::{TextAction, dialogs};
+#[cfg(test)]
+use super::TextAction;
+use super::dialogs::{Dialog, DialogAction, DialogRole};
 use egui::{Response, Ui};
 
 const HEADER_HEIGHT: f32 = 32.;
@@ -67,51 +69,47 @@ pub fn app_panel(
     escape_available: bool,
     settings: impl FnOnce(&mut egui::Ui),
 ) -> bool {
-    let response = dialogs::modal(context, egui::Id::new(("application-panel", panel)), |ui| {
-        match panel {
-            AppPanel::Settings => {
-                ui.heading("Settings");
-                ui.strong("Memory");
-                ui.label(
-                    "These limits control optional cached data, not total application memory.",
-                );
-                settings(ui);
-            }
-            AppPanel::About => {
-                ui.heading("Antitone");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.label("An editor for camera-scanned film negatives.");
-                ui.label("Analyze a roll, refine your photographs, and export TIFF or EXR.");
-                ui.small("Copyright © Emil Sahlén · No warranty");
-                ui.hyperlink_to(
-                    "Original Antitone code: MIT license",
-                    "https://opensource.org/license/MIT",
-                );
-                ui.hyperlink_to(
-                    "spektrafilm by Andrea Volpato",
-                    "https://github.com/andreavolpato/spektrafilm",
-                );
-                ui.small("Profile data: CC BY-SA 4.0 · Native algorithm ports: GPLv3");
-                ui.small("Packaged builds include third-party licenses in Resources/Licenses.");
-                ui.small("Development build · macOS on Apple Silicon");
-            }
-            AppPanel::Help => {
-                ui.heading("Antitone Help");
-                egui::ScrollArea::vertical()
-                    .max_height((context.content_rect().height() - 240.).clamp(80., 420.))
-                    .auto_shrink([false, false])
-                    .show(ui, help_contents);
-            }
-        }
-        ui.add_space(8.);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close = TextAction::new("Close").show(ui);
-            dialogs::focus_default(ui, &close);
-            close.clicked()
-        })
-        .inner
-    });
-    response.inner || dialogs::escape_requested(&response, escape_available)
+    let actions = [DialogAction::new((), "Close", DialogRole::Primary)];
+    let (_, close) = Dialog::new(&actions)
+        .initial_focus(())
+        .escape(escape_available, ())
+        .show(
+            context,
+            egui::Id::new(("application-panel", panel)),
+            |ui| match panel {
+                AppPanel::Settings => {
+                    ui.heading("Settings");
+                    ui.strong("Memory");
+                    ui.label(
+                        "These limits control optional cached data, not total application memory.",
+                    );
+                    settings(ui);
+                }
+                AppPanel::About => {
+                    ui.heading("Antitone");
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label("An editor for camera-scanned film negatives.");
+                    ui.label("Analyze a roll, refine your photographs, and export TIFF or EXR.");
+                    ui.small("Copyright © Emil Sahlén · No warranty");
+                    ui.hyperlink_to(
+                        "Original Antitone code: MIT license",
+                        "https://opensource.org/license/MIT",
+                    );
+                    ui.hyperlink_to(
+                        "spektrafilm by Andrea Volpato",
+                        "https://github.com/andreavolpato/spektrafilm",
+                    );
+                    ui.small("Profile data: CC BY-SA 4.0 · Native algorithm ports: GPLv3");
+                    ui.small("Packaged builds include third-party licenses in Resources/Licenses.");
+                    ui.small("Development build · macOS on Apple Silicon");
+                }
+                AppPanel::Help => {
+                    ui.heading("Antitone Help");
+                    help_contents(ui);
+                }
+            },
+        );
+    close.is_some()
 }
 
 #[cfg(test)]

@@ -48,6 +48,23 @@ fn labels(
     ui_labels(frame(editor, context, size, events))
 }
 
+fn accessible_value_rect(output: &egui::FullOutput, value: &str) -> egui::Rect {
+    let bounds = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.value() == Some(value))
+        .and_then(|(_, node)| node.bounds())
+        .unwrap_or_else(|| panic!("missing accessibility value {value:?}"));
+    egui::Rect::from_min_max(
+        egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+        egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+    )
+}
+
 fn pointer(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(pos),
@@ -230,8 +247,8 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             .unwrap()
                             .canvas;
                         let output = frame(editor, &context, size, vec![]);
-                        for name in ["Cancel", "Apply"] {
-                            let bounds = output
+                        let action_bounds = |name| {
+                            output
                                 .platform_output
                                 .accesskit_update
                                 .as_ref()
@@ -242,10 +259,16 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                                 .unwrap()
                                 .1
                                 .bounds()
-                                .unwrap();
+                                .unwrap()
+                        };
+                        for name in ["Cancel", "Apply"] {
+                            let bounds = action_bounds(name);
                             assert_eq!(bounds.y1 - bounds.y0, 28.);
                             assert!(bounds.y0 as f32 >= canvas.bottom());
-                            assert!(bounds.x1 as f32 <= canvas.right() + 4.);
+                            assert!(
+                                (bounds.x1 as f32).round() <= canvas.right() + 4.,
+                                "{size:?} {pick:?} tab={tab} {name}: {bounds:?} / {canvas:?}"
+                            );
                         }
                         let text = ui_labels(output.clone());
                         let title = match pick {
@@ -257,16 +280,14 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             PickerCase::Wb => "WB neutral",
                         };
                         let marking = title.to_uppercase();
-                        let identity = text
-                            .iter()
-                            .find(|(s, rect)| s == &marking && rect.top() >= canvas.bottom())
-                            .unwrap()
-                            .1;
-                        assert!(
-                            text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left()
-                                - identity.right()
-                                >= 11.5
-                        );
+                        let identity = accessible_value_rect(&output, &format!("Active tool: {title}"));
+                        assert!(identity.top() >= canvas.bottom());
+                        if size.x >= 1100. {
+                            assert!(text.iter().any(|(s, rect)| s == &marking && rect.top() >= canvas.bottom()));
+                        }
+                        let gap = text.iter().find(|(s, _)| s == "Cancel").unwrap().1.left()
+                            - identity.right();
+                        assert!(gap >= if size.x >= 800. { 11.5 } else { 4. });
                         assert!(
                             !text
                                 .iter()
@@ -280,7 +301,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             );
                             assert_eq!(text.iter().filter(|(s, _)| s == name).count(), 1);
                         }
-                        for name in ["Details", "Set up…", "current.ARW"] {
+                        for name in ["Details", "Choose reference…", "current.ARW"] {
                             assert!(
                                 !text
                                     .iter()
@@ -293,32 +314,17 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         assert!(cancel.right() < apply.left());
                         assert!(apply.right() - cancel.left() < 120.);
                         assert_eq!(identity.center().y, cancel.center().y);
-                        let tint = context
-                            .global_style()
-                            .visuals
-                            .selection
-                            .bg_fill
-                            .linear_multiply(0.15);
-                        let output = frame(editor, &context, size, vec![]);
-                        assert!(
-                            output
-                                .platform_output
-                                .accesskit_update
-                                .as_ref()
-                                .unwrap()
-                                .nodes
-                                .iter()
-                                .any(|(_, node)| node.value()
-                                    == Some(format!("Active tool: {title}").as_str()))
-                        );
-                        assert!(output.shapes.iter().any(|shape| match &shape.shape {
-                            egui::Shape::Rect(rect) => {
-                                rect.fill == tint
-                                    && rect.rect.contains_rect(identity)
-                                    && rect.rect.contains_rect(apply)
-                            }
-                            _ => false,
-                        }));
+                        let style = context.global_style();
+                        let tint = style.visuals.selection.bg_fill.linear_multiply(0.15);
+                        let badge = output.shapes.iter().find_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect)
+                                if rect.fill == tint && rect.rect.contains_rect(identity) => Some(rect),
+                            _ => None,
+                        }).expect("active tool identity has a visible badge");
+                        assert_eq!(badge.corner_radius, style.visuals.widgets.inactive.corner_radius);
+                        let cancel_target = action_bounds("Cancel");
+                        assert_eq!(badge.rect.y_range(), egui::Rangef::new(cancel_target.y0 as f32, cancel_target.y1 as f32));
+                        assert!(badge.rect.right() < cancel_target.x0 as f32);
                     }
                     editor.finish_pick(cx);
                 }
@@ -377,19 +383,17 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         let viewport = editor.document.visit.canvas.viewport;
         let draft = editor.document.crop_edit().map(|edit| edit.draft);
         let region = editor.test_pick_region();
-        let text = labels(&mut editor, &context, size, vec![]);
-        let title = text
-            .iter()
-            .find(|(s, _)| {
-                s == if cropping {
-                    "Crop & straighten"
-                } else {
-                    "WB NEUTRAL"
-                }
-            })
-            .unwrap()
-            .1
-            .center();
+        let output = frame(&mut editor, &context, size, vec![]);
+        let picker_identity =
+            (!cropping).then(|| accessible_value_rect(&output, "Active tool: WB neutral"));
+        let text = ui_labels(output);
+        let identity = picker_identity.unwrap_or_else(|| {
+            text.iter()
+                .find(|(s, _)| s == "Crop & straighten")
+                .unwrap()
+                .1
+        });
+        let title = identity.center();
         frame(&mut editor, &context, size, pointer(title, true));
         frame(
             &mut editor,
@@ -406,13 +410,12 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(editor.test_pick_region(), region);
         assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
-        let help = text
-            .iter()
-            .find(|(s, _)| s == "Viewer help")
-            .unwrap()
-            .1
-            .center();
-        click(&mut editor, &context, size, help);
+        let help = text.iter().find(|(s, _)| s == "Viewer help").unwrap().1;
+        assert!(
+            !help.intersects(identity),
+            "help {help:?} overlaps {identity:?}"
+        );
+        click(&mut editor, &context, size, help.center());
         assert!(
             egui::Popup::is_any_open(&context),
             "cropping={cropping}, help={help:?}, error={:?}",
@@ -452,6 +455,29 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         frame(&mut editor, &context, size, key(egui::Key::Escape));
         assert!(editor.document.crop_edit().is_none() && editor.test_pick().is_none());
     }
+}
+
+#[test]
+fn compact_viewer_keeps_zoom_to_actual_pixels_available_in_help() {
+    let size = egui::vec2(700., 600.);
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
+    editor.preview_picker(PickerCase::Wb);
+    editor.document.source = true;
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
+    let context = egui::Context::default();
+    warm(&mut editor, &context, size);
+
+    let text = labels(&mut editor, &context, size, vec![]);
+    assert!(!text.iter().any(|(s, _)| s == "100%"));
+    let help = text.iter().find(|(s, _)| s == "Viewer help").unwrap().1;
+    click(&mut editor, &context, size, help.center());
+    let text = labels(&mut editor, &context, size, vec![]);
+    let zoom = text.iter().find(|(s, _)| s == "Zoom to 100%").unwrap().1;
+    click(&mut editor, &context, size, zoom.center());
+    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.));
+    assert!(editor.test_pick().is_some());
+    assert!(!egui::Popup::is_any_open(&context));
 }
 
 #[test]
@@ -842,7 +868,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         assert_eq!(bounds.y1 - bounds.y0, 28.);
                         assert!(bounds.y0 as f32 >= canvas.bottom());
                         assert!(
-                            bounds.x1 as f32 <= canvas.right() + 4.,
+                            (bounds.x1 as f32).round() <= canvas.right() + 4.,
                             "{size:?} cropping={cropping} source={source} tab={tab} {name}: {bounds:?} canvas={canvas:?} error={:?}",
                             editor.document.visit.working_view.error
                         );
@@ -895,15 +921,18 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         apply.right() <= canvas.right() + 4.,
                         "{size:?}: {apply:?} / {canvas:?}"
                     );
-                    let identity = text
-                        .iter()
-                        .find(|(s, rect)| {
-                            s == if cropping { "CROP" } else { "FLAT-FIELD" }
-                                && rect.top() >= canvas.bottom()
-                        })
-                        .unwrap()
-                        .1;
-                    assert!(cancel.left() - identity.right() >= 11.5);
+                    let identity = accessible_value_rect(
+                        &output,
+                        if cropping {
+                            "Active tool: Crop"
+                        } else {
+                            "Active tool: Flat-field"
+                        },
+                    );
+                    assert!(identity.top() >= canvas.bottom());
+                    assert!(
+                        cancel.left() - identity.right() >= if size.x >= 800. { 11.5 } else { 4. }
+                    );
                     assert_eq!(identity.center().y, cancel.center().y);
                     let title = if cropping {
                         "Crop & straighten"

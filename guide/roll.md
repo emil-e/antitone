@@ -21,8 +21,8 @@ else happens.
 
 To set it up, you need one extra frame from the same scanning setup: photograph the light
 source itself — same lens, focus and aperture, **without film** in the holder. Choose
-**Set up…** and select that "bare light" RAW. When editing the reference area, "select the
-illuminated area, excluding the holder and including the image centre".
+**Choose reference…** and select that "bare light" RAW. Adjust the area to exclude the holder
+and include the image centre.
 
 If your setup is even enough without it, leave this disabled. Sony scans may already carry
 embedded lens correction (vignetting and distortion), which can make a flat field

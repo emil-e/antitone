@@ -717,7 +717,6 @@ impl Editor {
 
     fn cache_preferences(&mut self, ui: &mut egui::Ui) {
         use cache_limits::{MAX_MIB, MIB};
-        ui.set_min_width(330.);
         let mut limits = self.cache_limits();
         let mut changed = false;
         for (label, bytes) in [
@@ -945,7 +944,7 @@ impl Editor {
                     "Switch input stage?",
                     "Switching stages discards the current stage's settings: calibration, gamma, balance, response and flat-field correction. Your source files are not changed.",
                     "Switch stage",
-                ).warning().show(context, id, escape)
+                ).destructive().show(context, id, escape)
             });
             self.document.input_change = cx.spawn(move |cx| async move {
                 let confirmed = response.await == Ok(ui::DialogChoice::Confirm);

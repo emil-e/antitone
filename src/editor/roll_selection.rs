@@ -133,7 +133,7 @@ impl Editor {
         let response = self.dialogs.show(move |context, id, escape| {
             ui::DecisionDialog::new(&title,
                 "The photos will be removed from this roll. Their project data will be discarded. Your RAW files are not changed.",
-                "Remove photos").warning().show(context, id, escape)
+                "Remove photos").destructive().show(context, id, escape)
         });
         self.document.dialog_action = cx.spawn(move |cx| async move {
             if response.await == Ok(ui::DialogChoice::Confirm) {

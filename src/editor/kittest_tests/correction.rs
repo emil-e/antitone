@@ -555,7 +555,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.step();
         assert!(
             !harness
-                .get_by_label("Set up…")
+                .get_by_label("Choose reference…")
                 .accesskit_node()
                 .is_disabled()
         );
@@ -993,7 +993,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         assert!(
             !harness
-                .get_by_label("Set up…")
+                .get_by_label("Choose reference…")
                 .accesskit_node()
                 .is_disabled()
         );

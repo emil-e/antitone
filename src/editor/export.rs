@@ -218,15 +218,13 @@ impl Editor {
     }
 }
 
-#[derive(Default)]
-struct Intent {
-    close: bool,
-    choose: bool,
-    export: bool,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum FormAction {
+    Cancel,
+    Export,
 }
 
-fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> Intent {
-    let mut intent = Intent::default();
+fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bool {
     let form_inputs = (
         draft.scope,
         draft.folder.clone(),
@@ -238,186 +236,164 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
     );
     ui.heading("Export photos");
     ui.add_space(8.);
-    let height = (ui.ctx().content_rect().height() - 190.).max(80.);
-    egui::ScrollArea::vertical()
-        .max_height(height)
-        .show(ui, |ui| {
-            ui.strong("Photos");
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut draft.scope,
-                    Scope::Selected,
-                    format!("Selected photos ({selected})"),
-                );
-                ui.selectable_value(&mut draft.scope, Scope::All, format!("All photos ({all})"));
-            });
-            ui.add_space(8.);
-            ui.strong("Destination");
-            ui.horizontal(|ui| {
-                let choose = ui::TextAction::new("Choose…");
-                let available =
-                    (ui.available_width() - choose.width(ui) - ui.spacing().item_spacing.x).max(1.);
-                let size = egui::vec2(available, ui::CONTROL_HEIGHT);
-                ui.allocate_ui_with_layout(
-                    size,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_min_size(size);
-                        ui.add(
-                            egui::Label::new(if draft.folder.as_os_str().is_empty() {
-                                "Choose a folder".into()
-                            } else {
-                                draft.folder.display().to_string()
-                            })
-                            .truncate(),
-                        )
-                        .on_hover_text(draft.folder.display().to_string());
-                    },
-                );
-                intent.choose = choose.show(ui).clicked();
-            });
-            ui.add_space(8.);
-            ui.strong("Output");
-            ui::labelled_row(ui, "Format", None, |ui, label| {
-                egui::ComboBox::from_id_salt("export-format")
-                    .width(240.)
-                    .selected_text(match draft.kind {
-                        Kind::Tiff => "TIFF",
-                        Kind::Exr => "EXR",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut draft.kind, Kind::Tiff, "TIFF");
-                        ui.selectable_value(&mut draft.kind, Kind::Exr, "EXR");
-                    })
-                    .response
-                    .labelled_by(label);
-            });
-            ui::labelled_row(ui, "Target", None, |ui, label| {
-                ui.add_enabled_ui(draft.kind == Kind::Tiff, |ui| {
-                    egui::ComboBox::from_id_salt("export-target")
-                        .width(240.)
-                        .selected_text(if draft.kind == Kind::Exr {
-                            "Scene-linear AP0"
-                        } else {
-                            match draft.target {
-                                OutputTarget::Srgb => "sRGB",
-                                OutputTarget::DisplayP3 => "Display P3",
-                            }
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut draft.target, OutputTarget::Srgb, "sRGB");
-                            ui.selectable_value(
-                                &mut draft.target,
-                                OutputTarget::DisplayP3,
-                                "Display P3",
-                            );
-                        })
-                        .response
-                        .labelled_by(label);
-                });
-            });
-            if draft.kind == Kind::Exr {
-                ui::labelled_row(ui, "Precision", None, |ui, label| {
-                    egui::ComboBox::from_id_salt("export-precision")
-                        .width(240.)
-                        .selected_text(match draft.precision {
-                            ExrPrecision::Half => "Half float · 16-bit",
-                            ExrPrecision::Full => "Full float · 32-bit",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut draft.precision,
-                                ExrPrecision::Half,
-                                "Half float · 16-bit",
-                            );
-                            ui.selectable_value(
-                                &mut draft.precision,
-                                ExrPrecision::Full,
-                                "Full float · 32-bit",
-                            );
-                        })
-                        .response
-                        .labelled_by(label);
-                });
-                ui.small("Creative look and display rendering are not applied.");
-            } else {
-                ui::labelled_row(ui, "Bit depth", None, |ui, _| {
-                    ui.label("16-bit RGB");
-                });
-                ui::labelled_row(ui, "Compression", None, |ui, _| {
-                    ui.label("Lossless · Deflate");
-                });
-            }
-            ui.add_space(8.);
-            ui.strong("Files");
-            ui::labelled_row(ui, "Filename", None, |ui, _| {
-                ui.label("Original filename");
-            });
-            ui::labelled_row(ui, "Suffix", None, |ui, label| {
-                ui.add(egui::TextEdit::singleline(&mut draft.suffix).desired_width(240.))
-                    .labelled_by(label);
-            });
-            if let Ok(name) = filename(
-                std::path::Path::new("DSC01234.RAW"),
-                &draft.suffix,
-                draft.kind,
-            ) {
-                ui.small(format!("Example: {}", name.display()));
-            }
-            ui::labelled_row(ui, "Existing files", None, |ui, label| {
-                egui::ComboBox::from_id_salt("export-existing")
-                    .width(240.)
-                    .selected_text(match draft.collision {
-                        Collision::KeepBoth => "Keep both",
-                        Collision::Skip => "Skip",
-                        Collision::Replace => "Replace…",
-                        #[cfg(test)]
-                        Collision::Refuse => "Refuse",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut draft.collision, Collision::KeepBoth, "Keep both");
-                        ui.selectable_value(&mut draft.collision, Collision::Skip, "Skip");
-                        ui.selectable_value(&mut draft.collision, Collision::Replace, "Replace…");
-                    })
-                    .response
-                    .labelled_by(label);
-            });
-            let inputs = (
-                draft.scope,
-                draft.folder.clone(),
-                draft.kind,
-                draft.target,
-                draft.precision,
-                draft.suffix.clone(),
-                draft.collision,
-            );
-            if inputs != form_inputs {
-                draft.error = None;
-            }
-            if let Some(error) = &draft.error {
-                ui.label(error);
-            }
-        });
-    ui.add_space(12.);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let count = if draft.scope == Scope::Selected {
-            selected
-        } else {
-            all
-        };
-        let export = ui::TextAction::new(&format!(
-            "Export {count} {}",
-            if count == 1 { "photo" } else { "photos" }
-        ))
-        .primary()
-        .enabled(count > 0 && !draft.folder.as_os_str().is_empty())
-        .show(ui);
-        intent.export = export.clicked();
-        let cancel = ui::TextAction::new("Cancel").show(ui);
-        intent.close = cancel.clicked();
-        ui::focus_default(ui, &cancel);
+    ui.strong("Photos");
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(
+            &mut draft.scope,
+            Scope::Selected,
+            format!("Selected photos ({selected})"),
+        );
+        ui.selectable_value(&mut draft.scope, Scope::All, format!("All photos ({all})"));
     });
-    intent
+    ui.add_space(8.);
+    ui.strong("Destination");
+    let choose_folder = ui
+        .horizontal(|ui| {
+            let choose = ui::TextAction::new("Choose…");
+            let available =
+                (ui.available_width() - choose.width(ui) - ui.spacing().item_spacing.x).max(1.);
+            let size = egui::vec2(available, ui::CONTROL_HEIGHT);
+            ui.allocate_ui_with_layout(
+                size,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_size(size);
+                    ui.add(
+                        egui::Label::new(if draft.folder.as_os_str().is_empty() {
+                            "Choose a folder".into()
+                        } else {
+                            draft.folder.display().to_string()
+                        })
+                        .truncate(),
+                    )
+                    .on_hover_text(draft.folder.display().to_string());
+                },
+            );
+            choose.show(ui).clicked()
+        })
+        .inner;
+    ui.add_space(8.);
+    ui.strong("Output");
+    ui::labelled_row(ui, "Format", None, |ui, label| {
+        egui::ComboBox::from_id_salt("export-format")
+            .width(ui.available_width().min(240.))
+            .truncate()
+            .selected_text(match draft.kind {
+                Kind::Tiff => "TIFF",
+                Kind::Exr => "EXR",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut draft.kind, Kind::Tiff, "TIFF");
+                ui.selectable_value(&mut draft.kind, Kind::Exr, "EXR");
+            })
+            .response
+            .labelled_by(label);
+    });
+    ui::labelled_row(ui, "Target", None, |ui, label| {
+        ui.add_enabled_ui(draft.kind == Kind::Tiff, |ui| {
+            egui::ComboBox::from_id_salt("export-target")
+                .width(ui.available_width().min(240.))
+                .truncate()
+                .selected_text(if draft.kind == Kind::Exr {
+                    "Scene-linear AP0"
+                } else {
+                    match draft.target {
+                        OutputTarget::Srgb => "sRGB",
+                        OutputTarget::DisplayP3 => "Display P3",
+                    }
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut draft.target, OutputTarget::Srgb, "sRGB");
+                    ui.selectable_value(&mut draft.target, OutputTarget::DisplayP3, "Display P3");
+                })
+                .response
+                .labelled_by(label);
+        });
+    });
+    if draft.kind == Kind::Exr {
+        ui::labelled_row(ui, "Precision", None, |ui, label| {
+            egui::ComboBox::from_id_salt("export-precision")
+                .width(ui.available_width().min(240.))
+                .truncate()
+                .selected_text(match draft.precision {
+                    ExrPrecision::Half => "Half float · 16-bit",
+                    ExrPrecision::Full => "Full float · 32-bit",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut draft.precision,
+                        ExrPrecision::Half,
+                        "Half float · 16-bit",
+                    );
+                    ui.selectable_value(
+                        &mut draft.precision,
+                        ExrPrecision::Full,
+                        "Full float · 32-bit",
+                    );
+                })
+                .response
+                .labelled_by(label);
+        });
+        ui.small("Creative look and display rendering are not applied.");
+    } else {
+        ui::labelled_row(ui, "Bit depth", None, |ui, _| {
+            ui.label("16-bit RGB");
+        });
+        ui::labelled_row(ui, "Compression", None, |ui, _| {
+            ui.label("Lossless · Deflate");
+        });
+    }
+    ui.add_space(8.);
+    ui.strong("Files");
+    ui::labelled_row(ui, "Filename", None, |ui, _| {
+        ui.label("Original filename");
+    });
+    ui::labelled_row(ui, "Suffix", None, |ui, label| {
+        ui.add(egui::TextEdit::singleline(&mut draft.suffix).desired_width(240.))
+            .labelled_by(label);
+    });
+    if let Ok(name) = filename(
+        std::path::Path::new("DSC01234.RAW"),
+        &draft.suffix,
+        draft.kind,
+    ) {
+        ui.small(format!("Example: {}", name.display()));
+    }
+    ui::labelled_row(ui, "Existing files", None, |ui, label| {
+        egui::ComboBox::from_id_salt("export-existing")
+            .width(ui.available_width().min(240.))
+            .truncate()
+            .selected_text(match draft.collision {
+                Collision::KeepBoth => "Keep both",
+                Collision::Skip => "Skip",
+                Collision::Replace => "Replace…",
+                #[cfg(test)]
+                Collision::Refuse => "Refuse",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut draft.collision, Collision::KeepBoth, "Keep both");
+                ui.selectable_value(&mut draft.collision, Collision::Skip, "Skip");
+                ui.selectable_value(&mut draft.collision, Collision::Replace, "Replace…");
+            })
+            .response
+            .labelled_by(label);
+    });
+    let inputs = (
+        draft.scope,
+        draft.folder.clone(),
+        draft.kind,
+        draft.target,
+        draft.precision,
+        draft.suffix.clone(),
+        draft.collision,
+    );
+    if inputs != form_inputs {
+        draft.error = None;
+    }
+    if let Some(error) = &draft.error {
+        ui.label(error);
+    }
+    choose_folder
 }
 
 impl Editor {
@@ -446,14 +422,37 @@ impl Editor {
             let draft = &mut modal.draft;
             let selected = self.export_ids(Scope::Selected).len();
             let all = self.export_ids(Scope::All).len();
-            let response = ui::modal(context, egui::Id::new("export-photos"), |ui| {
-                ui.set_width((context.content_rect().width() - 80.).clamp(1., 500.));
-                form(ui, draft, selected, all)
-            });
-            if response.inner.close || ui::escape_requested(&response, escape) {
+            let scope = draft.scope;
+            let count = if scope == Scope::Selected {
+                selected
+            } else {
+                all
+            };
+            let export = format!(
+                "Export {count} {}",
+                if count == 1 { "photo" } else { "photos" }
+            );
+            let actions = [
+                ui::DialogAction::new(FormAction::Cancel, "Cancel", ui::DialogRole::Cancel),
+                ui::DialogAction::new(FormAction::Export, &export, ui::DialogRole::Primary)
+                    .enabled(count > 0 && !draft.folder.as_os_str().is_empty()),
+            ];
+            let (choose_folder, action) = ui::Dialog::new(&actions)
+                .wide()
+                .initial_focus(FormAction::Cancel)
+                .escape(escape, FormAction::Cancel)
+                .show(context, egui::Id::new("export-photos"), |ui| {
+                    form(ui, draft, selected, all)
+                });
+            if action == Some(FormAction::Cancel) {
                 return;
             }
-            if response.inner.choose {
+            let scope_changed = scope != draft.scope;
+            if scope_changed {
+                // The footer was measured for the scope at the start of this pass.
+                context.request_repaint();
+            }
+            if choose_folder {
                 let mut picker = rfd::FileDialog::new().set_title("Export destination");
                 if !draft.folder.as_os_str().is_empty() {
                     picker = picker.set_directory(&draft.folder);
@@ -464,16 +463,15 @@ impl Editor {
                     draft.error = None;
                     draft.folder = folder;
                 }
-            }
-            if response.inner.export {
+            } else if action == Some(FormAction::Export) && !scope_changed {
                 if draft.collision == Collision::Replace {
                     self.request_export_replacement(modal, cx);
                 } else {
                     self.accept_export(modal, cx);
                 }
-            } else {
-                self.document.export.form = Some(modal);
+                return;
             }
+            self.document.export.form = Some(modal);
         }
     }
 
@@ -482,46 +480,57 @@ impl Editor {
         {
             self.document.export.summary = Some(summary.clone());
         }
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        enum Completion {
+            Done,
+            Reveal,
+        }
+
         drop(self.dialogs.show(move |context, id, escape| {
-            let response = ui::modal(context, id, |ui| {
-                ui.heading(if summary.stopped {
-                    "Export stopped"
-                } else {
-                    "Export complete"
-                });
-                ui.label(summary.text());
-                egui::ScrollArea::vertical()
-                    .max_height(180.)
-                    .show(ui, |ui| {
-                        for outcome in &summary.outcomes {
-                            match outcome {
-                                Outcome::Failed { path, error } => {
-                                    ui.label(format!("{}: {error}", path.display()));
-                                }
-                                Outcome::Skipped(path) => {
-                                    ui.label(format!("Skipped {}", path.display()));
-                                }
-                                _ => {}
-                            }
-                        }
-                    });
-                let mut reveal = None;
-                if let Some(Outcome::Exported(path)) = summary
-                    .outcomes
-                    .iter()
-                    .find(|o| matches!(o, Outcome::Exported(_)))
-                    && ui::TextAction::new("Show in Finder").show(ui).clicked()
-                {
-                    reveal = Some(path.clone());
-                }
-                let ok = ui::TextAction::new("OK").show(ui);
-                ui::focus_default(ui, &ok);
-                (ok.clicked(), reveal)
+            let mut actions = vec![ui::DialogAction::new(
+                Completion::Done,
+                "Done",
+                ui::DialogRole::Primary,
+            )];
+            let reveal = summary.outcomes.iter().find_map(|outcome| match outcome {
+                Outcome::Exported(path) if cfg!(target_os = "macos") => Some(path),
+                _ => None,
             });
-            if let Some(path) = &response.inner.1 {
+            if reveal.is_some() {
+                actions.push(ui::DialogAction::new(
+                    Completion::Reveal,
+                    "Show in Finder",
+                    ui::DialogRole::Secondary,
+                ));
+            }
+            let (_, action) = ui::Dialog::new(&actions)
+                .initial_focus(Completion::Done)
+                .escape(escape, Completion::Done)
+                .show(context, id, |ui| {
+                    ui.heading(if summary.stopped {
+                        "Export stopped"
+                    } else {
+                        "Export complete"
+                    });
+                    ui.label(summary.text());
+                    for outcome in &summary.outcomes {
+                        match outcome {
+                            Outcome::Failed { path, error } => {
+                                ui.label(format!("{}: {error}", path.display()));
+                            }
+                            Outcome::Skipped(path) => {
+                                ui.label(format!("Skipped {}", path.display()));
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            if action == Some(Completion::Reveal)
+                && let Some(path) = reveal
+            {
                 reveal_file(path.clone());
             }
-            (response.inner.0 || ui::escape_requested(&response, escape)).then_some(())
+            (action == Some(Completion::Done)).then_some(())
         }));
     }
 
@@ -530,7 +539,7 @@ impl Editor {
         let response = self.dialogs.show(move |context, id, escape| {
             ui::DecisionDialog::new("Replace existing exported files?",
                 "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.",
-                "Replace and export").warning().detail(&detail).show(context, id, escape)
+                "Replace and export").destructive().detail(&detail).show(context, id, escape)
         });
         self.document.dialog_action = cx.spawn(move |cx| async move {
             let Ok(choice) = response.await else { return };

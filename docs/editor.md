@@ -90,7 +90,7 @@ Colour wheels drag relative to the accepted value; holding Shift gives ten-times
 
 Notifications and decisions use one [dialog host](../src/editor/dialogs.rs). Features submit presentation and await a typed answer when their continuation needs one. Captured targets and subsequent actions stay in the feature's async workflow, retained by its document or photo visit. The host presents one dialog at a time until an explicit user answer; later submissions wait. Dropping a response waiter or succeeding on a later attempt does not erase an unread dialog.
 
-A decision asks permission before changing or replacing something; a failure explains why an attempt did not complete. Save/Discard and replacement choices use shared [decision presentation](../src/editor/ui/dialogs.rs). [Notice presentation](../src/editor/ui/feedback.rs) supplies named severity, glyph, restrained colour and expandable diagnostic Details. Required choices are not labelled operation failures. Analyze folds its Photo-reset consequence into its sampling-area review. Other import/analysis failures remain passive status rather than acknowledged messages.
+A decision asks permission before changing or replacing something; a failure explains why an attempt did not complete. [Notice presentation](../src/editor/ui/feedback.rs) supplies named severity, glyph, restrained colour and expandable diagnostic Details. Required choices are not labelled operation failures. Analyze folds its Photo-reset consequence into its sampling-area review. Other import/analysis failures remain passive status rather than acknowledged messages.
 
 ## Working feedback follows what remains usable
 
@@ -119,7 +119,7 @@ File → **Export…** writes Selected photos or All photos in filmstrip order. 
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 
-The [export action](../src/editor/export.rs) uses [shared photographic output](../src/editor/output.rs) to capture accepted recipes only for the requested photos, then processes full-resolution inputs one photo at a time without visiting them. Acquisition and execution validate each photo's actual interpretation, correction, numerical domain and format-specific resources; unrelated photos do not participate in rendering admission. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
+The [export action](../src/editor/export.rs) uses [shared photographic output](../src/editor/output.rs) to capture accepted recipes only for the requested photos, then processes full-resolution inputs one photo at a time without visiting them. Acquisition and execution validate each photo's actual interpretation, correction, numerical domain and format-specific resources; unrelated photos do not participate in rendering admission. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and, on macOS, Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
 
 ## External edit sessions
 
@@ -227,13 +227,17 @@ Use the existing component families rather than copying their painting or intera
 - [UI](../src/editor/ui.rs): the shared entry point; [theme](../src/editor/ui/theme.rs) owns colours and typography, [application](../src/editor/ui/application.rs) owns header/branding and panels.
 - [Inspector](../src/editor/ui/inspector.rs), [parameter rows](../src/editor/ui/parameter.rs), [balance](../src/editor/ui/balance.rs): section hierarchy, row layout and value widgets.
 - [Viewer framing](../src/editor/ui/viewer.rs), [tools](../src/editor/ui/tools.rs), [actions](../src/editor/ui/actions.rs), [icons](../src/editor/ui/icons.rs), [cards](../src/editor/ui/cards.rs): shared framing and interaction components.
-- [Decisions](../src/editor/ui/dialogs.rs), [feedback](../src/editor/ui/feedback.rs), [working](../src/editor/ui/progress.rs): shared modal, severity and progress surfaces; [activities](../src/editor/activity.rs) own their lifetimes.
+- [Dialogs](../src/editor/ui/dialogs.rs), [feedback](../src/editor/ui/feedback.rs), [working](../src/editor/ui/progress.rs): shared modal layout, notices and progress presentation.
 
 Features compose `editor::ui` components through body closures and ordinary egui layout, owning availability, accepted/draft state and dispatch. [ParameterRow](../src/editor/ui/parameter.rs) receives an explicit identity, label, bounds and value options together at its call site; shared spacing and gestures stay inside the component. [BalanceControl](../src/editor/ui/balance.rs) composes those rows with a wheel, while [white balance](../src/editor/white_balance.rs) owns its section framing and actions. Non-numeric controls use the fixed-name inspector row where they share that layout, and ordinary themed egui controls inside it.
 
 Shared value widgets edit local values and return interaction responses; features validate and accept changed values through short mutations. Completed inputs are independently undoable, with continuous gestures grouped as one action. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
 
 Use [`Segments`](../src/editor/ui/segments.rs) for a short set of mutually exclusive choices. The compact layout uses icons with tooltips; the fill-width layout shows labels. Give each segment an accessible name and keep commands and popup actions outside the frame.
+
+### Dialog bodies and actions
+
+Supply modal content and typed actions separately to [`Dialog`](../src/editor/ui/dialogs.rs). It scrolls the body as needed and keeps the action footer visible. The footer follows macOS order: Cancel leads a row or sits last in a stack. Use primary emphasis for a recommended action and the destructive role for an action that discards work or replaces data. Initial focus and Escape are explicit and independent of visual emphasis; progress uses the same footer without treating Escape as a cancellation request.
 
 ### Inspector density and value grammar
 

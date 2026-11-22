@@ -24,7 +24,7 @@ fn frame(
                 "Save changes",
             )
             .detail("/projects/照片-very-long-project-with-no-spaces-that-must-wrap.antitone.json")
-            .alternative("Discard changes")
+            .destructive_alternative("Discard changes")
             .show(ui.ctx(), Id::new("test-decision"), true);
         },
     );
@@ -79,9 +79,13 @@ fn decisions_keep_text_and_distinct_actions_visible_at_narrow_widths() {
         for action in [cancel, alternative, confirm] {
             assert!(!action.intersects(detail));
         }
-        assert!(!cancel.intersects(alternative));
-        assert!(!cancel.intersects(confirm));
-        assert!(!alternative.intersects(confirm));
+        if width >= 800. {
+            assert!(cancel.right() < alternative.left());
+            assert!(alternative.right() < confirm.left());
+        } else if width == 260. {
+            assert!(confirm.bottom() < alternative.top());
+            assert!(alternative.bottom() < cancel.top());
+        }
         let nodes = &output
             .platform_output
             .accesskit_update
@@ -109,6 +113,10 @@ fn decisions_keep_text_and_distinct_actions_visible_at_narrow_widths() {
                 egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
             );
             assert!(area.contains_rect(hit));
+            assert!(
+                hit.height() >= 28.,
+                "modal action target is too short: {hit:?}"
+            );
             assert!(hit.contains_rect(text(&output, label)));
             assert!(!hit.intersects(detail));
             assert!(hit_regions.iter().all(|other| !hit.intersects(*other)));
@@ -133,7 +141,7 @@ fn replacing_existing_work_uses_an_explicit_warning() {
                     "A file already exists at this location. Exporting will overwrite it.",
                     "Replace file",
                 )
-                .warning()
+                .destructive()
                 .show(ui.ctx(), Id::new("test-warning-decision"), true);
             },
         );
@@ -241,13 +249,23 @@ fn reopening_after_keyboard_choice_restores_safe_initial_focus() {
 
 #[test]
 fn tab_follows_visual_action_order_and_explicit_focus_allows_keyboard_activation() {
-    for width in [800., 260.] {
+    for (width, modifiers) in [
+        (800., egui::Modifiers::NONE),
+        (260., egui::Modifiers::SHIFT),
+    ] {
         for (tabs, expected) in [(1, DialogChoice::Alternative), (2, DialogChoice::Confirm)] {
             let context = Context::default();
             frame(&context, width, vec![]);
             frame(&context, width, vec![]);
             for _ in 0..tabs {
-                assert_eq!(frame(&context, width, key(egui::Key::Tab)).0, None);
+                let tab = Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                };
+                assert_eq!(frame(&context, width, vec![tab]).0, None);
             }
             assert_eq!(
                 frame(&context, width, key(egui::Key::Enter)).0,
@@ -255,6 +273,68 @@ fn tab_follows_visual_action_order_and_explicit_focus_allows_keyboard_activation
             );
         }
     }
+}
+
+#[test]
+fn stacking_does_not_transfer_keyboard_focus_to_another_action() {
+    let context = Context::default();
+    frame(&context, 800., vec![]);
+    frame(&context, 800., vec![]);
+    assert_eq!(
+        frame(&context, 260., key(egui::Key::Enter)).0,
+        Some(DialogChoice::Cancel)
+    );
+}
+
+#[test]
+fn scrolling_the_body_does_not_move_or_cover_the_footer() {
+    let context = Context::default();
+    let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(260., 260.));
+    let draw = |events| {
+        let mut body_start = Pos2::ZERO;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                (body_start, _) = Dialog::new(&[
+                    DialogAction::new(0, "Cancel", DialogRole::Cancel),
+                    DialogAction::new(1, "Discard changes", DialogRole::Destructive),
+                    DialogAction::new(2, "Save changes", DialogRole::Primary),
+                ])
+                .show(ui.ctx(), Id::new("short-dialog"), |ui| {
+                    let first = ui.heading("Long form");
+                    for n in 0..40 {
+                        ui.label(format!("Form entry {n}"));
+                    }
+                    first.rect.center()
+                });
+            },
+        );
+        output.textures_delta.clear();
+        (body_start, output)
+    };
+    draw(vec![]);
+    draw(vec![]);
+    let (start, output) = draw(vec![]);
+    let cancel = text(&output, "Cancel");
+    assert!(screen.contains_rect(cancel));
+    draw(vec![
+        Event::PointerMoved(start),
+        Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0., -140.),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    let (scrolled, output) = draw(vec![]);
+    assert!(scrolled.y < start.y, "wheel input must reach the body");
+    assert_eq!(text(&output, "Cancel"), cancel);
+    let area = context.memory(|memory| memory.area_rect(Id::new("short-dialog")).unwrap());
+    assert!(screen.contains_rect(area), "modal is clipped: {area:?}");
 }
 
 #[test]

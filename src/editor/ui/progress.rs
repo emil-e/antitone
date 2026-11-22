@@ -1,4 +1,7 @@
-use super::{TextAction, dialogs};
+use super::{
+    TextAction,
+    dialogs::{Dialog, DialogAction, DialogRole},
+};
 use egui::{Context, Id, Ui};
 
 // Preserve the single-line status strip's viewer geometry while activity changes.
@@ -145,18 +148,17 @@ impl ProgressContent<'_> {
 
     pub fn modal(&self, context: &Context, id: Id) -> bool {
         // No backdrop/Escape dismissal: a working view cannot silently cancel or hide a job.
-        dialogs::modal(context, id, |ui| {
-            ui.heading(egui::RichText::new(self.title).strong());
-            self.bar(ui);
-            if let Some(label) = self.cancel {
-                let cancel = TextAction::new(label).show(ui);
-                dialogs::focus_default(ui, &cancel);
-                cancel.clicked()
-            } else {
-                false
-            }
-        })
-        .inner
+        let cancel = self
+            .cancel
+            .map(|label| DialogAction::new((), label, DialogRole::Cancel));
+        let (_, clicked) =
+            Dialog::new(cancel.as_slice())
+                .initial_focus(())
+                .show(context, id, |ui| {
+                    ui.heading(egui::RichText::new(self.title).strong());
+                    self.bar(ui);
+                });
+        clicked.is_some()
     }
 }
 
