@@ -183,7 +183,14 @@ impl Request {
         target: OutputTarget,
     ) -> Result<Self, Error> {
         let spec = ViewImage::proxy_request(source, spec)?;
-        let (definition, spec) = capture.sampled_output(&renderer, source, field, spec, target)?;
+        let (definition, spec) = capture.sampled_output(
+            &renderer.evaluation().device().limits(),
+            source,
+            field,
+            spec,
+            renderer.looks(),
+            renderer.drt(target),
+        )?;
         Self::new(Preparation::new(
             renderer,
             kernels,
@@ -284,6 +291,13 @@ pub(crate) fn photograph(
     spec: SourceRequest,
     target: OutputTarget,
 ) -> Result<ImageRequest, Error> {
-    let (definition, spec) = capture.preview_output(renderer, scan, field, spec, target)?;
+    let (definition, spec) = capture.preview_output(
+        &renderer.evaluation().device().limits(),
+        scan,
+        field,
+        spec,
+        renderer.looks(),
+        renderer.drt(target),
+    )?;
     ImageRequest::new(definition, spec)
 }

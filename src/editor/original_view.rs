@@ -100,11 +100,11 @@ impl Request {
             let scan = source.scan()?;
             let renderer = services.renderers.get(&services.device, &services.queue)?;
             let original = demand.capture.original(
-                &services.device,
-                &renderer,
+                &services.device.limits(),
                 &scan,
                 source.correction.gpu()?,
-                demand.target,
+                renderer.looks(),
+                renderer.drt(demand.target),
             )?;
             crate::refinement::refine_definition(
                 renderer.evaluation(),

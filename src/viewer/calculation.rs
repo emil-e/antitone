@@ -97,11 +97,12 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         capture.resident_output(
-            &processing.renderer,
+            &self.device_limits,
             &processing.source,
             self.size(),
             field,
-            self.target,
+            processing.renderer.looks(),
+            processing.renderer.drt(self.target),
         )
     }
 
@@ -116,7 +117,7 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
-            .resident_processed(&processing.renderer, &processing.source, self.size(), field)
+            .resident_processed(&self.device_limits, &processing.source, self.size(), field)
     }
 
     #[cfg(test)]

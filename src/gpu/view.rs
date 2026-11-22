@@ -163,11 +163,12 @@ impl RenderedView {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
         let (definition, spec) = capture.retained_output(
-            &source.renderer,
+            &device.limits(),
             &source.definition,
             field,
             &source.spec,
-            target,
+            source.renderer.looks(),
+            source.renderer.drt(target),
         )?;
         let image = ViewImage::on_worker(
             source.renderer.clone(),
@@ -194,7 +195,11 @@ impl RenderedView {
             input,
             previous.and_then(|view| view.product.as_ref()),
         )?;
-        let endpoint = capture.display(&product.renderer, product.definition.clone(), target)?;
+        let endpoint = capture.display(
+            product.definition.clone(),
+            product.renderer.looks(),
+            product.renderer.drt(target),
+        )?;
         Self::from_value(device, product, capture, target, endpoint)
     }
 

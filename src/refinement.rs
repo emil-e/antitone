@@ -51,13 +51,13 @@ pub(crate) fn refine_cancellable(
     }
     scan.validate_area(view.area)?;
     let root = crate::gpu::photograph::authoring::original_chain(
-        device,
-        renderer,
+        &device.limits(),
         scan,
         field,
         &input,
-        target,
         &input.definition(),
+        renderer.looks(),
+        renderer.drt(target),
     )?;
     refine_definition(
         renderer.evaluation(),

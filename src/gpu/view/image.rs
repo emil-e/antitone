@@ -63,7 +63,14 @@ impl ViewImage {
                 proxy.dimensions(),
             )?),
         )?;
-        let (root, spec) = request.sampled_output(&renderer, &camera, field, spec, target)?;
+        let (root, spec) = request.sampled_output(
+            &device.limits(),
+            &camera,
+            field,
+            spec,
+            renderer.looks(),
+            renderer.drt(target),
+        )?;
         Self::on_worker(renderer, kernels, spec, root, queue, cancelled)
     }
 

@@ -61,7 +61,14 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
             .unwrap();
         let capture = PhotographRequest::Recipe(recipe.clone());
         let (definition, spec) = capture
-            .sampled_output(&renderer, &camera, None, spec, OutputTarget::Srgb)
+            .sampled_output(
+                &device.limits(),
+                &camera,
+                None,
+                spec,
+                renderer.looks(),
+                renderer.drt(OutputTarget::Srgb),
+            )
             .unwrap();
         let work = renderer
             .evaluation()

@@ -350,13 +350,13 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
             let frame = FrameRaster { output, ..frame };
             if output == [1, 1] {
                 let original = crate::gpu::photograph::authoring::original_chain(
-                    &device,
-                    &renderer,
+                    &device.limits(),
                     &scan,
                     None,
                     &input,
-                    target,
                     &input.definition(),
+                    renderer.looks(),
+                    renderer.drt(target),
                 )
                 .unwrap();
                 let domain = crate::gpu::evaluation::Domain {

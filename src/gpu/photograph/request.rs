@@ -7,9 +7,9 @@ use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
+use crate::gpu::{drt, lut3d::Looks};
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
-use crate::rendering::OutputTarget;
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,
@@ -89,25 +89,20 @@ pub(crate) struct ViewGraph {
 impl PhotographRequest {
     pub(crate) fn display(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
         image: Value,
-        target: OutputTarget,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<Value, Error> {
-        display_output(
-            image,
-            self.luts(),
-            &renderer.looks,
-            renderer.drt.get(target),
-        )
+        display_output(image, self.luts(), looks, target)
     }
 
     pub fn original(
         &self,
-        device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         scan: &crate::scan::Scan,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        target: OutputTarget,
+        field: Option<Arc<GpuFlatField>>,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<Value, Error> {
         if scan.flat_field() != field.as_ref().map(|field| field.field()) {
             return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
@@ -127,7 +122,7 @@ impl PhotographRequest {
                     field,
                     recipe,
                 )?
-                .processed(&device.limits())?
+                .processed(limits)?
             }
             Self::Inspection(view) => super::PhotographGraph::inspection_original(
                 crate::gpu::evaluation::camera_source(scan)?,
@@ -138,17 +133,17 @@ impl PhotographRequest {
             #[cfg(test)]
             Self::Fixture(input) => {
                 return super::authoring::original_chain(
-                    device,
-                    renderer,
+                    limits,
                     scan,
                     field,
                     input,
-                    target,
                     &input.definition(),
+                    looks,
+                    target,
                 );
             }
         };
-        self.display(renderer, photograph, target)
+        self.display(photograph, looks, target)
     }
 
     pub fn validate(&self, limits: &wgpu::Limits) -> Result<(), Error> {
@@ -493,12 +488,11 @@ impl PhotographRequest {
 
     pub(crate) fn resident_processed(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         source: &ProcessingSource,
         layout: [u32; 2],
         field: Option<Arc<GpuFlatField>>,
     ) -> Result<Value, Error> {
-        let limits = renderer.evaluation().device().limits();
         let image = match self {
             Self::Recipe(recipe) => {
                 let raster = RecipeGraph::sampled_raster(source, recipe, layout)?;
@@ -508,7 +502,7 @@ impl PhotographRequest {
                     field,
                     recipe,
                 )?
-                .processed(&limits)?
+                .processed(limits)?
             }
             Self::Inspection(view) => {
                 let raster = PhotographGraph::resident_raster(source, layout)?;
@@ -526,7 +520,7 @@ impl PhotographRequest {
                 if let Some(program) = input.source_transform() {
                     input.definition().compose(
                         PhotographGraph::resident_photograph(
-                            &limits,
+                            limits,
                             codes,
                             operations::CameraInput::resident(source, *program, field),
                             *program,
@@ -552,74 +546,67 @@ impl PhotographRequest {
 
     pub(crate) fn resident_output(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         source: &ProcessingSource,
         layout: [u32; 2],
         field: Option<Arc<GpuFlatField>>,
-        target: OutputTarget,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<Value, Error> {
         self.display(
-            renderer,
-            self.resident_processed(renderer, source, layout, field)?,
+            self.resident_processed(limits, source, layout, field)?,
+            looks,
             target,
         )
     }
 
     pub(crate) fn sampled_output(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-        target: OutputTarget,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<(Value, SourceRequest), Error> {
-        let graph = self.sampled_graph(
-            &renderer.evaluation().device().limits(),
-            source,
-            field,
-            spec,
-        )?;
-        let image = self.display(renderer, graph.processed, target)?;
+        let graph = self.sampled_graph(limits, source, field, spec)?;
+        let image = self.display(graph.processed, looks, target)?;
         Ok((image, graph.request))
     }
 
     pub(crate) fn retained_output(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         source: &Value,
         field: Option<Arc<GpuFlatField>>,
         spec: &SourceRequest,
-        target: OutputTarget,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<(Value, SourceRequest), Error> {
-        let graph = self.retained_graph(
-            &renderer.evaluation().device().limits(),
-            source,
-            field,
-            spec,
-        )?;
-        let image = self.display(renderer, graph.processed, target)?;
+        let graph = self.retained_graph(limits, source, field, spec)?;
+        let image = self.display(graph.processed, looks, target)?;
         Ok((image, graph.request))
     }
 
     pub(crate) fn preview_output(
         &self,
-        renderer: &crate::renderer::GpuRenderer,
+        limits: &wgpu::Limits,
         scan: &crate::scan::Scan,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-        target: OutputTarget,
+        looks: &Looks,
+        target: &drt::Target,
     ) -> Result<(Value, SourceRequest), Error> {
-        let limits = renderer.evaluation().device().limits();
         let (image, plan) = match self {
             Self::Recipe(recipe) => {
                 let (graph, plan) =
-                    PhotographGraph::preview(&limits, scan, field, recipe, spec.frame(), None)?;
+                    PhotographGraph::preview(limits, scan, field, recipe, spec.frame(), None)?;
                 (graph.processed, plan)
             }
             #[cfg(test)]
             Self::Fixture(input) if input.is_positive() => {
                 let (graph, plan) = PhotographGraph::preview_with_input(
-                    &limits,
+                    limits,
                     crate::gpu::evaluation::camera_source(scan)?,
                     field,
                     input,
@@ -632,10 +619,10 @@ impl PhotographRequest {
                 let source = self
                     .source_graphs(scan, field, std::slice::from_ref(&spec))?
                     .remove(0);
-                self.filtered(&limits, &spec, source)?
+                self.filtered(limits, &spec, source)?
             }
         };
-        let spec = self.planned_request(&limits, spec, plan)?;
-        Ok((self.display(renderer, image, target)?, spec))
+        let spec = self.planned_request(limits, spec, plan)?;
+        Ok((self.display(image, looks, target)?, spec))
     }
 }

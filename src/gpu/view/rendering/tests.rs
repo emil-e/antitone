@@ -78,7 +78,11 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
         .unwrap();
         let target = crate::rendering::OutputTarget::Srgb;
         let endpoint = capture
-            .display(&renderer, product.definition.clone(), target)
+            .display(
+                product.definition.clone(),
+                renderer.looks(),
+                renderer.drt(target),
+            )
             .unwrap();
         crate::gpu::view::RenderedView::from_value(&device, product, capture, target, endpoint)
             .unwrap()
