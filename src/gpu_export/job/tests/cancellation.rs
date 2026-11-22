@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::*;
+use crate::gpu::{evaluation::*, source::camera_source};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

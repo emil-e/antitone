@@ -8,10 +8,11 @@ use antitone::{
     export::Overwrite,
     geometry::Composition,
     gpu::{
-        evaluation::{self, Value},
+        evaluation::Value,
         flat::GpuFlatField,
         grading::Grading,
         photograph::{PhotographGraph, display_output},
+        source::camera_source,
     },
     processing::{InputSettings, RollSettings},
     scan::{ImageSource, Scan},
@@ -45,7 +46,7 @@ impl Request<'_> {
         }
         let photograph = PhotographGraph::original_image(
             &device.limits(),
-            evaluation::camera_source(self.scan)?,
+            camera_source(self.scan)?,
             self.field,
             ImageSource::new(self.scan, self.input)?.gpu_program()?,
             Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,

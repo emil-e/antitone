@@ -29,7 +29,7 @@ impl<'a> Source<'a> {
     ) -> Result<Self, Error> {
         recipe.neutral.require_scan(scan)?;
         let graph = crate::gpu::photograph::RecipeGraph::originals(
-            evaluation::camera_source(scan)?,
+            crate::gpu::source::camera_source(scan)?,
             field,
             recipe,
         )?;

@@ -156,7 +156,7 @@ fn supplied_early_highlights_source_observation() {
             .unwrap();
             let image = PhotographGraph::original_image(
                 &device.limits(),
-                crate::gpu::evaluation::camera_source(&scan).unwrap(),
+                crate::gpu::source::camera_source(&scan).unwrap(),
                 None,
                 program,
                 grading,

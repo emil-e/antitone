@@ -100,7 +100,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .unwrap();
     let recipe = Arc::new(project.image_recipe(id).unwrap());
     let capture = PhotographRequest::Recipe(recipe.clone());
-    let codes = evaluation::camera_source(&scan).unwrap();
+    let codes = crate::gpu::source::camera_source(&scan).unwrap();
     let limits = device.limits();
     let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
     let camera = ProcessingSource::new_continuous(

@@ -60,7 +60,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                     crate::image_recipe::quality::Quality::Originals,
                 )
                 .unwrap()
-                .originals(e::camera_source(&scan).unwrap())
+                .originals(crate::gpu::source::camera_source(&scan).unwrap())
                 .unwrap();
             let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
             let camera = crate::gpu::source::ProcessingSource::new_continuous(

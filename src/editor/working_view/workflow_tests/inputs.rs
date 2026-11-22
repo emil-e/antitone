@@ -157,7 +157,7 @@ fn replacing_a_working_request_does_not_wait_for_the_retired_corrections_prepara
 
 #[test]
 fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_frames() {
-    use crate::gpu::evaluation::{ImageLayout, camera_source};
+    use crate::gpu::{evaluation::ImageLayout, source::camera_source};
     let (editor, input, frame_spec, scheduler) = fixture();
     let scan = input.scan().unwrap();
     let calibration = (crate::processing::Calibration {
@@ -272,7 +272,7 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
 
 #[test]
 fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
-    use crate::gpu::evaluation::{ImageLayout, camera_source};
+    use crate::gpu::{evaluation::ImageLayout, source::camera_source};
     let (editor, pixels, inspection, scheduler) = fixture();
     let positive = positive_spec(inspection.frame(), &pixels, 0.25);
     let source = camera_source(&pixels.scan().unwrap()).unwrap();
