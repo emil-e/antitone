@@ -23,6 +23,10 @@ pub struct AdjustmentLayerSettings {
     pub pivot: f64,
     #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
     pub contrast_colour_mix: f64,
+    #[cfg_attr(feature = "project", serde(default, skip_serializing_if = "zero_ev"))]
+    pub shadows: f64,
+    #[cfg_attr(feature = "project", serde(default, skip_serializing_if = "zero_ev"))]
+    pub highlights: f64,
     #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
     pub saturation: f64,
     #[cfg_attr(feature = "project", serde(default))]
@@ -37,12 +41,19 @@ impl std::hash::Hash for AdjustmentLayerSettings {
             self.contrast,
             self.pivot,
             self.contrast_colour_mix,
+            self.shadows,
+            self.highlights,
             self.saturation,
             self.vibrance,
         ] {
             crate::float_hash::f64(value, state);
         }
     }
+}
+
+#[cfg(feature = "project")]
+fn zero_ev(value: &f64) -> bool {
+    *value == 0.
 }
 
 fn identity_amount() -> f64 {
@@ -65,6 +76,8 @@ impl Default for AdjustmentLayerSettings {
             contrast: identity_amount(),
             pivot: default_pivot(),
             contrast_colour_mix: default_colour_mix(),
+            shadows: 0.,
+            highlights: 0.,
             saturation: identity_amount(),
             vibrance: 0.,
         }
@@ -252,6 +265,8 @@ fn weighted(photo: AdjustmentLayerSettings, weight: f64) -> AdjustmentLayerSetti
             tint: weight * photo.wb.tint,
         },
         contrast: 1. + weight * (photo.contrast - 1.),
+        shadows: weight * photo.shadows,
+        highlights: weight * photo.highlights,
         saturation: 1. + weight * (photo.saturation - 1.),
         vibrance: weight * photo.vibrance,
         ..photo
@@ -296,6 +311,8 @@ impl AdjustmentLayer {
             && (self.photo.exposure != 0.
                 || self.photo.wb != Balance::default()
                 || self.photo.contrast != 1.
+                || self.photo.shadows != 0.
+                || self.photo.highlights != 0.
                 || self.photo.saturation != 1.
                 || self.photo.vibrance != 0.)
     }

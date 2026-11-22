@@ -1,5 +1,5 @@
 fn adjustment_layer_grade(input: array<f32, 3>, index: u32) -> array<f32, 3> {
-    if adjustment_layer_context.count.x == 0u {
+    if adjustment_layer_context.layer_count == 0u {
         return input;
     }
     let pixel = source_pixel(index);

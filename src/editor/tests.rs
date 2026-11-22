@@ -947,6 +947,8 @@ fn neutral_proposals_have_independent_scopes_and_reject_out_of_range_controls() 
         contrast: 0.4,
         pivot: 0.25,
         contrast_colour_mix: 0.75,
+        shadows: 0.4,
+        highlights: -0.2,
         saturation: 1.3,
         vibrance: 0.25,
     };
@@ -3187,6 +3189,8 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
         contrast: 1.2,
         pivot: 0.25,
         contrast_colour_mix: 1.,
+        shadows: 1.,
+        highlights: -0.5,
         saturation: 1.3,
         vibrance: 1.,
     };
@@ -3194,10 +3198,10 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     let roll = editor.document.project.roll;
     let calibration = (editor.dmin(), editor.dmax());
     editor.set_test_busy(true);
-    click_section_reset(&mut editor, &context, "Contrast");
+    click_section_reset(&mut editor, &context, "Tone");
     assert_eq!(editor.photo_settings(), photo);
     editor.set_test_busy(false);
-    click_section_reset(&mut editor, &context, "Contrast");
+    click_section_reset(&mut editor, &context, "Tone");
     let defaults = AdjustmentLayerSettings::default();
     assert_eq!(
         editor.photo_settings(),
@@ -3205,6 +3209,8 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
             contrast: defaults.contrast,
             pivot: defaults.pivot,
             contrast_colour_mix: defaults.contrast_colour_mix,
+            shadows: defaults.shadows,
+            highlights: defaults.highlights,
             ..photo
         }
     );

@@ -226,6 +226,147 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
 }
 
 #[test]
+fn tonal_ranges_grade_before_display_and_respect_feathered_exposure() {
+    use crate::rendering::OutputTarget;
+
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let grey = 0.18_f32;
+    let bright = grey * 32.;
+    let dark = grey / 32.;
+    let pixels = [bright, bright, bright, grey, dark, 0.].map(|y| [y, y, y, 0.]);
+    let region = CellRegion::new([0, 0], [pixels.len() as u32, 1]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+    };
+    let layer = AdjustmentLayer {
+        mask: AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([0.5, 0.5]),
+            end: SourcePoint([2.5, 0.5]),
+        },
+        ..AdjustmentLayer::global(AdjustmentLayerSettings {
+            shadows: 3.,
+            highlights: -3.,
+            ..Default::default()
+        })
+    };
+    let graded = Grading::new(
+        &device.limits(),
+        RollSettings::default(),
+        AdjustmentLayerSnapshot::new(vec![layer]).unwrap(),
+        [0, 0, region.width, 1].into(),
+    )
+    .unwrap()
+    .compose(borrowed_input(domain))
+    .unwrap();
+    let input = buffer(&device, &pixels);
+    let (working, _) = record(&device, &queue, &renderer, graded.clone(), region, &input);
+
+    // At +/-5 stops the remapped distance squared is 1/2, so smoothstep
+    // at full +/-3 EV gives magnitude 1.5 * (3 - sqrt(2)), even with both sliders active.
+    // The second bright sample has half coverage.
+    let ev = 1.5 * (3. - 2_f32.sqrt());
+    let expected = [
+        bright,
+        bright * (-ev / 2.).exp2(),
+        bright * (-ev).exp2(),
+        grey,
+        dark * ev.exp2(),
+        0.,
+    ]
+    .map(|y| [y, y, y, 0.]);
+    for (actual, expected) in working.iter().zip(expected) {
+        for c in 0..3 {
+            assert!(
+                (actual[c] - expected[c]).abs() < 2e-6,
+                "{actual:?} vs {expected:?}"
+            );
+        }
+    }
+
+    let display = |image| {
+        crate::gpu::photograph::display_output(
+            image,
+            &Default::default(),
+            &renderer.looks,
+            renderer.drt.get(OutputTarget::Srgb),
+        )
+        .unwrap()
+    };
+    let expected_input = buffer(&device, &expected);
+    let (expected, _) = record(
+        &device,
+        &queue,
+        &renderer,
+        display(borrowed_input(domain)),
+        region,
+        &expected_input,
+    );
+    let (actual, _) = record(&device, &queue, &renderer, display(graded), region, &input);
+    for (actual, expected) in actual.iter().zip(expected) {
+        for c in 0..3 {
+            assert!(
+                (actual[c] - expected[c]).abs() < 2e-5,
+                "{actual:?} vs {expected:?}"
+            );
+        }
+    }
+    assert!(
+        actual[0][0] - actual[2][0] > 0.01,
+        "visible highlight adjustment"
+    );
+}
+
+#[test]
+fn preserve_operates_on_gpu_tone_even_with_neutral_contrast() {
+    use crate::color::oklab::{AP1_TO_LMS, LIGHTNESS};
+
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let pixels = [[2.4, 1.2, -0.1, 0.]];
+    let input = buffer(&device, &pixels);
+    let region = CellRegion::new([0, 0], [1, 1]);
+    let domain = Domain {
+        bounds: Some(region),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+    };
+    let render = |preserve| {
+        let graded = Grading::new(
+            &device.limits(),
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+                highlights: -1.5,
+                contrast_colour_mix: preserve,
+                ..Default::default()
+            })])
+            .unwrap(),
+            [0, 0, 1, 1].into(),
+        )
+        .unwrap()
+        .compose(borrowed_input(domain))
+        .unwrap();
+        record(&device, &queue, &renderer, graded, region, &input).0[0]
+    };
+    let roots = |pixel: [f32; 4]| {
+        (*AP1_TO_LMS * DVec3::new(pixel[0].into(), pixel[1].into(), pixel[2].into())).map(f64::cbrt)
+    };
+    let before = roots(pixels[0]);
+    let toned = roots(render(0.));
+    let preserved = roots(render(1.));
+    assert!(
+        LIGHTNESS.dot(before - toned) > 0.01,
+        "Highlights lowers lightness"
+    );
+    assert!(LIGHTNESS.dot(preserved - toned).abs() < 2e-6);
+    // Equal differences in cube-root cone coordinates leave both opponents unchanged.
+    let delta = preserved - before;
+    assert!((delta.max_element() - delta.min_element()).abs() < 2e-6);
+    assert!(
+        (preserved - toned).abs().max_element() > 0.01,
+        "Preserve changes chroma"
+    );
+}
+
+#[test]
 fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let pixels = [
@@ -241,7 +382,7 @@ fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic()
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     };
     let input = buffer(&device, &pixels);
-    for contrast in [0.4, 1., 1.6] {
+    for contrast in [0.4, 1., 2.] {
         for colour in [0., 0.5, 1.] {
             let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
                 exposure: 16.,

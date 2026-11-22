@@ -539,29 +539,44 @@ impl Editor {
         }
         ui.add_enabled_ui(editable, |ui| {
             let defaults = AdjustmentLayerSettings::default();
-            let changed = photo.contrast != defaults.contrast
+            let ranges_changed =
+                photo.shadows != defaults.shadows || photo.highlights != defaults.highlights;
+            let changed = ranges_changed
+                || photo.contrast != defaults.contrast
                 || photo.pivot != defaults.pivot
                 || photo.contrast_colour_mix != defaults.contrast_colour_mix;
+            let summary = if ranges_changed {
+                format!(
+                    "{:.2} · S {:+.2} · H {:+.2}",
+                    photo.contrast, photo.shadows, photo.highlights
+                )
+            } else {
+                format!(
+                    "{:.2} · Pivot {:.3} · Preserve {:.2}",
+                    photo.contrast, photo.pivot, photo.contrast_colour_mix
+                )
+            };
             let (_, action) = ui::section(
                 ui,
                 "photo-contrast",
-                "Contrast",
+                "Tone",
                 ui::SectionHeader {
-                    summary: &format!(
-                        "{:.2} · Pivot {:.3} · Preserve {:.2}",
-                        photo.contrast, photo.pivot, photo.contrast_colour_mix
-                    ),
+                    summary: &summary,
                     changed,
                     reset: Some(changed),
                     tool: None,
                     default_open: Some(true),
                 },
                 |ui| {
-                    let response = ui::ParameterRow::new("contrast", "Contrast", 0.4..=1.6)
-                        .default_value(defaults.contrast)
-                        .help("Adjust contrast around Pivot; 1 leaves contrast unchanged.")
-                        .show(ui, &mut photo.contrast)
-                        .edit;
+                    let response = ui::ParameterRow::new(
+                        "contrast",
+                        "Contrast",
+                        crate::photographic::CONTRAST_RANGE,
+                    )
+                    .default_value(defaults.contrast)
+                    .help("Adjust contrast around Pivot; 1 leaves contrast unchanged.")
+                    .show(ui, &mut photo.contrast)
+                    .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.contrast = photo.contrast
                     });
@@ -574,12 +589,39 @@ impl Editor {
                         .show(ui, &mut photo.pivot)
                         .edit;
                     self.photo_control(response, |adjustment| adjustment.photo.pivot = photo.pivot);
+
+                    let max_ev = crate::photographic::MAX_TONAL_EV;
                     let response =
-                        ui::ParameterRow::new("contrast-colour-mix", "Preserve", 0.0..=1.0)
-                            .default_value(defaults.contrast_colour_mix)
-                            .help("Restore original hue and chroma in OKLab while keeping contrasted lightness.")
-                            .show(ui, &mut photo.contrast_colour_mix)
+                        ui::ParameterRow::new("photo-shadows", "Shadows", -max_ev..=max_ev)
+                            .default_value(defaults.shadows)
+                            .unit("EV")
+                            .help("Adjust tones below middle grey, with more effect toward black.")
+                            .show(ui, &mut photo.shadows)
                             .edit;
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.shadows = photo.shadows
+                    });
+
+                    let response =
+                        ui::ParameterRow::new("photo-highlights", "Highlights", -max_ev..=max_ev)
+                            .default_value(defaults.highlights)
+                            .unit("EV")
+                            .help("Adjust tones above middle grey, with more effect toward white.")
+                            .show(ui, &mut photo.highlights)
+                            .edit;
+                    self.photo_control(response, |adjustment| {
+                        adjustment.photo.highlights = photo.highlights
+                    });
+
+                    let response = ui::ParameterRow::new(
+                        "contrast-colour-mix",
+                        "Preserve",
+                        0.0..=1.0,
+                    )
+                    .default_value(defaults.contrast_colour_mix)
+                    .help("Restore pre-Tone hue and chroma while keeping the adjusted lightness.")
+                    .show(ui, &mut photo.contrast_colour_mix)
+                    .edit;
                     self.photo_control(response, |adjustment| {
                         adjustment.photo.contrast_colour_mix = photo.contrast_colour_mix
                     });
@@ -595,20 +637,19 @@ impl Editor {
                         adjustment.photo.contrast = defaults.contrast;
                         adjustment.photo.pivot = defaults.pivot;
                         adjustment.photo.contrast_colour_mix = defaults.contrast_colour_mix;
+                        adjustment.photo.shadows = defaults.shadows;
+                        adjustment.photo.highlights = defaults.highlights;
                     },
                 );
             }
-            let changed = photo.saturation != defaults.saturation
-                || photo.vibrance != defaults.vibrance;
+            let changed =
+                photo.saturation != defaults.saturation || photo.vibrance != defaults.vibrance;
             let (_, action) = ui::section(
                 ui,
                 "photo-saturation",
                 "Saturation",
                 ui::SectionHeader {
-                    summary: &format!(
-                        "{:.2} · Vibrance {:+.2}",
-                        photo.saturation, photo.vibrance
-                    ),
+                    summary: &format!("{:.2} · Vibrance {:+.2}", photo.saturation, photo.vibrance),
                     changed,
                     reset: Some(changed),
                     tool: None,

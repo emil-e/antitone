@@ -125,7 +125,7 @@ pub fn contrast(rgb: DVec3, amount: f64, pivot: f64, model: Contrast) -> Result<
 
 pub fn contrast_mix(rgb: DVec3, amount: f64, pivot: f64, preserve: f64) -> Result<DVec3> {
     finite(rgb)?;
-    parameter(amount, 0.4, 1.6)?;
+    parameter(amount, 0.4, 2.)?;
     parameter(pivot, 0.01, 1.)?;
     parameter(preserve, 0., 1.)?;
     if amount == 1. {
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn contrast_endpoints_share_the_neutral_curve() {
         for x in [-1., 0., FOOT, 0.18, 16.] {
-            for amount in [0.4, 1., 1.6] {
+            for amount in [0.4, 1., 2.] {
                 let rgb = DVec3::splat(x);
                 assert_eq!(
                     contrast(rgb, amount, 0.18, Contrast::Rgb).unwrap(),

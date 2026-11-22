@@ -1,11 +1,3 @@
-fn colour_adjustment_layer_delta(stage: u32, row: u32, column: u32, base: f32) -> f32 {
-    return adjustment_layer_value(stage, row, column) - base;
-}
-
-fn colour_adjustment_layer(stage: u32, row: u32, column: u32) -> f32 {
-    return adjustment_layer_value(stage, row, column);
-}
-
 // Originals, repaired positives and filtered views share Roll balance and exposure.
 // Neutral working-view acquisition omits exposure; its caller restores that gain here.
 fn photographic_post(input: array<f32, 3>, gain: f32) -> array<f32, 3> {
@@ -16,61 +8,57 @@ fn photographic_post(input: array<f32, 3>, gain: f32) -> array<f32, 3> {
     return matrix_product(parameters.post, scaled);
 }
 
-fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: f32) -> array<f32, 3> {
-    let exposure = exp(weight * colour_adjustment_layer(stage, 2u, 0u));
+fn colour_balance(
+    layer: AdjustmentLayerParameters,
+    rgb: array<f32, 3>,
+    weight: f32,
+) -> array<f32, 3> {
+    let exposure = exp(weight * layer.log_exposure_gain);
     var exposed: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {
         exposed[c] = photographic_finite(rgb[c] * exposure);
     }
-    var cones = matrix_product(adjustment_layer_context.cones.columns, exposed);
+    var cones = matrix_product(adjustment_layer_context.ap1_to_bradford.columns, exposed);
     for(var c = 0u; c < 3u; c++) {
-        cones[c] = photographic_finite(
-                cones[c] * exp(weight * colour_adjustment_layer(stage, 2u, c + 1u)),
-            );
+        cones[c] = photographic_finite(cones[c] * exp(weight * layer.wb_log_cone_offsets[c]));
     }
-    return matrix_product(adjustment_layer_context.inverse.columns, cones);
+    return matrix_product(adjustment_layer_context.bradford_to_ap1.columns, cones);
 }
 
 fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3> {
-    if adjustment_layer_context.count.x == 0u {
+    let count = adjustment_layer_context.layer_count;
+    if count == 0u {
         return input;
     }
-    let area = adjustment_layer_context.area;
-    let inside =
-        f32(area.x) <= source.x && f32(area.y) <= source.y && source.x < f32(area.x + area.z)
-        && source.y < f32(area.y + area.w);
+    let origin = adjustment_layer_context.source_origin;
+    let end = origin + adjustment_layer_context.source_extent;
+    let inside = all(vec2f(origin) <= source) && all(source < vec2f(end));
     var rgb = input;
-    for(var stage = 0u; stage < adjustment_layer_context.count.x; stage++) {
-        if adjustment_layer_stages[stage].flags.x != 0u && !inside {
+    for(var stage = 0u; stage < count; stage++) {
+        let layer = adjustment_layer_stages[stage];
+        if layer.mask_kind != GLOBAL_MASK && !inside {
             continue;
         }
-        let weight = adjustment_layer_weight32(stage, source);
+        let weight = adjustment_layer_weight32(layer, source);
         if weight == 0.0 {
             continue;
         }
-        let ev = colour_adjustment_layer(stage, 2u, 0u);
-        if adjustment_layer_stages[stage].flags.z != 0u {
-            rgb = colour_balance(stage, rgb, weight);
-        } else if ev != 0.0 {
-            let gain = exp(weight * ev);
+        if layer.has_wb != 0u {
+            rgb = colour_balance(layer, rgb, weight);
+        } else if layer.log_exposure_gain != 0.0 {
+            let gain = exp(weight * layer.log_exposure_gain);
             for(var c = 0u; c < 3u; c++) {
                 rgb[c] = photographic_finite(rgb[c] * gain);
             }
         }
-        let da = weight * colour_adjustment_layer_delta(stage, 3u, 0u, 1.0);
-        let ds = weight * colour_adjustment_layer_delta(stage, 3u, 3u, 1.0);
-        let vibrance = weight * colour_adjustment_layer(stage, 4u, 0u);
-        if da == 0.0 && ds == 0.0 && vibrance == 0.0 {
+        let da = weight * (layer.contrast - 1.0);
+        let ds = weight * (layer.saturation - 1.0);
+        let vibrance = weight * layer.vibrance;
+        let tonal_ev = weight * tonal_exposure(rgb, layer.shadows_ev, layer.highlights_ev);
+        if tonal_ev == 0.0 && da == 0.0 && ds == 0.0 && vibrance == 0.0 {
             continue;
         }
-        rgb = colour_apply(
-                rgb,
-                da,
-                colour_adjustment_layer(stage, 3u, 1u),
-                colour_adjustment_layer(stage, 3u, 2u),
-                ds,
-                vibrance,
-            );
+        rgb = colour_apply(rgb, tonal_ev, da, layer.encoded_pivot, layer.preserve, ds, vibrance);
     }
     return rgb;
 }

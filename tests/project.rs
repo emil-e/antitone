@@ -245,9 +245,11 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         .adjustment
         .photo;
     let photo = AdjustmentLayerSettings {
-        contrast: 1.123456789012345,
+        contrast: 1.923456789012345,
         pivot: 0.23456789012345,
         contrast_colour_mix: 0.3456789012345,
+        shadows: 2.56789012345,
+        highlights: -2.6789012345,
         saturation: 1.23456789012345,
         vibrance: 0.456789012345,
         ..before
@@ -285,6 +287,8 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
             "contrast",
             "pivot",
             "contrast_colour_mix",
+            "shadows",
+            "highlights",
             "saturation",
             "vibrance",
         ] {
@@ -313,7 +317,7 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         .layers[0]
         .adjustment
         .photo
-        .contrast = 2.;
+        .contrast = 2_f64.next_up();
     assert!(serde_json::to_value(&project).is_err());
 }
 
