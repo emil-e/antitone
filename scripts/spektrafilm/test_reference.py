@@ -29,6 +29,7 @@ def diagonal():
         exposure_rows=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         dye_rows=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         density_gain=1.0,
+        base_density_offset=1.25,
     )
     return film, pair, definition
 
@@ -49,14 +50,15 @@ class ReferenceFormation(unittest.TestCase):
     def test_common_neutral_filtration_and_lamp_compensation_preserve_dose(self):
         film, pair, definition = diagonal()
         models = []
-        for offset in [0.0, 1.25]:
+        for offset in [0.0, 1.25, 1.5]:
             setting = copy.deepcopy(definition)
             setting["base_density_offset"] = offset
             with patch.object(reference, "definition", return_value=setting):
                 models.append(reference.Reference(film, pair))
         for rgb in [[0.18] * 3, [3.0, 0.2, 0.03], [-0.01, 0.3, 0.02]]:
-            for a, b in zip(models[0].expose(rgb), models[1].expose(rgb)):
-                self.assertAlmostEqual(a, b, places=13)
+            for model in models[1:]:
+                for a, b in zip(models[0].expose(rgb), model.expose(rgb)):
+                    self.assertAlmostEqual(a, b, places=13)
 
     def test_signed_effective_coordinates_are_not_clipped(self):
         film, pair, definition = diagonal()

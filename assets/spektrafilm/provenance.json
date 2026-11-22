@@ -103,8 +103,8 @@
   "characteristic_sha256": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
   "characteristic_definition_sha256": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b",
   "paper_reference": {
-    "definition_sha256": "4af3ad1a83e3a671f2bcf54ac52d5c54048310bffc05178c98325578308b5738",
-    "calibration_sha256": "61f13cfdf25bb69d9fbe54e40ec87796a4dab20c4f15619d2897db3dd16109e3",
+    "definition_sha256": "b13c9e02d3eca5e01118d392f85b92a9a90d285a6e26f10d025fd1b8c1dd53fc",
+    "calibration_sha256": "d25d0e49ab3d3aef46d9dbb0f587ae13e3d4378798c889a54743fc42858f6c37",
     "negative": "kodak_vision3_250d",
     "formation": "A AP1 chooses exposure records; shared F develops them; g B maps into peak-normalized effective dye coordinates. Source base and signed spectra retained.",
     "printing": "Fixed neutral filtration with reciprocal lamp scaling; fixed per-medium exposure/balance at AP1 gray. No per-input or photographic calibration.",
@@ -115,8 +115,8 @@
       "negative": "kodak_vision3_250d",
       "paper": "fujifilm_crystal_archive_typeii",
       "print_log_h": [
-        0.2332966958830331,
-        0.15180232564179494,
+        0.23329669588303265,
+        0.15180232564179597,
         0.12349425089232197
       ]
     },
@@ -124,63 +124,63 @@
       "negative": "kodak_vision3_250d",
       "paper": "kodak_2383",
       "print_log_h": [
-        0.24294125394326394,
-        0.15090938473766918,
-        0.13619751518691514
+        0.24294125394326344,
+        0.15090938473767013,
+        0.13619751518691478
       ]
     },
     "kodak_2393": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_2393",
       "print_log_h": [
-        0.24906717403621145,
-        0.15053464584830734,
-        0.13314685702792833
+        0.24906717403621095,
+        0.15053464584830828,
+        0.1331468570279279
       ]
     },
     "kodak_ektacolor_edge": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_ektacolor_edge",
       "print_log_h": [
-        0.24545823056195754,
-        0.1465902311962734,
-        0.12651591943677498
+        0.2454582305619571,
+        0.1465902311962744,
+        0.1265159194367747
       ]
     },
     "kodak_endura_premier": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_endura_premier",
       "print_log_h": [
-        0.24916609571046888,
-        0.14909401820796456,
-        0.1229145785266754
+        0.24916609571046844,
+        0.1490940182079655,
+        0.12291457852667517
       ]
     },
     "kodak_portra_endura": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_portra_endura",
       "print_log_h": [
-        0.23958642471324254,
-        0.1474000928177161,
-        0.12304084586518872
+        0.2395864247132422,
+        0.14740009281771707,
+        0.12304084586518853
       ]
     },
     "kodak_supra_endura": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_supra_endura",
       "print_log_h": [
-        0.2365081130978796,
-        0.1495706584301162,
-        0.12428472589056412
+        0.23650811309787917,
+        0.1495706584301172,
+        0.12428472589056391
       ]
     },
     "kodak_ultra_endura": {
       "negative": "kodak_vision3_250d",
       "paper": "kodak_ultra_endura",
       "print_log_h": [
-        0.25306575041372104,
-        0.1481593675663762,
-        0.12147781642808056
+        0.2530657504137206,
+        0.1481593675663772,
+        0.12147781642808031
       ]
     }
   },
@@ -247,8 +247,8 @@
       "sha256": "98974c8a4f006eed4874f66867b198ebb697db018ffc4aab3734cfec7fc577d5"
     },
     "conformance.json": {
-      "bytes": 394514,
-      "sha256": "fb616a86b06bbe94ddfb81d7b79336e4b272b82bed50f6f626e07f6f08c074c3"
+      "bytes": 394542,
+      "sha256": "1b1835dbfc40cf0bcc234b01d533718a58bae3e30285c658a3acaab93d5f839e"
     },
     "fujifilm_crystal_archive_typeii-scan.cct.z": {
       "bytes": 2790285,

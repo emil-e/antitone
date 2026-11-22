@@ -1,7 +1,7 @@
 {
   "model": "a = g B F(A AP1), D(lambda) = base(lambda) + delta + sum(a_i*d_i(lambda)); lamp scaled by10**delta. F is the shared forward characteristic.",
   "units": "Source effective dye spectra divided by positive native peaks; a is peak-OD contribution, not chemical concentration. Signed effective coefficients/spectra retained. Delta is fixed neutral density, not a stock measurement.",
-  "objective": "CIEDE2000 C/H residual with rotation, no explicit lightness term; not full DE00 or strictly brightness invariant. Uniform colour/exposure weighting; equal three-paper weighting.",
+  "objective": "Common-luminance D65 Lab hue directions and broad hue/exposure-group mean log colour-strength ratios against contrast-adjusted ACES. Equal three-paper/group weighting and equal dimensionless terms, without a coloured-lightness residual or per-patch chroma matching.",
   "media": [
     "kodak_portra_endura",
     "fujifilm_crystal_archive_typeii",
@@ -9384,13 +9384,23 @@
   "neutral_gain": "Global g1.1908250918396057 calibrated on neutral contrast; base unchanged during colour fit, fixed printing recomputed once per g.",
   "fitting": {
     "family": "Two unit-row-sum matrices; pre off-diagonal range +/-0.1; nonnegative pre-drives/amounts on144trainingcontrols only. These are calibration choices, not physical laws.",
-    "method": "Damped finite-difference least squares with feasible sequential projection and coordinate fallback. Three starts; chosen by training residual only. Local result, not global optimum.",
-    "status": "no_decreasing_step",
-    "training_rms_CH": 4.838760808063341
+    "method": "SLSQP finite differences from calibrated and identity starts; both converged. Selected by training loss only, without photograph-based selection or a global-optimum claim.",
+    "status": "converged",
+    "comparison_luminance": 0.18,
+    "reference_eligibility": "Original rendered reference L in[15,90] and common-luminance C>=10; candidate colour does not select controls.",
+    "groups": "Nonempty reference hue bins of60degrees crossed with input EV-2,0,+2; equal group and medium weights.",
+    "direction_term": "Mean squared distance between unit Lab(a,b) vectors, averaged over points within each group.",
+    "strength_term": "Square of the group mean log((C+1e-8)/(C_reference+1e-8)), not mean per-point squared chroma error.",
+    "reference_eligible_controls": 90,
+    "feasibility_controls": 144,
+    "starting_training_loss": 0.04937294073766775,
+    "training_loss": 0.03365751681715266,
+    "pre_boundary_contacts": 3,
+    "neutral_calibration": "Unchanged density gain, characteristic and unit-row-sum neutral response. Extra neutral filtration is compensated by lamp intensity before preflash, not a colour or contrast stage."
   },
   "normalization": {
-    "neutral_density": 1.25,
-    "lamp_scale": 17.78279410038923,
+    "neutral_density": 1.5,
+    "lamp_scale": 31.622776601683793,
     "input_cube": [
       -0.05435413775647024,
       356.45831823434094
@@ -9401,6 +9411,6 @@
     ],
     "meaning": "Fixed passive spectral-filter realization over authored input cube; not source-stock chemistry or a claim outside that domain. Algebraically identical paper dose with reciprocal lamp compensation."
   },
-  "definition_sha256": "4af3ad1a83e3a671f2bcf54ac52d5c54048310bffc05178c98325578308b5738",
+  "definition_sha256": "b13c9e02d3eca5e01118d392f85b92a9a90d285a6e26f10d025fd1b8c1dd53fc",
   "characteristic_sha256": "efdca4026d604ea042019778730ffaf6bb3e47f03f3f5160db2e78f91c11cc5b"
 }
