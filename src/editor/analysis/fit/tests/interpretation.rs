@@ -34,9 +34,9 @@ fn cold_fit_acquires_unresolved_interpretations_before_computation_and_needs_no_
         sources: loader.provider(None),
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let fit = resources.fit(request.clone(), None).unwrap();
     assert_eq!(developments.load(Ordering::Relaxed), 2);
@@ -132,9 +132,9 @@ fn acquired_rasters_establish_facts_before_matching_captured_region_evidence() {
         sources: loader.provider(None),
         sampling_inputs: prepared.sampling_inputs,
         initialization,
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let fit = resources.fit(request.clone(), None).unwrap();
     assert_eq!(developments.load(Ordering::Relaxed), 2);
@@ -288,9 +288,9 @@ fn fitting_uses_each_acquired_camera_mapping_across_development_modes_and_correc
             sources,
             sampling_inputs,
             initialization: scope.initialization.clone(),
-            device,
+            device: device.clone(),
             queue,
-            renderers: Arc::new(crate::renderer::RendererCache::default()),
+            renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         };
         let correction = input(&resources, &request);
         let before = request.document.project.clone();

@@ -17,7 +17,7 @@ struct Case {
 
 fn case(
     device: &wgpu::Device,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     scan: Arc<crate::scan::Scan>,
     size: [u32; 2],
 ) -> Case {
@@ -94,7 +94,7 @@ fn case(
 fn regional(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     case: &Case,
 ) -> Arc<crate::viewer::GpuImage> {
     crate::refinement::refine(

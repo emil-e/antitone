@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::source::SourceGeometry;
+use crate::render_fixture::RenderFixture;
 
 #[test]
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
@@ -18,16 +19,16 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         let area = [120, 73, 1200, 1200];
         let image = GpuImage::new_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(OutputTarget::Srgb),
             [2, 2],
             &[[12000, 16000, 18000, 0]; 4],
             DMat3::IDENTITY,
             None,
-            OutputTarget::Srgb,
         )
         .await
         .unwrap();
@@ -94,13 +95,13 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         drop(image);
         for region in [[120, 73, 8, 8], [120, 73, 2, 2]] {
             let image = GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::Srgb),
                 [2, 2],
                 &[[12000, 16000, 18000, 0]; 4],
                 DMat3::IDENTITY,
                 Some(SourceGeometry::new(region, [2, 2]).unwrap()),
-                OutputTarget::Srgb,
             )
             .await
             .unwrap();
@@ -139,7 +140,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         let small = [0, 0, 6000, 3000].into();
         let large = [0, 0, 6000, 6000].into();
         let roll = RollSettings {
@@ -156,13 +157,13 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             Arc::new(Grading::new(&device.limits(), roll, snapshot.clone(), small).unwrap());
         let fresh = Arc::new(Grading::new(&device.limits(), roll, snapshot, large).unwrap());
         let image = GpuImage::new_continuous_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(OutputTarget::Srgb),
             [64, 64],
             &vec![[6000., 10000., 14000., 0.]; 64 * 64],
             DMat3::IDENTITY,
             Some(SourceGeometry::new([0, 0, 64, 64], [64, 64]).unwrap()),
-            OutputTarget::Srgb,
         )
         .await
         .unwrap();

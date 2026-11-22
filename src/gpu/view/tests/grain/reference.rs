@@ -3,7 +3,7 @@ use super::*;
 fn render_configured(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     config: ProbeConfig,
     seed: u64,

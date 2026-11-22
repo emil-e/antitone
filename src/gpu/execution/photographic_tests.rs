@@ -11,7 +11,7 @@ use crate::{
     gpu::execution::test_support::OutputReference,
     gpu::flat::GpuFlatField,
     processing::{Calibration, RollSettings},
-    renderer::GpuRenderer,
+    render_fixture::RenderFixture,
     scan::Scan,
     working_precision,
 };
@@ -125,7 +125,7 @@ fn oriented_crop(scan: &Scan, angle: f64) -> Composition {
 fn capture(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     controls: OriginalControls<'_>,
 ) -> Vec<[f32; 4]> {
     let size = controls.composition.size();

@@ -52,11 +52,48 @@ fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_a
         height: 32,
     });
     let expected = scan.reference_coverage(coverage).unwrap();
-    let samples = query::Samples::new(&services, &mut scan, field, coverage, &|| false).unwrap();
+    let samples = query::Samples::new(
+        (&services.evaluation, &services.queue),
+        &mut scan,
+        field,
+        coverage,
+        &|| false,
+    )
+    .unwrap();
     let actual = samples
         .mean(samples.camera_light().unwrap(), &|| false)
         .unwrap();
     assert!((actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6);
+}
+
+#[test]
+fn original_grid_measurement_does_not_require_display_initialization() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let mut scan = capture_scan(&editor).unwrap();
+    let mut services = editor.source_services.clone().unwrap();
+    let display_error = Error::Gpu("injected display initialization failure".into());
+    services.display = super::super::display::Warmup::failed(display_error.clone());
+
+    let coverage = Coverage::rectangle(Rect {
+        x: scan.area.x + 8,
+        y: scan.area.y + 8,
+        width: 32,
+        height: 32,
+    });
+    let expected = scan.reference_coverage(coverage).unwrap();
+    let samples = query::Samples::new(
+        (&services.evaluation, &services.queue),
+        &mut scan,
+        None,
+        coverage,
+        &|| false,
+    )
+    .unwrap();
+    let actual = samples
+        .mean(samples.camera_light().unwrap(), &|| false)
+        .unwrap();
+    assert!((actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6);
+    assert_eq!(services.display.ready().err(), Some(display_error));
 }
 
 // Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
@@ -73,7 +110,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
         let (ready, mut scan) = crate::editor::prepare_source(
             &renderers,
             &device,
@@ -102,12 +139,12 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         let lease = Arc::downgrade(scan.source());
         let mut editor = Editor::state();
         let scheduler = source_loading::SourceLoader::new();
-        editor.source_services = Some(crate::editor::source::Services {
-            developments: scheduler.clone(),
-            renderers,
-            device: device.clone(),
-            queue: queue.clone(),
-        });
+        editor.source_services = Some(crate::editor::source::Services::fixture(
+            scheduler.clone(),
+            &device,
+            &queue,
+            &renderers,
+        ));
         editor.document.visit.current_source = Some(
             editor
                 .document

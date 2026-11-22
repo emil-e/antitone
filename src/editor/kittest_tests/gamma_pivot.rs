@@ -219,7 +219,10 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             )
             .unwrap();
         let samples = crate::editor::measurement::query::Samples::new(
-            editor.source_services.as_ref().unwrap(),
+            (
+                &editor.source_services.as_ref().unwrap().evaluation,
+                &editor.source_services.as_ref().unwrap().queue,
+            ),
             scan,
             editor.correction().gpu().unwrap(),
             coverage,

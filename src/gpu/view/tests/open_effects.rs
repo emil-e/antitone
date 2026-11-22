@@ -79,7 +79,7 @@ fn neighbour(left: DVec3, center: DVec3, right: DVec3, position: [f64; 2]) -> DV
 fn native(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     scan: &crate::scan::Scan,
     stages: Assembly,
 ) -> Vec<[f32; 4]> {
@@ -226,8 +226,9 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
             .tile_region(area, 0, 0, area.width, area.height)
             .unwrap();
         let resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(target),
             [area.width, area.height],
             &pixels,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
@@ -238,7 +239,6 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
                 )
                 .unwrap(),
             ),
-            target,
         ))
         .unwrap();
 

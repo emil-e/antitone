@@ -45,7 +45,7 @@ impl Default for ProbeConfig {
 fn probe_view(
     device: &wgpu::Device,
     _queue: &crate::gpu::submission::Queue,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     [scale, footprint]: [f64; 2],
     enabled: bool,
@@ -68,7 +68,7 @@ fn probe_view(
 
 fn configured_probe(
     device: &wgpu::Device,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     config: ProbeConfig,
     seed: u64,
@@ -176,7 +176,7 @@ fn configured_probe(
 fn render_probe(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     scale_and_footprint: [f64; 2],
     enabled: bool,

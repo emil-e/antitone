@@ -3,13 +3,13 @@ use super::{assembly::Assembly, composition::ViewOutput, *};
 
 #[cfg(all(feature = "raw", feature = "render", feature = "editor"))]
 pub(crate) fn original_chain(
-    device: &wgpu::Device,
-    renderer: &crate::renderer::GpuRenderer,
+    limits: &wgpu::Limits,
     scan: &crate::scan::Scan,
     field: Option<Arc<GpuFlatField>>,
     input: &crate::gpu::test_inputs::AuthoredPhotograph,
-    target: crate::rendering::OutputTarget,
     stages: &Assembly,
+    looks: &crate::gpu::lut3d::Looks,
+    target: &crate::gpu::drt::Target,
 ) -> Result<Value, Error> {
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
@@ -25,14 +25,8 @@ pub(crate) fn original_chain(
         scan.camera_to_ap1
     };
     let node = camera_source(scan)?;
-    let photograph =
-        PhotographGraph::authored(&device.limits(), node, field, input, matrix, stages)?;
-    display_output(
-        photograph.processed,
-        input.luts(),
-        &renderer.looks,
-        renderer.drt.get(target),
-    )
+    let photograph = PhotographGraph::authored(limits, node, field, input, matrix, stages)?;
+    display_output(photograph.processed, input.luts(), looks, target)
 }
 
 pub(crate) type Author = dyn Fn(Value, Option<ViewOutput>) -> Result<Value, Error> + Send + Sync;

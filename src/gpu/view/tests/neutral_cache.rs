@@ -247,7 +247,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         assert_eq!(evaluation.retained_bytes(), 0);
         assert!(!read(&device, &queue, &active).is_empty());
 
-        let off_renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
+        let off_renderer = crate::render_fixture::RenderFixture::new_with_cache_policy(
             &device,
             &queue,
             crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },

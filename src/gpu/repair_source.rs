@@ -4,7 +4,6 @@ use crate::{
     Error,
     dust_repair::{Ap1, BaseImage},
     geometry::SourceRegion,
-    renderer::GpuRenderer,
     scan::Scan,
 };
 use std::sync::Arc;
@@ -23,7 +22,7 @@ pub(crate) struct Source<'a> {
 impl<'a> Source<'a> {
     pub(crate) fn from_recipe(
         field: Option<Arc<GpuFlatField>>,
-        renderer: &'a GpuRenderer,
+        context: &'a evaluation::Context,
         gpu: &'a crate::gpu::submission::Queue,
         scan: &Scan,
         recipe: &crate::image_recipe::ImageRecipe,
@@ -34,16 +33,16 @@ impl<'a> Source<'a> {
             field,
             recipe,
         )?;
-        Self::from_image(renderer, gpu, graph.unrepaired()?)
+        Self::from_image(context, gpu, graph.unrepaired()?)
     }
 
     pub(crate) fn from_image(
-        renderer: &'a GpuRenderer,
+        context: &'a evaluation::Context,
         gpu: &'a crate::gpu::submission::Queue,
         image: evaluation::Value,
     ) -> Result<Self, Error> {
         Ok(Self {
-            context: renderer.evaluation(),
+            context,
             queue: gpu,
             image,
             budget: evaluation::Tiling { tile: [512, 128] },

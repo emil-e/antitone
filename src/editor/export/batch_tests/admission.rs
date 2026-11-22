@@ -47,15 +47,16 @@ fn cold_editor(limits: wgpu::Limits) -> (Editor, Arc<Mutex<Vec<PathBuf>>>) {
         .roll_selection
         .reconcile(&editor.document.project.order.clone(), Some(selected));
     editor.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
-    let sources = source::Services {
-        device: device.clone(),
-        queue: queue.clone(),
-        developments: loader,
-        renderers: renderers.clone(),
-    };
+    let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
+    let sources = source::Services::fixture(loader, &device, &queue, &renderers);
     editor.source_services = Some(sources.clone());
-    editor.output_services = Some(Services::new(renderers, device, queue, sources));
+    editor.output_services = Some(Services::new(
+        sources.evaluation.clone(),
+        sources.looks.clone(),
+        sources.display.clone(),
+        queue,
+        sources,
+    ));
     (editor, reads)
 }
 
@@ -209,10 +210,7 @@ fn exr_bypasses_actual_lut_capacity_while_tiff_preserves_failed_destination_and_
     let directory = tempfile::tempdir().unwrap();
     let large = look(81);
     let services = editor.source_services.as_ref().unwrap();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     assert!(
         renderer.looks.resource(large.lut()).is_err(),
         "the LUT must actually exceed this device's resource capacity"

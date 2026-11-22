@@ -42,13 +42,13 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
         .unwrap()
     });
     let scheduler = source_loading::SourceLoader::new();
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
-    e.source_services = Some(source::Services {
-        developments: scheduler.clone(),
-        renderers: renderers.clone(),
-        device: device.clone(),
-        queue: queue.clone(),
-    });
+    let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
+    e.source_services = Some(source::Services::fixture(
+        scheduler.clone(),
+        &device,
+        &queue,
+        &renderers,
+    ));
     e.look.services = Some(Services::new(device.limits()));
     (e, scheduler)
 }
@@ -609,9 +609,8 @@ fn opening_retains_colour_assets_that_exceed_the_current_device_limits() {
         let mut candidate = crate::project::Project::default();
         slot.set(&mut candidate, Some(make(3)));
         candidate.save(&path, crate::project::Save::New).unwrap();
-        let device = &e.source_services.as_ref().unwrap().device;
         let services = e.source_services.as_ref().unwrap();
-        let renderer = services.renderers.get(device, &services.queue).unwrap();
+        let renderer = services.render_fixture().unwrap();
         let small = Document::open(&path).unwrap();
         renderer
             .looks

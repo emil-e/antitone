@@ -29,7 +29,7 @@ fn worker_production_preserves_memory_failure_without_publishing_a_view() {
     .unwrap();
     let request = Request::new(
         Preparation::new(
-            renderer.clone(),
+            renderer.evaluation().clone(),
             kernels,
             vec![
                 ImageRequest::new(

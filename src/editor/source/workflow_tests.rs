@@ -235,12 +235,12 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     });
     editor.document.visit.working_view =
         crate::editor::working_view::WorkingView::new(device.clone(), queue.clone());
-    editor.source_services = Some(source::Services {
-        developments: scheduler,
-        renderers: Arc::default(),
-        device,
-        queue,
-    });
+    editor.source_services = Some(source::Services::fixture(
+        scheduler,
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     editor
 }
 

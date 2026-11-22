@@ -10,17 +10,13 @@ pub(super) fn pixels(
     repair: &Repair,
     services: &source::Services,
 ) -> Vec<([u32; 2], [f32; 3])> {
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
     let field = scan
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&services.device, map).unwrap()));
     let base = crate::gpu::repair_source::Source::from_recipe(
         field,
-        &renderer,
+        &services.evaluation,
         &services.queue,
         scan,
         recipe,
@@ -28,7 +24,8 @@ pub(super) fn pixels(
     .unwrap();
     let image = crate::gpu::repairs::definition::healing_image(base.image(), repair).unwrap();
     let mut reader =
-        crate::gpu::repair_source::Source::from_image(&renderer, &services.queue, image).unwrap();
+        crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, image)
+            .unwrap();
     let [x, y] = repair.support.origin();
     let [width, height] = repair.support.size();
     let values = reader
@@ -80,12 +77,8 @@ impl Image {
     // This performs common graph work: call outside an Editor/Harness borrow.
     pub fn pixels(&self) -> std::vec::IntoIter<([u32; 2], [f32; 3])> {
         let services = &self.services;
-        let renderer = services
-            .renderers
-            .get(&services.device, &services.queue)
-            .unwrap();
         let mut source = crate::gpu::repair_source::Source::from_image(
-            &renderer,
+            &services.evaluation,
             &services.queue,
             self.definition.clone(),
         )

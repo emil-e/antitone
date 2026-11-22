@@ -83,7 +83,7 @@ fn exercise(
     let (renderer, kernels) = monitor.phase("local-infrastructure", || {
         pollster::block_on(async {
             Ok::<_, Error>((
-                crate::renderer::GpuRenderer::new(device, queue).await?,
+                crate::render_fixture::RenderFixture::new(device, queue).await?,
                 ViewKernels::new(device).await?,
             ))
         })

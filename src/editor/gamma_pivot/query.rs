@@ -80,13 +80,12 @@ fn plan(coverage: Coverage, area: SourceRegion) -> Result<Vec<([u32; 2], f64)>, 
 }
 
 fn read(
-    services: &super::super::source::Services,
+    (context, queue): super::super::measurement::Gpu<'_>,
     image: Value,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<[f32; 4]>, Error> {
-    let renderer = services.renderers.get(&services.device, &services.queue)?;
     let domain = image.domain();
-    let request = renderer.evaluation().request(
+    let request = context.request(
         image,
         Region {
             bounds: domain.finite()?,
@@ -95,9 +94,8 @@ fn read(
         BUDGET,
     )?;
     let mut pixels = Vec::new();
-    renderer
-        .evaluation()
-        .read(&services.queue, &request, cancelled, |_, block| {
+    context
+        .read(queue, &request, cancelled, |_, block| {
             pixels.extend_from_slice(block);
             Ok(())
         })?
@@ -107,7 +105,7 @@ fn read(
 
 impl Evidence {
     pub(super) fn capture(
-        services: &super::super::source::Services,
+        gpu: super::super::measurement::Gpu<'_>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
@@ -131,7 +129,7 @@ impl Evidence {
             field,
             &positions,
         )?;
-        let pixels = read(services, camera, cancelled)?;
+        let pixels = read(gpu, camera, cancelled)?;
         let floor = scan.effective_floor() as f32;
         if pixels.iter().any(|pixel| {
             pixel[..3]
@@ -150,13 +148,13 @@ impl Evidence {
 
     fn mean(
         &self,
-        services: &super::super::source::Services,
+        gpu: super::super::measurement::Gpu<'_>,
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<DVec3, Error> {
         let readout =
             crate::gpu::photograph::camera_response::normalized(self.camera.clone(), negative)?;
-        let pixels = read(services, readout, cancelled)?;
+        let pixels = read(gpu, readout, cancelled)?;
         let mut sum = DVec3::ZERO;
         let mut total = 0.;
         for (pixel, weight) in pixels.iter().zip(&self.weights) {
@@ -177,18 +175,18 @@ impl Evidence {
 
     pub(super) fn compensate(
         &self,
-        services: &super::super::source::Services,
+        gpu: super::super::measurement::Gpu<'_>,
         from: NegativeInput,
         to: NegativeInput,
         matrix: DMat3,
         wb: Balance,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Balance, Error> {
-        let before = chromaticity(matrix * self.mean(services, from, cancelled)?)?;
+        let before = chromaticity(matrix * self.mean(gpu, from, cancelled)?)?;
         if from == to {
             return Ok(wb);
         }
-        let after = chromaticity(matrix * self.mean(services, to, cancelled)?)?;
+        let after = chromaticity(matrix * self.mean(gpu, to, cancelled)?)?;
         let correction = before - after;
         Balance {
             warmth: wb.warmth + correction.x,

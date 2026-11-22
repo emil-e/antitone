@@ -5,10 +5,12 @@ use crate::gpu::evaluation as e;
 
 mod authoring;
 
+pub(crate) type FixtureDisplay = (Arc<crate::gpu::lut3d::Looks>, Arc<crate::gpu::drt::Targets>);
+
 impl ViewImage {
     pub(super) fn from_neutral_samples(
         spec: SourceRequest,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         pixels: wgpu::Buffer,
     ) -> Self {
@@ -22,7 +24,8 @@ impl ViewImage {
         });
         Self {
             spec,
-            renderer,
+            context: renderer.evaluation().clone(),
+            fixture_display: Some((renderer.looks().clone(), renderer.drt.clone())),
             kernels,
             definition,
             region,
@@ -33,10 +36,25 @@ impl ViewImage {
         }
     }
 
+    pub(crate) fn from_recorded_fixture(
+        context: e::Context,
+        display: FixtureDisplay,
+        kernels: Arc<ViewKernels>,
+        spec: SourceRequest,
+        definition: e::Value,
+        region: e::CellRegion,
+        recorded: e::RecordedImage,
+    ) -> Result<Arc<Self>, Error> {
+        let mut image = Self::from_recorded(context, kernels, spec, definition, region, recorded)?;
+        Arc::get_mut(&mut image).unwrap().fixture_display = Some(display);
+        Ok(image)
+    }
+
     pub(super) fn fixture_input(&self) -> Arc<Self> {
         let (spec, supplied) = self.argument.as_ref().expect("explicit fixture argument");
-        Self::from_recorded(
-            self.renderer.clone(),
+        Self::from_recorded_fixture(
+            self.context.clone(),
+            self.fixture_display.clone().expect("authored view fixture"),
             self.kernels.clone(),
             spec.clone(),
             supplied.definition().clone(),
@@ -55,7 +73,7 @@ impl ViewImage {
 
     pub fn cached_neutral(
         cache: &e::Materializations,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         wanted: &SourceRequest,
         scan: &Scan,
@@ -73,8 +91,9 @@ impl ViewImage {
         let found = cache.find_ready::<e::ImageLayout>(root.identity()?, |layout| {
             layout.domain == root.domain() && layout.region == region
         })?;
-        Self::from_recorded(
-            renderer,
+        Self::from_recorded_fixture(
+            renderer.evaluation().clone(),
+            (renderer.looks().clone(), renderer.drt.clone()),
             kernels,
             wanted.clone(),
             root,
@@ -91,12 +110,34 @@ impl ViewImage {
     pub fn from_processing(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         source: Arc<ProcessingSource>,
         input: &AuthoredPhotograph,
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
+        renderer.evaluation().require_device(device)?;
+        Self::from_processing_with_display(
+            renderer.evaluation().clone(),
+            (renderer.looks().clone(), renderer.drt.clone()),
+            queue,
+            kernels,
+            source,
+            input,
+            spec,
+        )
+    }
+
+    pub(crate) fn from_processing_with_display(
+        context: e::Context,
+        display: FixtureDisplay,
+        queue: &crate::gpu::submission::Queue,
+        kernels: Arc<ViewKernels>,
+        source: Arc<ProcessingSource>,
+        input: &AuthoredPhotograph,
+        spec: SourceRequest,
+    ) -> Result<Arc<Self>, Error> {
+        let device = context.device().clone();
         let spec = Self::proxy_request(&source, spec)?;
         let (spec, root) = PhotographRequest::Fixture(input.clone()).sampled_prefix(
             &source,
@@ -104,7 +145,6 @@ impl ViewImage {
             spec,
         )?;
         let region = spec.input_region()?;
-        let context = renderer.evaluation();
         let work = context.prepare_image(context.request(
             root.clone(),
             e::Region {
@@ -115,17 +155,16 @@ impl ViewImage {
                 tile: [region.width, region.height],
             },
         )?)?;
-        let image = work.record(context)?;
-        let image = Self::from_recorded(renderer, kernels, spec, root, region, image)?;
+        let image = work.record(&context)?;
+        let image =
+            Self::from_recorded_fixture(context, display, kernels, spec, root, region, image)?;
         let mut encoder = device.create_command_encoder(&Default::default());
-        image.encode(device, &mut encoder);
+        image.encode(&device, &mut encoder);
         queue.submit([encoder.finish()]);
         if let Some(commands) = &image.commands {
             commands.submitted();
         }
-        image
-            .pixels
-            .submitted(&image.renderer.evaluation().materializations());
+        image.pixels.submitted(&image.context.materializations());
         *image.submitted.lock().unwrap() = true;
         Ok(image)
     }
@@ -134,7 +173,7 @@ impl ViewImage {
     pub fn prefix(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
@@ -158,7 +197,7 @@ impl ViewImage {
     pub fn prefixes(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
@@ -175,7 +214,7 @@ impl ViewImage {
     pub async fn original_prefixes(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
@@ -265,8 +304,9 @@ impl ViewImage {
             .zip(definitions)
             .zip(images)
             .map(|((spec, root), image)| {
-                Self::from_recorded(
-                    renderer.clone(),
+                Self::from_recorded_fixture(
+                    renderer.evaluation().clone(),
+                    (renderer.looks().clone(), renderer.drt.clone()),
                     kernels.clone(),
                     spec,
                     root,
@@ -288,7 +328,7 @@ impl ViewImage {
     ) -> Result<Arc<Self>, Error> {
         let capture = PhotographRequest::Fixture(input.clone());
         let (root, plan) = capture.filtered(
-            &source.renderer.evaluation().device().limits(),
+            &source.context.device().limits(),
             &source.spec,
             source.definition.clone(),
         )?;
@@ -313,19 +353,23 @@ impl ViewImage {
                 return Ok(previous.clone());
             }
         }
-        let context = source.renderer.evaluation();
+        let context = &source.context;
         let work = context.prepare_supplied(
             Self::evaluation(context, root.clone())?,
             vec![source.supplied()?],
         )?;
         let image = work.record(context)?;
         let spec = capture.planned_request(
-            &source.renderer.evaluation().device().limits(),
+            &source.context.device().limits(),
             source.spec.clone(),
             plan,
         )?;
-        let mut image = Self::from_recorded(
-            source.renderer.clone(),
+        let mut image = Self::from_recorded_fixture(
+            source.context.clone(),
+            source
+                .fixture_display
+                .clone()
+                .expect("authored view fixture"),
             source.kernels.clone(),
             spec,
             root,

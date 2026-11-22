@@ -723,7 +723,11 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
                     _ => None,
                 })
                 .unwrap();
-            editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), Arc::default()));
+            editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(
+                &device,
+                &queue,
+                &crate::editor::display::DisplayFixture::for_device(&device),
+            ));
             editor
                 .document
                 .thumbnails

@@ -1761,7 +1761,7 @@ struct SearchInput {
     pub previous_offset: Option<[i32; 2]>,
     pub recipe: crate::image_recipe::ImageRecipe,
     pub context: source::Context,
-    pub services: Option<source::Services>,
+    pub gpu: Option<super::measurement::GpuCapture>,
     #[cfg(test)]
     pub worker: Option<search_testing::Search>,
 }
@@ -1929,7 +1929,7 @@ impl DustTool {
             support: support.clone(),
             select: Cell::new(true),
         });
-        let services = editor.source_services.clone();
+        let gpu = super::measurement::capture_gpu(editor);
         #[cfg(test)]
         let worker = editor.document.dust.search_worker.clone();
         let active = editor
@@ -1961,7 +1961,7 @@ impl DustTool {
                 previous_offset: previous.as_ref().map(|repair| repair.offset),
                 recipe,
                 context,
-                services,
+                gpu,
                 #[cfg(test)]
                 worker,
             };
@@ -2054,15 +2054,14 @@ fn search_pixels(
     }
     let scan = input.context.scan()?;
     let (scan, recipe) = crate::photo_preparation::native_image(&scan, &input.recipe)?;
-    let services = input
-        .services
+    let (evaluation, queue) = input
+        .gpu
         .as_ref()
         .ok_or_else(|| crate::Error::Gpu("repair image-query services unavailable".into()))?;
-    let renderer = services.renderers.get(&services.device, &services.queue)?;
     let mut source = crate::gpu::repair_source::Source::from_recipe(
         input.context.correction.gpu()?,
-        &renderer,
-        &services.queue,
+        evaluation,
+        queue,
         &scan,
         &recipe,
     )?;

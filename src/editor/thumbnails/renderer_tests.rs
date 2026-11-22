@@ -1,5 +1,5 @@
 use super::*;
-use crate::renderer::RendererCache;
+use crate::editor::display::DisplayFixture;
 #[cfg(feature = "ocio-reference")]
 use std::sync::atomic::AtomicU64;
 
@@ -7,23 +7,29 @@ use std::sync::atomic::AtomicU64;
 mod adjustment_layers;
 
 #[test]
-fn calculation_retention_honors_the_full_settings_share_before_and_after_renderer_initialization() {
+fn calculation_retention_honors_the_full_settings_share_before_and_after_display_warmup() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let renderers = Arc::new(RendererCache::default());
+    let renderers = Arc::new(DisplayFixture::for_device(&device));
     let mut editor = Editor::state();
-    editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
-    editor.source_services = Some(crate::editor::source::Services {
-        developments: source_loading::SourceLoader::new(),
-        renderers: renderers.clone(),
-        device: device.clone(),
-        queue: queue.clone(),
-    });
+    editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
+    editor.source_services = Some(crate::editor::source::Services::fixture(
+        source_loading::SourceLoader::new(),
+        &device,
+        &queue,
+        &renderers,
+    ));
     editor.memory_pressure = memory::Pressure::Normal;
     let limits = cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 768 << 20,
     };
     editor.set_cache_limits(limits);
+    let display = renderers.warmup(&queue);
+    assert!(!display.is_ready());
+    assert_eq!(
+        renderers.evaluation().cache_policy().generated_bytes,
+        limits.gpu_bytes
+    );
     let renderer = renderers.get(&device, &queue).unwrap();
     assert_eq!(
         renderer.evaluation.cache_policy().generated_bytes,
@@ -38,10 +44,7 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_rendere
         renderer.evaluation.cache_policy().generated_bytes,
         changed.gpu_bytes
     );
-    assert!(Arc::ptr_eq(
-        &renderer,
-        &renderers.get(&device, &queue).unwrap()
-    ));
+    assert!(Arc::ptr_eq(&renderer.drt, &display.ready().unwrap()));
     for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
         editor.memory_pressure = pressure;
         editor.apply_cache_budgets();
@@ -68,16 +71,16 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
 
     pollster::block_on(async {
         let (device, queue, _) = crate::gpu::test_support::render_context();
-        let renderers = Arc::new(RendererCache::default());
+        let renderers = Arc::new(DisplayFixture::for_device(&device));
         let mut editor = Editor::state();
         *editor.document = super::tests::fixture();
-        editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
-        editor.source_services = Some(crate::editor::source::Services {
-            developments: source_loading::SourceLoader::new(),
-            renderers: renderers.clone(),
-            device: device.clone(),
-            queue: queue.clone(),
-        });
+        editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
+        editor.source_services = Some(crate::editor::source::Services::fixture(
+            source_loading::SourceLoader::new(),
+            &device,
+            &queue,
+            &renderers,
+        ));
         editor.memory_pressure = memory::Pressure::Normal;
         let limits = cache_limits::CacheLimits {
             cpu_bytes: 0,
@@ -87,13 +90,13 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
         let renderer = renderers.get(&device, &queue).unwrap();
         let image = Arc::new(
             GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 [256, 256],
                 &vec![[0; 4]; 256 * 256],
                 glam::DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),
@@ -190,9 +193,9 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(RendererCache::default());
+        let renderers = Arc::new(DisplayFixture::for_device(&device));
         let mut thumbnails = Thumbnails {
-            gpu: Some((device.clone(), queue.clone(), renderers.clone())),
+            gpu: Some(ThumbnailGpu::fixture(&device, &queue, &renderers)),
             ..Default::default()
         };
         let limits = cache_limits::CacheLimits {
@@ -383,7 +386,9 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             scan.area,
         )
         .unwrap();
-        let renderer = RendererCache::default().get(&device, &queue).unwrap();
+        let renderer = DisplayFixture::for_device(&device)
+            .get(&device, &queue)
+            .unwrap();
         let generation = AtomicU64::new(0);
         for angle in [-23.7_f64, 31.2] {
             let composition = Composition::with_crop(
@@ -523,8 +528,8 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(RendererCache::default());
-        renderers.prewarm(device.clone(), queue.clone());
+        let renderers = Arc::new(DisplayFixture::for_device(&device));
+        renderers.warmup(&queue).start();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
         let paths = [
             "patches.dng",
@@ -690,9 +695,9 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             .await
             .unwrap();
         let mut thumbnails = Thumbnails::with_disk(
-            device,
+            device.clone(),
             queue,
-            Arc::new(RendererCache::default()),
+            Arc::new(DisplayFixture::for_device(&device)),
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
         let key = tests::key(&document, id);

@@ -11,7 +11,9 @@ mod tests;
 pub(crate) struct GpuProxy(Arc<ProxyState>);
 
 struct ProxyState {
-    renderer: Arc<GpuRenderer>,
+    evaluation: evaluation::Context,
+    looks: Arc<Looks>,
+    targets: Arc<drt::Targets>,
     source: Arc<ProcessingSource>,
     #[cfg(feature = "editor")]
     identity: Option<crate::gpu::source::identity::Identity>,
@@ -21,8 +23,9 @@ struct ProxyState {
 impl GpuProxy {
     #[cfg(test)]
     pub(crate) fn new(
-        renderer: Arc<GpuRenderer>,
-        device: &wgpu::Device,
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        targets: Arc<drt::Targets>,
         size: [u32; 2],
         pixels: &[[u16; 4]],
         matrix: DMat3,
@@ -33,13 +36,14 @@ impl GpuProxy {
                 "source dimensions do not match the GPU image",
             ));
         }
-        let source = ProcessingSource::new(device, pixels, matrix, Some(geometry))?;
-        Ok(Self::from_source(renderer, size, source))
+        let source = ProcessingSource::new(evaluation.device(), pixels, matrix, Some(geometry))?;
+        Ok(Self::from_source(evaluation, looks, targets, size, source))
     }
 
     pub(crate) fn new_continuous(
-        renderer: Arc<GpuRenderer>,
-        device: &wgpu::Device,
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        targets: Arc<drt::Targets>,
         size: [u32; 2],
         pixels: &[[f32; 4]],
         matrix: DMat3,
@@ -50,13 +54,22 @@ impl GpuProxy {
                 "source dimensions do not match the GPU image",
             ));
         }
-        let source = ProcessingSource::new_continuous(device, pixels, matrix, Some(geometry))?;
-        Ok(Self::from_source(renderer, size, source))
+        let source =
+            ProcessingSource::new_continuous(evaluation.device(), pixels, matrix, Some(geometry))?;
+        Ok(Self::from_source(evaluation, looks, targets, size, source))
     }
 
-    fn from_source(renderer: Arc<GpuRenderer>, size: [u32; 2], source: ProcessingSource) -> Self {
+    fn from_source(
+        evaluation: evaluation::Context,
+        looks: Arc<Looks>,
+        targets: Arc<drt::Targets>,
+        size: [u32; 2],
+        source: ProcessingSource,
+    ) -> Self {
         Self(Arc::new(ProxyState {
-            renderer,
+            evaluation,
+            looks,
+            targets,
             source: Arc::new(source),
             #[cfg(feature = "editor")]
             identity: None,
@@ -98,10 +111,10 @@ impl GpuProxy {
         input: &AuthoredPhotograph,
         spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<Arc<crate::gpu::view::ViewImage>, Error> {
-        crate::gpu::view::ViewImage::from_processing(
-            self.0.renderer.evaluation().device(),
+        crate::gpu::view::ViewImage::from_processing_with_display(
+            self.0.evaluation.clone(),
+            (self.0.looks.clone(), self.0.targets.clone()),
             queue,
-            self.0.renderer.clone(),
             kernels,
             self.0.source.clone(),
             input,
@@ -121,7 +134,9 @@ impl GpuProxy {
         target: OutputTarget,
     ) -> Result<crate::gpu::view::rendering::Request, Error> {
         crate::gpu::view::rendering::Request::camera_proxy(
-            self.0.renderer.clone(),
+            self.0.evaluation.clone(),
+            &self.0.looks,
+            self.0.targets.get(target),
             kernels,
             &self.0.source,
             field,
@@ -129,18 +144,17 @@ impl GpuProxy {
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
                 crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             }))?,
-            target,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn image(&self, target: OutputTarget) -> Result<Arc<GpuImage>, Error> {
-        Ok(Arc::new(pollster::block_on(GpuImage::create(
-            self.0.renderer.evaluation().device(),
-            self.0.size[0],
-            self.0.size[1],
-            Some((self.0.renderer.clone(), self.0.source.clone())),
-            target,
+        Ok(Arc::new(pollster::block_on(GpuImage::from_camera(
+            self.0.evaluation.clone(),
+            self.0.looks.clone(),
+            self.0.targets.get(target),
+            self.0.source.clone(),
+            self.0.size,
         ))?))
     }
 

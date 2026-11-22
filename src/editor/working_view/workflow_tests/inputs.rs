@@ -173,11 +173,8 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
         SourceRequest::new(frame_spec.frame(), settings, scan.camera_to_ap1, None).unwrap()
     };
     let services = editor.source_services.as_ref().unwrap().clone();
-    services.renderers.set_retention_budget(8 << 20);
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    services.evaluation.set_retention_limit(8 << 20);
+    let renderer = services.render_fixture().unwrap();
     let common = renderer.evaluation().materializations();
     common.set_test_pressure(memory::Pressure::Normal);
     let original = camera_source(&scan).unwrap();
@@ -279,11 +276,8 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
     let positive = positive_spec(inspection.frame(), &pixels, 0.25);
     let source = camera_source(&pixels.scan().unwrap()).unwrap();
     let services = editor.source_services.as_ref().unwrap().clone();
-    services.renderers.set_retention_budget(8 << 20);
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    services.evaluation.set_retention_limit(8 << 20);
+    let renderer = services.render_fixture().unwrap();
     let values = renderer.evaluation().materializations();
     values.set_test_pressure(memory::Pressure::Normal);
     with_application(editor, |app| {
@@ -352,10 +346,7 @@ fn departing_visit_keeps_reusable_values_only_through_common_budgeted_ownership(
     use crate::gpu::evaluation::ImageLayout;
     let (editor, input, spec, scheduler) = fixture();
     let services = editor.source_services.as_ref().unwrap().clone();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let values = renderer.evaluation().materializations();
     values.set_test_pressure(memory::Pressure::Normal);
     with_application(editor, |app| {

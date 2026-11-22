@@ -62,12 +62,12 @@ impl DustTool {
         let Ok(source) = editor.capture_source_context() else {
             return;
         };
-        let services = editor.source_services.clone();
+        let gpu = crate::editor::measurement::capture_gpu(editor);
         let state = self.interaction.feedback.clone();
         self.feedback_task = cx.spawn(move |cx| async move {
             let results = match source.await {
                 Ok(context) => crate::background::run(move |cancelled| {
-                    evaluate(context, recipe, services, &cancelled)
+                    evaluate(context, recipe, gpu, &cancelled)
                 })
                 .await
                 .ok()
@@ -88,19 +88,18 @@ impl DustTool {
 fn evaluate(
     context: source::Context,
     recipe: crate::image_recipe::ImageRecipe,
-    services: Option<source::Services>,
+    gpu: Option<crate::editor::measurement::GpuCapture>,
     cancelled: &Cancellation,
 ) -> Result<Vec<RepairFeedback>, Error> {
     let stopped = || cancelled.is_cancelled();
     let scan = context.scan()?;
     let (scan, recipe) = crate::photo_preparation::native_image(&scan, &recipe)?;
-    let services =
-        services.ok_or_else(|| Error::Gpu("repair image-query services unavailable".into()))?;
-    let renderer = services.renderers.get(&services.device, &services.queue)?;
+    let (evaluation, queue) =
+        gpu.ok_or_else(|| Error::Gpu("repair image-query services unavailable".into()))?;
     let source = crate::gpu::repair_source::Source::from_recipe(
         context.correction.gpu()?,
-        &renderer,
-        &services.queue,
+        &evaluation,
+        &queue,
         &scan,
         &recipe,
     )?;

@@ -39,8 +39,8 @@ impl GpuImage {
         crate::gpu::photograph::display_output(
             prefix,
             luts,
-            &processing.renderer.looks,
-            processing.renderer.drt.get(self.target),
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -97,11 +97,12 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         capture.resident_output(
-            &processing.renderer,
+            &self.device_limits,
             &processing.source,
             self.size(),
             field,
-            self.target,
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -116,7 +117,7 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
-            .resident_processed(&processing.renderer, &processing.source, self.size(), field)
+            .resident_processed(&self.device_limits, &processing.source, self.size(), field)
     }
 
     #[cfg(test)]
@@ -143,8 +144,8 @@ impl GpuImage {
         crate::gpu::photograph::display_output(
             image,
             input.luts(),
-            &processing.renderer.looks,
-            processing.renderer.drt.get(self.target),
+            &processing.looks,
+            &processing.transform,
         )
     }
 
@@ -221,11 +222,11 @@ impl GpuImage {
             device,
             raster,
             root.clone(),
-            processing.renderer.evaluation.clone(),
+            processing.evaluation.clone(),
         )?;
         prepared.encode_result(device, encoder, &processing.working)?;
         let prepared_binding = crate::gpu::recorded_image::Texture::new(
-            processing.renderer.evaluation(),
+            &processing.evaluation,
             device,
             crate::gpu::evaluation::SuppliedImage::from_buffer(
                 root.clone(),

@@ -1,4 +1,4 @@
-use crate::renderer::GpuRenderer;
+use crate::render_fixture::RenderFixture;
 use std::sync::Arc;
 
 #[cfg(feature = "editor")]
@@ -22,7 +22,7 @@ pub(crate) fn take_evaluation_buffer_creations() -> [u64; 2] {
 pub(crate) fn render_context() -> (
     wgpu::Device,
     crate::gpu::submission::Queue,
-    Arc<GpuRenderer>,
+    Arc<RenderFixture>,
 ) {
     pollster::block_on(async {
         let instance = super::instance();
@@ -30,7 +30,7 @@ pub(crate) fn render_context() -> (
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     })
 }

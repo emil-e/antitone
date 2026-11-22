@@ -76,7 +76,7 @@ pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
 
 pub(super) fn chain(
     device: &wgpu::Device,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     data: Arc<dyn Source>,
     physical: bool,
     target: Option<OutputTarget>,

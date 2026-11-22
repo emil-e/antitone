@@ -48,7 +48,7 @@ fn complete(
 #[test]
 fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     let (device, queue) = gpu();
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
+    let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
     let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
     let mut document = document();
     let id = document.project.order[0];
@@ -197,9 +197,9 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
 fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_raw() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     // This document has locator-only files, not decodable RAWs: the published
@@ -277,9 +277,9 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     let mut document = document();
@@ -351,9 +351,9 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let (device, queue) = gpu();
     let presentation = pollster::block_on(Presentation::new(&device)).unwrap();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     let document = document();
@@ -519,9 +519,9 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
 fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     let mut document = document();
@@ -654,9 +654,9 @@ fn document_thumbnails_finish_without_visible_cards_or_a_settled_main_view() {
 fn assert_document_cards_finish(show_selected: bool) {
     let (device, queue) = gpu();
     let thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     let directory = tempfile::tempdir().unwrap();
@@ -738,9 +738,9 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     thumbnails.set_limits(cache_limits::CacheLimits {
@@ -834,9 +834,9 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
 fn repair_instructions_do_not_block_graded_navigation_cards() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
-        device,
+        device.clone(),
         queue,
-        Arc::new(crate::renderer::RendererCache::default()),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
     );
     let mut document = document();

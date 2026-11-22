@@ -12,7 +12,7 @@ use crate::{
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},
-    renderer::GpuRenderer,
+    render_fixture::RenderFixture,
     scan::Scan,
 };
 use glam::{DVec3, Vec3};
@@ -77,7 +77,7 @@ pub fn write_checked(
 
 #[cfg(test)]
 fn authored_area(
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     device: &wgpu::Device,
     gpu: &crate::gpu::submission::Queue,
     request: authored::Request<'_>,

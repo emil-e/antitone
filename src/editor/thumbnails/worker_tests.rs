@@ -23,7 +23,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
     let thumbnails = Thumbnails::with_developments(
         device.clone(),
         queue.clone(),
-        Arc::default(),
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         None,
         loader.clone(),
     );
@@ -110,8 +110,13 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
             .unwrap()
     });
     let loader = source_loading::SourceLoader::new();
-    let mut thumbnails =
-        Thumbnails::with_developments(device, queue, Arc::default(), None, loader.clone());
+    let mut thumbnails = Thumbnails::with_developments(
+        device.clone(),
+        queue,
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+        None,
+        loader.clone(),
+    );
     thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(&source, document.file_key(file.path()), proxy);
     let (entered, starts) = mpsc::channel();
@@ -203,8 +208,13 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
             .unwrap()
     });
     let loader = source_loading::SourceLoader::new();
-    let mut thumbnails =
-        Thumbnails::with_developments(device, queue, Arc::default(), None, loader.clone());
+    let mut thumbnails = Thumbnails::with_developments(
+        device.clone(),
+        queue,
+        Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+        None,
+        loader.clone(),
+    );
     thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.sources.set_budget(64 << 20);
     for id in &ids {

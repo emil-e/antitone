@@ -8,7 +8,8 @@ mod tests;
 pub(crate) struct Intent<'a> {
     pub capture: &'a PhotographRequest,
     pub frame: FrameRaster,
-    pub target: OutputTarget,
+    pub looks: &'a crate::gpu::lut3d::Looks,
+    pub transform: &'a crate::gpu::drt::Target,
 }
 
 pub(crate) struct ImageRequest {
@@ -33,22 +34,22 @@ impl ImageRequest {
 
     pub(crate) fn recorded(
         self,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: Context,
         kernels: Arc<ViewKernels>,
         image: crate::gpu::evaluation::RecordedImage,
     ) -> Result<Arc<ViewImage>, Error> {
         let region = self.definition.domain().finite()?;
-        ViewImage::from_recorded(renderer, kernels, self.spec, self.definition, region, image)
+        ViewImage::from_recorded(context, kernels, self.spec, self.definition, region, image)
     }
 
     pub(crate) fn produced(
         self,
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: Context,
         kernels: Arc<ViewKernels>,
         image: Image<ImageLayout>,
     ) -> Result<Arc<ViewImage>, Error> {
         self.recorded(
-            renderer,
+            context,
             kernels,
             crate::gpu::evaluation::RecordedImage {
                 pixels: image.try_into()?,
@@ -61,44 +62,27 @@ impl ImageRequest {
 pub(crate) struct Preparation {
     images: Vec<ImageRequest>,
     work: Vec<crate::gpu::evaluation::Preparation>,
-    renderer: Arc<crate::renderer::GpuRenderer>,
+    context: Context,
     kernels: Arc<ViewKernels>,
 }
 
 impl Preparation {
     pub(crate) fn new(
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: Context,
         kernels: Arc<ViewKernels>,
         images: Vec<ImageRequest>,
     ) -> Result<Self, Error> {
         let evaluations = images
             .iter()
-            .map(|image| image.evaluation(renderer.evaluation()))
+            .map(|image| image.evaluation(&context))
             .collect::<Result<Vec<_>, _>>()?;
-        let work = renderer.evaluation().prepare_images(evaluations)?;
+        let work = context.prepare_images(evaluations)?;
         Ok(Self {
             images,
             work,
-            renderer,
+            context,
             kernels,
         })
-    }
-
-    pub(crate) fn photograph(
-        renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<ViewKernels>,
-        scan: &crate::scan::Scan,
-        field: Option<Arc<GpuFlatField>>,
-        capture: &PhotographRequest,
-        spec: SourceRequest,
-        target: OutputTarget,
-    ) -> Result<Self, Error> {
-        let specs = [spec.clone(), spec.underlay()?];
-        let images = specs
-            .into_iter()
-            .map(|spec| photograph(&renderer, scan, field.clone(), capture, spec, target))
-            .collect::<Result<Vec<_>, _>>()?;
-        Self::new(renderer, kernels, images)
     }
 
     pub(crate) fn can_record(&self) -> bool {
@@ -110,8 +94,8 @@ impl Preparation {
             .into_iter()
             .zip(self.work)
             .map(|(description, work)| {
-                let image = work.record(self.renderer.evaluation())?;
-                description.recorded(self.renderer.clone(), self.kernels.clone(), image)
+                let image = work.record(&self.context)?;
+                description.recorded(self.context.clone(), self.kernels.clone(), image)
             })
             .collect()
     }
@@ -121,10 +105,7 @@ impl Preparation {
         queue: &crate::gpu::submission::Queue,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
-        let values = self
-            .renderer
-            .evaluation()
-            .produce_images(queue, self.work)?;
+        let values = self.context.produce_images(queue, self.work)?;
         let mut values = Box::pin(futures_util::future::try_join_all(values));
         let result = futures_util::future::poll_fn(|cx| {
             if cancelled() {
@@ -145,7 +126,7 @@ impl Preparation {
             .into_iter()
             .zip(values)
             .map(|(description, image)| {
-                description.produced(self.renderer.clone(), self.kernels.clone(), image)
+                description.produced(self.context.clone(), self.kernels.clone(), image)
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Some)
@@ -173,26 +154,35 @@ impl Request {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn camera_proxy(
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: Context,
+        looks: &crate::gpu::lut3d::Looks,
+        transform: &crate::gpu::drt::Target,
         kernels: Arc<ViewKernels>,
         source: &Arc<ProcessingSource>,
         field: Option<Arc<GpuFlatField>>,
         capture: &PhotographRequest,
         spec: SourceRequest,
-        target: OutputTarget,
     ) -> Result<Self, Error> {
         let spec = ViewImage::proxy_request(source, spec)?;
-        let (definition, spec) = capture.sampled_output(&renderer, source, field, spec, target)?;
+        let (definition, spec) = capture.sampled_output(
+            &context.device().limits(),
+            source,
+            field,
+            spec,
+            looks,
+            transform,
+        )?;
         Self::new(Preparation::new(
-            renderer,
+            context,
             kernels,
             vec![ImageRequest::new(definition, spec)?],
         )?)
     }
 
     pub(crate) fn photograph(
-        renderer: Arc<crate::renderer::GpuRenderer>,
+        context: Context,
         kernels: Arc<ViewKernels>,
         scan: &crate::scan::Scan,
         field: Option<Arc<GpuFlatField>>,
@@ -202,7 +192,8 @@ impl Request {
         let Intent {
             capture,
             frame,
-            target,
+            looks,
+            transform,
         } = intent;
         #[cfg(test)]
         let spec = if matches!(capture, PhotographRequest::Fixture(_)) {
@@ -215,15 +206,26 @@ impl Request {
         let spec = spec.with_identity(crate::gpu::source::identity::Identity::camera(
             scan.source().identity(),
         ));
-        let prepared = Preparation::photograph(
-            renderer.clone(),
-            kernels.clone(),
-            scan,
-            field.clone(),
-            capture,
-            spec.clone(),
-            target,
-        )?;
+        let limits = context.device().limits();
+        let prepare = |spec: SourceRequest| {
+            let underlay = spec.underlay()?;
+            let images = [spec, underlay]
+                .into_iter()
+                .map(|spec| {
+                    photograph(
+                        &limits,
+                        scan,
+                        field.clone(),
+                        capture,
+                        spec,
+                        looks,
+                        transform,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Preparation::new(context.clone(), kernels.clone(), images)
+        };
+        let prepared = prepare(spec.clone())?;
         if prepared.can_record() {
             return Self::new(prepared);
         }
@@ -233,17 +235,7 @@ impl Request {
                     && previous.frame().composition == spec.frame().composition
                     && previous.frame() != spec.frame()
             })
-            .map(|previous| {
-                Preparation::photograph(
-                    renderer,
-                    kernels,
-                    scan,
-                    field,
-                    capture,
-                    previous.clone(),
-                    target,
-                )
-            })
+            .map(|previous| prepare(previous.clone()))
             .transpose()?;
         let ready = match provisional {
             Some(provisional) if provisional.can_record() => Some(provisional.record()?),
@@ -277,13 +269,14 @@ impl Request {
 }
 
 pub(crate) fn photograph(
-    renderer: &crate::renderer::GpuRenderer,
+    limits: &wgpu::Limits,
     scan: &crate::scan::Scan,
     field: Option<Arc<GpuFlatField>>,
     capture: &PhotographRequest,
     spec: SourceRequest,
-    target: OutputTarget,
+    looks: &crate::gpu::lut3d::Looks,
+    transform: &crate::gpu::drt::Target,
 ) -> Result<ImageRequest, Error> {
-    let (definition, spec) = capture.preview_output(renderer, scan, field, spec, target)?;
+    let (definition, spec) = capture.preview_output(limits, scan, field, spec, looks, transform)?;
     ImageRequest::new(definition, spec)
 }

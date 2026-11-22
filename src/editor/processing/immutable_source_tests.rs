@@ -15,7 +15,7 @@ fn resident_camera(image: &Value) -> Value {
 }
 
 fn pixels(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {
@@ -52,7 +52,7 @@ fn pixels(
 fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_resources() {
     pollster::block_on(async {
         let (editor, device, queue) = super::tests::fixture().await;
-        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let proxy = &editor.document.visit.canvas.ready.as_ref().unwrap().proxy;

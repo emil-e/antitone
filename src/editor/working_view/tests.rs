@@ -52,7 +52,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();
@@ -111,6 +111,8 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                 source: underlay.clone(),
                 underlay: Some(underlay),
                 request: Arc::new(Demand::fixture(first.clone(), input.clone())),
+                looks: renderer.looks().clone(),
+                targets: renderer.drt.clone(),
             }));
             working.request(Demand::fixture(first.clone(), input.clone()));
             let mut navigated = first.clone();

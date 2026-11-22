@@ -10,7 +10,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn render_reference(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     device: &wgpu::Device,
     source: SuppliedImage,
     target: OutputTarget,
@@ -267,7 +267,7 @@ fn read_texture(
 fn legacy(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     source: &wgpu::Buffer,
     (dimensions, target, look): ([u32; 4], OutputTarget, Option<&Arc<LookAsset>>),
     output: &wgpu::Texture,
@@ -640,7 +640,8 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
         }
     }
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let other = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let other =
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let domain = Domain {
         bounds: Some([0, 0, 1, 1].into()),
         grid: Grid {

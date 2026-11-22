@@ -24,12 +24,12 @@ fn editor() -> (Editor, crate::source::SourceLoader) {
     editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     let (device, queue) = gpu();
     let scheduler = crate::source::SourceLoader::new();
-    editor.source_services = Some(source::Services {
-        developments: scheduler.clone(),
-        renderers: Arc::default(),
-        device,
-        queue,
-    });
+    editor.source_services = Some(source::Services::fixture(
+        scheduler.clone(),
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     (editor, scheduler)
 }
 

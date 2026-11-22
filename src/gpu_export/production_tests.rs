@@ -4,20 +4,21 @@ use crate::processing::Calibration;
 
 #[cfg(feature = "editor")]
 #[test]
-fn editor_background_prewarm_initializes_the_shared_renderer() {
+fn editor_background_prewarm_initializes_the_shared_display_targets() {
     let (device, queue, _) = super::tests::context();
-    let cache = Arc::new(crate::renderer::RendererCache::default());
-    cache.prewarm(device.clone(), queue.clone());
+    let evaluation = evaluation::Context::new(&device, Default::default());
+    let display = crate::editor::display::Warmup::new(evaluation, queue);
+    display.start();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !cache.is_initialized() && std::time::Instant::now() < deadline {
+    while !display.is_ready() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(
-        cache.is_initialized(),
+        display.is_ready(),
         "background prewarm must initialize processing without a foreground consumer"
     );
-    let renderer = cache.get(&device, &queue).unwrap();
-    assert!(Arc::ptr_eq(&renderer, &cache.get(&device, &queue).unwrap()));
+    let targets = display.targets().unwrap();
+    assert!(Arc::ptr_eq(&targets, &display.ready().unwrap()));
 }
 
 #[test]

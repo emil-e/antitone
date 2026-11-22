@@ -32,7 +32,7 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
     };
     let mut scan = measurement::capture_scan(&editor).unwrap();
     let samples = Samples::new(
-        services,
+        (&services.evaluation, &services.queue),
         &mut scan,
         None,
         Coverage::rectangle(patch),
@@ -130,7 +130,7 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     for (enabled, invert, strength) in [(false, false, 1.), (true, false, 0.), (true, true, 1.)] {
         assert!(matches!(
             layer(
-                services,
+                (&services.evaluation, &services.queue),
                 &mut scan,
                 None,
                 coverage,
@@ -142,7 +142,7 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     }
     assert!(matches!(
         layer(
-            services,
+            (&services.evaluation, &services.queue),
             &mut scan,
             None,
             coverage,
@@ -154,7 +154,7 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     let checks = std::cell::Cell::new(0);
     assert!(matches!(
         layer(
-            services,
+            (&services.evaluation, &services.queue),
             &mut scan,
             None,
             coverage,
@@ -167,7 +167,7 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
         Err(Error::Cancelled)
     ));
     let balance = layer(
-        services,
+        (&services.evaluation, &services.queue),
         &mut scan,
         None,
         coverage,
@@ -237,12 +237,17 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
             )
             .unwrap();
         recipe.neutral.reference = scan.reference_exposure.clone();
-        let roll_balance = roll(services, &mut scan, None, coverage, recipe.clone(), &|| {
-            false
-        })
+        let roll_balance = roll(
+            (&services.evaluation, &services.queue),
+            &mut scan,
+            None,
+            coverage,
+            recipe.clone(),
+            &|| false,
+        )
         .unwrap();
         let layer_balance = layer(
-            services,
+            (&services.evaluation, &services.queue),
             &mut scan,
             None,
             coverage,

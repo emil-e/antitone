@@ -5,7 +5,7 @@ use crate::processing::{NegativeInput, Response};
 
 fn source(
     device: &wgpu::Device,
-    renderer: &Arc<crate::renderer::GpuRenderer>,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     kernels: &Arc<ViewKernels>,
     spec: SourceRequest,
     pixels: &[[f32; 4]],
@@ -598,7 +598,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         )
         .await
         .unwrap();
-        let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();

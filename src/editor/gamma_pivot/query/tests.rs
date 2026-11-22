@@ -83,7 +83,13 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     // analytic calibration case, not another implementation of the general response.
     let expected =
         (DVec3::new(1., 1. / 3., 0.2) + DVec3::new(1. / 9., 5. / 9., 11. / 15.) * 3.) / 4.;
-    let mean = evidence.mean(services, negative(1.), &|| false).unwrap();
+    let mean = evidence
+        .mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| false,
+        )
+        .unwrap();
     assert!(
         (mean - expected).abs().max_element() < 2e-6,
         "{mean:?} != {expected:?}"
@@ -97,7 +103,7 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     };
     let compensated = evidence
         .compensate(
-            services,
+            (&services.evaluation, &services.queue),
             negative(1.),
             negative(0.7),
             DMat3::IDENTITY,
@@ -106,7 +112,13 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         )
         .unwrap();
     assert_ne!(compensated, wb);
-    let next = evidence.mean(services, negative(0.7), &|| false).unwrap();
+    let next = evidence
+        .mean(
+            (&services.evaluation, &services.queue),
+            negative(0.7),
+            &|| false,
+        )
+        .unwrap();
     let held = crate::color::wb_matrix(wb).unwrap() * mean;
     let changed = crate::color::wb_matrix(compensated).unwrap() * next;
     assert!((chromaticity(held).unwrap() - chromaticity(changed).unwrap()).length() < 1e-12);
@@ -117,7 +129,7 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     assert_eq!(
         evidence
             .compensate(
-                services,
+                (&services.evaluation, &services.queue),
                 negative(1.),
                 negative(1.),
                 DMat3::IDENTITY,
@@ -128,7 +140,11 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         wb
     );
     assert!(matches!(
-        evidence.mean(services, negative(1.), &|| true),
+        evidence.mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| true
+        ),
         Err(Error::Cancelled)
     ));
     let limit = Balance {
@@ -137,7 +153,7 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     };
     assert!(matches!(
         evidence.compensate(
-            services,
+            (&services.evaluation, &services.queue),
             negative(1.),
             negative(0.7),
             DMat3::IDENTITY,
@@ -151,14 +167,20 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
 
     let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
     let captured = Evidence::capture(
-        services,
+        (&services.evaluation, &services.queue),
         &scan,
         None,
         Coverage::rectangle(scan.area),
         &|| false,
     )
     .unwrap();
-    let native = captured.mean(services, negative(1.), &|| false).unwrap();
+    let native = captured
+        .mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| false,
+        )
+        .unwrap();
     let supplied = DVec3::new(16000., 20000., 24000.) / 65535.;
     let expected = (DVec3::splat(0.8) / supplied - DVec3::ONE) / 3.;
     assert!(
@@ -172,7 +194,13 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         })),
         weights: vec![1.],
     };
-    let extreme_mean = extremes.mean(services, negative(1.), &|| false).unwrap();
+    let extreme_mean = extremes
+        .mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| false,
+        )
+        .unwrap();
     assert!(extreme_mean.x > 100. && extreme_mean.y < 0.);
 
     let floored = Evidence {
@@ -182,7 +210,11 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         weights: vec![1.],
     };
     assert!(matches!(
-        floored.mean(services, negative(1.), &|| false),
+        floored.mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| false
+        ),
         Err(Error::UnusableSample(
             "gamma pivot reaches the source precision floor"
         ))
@@ -229,14 +261,20 @@ fn corrected_nonuniform_source_coverage_matches_individually_transformed_origina
     )
     .unwrap();
     let evidence = Evidence::capture(
-        services,
+        (&services.evaluation, &services.queue),
         &scan,
         Some(captured.gpu.clone()),
         coverage,
         &|| false,
     )
     .unwrap();
-    let actual = evidence.mean(services, negative(1.), &|| false).unwrap();
+    let actual = evidence
+        .mean(
+            (&services.evaluation, &services.queue),
+            negative(1.),
+            &|| false,
+        )
+        .unwrap();
     let mut sum = DVec3::ZERO;
     let mut camera_sum = DVec3::ZERO;
     let mut weight = 0.;

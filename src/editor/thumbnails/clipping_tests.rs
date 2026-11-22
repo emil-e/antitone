@@ -159,7 +159,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let shared = crate::renderer::GpuRenderer::new(&device, &queue)
+        let shared = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         // Odd dimensions avoid nearest-texel ties when comparing clipped and full viewports.
@@ -177,13 +177,13 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
             .collect::<Vec<[u16; 4]>>();
         let image = Arc::new(
             GpuImage::new_shared(
-                &shared,
-                &device,
+                shared.evaluation().clone(),
+                shared.looks().clone(),
+                shared.drt(OutputTarget::DisplayP3),
                 [25, 17],
                 &pixels,
                 glam::DMat3::IDENTITY,
                 None,
-                OutputTarget::DisplayP3,
             )
             .await
             .unwrap(),
@@ -194,8 +194,11 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     let mut editor = crate::editor::tests::fixture();
                     editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
-                    editor.document.thumbnails.gpu =
-                        Some((device.clone(), queue.clone(), Arc::default()));
+                    editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(
+                        &device,
+                        &queue,
+                        &crate::editor::display::DisplayFixture::for_device(&device),
+                    ));
                     if let Some(contrast) = contrast {
                         for source in &mut editor.document.state.project.sources {
                             source.adjustment_layers.as_mut().unwrap().layers[0]

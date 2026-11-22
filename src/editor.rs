@@ -97,6 +97,7 @@ mod cache_preferences_tests;
 mod calibration;
 mod canvas;
 mod canvas_view;
+pub(crate) mod display;
 mod export;
 mod frame;
 mod gamma_pivot;
@@ -154,7 +155,7 @@ enum OutputFormat {
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_source(
-    renderers: &crate::renderer::RendererCache,
+    renderers: &crate::editor::display::DisplayFixture,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     path: PathBuf,
@@ -170,7 +171,7 @@ fn prepare_source(
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_source_cached(
-    renderers: &crate::renderer::RendererCache,
+    renderers: &crate::editor::display::DisplayFixture,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     path: PathBuf,
@@ -196,7 +197,7 @@ fn prepare_source_cached(
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_source_scheduled(
-    renderers: &crate::renderer::RendererCache,
+    renderers: &crate::editor::display::DisplayFixture,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     path: PathBuf,
@@ -238,7 +239,13 @@ fn prepare_source_scheduled(
     }
     .load(developments, cancelled)?;
     let scan = developed.context.scan()?;
-    let ready = developed.prepare_gpu(renderers, device, queue, cancelled)?;
+    renderers.evaluation().require_device(device)?;
+    let ready = developed.prepare_gpu(
+        renderers.evaluation().clone(),
+        renderers.looks().clone(),
+        &renderers.warmup(queue),
+        cancelled,
+    )?;
     Ok((ready, scan))
 }
 
@@ -295,13 +302,16 @@ impl Editor {
 
     pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
         let cache_limits = cache_limits::Hardware::current(Some(device)).defaults();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
-        renderers.prewarm(device.clone(), queue.clone());
+        let evaluation = crate::gpu::evaluation::Context::new(device, Default::default());
+        let looks = Arc::new(crate::gpu::lut3d::Looks::new(device));
+        let display = display::Warmup::new(evaluation.clone(), queue.clone());
+        display.start();
         let developments = source_loading::SourceLoader::with_gpu(device, queue);
         let thumbnails = Thumbnails::new(
-            device.clone(),
+            evaluation.clone(),
             queue.clone(),
-            renderers.clone(),
+            looks.clone(),
+            display.clone(),
             developments.clone(),
         );
         let source_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -314,13 +324,16 @@ impl Editor {
         editor.look.services = Some(look::Services::new(device.limits()));
         editor.source_services = Some(source::Services {
             developments: developments.clone(),
-            renderers: renderers.clone(),
+            evaluation: evaluation.clone(),
+            looks: looks.clone(),
+            display: display.clone(),
             device: device.clone(),
             queue: queue.clone(),
         });
         editor.output_services = Some(output::Services::new(
-            renderers,
-            device,
+            evaluation,
+            looks,
+            display,
             queue,
             editor
                 .source_services

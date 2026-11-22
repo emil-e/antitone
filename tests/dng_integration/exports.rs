@@ -8,7 +8,6 @@ use antitone::{
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu_export::Format,
     processing::{Calibration, InputSettings},
-    renderer::GpuRenderer,
     rendering::OutputTarget,
 };
 use tiff::decoder::{Decoder, DecodingResult};
@@ -101,7 +100,9 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     });
     for (extension, format) in [

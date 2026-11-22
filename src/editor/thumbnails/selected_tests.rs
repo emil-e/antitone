@@ -176,9 +176,13 @@ fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_no
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device.clone(), queue.clone(), Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
+                editor.document.thumbnails = (Thumbnails::with_disk(
+                    device.clone(),
+                    queue.clone(),
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+                    None,
+                ))
+                .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor
@@ -315,18 +319,19 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = super::super::tests::fixture();
         editor.initialize_viewer(&device, &queue);
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
         editor.document.thumbnails =
             (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
                 .with_sources(editor.document.cache.clone());
         let path = directory.path().join("selected.ARW");
         let id = add_source(&mut editor, path.clone());
         let source = editor.document.state.project.source(id).unwrap();
+        let renderer = renderers.get(&device, &queue).unwrap();
         let image = proxy()
             .image(
-                &renderers.get(&device, &queue).unwrap(),
-                &device,
-                OutputTarget::DisplayP3,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::DisplayP3),
                 source.development.active_area,
             )
             .await
@@ -395,9 +400,13 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
+                editor.document.thumbnails = (Thumbnails::with_disk(
+                    device.clone(),
+                    queue,
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+                    None,
+                ))
+                .with_sources(editor.document.cache.clone());
                 let a = directory.path().join("a.ARW");
                 let b = directory.path().join("b.ARW");
                 add_source(editor, a.clone());
@@ -442,9 +451,13 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
+                editor.document.thumbnails = (Thumbnails::with_disk(
+                    device.clone(),
+                    queue,
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+                    None,
+                ))
+                .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
@@ -489,9 +502,13 @@ fn project_correction_changes_preserve_pending_camera_samples() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device.clone(), queue, Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
+                editor.document.thumbnails = (Thumbnails::with_disk(
+                    device.clone(),
+                    queue,
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+                    None,
+                ))
+                .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("corrected.ARW");
                 let id = add_source(editor, path.clone());
                 let source = editor.document.state.project.source(id).unwrap().clone();
@@ -554,9 +571,13 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
+                editor.document.thumbnails = (Thumbnails::with_disk(
+                    device.clone(),
+                    queue,
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+                    None,
+                ))
+                .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
@@ -644,7 +665,8 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                let renderers = Arc::new(crate::renderer::RendererCache::default());
+                let renderers =
+                    Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
                 editor.document.thumbnails =
                     (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
                         .with_sources(editor.document.cache.clone());

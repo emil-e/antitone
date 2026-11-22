@@ -1,12 +1,12 @@
 use super::*;
 use crate::gpu::execution::test_support::OutputReference;
-use crate::renderer::GpuRenderer;
+use crate::render_fixture::RenderFixture;
 use std::sync::Arc;
 
 use crate::gpu::execution::test_support::OriginalControls as Request;
 
 fn execute(
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     device: &wgpu::Device,
     gpu: &crate::gpu::submission::Queue,
     request: Request<'_>,
@@ -106,7 +106,7 @@ fn request(scan: &Scan, output: OutputReference, encoding: SampleEncoding) -> Re
 fn render(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    renderer: &GpuRenderer,
+    renderer: &RenderFixture,
     request: Request<'_>,
 ) -> Result<OutputBlock, Error> {
     let size = request.composition.size();

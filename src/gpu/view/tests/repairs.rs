@@ -187,6 +187,7 @@ fn render_repaired(
     queue: &crate::gpu::submission::Queue,
     scan: &Scan,
     scope: &crate::gpu::evaluation::Materializations,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     base: Arc<ViewImage>,
     replacements: &[Replacement],
     (roll, photo): (RollSettings, AdjustmentLayerSettings),
@@ -199,7 +200,7 @@ fn render_repaired(
     let source = pollster::block_on(ViewImage::original_prefixes(
         device,
         queue,
-        base.renderer.clone(),
+        renderer.clone(),
         base.kernels.clone(),
         scan,
         None,
@@ -245,7 +246,7 @@ fn filter_authored_repairs(
     )
     .unwrap();
     let bounds = root.domain().finite().unwrap();
-    let evaluation = source.renderer.evaluation();
+    let evaluation = &source.context;
     let request = evaluation
         .request(
             root.clone(),
@@ -271,8 +272,12 @@ fn filter_authored_repairs(
             .unwrap(),
     )
     .unwrap();
-    ViewImage::from_recorded(
-        source.renderer.clone(),
+    ViewImage::from_recorded_fixture(
+        source.context.clone(),
+        source
+            .fixture_display
+            .clone()
+            .expect("authored view fixture"),
         source.kernels().clone(),
         spec,
         root,
@@ -325,7 +330,8 @@ fn sparse_repair_projection_retains_signed_hdr_and_ignores_replaced_values() {
             .unwrap(),
         );
         let patches = fixtures::replacements(std::slice::from_ref(&evaluated)).unwrap();
-        let original_source = colour::authored_source(&device, renderer, kernels, &values, frame);
+        let original_source =
+            colour::authored_source(&device, renderer.clone(), kernels, &values, frame);
         let source =
             filter_authored_repairs(&device, &queue, original_source.clone(), frame, &patches);
         let mut reduced = frame;
@@ -340,7 +346,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_ignores_replaced_values() {
         }
         let alternative = colour::authored_source(
             &device,
-            original_source.renderer.clone(),
+            renderer,
             original_source.kernels.clone(),
             &alternative,
             frame,
@@ -476,6 +482,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 &scan,
                 &scope,
+                &renderer,
                 source.clone(),
                 &patches,
                 (RollSettings::default(), AdjustmentLayerSettings::default()),
@@ -550,6 +557,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 &scan,
                 &scope,
+                &renderer,
                 source.clone(),
                 &patches,
                 (roll, photo),
@@ -588,6 +596,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 &scan,
                 &scope,
+                &renderer,
                 source.clone(),
                 &patches,
                 (roll, photo),
@@ -603,6 +612,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 &scan,
                 &scope,
+                &renderer,
                 source.clone(),
                 &[],
                 (roll, photo),

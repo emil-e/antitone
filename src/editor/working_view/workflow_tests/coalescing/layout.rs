@@ -28,10 +28,7 @@ fn superseded_layouts_cannot_publish_and_cached_inputs_keep_visit_independent_ow
         assert!(first != latest);
         let submissions = editor.submissions().clone();
         let services = editor.source_services.as_ref().unwrap().clone();
-        let renderer = services
-            .renderers
-            .get(&services.device, &services.queue)
-            .unwrap();
+        let renderer = services.render_fixture().unwrap();
         let scope = renderer.evaluation().materializations();
         scope.set_test_pressure(memory::Pressure::Normal);
         let (started, starts) = mpsc::channel();

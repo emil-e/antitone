@@ -174,7 +174,7 @@ impl Editor {
             self.document.state.project.input,
             self.document.state.project.roll.wb,
         );
-        let services = self.source_services.clone();
+        let gpu = measurement::capture_gpu(self);
         #[cfg(test)]
         let gate = self.document.gamma_pivot.edit_gate.clone();
         let Some(task) = cx.spawn(move |cx| async move {
@@ -186,14 +186,14 @@ impl Editor {
                 {
                     gate.wait(cancelled.clone()).map_err(Error::Gpu)?;
                 }
-                let services = measurement::query_services(services.as_ref())?;
+                let gpu = measurement::query_gpu(gpu.as_ref())?;
                 let negative = |input: InputSettings| -> Result<NegativeInput, Error> {
                     input
                         .negative_input()
                         .ok_or(Error::UnusableSample("gamma pivot requires negative input"))
                 };
                 let result = captured.evidence.compensate(
-                    services,
+                    gpu,
                     negative(starting_input)?,
                     negative(candidate)?,
                     captured.camera_to_ap1,
@@ -266,14 +266,14 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
             measurement::capture_input(editor)?,
             source,
             editor.document.state.project.input,
-            editor.source_services.clone(),
+            measurement::capture_gpu(editor),
         ))
     })
     .await
     else {
         return;
     };
-    let (image, source, input, services) = match captured {
+    let (image, source, input, gpu) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -284,15 +284,14 @@ pub(super) async fn pick(cx: UiContext<'_, Editor>) {
     let Some(anchor) = measurement::run(&cx, DISPLAY.label, async move {
         let (image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
-            let evidence = query::Evidence::capture(services, &image, field, region, &|| {
-                cancelled.is_cancelled()
-            })?;
+            let gpu = measurement::query_gpu(gpu.as_ref())?;
+            let evidence =
+                query::Evidence::capture(gpu, &image, field, region, &|| cancelled.is_cancelled())?;
             let negative = input
                 .negative_input()
                 .ok_or(Error::UnusableSample("gamma pivot requires negative input"))?;
             evidence.compensate(
-                services,
+                gpu,
                 negative,
                 negative,
                 image.camera_to_ap1,

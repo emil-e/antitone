@@ -4,7 +4,6 @@ use antitone::{
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
     gpu_export::Format,
-    renderer::GpuRenderer,
 };
 use authored_export::Request;
 
@@ -38,7 +37,9 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     });
     let directory = tempfile::tempdir().unwrap();

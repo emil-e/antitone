@@ -312,7 +312,7 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         drop(edited);
         warm.ensure_submitted(&device, &queue, &egui::Context::default());
         let warm_pixels = read(&device, &queue, &warm.product.as_ref().unwrap().pixels);
-        let cold_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+        let cold_renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         cold_renderer
@@ -463,7 +463,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
             (crate::sys::MemoryPressure::Warning, 256 << 20),
             (crate::sys::MemoryPressure::Critical, 256 << 20),
         ] {
-            let uncached_renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
+            let uncached_renderer = crate::render_fixture::RenderFixture::new_with_cache_policy(
                 &device,
                 &queue,
                 crate::gpu::evaluation::CachePolicy {

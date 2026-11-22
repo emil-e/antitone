@@ -36,7 +36,10 @@ fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVe
         .reference_coverage(region)
         .unwrap();
     let actual = query::reference(
-        editor.source_services.as_ref().unwrap(),
+        (
+            &editor.source_services.as_ref().unwrap().evaluation,
+            &editor.source_services.as_ref().unwrap().queue,
+        ),
         &mut measurement::capture_scan(editor).unwrap(),
         None,
         region,

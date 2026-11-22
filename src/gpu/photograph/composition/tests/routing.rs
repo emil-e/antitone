@@ -35,7 +35,7 @@ impl evaluation::Source for Pixels {
 }
 
 fn pixels(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     queue: &crate::gpu::submission::Queue,
     image: Value,
 ) -> Vec<[f32; 4]> {
@@ -149,7 +149,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .unwrap()
         .processed;
     let resident = capture
-        .resident_processed(&renderer, &camera, proxy.dimensions(), None)
+        .resident_processed(&device.limits(), &camera, proxy.dimensions(), None)
         .unwrap();
     let target = OutputTarget::Srgb;
     let display = Some(target);
@@ -177,12 +177,13 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "working",
                     physical,
                     crate::gpu::view::rendering::photograph(
-                        &renderer,
+                        &limits,
                         &scan,
                         None,
                         &capture,
                         SourceRequest::for_frame(view).unwrap(),
-                        target,
+                        renderer.looks(),
+                        renderer.drt(target),
                     )
                     .unwrap()
                     .definition,
@@ -192,7 +193,14 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "thumbnail",
                     sampled.clone(),
                     capture
-                        .sampled_output(&renderer, &camera, None, thumb.clone(), target)
+                        .sampled_output(
+                            &device.limits(),
+                            &camera,
+                            None,
+                            thumb.clone(),
+                            renderer.looks(),
+                            renderer.drt(target),
+                        )
                         .unwrap()
                         .0,
                     display,
@@ -201,7 +209,14 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "proxy",
                     navigation,
                     capture
-                        .sampled_output(&renderer, &camera, None, spatial, target)
+                        .sampled_output(
+                            &device.limits(),
+                            &camera,
+                            None,
+                            spatial,
+                            renderer.looks(),
+                            renderer.drt(target),
+                        )
                         .unwrap()
                         .0,
                     display,
@@ -210,7 +225,14 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "retained",
                     sampled.clone(),
                     capture
-                        .retained_output(&renderer, &sampled, None, &thumb, target)
+                        .retained_output(
+                            &device.limits(),
+                            &sampled,
+                            None,
+                            &thumb,
+                            renderer.looks(),
+                            renderer.drt(target),
+                        )
                         .unwrap()
                         .0,
                     display,
@@ -219,7 +241,14 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                     "resident",
                     resident,
                     capture
-                        .resident_output(&renderer, &camera, proxy.dimensions(), None, target)
+                        .resident_output(
+                            &device.limits(),
+                            &camera,
+                            proxy.dimensions(),
+                            None,
+                            renderer.looks(),
+                            renderer.drt(target),
+                        )
                         .unwrap(),
                     display,
                 ),
@@ -346,11 +375,12 @@ fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sa
     };
     let (_, preview) = capture
         .preview_output(
-            &renderer,
+            &device.limits(),
             &scan,
             None,
             SourceRequest::for_frame(frame).unwrap(),
-            OutputTarget::Srgb,
+            renderer.looks(),
+            renderer.drt(OutputTarget::Srgb),
         )
         .unwrap();
     check(&capture, &preview);

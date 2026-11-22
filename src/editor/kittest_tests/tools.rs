@@ -161,13 +161,11 @@ fn pickers_paint_the_normal_source_and_positive_in_straightened_frames() {
                 // normal physical-view acquisition must render, including while picking.
                 let services = e.source_services.as_ref().unwrap();
                 let ready = e.document.visit.canvas.ready.as_mut().unwrap();
-                let renderer = services
-                    .renderers
-                    .get(&services.device, &services.queue)
-                    .unwrap();
+                let renderer = services.render_fixture().unwrap();
                 ready.proxy = crate::viewer::GpuProxy::new_continuous(
-                    renderer,
-                    &services.device,
+                    renderer.evaluation().clone(),
+                    renderer.looks().clone(),
+                    renderer.drt.clone(),
                     [2, 2],
                     &[[0.; 4]; 4],
                     ready.proxy.matrix(),

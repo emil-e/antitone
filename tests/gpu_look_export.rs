@@ -7,6 +7,8 @@
 ))]
 #[path = "support/output.rs"]
 mod authored_export;
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
@@ -15,7 +17,6 @@ use antitone::{
     gpu_export::Format,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},
-    renderer::GpuRenderer,
     rendering::OutputTarget,
     scan::Scan,
 };
@@ -25,7 +26,7 @@ use std::{path::Path, sync::Arc};
 fn context() -> (
     wgpu::Device,
     antitone::gpu::submission::Queue,
-    Arc<GpuRenderer>,
+    Arc<crate::render_fixture::RenderFixture>,
 ) {
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -37,7 +38,9 @@ fn context() -> (
             antitone::gpu::submission::request_device(&adapter, &Default::default())
                 .await
                 .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
+            .await
+            .unwrap();
         (device, queue, renderer)
     })
 }

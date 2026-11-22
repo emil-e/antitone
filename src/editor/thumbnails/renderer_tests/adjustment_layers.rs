@@ -202,7 +202,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             .await
             .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let renderer = api::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let mut rasters = Vec::new();
@@ -380,13 +380,13 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                     let image = GpuImage::new_continuous_shared(
-                        &renderer,
-                        &device,
+                        renderer.evaluation().clone(),
+                        renderer.looks().clone(),
+                        renderer.drt(target),
                         [size[0], size[1]],
                         &pixels,
                         scan.camera_to_ap1,
                         Some(geometry),
-                        target,
                     )
                     .await
                     .unwrap();

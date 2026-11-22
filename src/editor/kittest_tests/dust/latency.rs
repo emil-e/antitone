@@ -75,8 +75,7 @@ fn profile_dust_pointer_to_gpu_display() {
             .source_services
             .as_ref()
             .unwrap()
-            .renderers
-            .get(&device, &queue)
+            .render_fixture()
             .unwrap()
             .evaluation
             .materializations()

@@ -39,7 +39,7 @@ mod underlay;
 async fn context() -> (
     wgpu::Device,
     crate::gpu::submission::Queue,
-    Arc<crate::renderer::GpuRenderer>,
+    Arc<crate::render_fixture::RenderFixture>,
     Arc<ViewKernels>,
 ) {
     context_with_cache_policy(Default::default()).await
@@ -50,7 +50,7 @@ async fn context_with_cache_policy(
 ) -> (
     wgpu::Device,
     crate::gpu::submission::Queue,
-    Arc<crate::renderer::GpuRenderer>,
+    Arc<crate::render_fixture::RenderFixture>,
     Arc<ViewKernels>,
 ) {
     let instance = crate::gpu::instance();
@@ -64,9 +64,10 @@ async fn context_with_cache_policy(
     )
     .await
     .unwrap();
-    let renderer = crate::renderer::GpuRenderer::new_with_cache_policy(&device, &queue, policy)
-        .await
-        .unwrap();
+    let renderer =
+        crate::render_fixture::RenderFixture::new_with_cache_policy(&device, &queue, policy)
+            .await
+            .unwrap();
     let kernels = ViewKernels::new(&device).await.unwrap();
     (device, queue, renderer, kernels)
 }
@@ -127,8 +128,12 @@ fn processing_input(
 
 fn independent_image(image: &Arc<ViewImage>) -> Arc<ViewImage> {
     assert!(*image.submitted.lock().unwrap());
-    ViewImage::from_recorded(
-        image.renderer.clone(),
+    ViewImage::from_recorded_fixture(
+        image.context.clone(),
+        image
+            .fixture_display
+            .clone()
+            .expect("authored view fixture"),
         image.kernels().clone(),
         image.spec.clone(),
         image.definition.clone(),

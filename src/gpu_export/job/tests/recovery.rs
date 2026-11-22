@@ -22,7 +22,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
     let mut original = repaired.clone();
     original.repairs.clear();
     let (device, queue, _) = super::super::super::tests::context();
-    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
+    let renderer = pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(
         &device,
         &queue,
         crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },
@@ -38,14 +38,13 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
         let actual = directory.path().join(format!("failed-{name}"));
         for (path, recipe) in [(&expected, &original), (&actual, &repaired)] {
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 Job {
                     scan: &scan,
                     field: None,
                     recipe,
-                    format,
+                    output: fixture_output(format, &renderer),
                 },
                 (path, Overwrite::Refuse),
                 &mut Execution::default(),
@@ -95,9 +94,14 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let reader =
-        crate::gpu::repair_source::Source::from_recipe(field, &renderer, &queue, &scan, &repaired)
-            .unwrap();
+    let reader = crate::gpu::repair_source::Source::from_recipe(
+        field,
+        renderer.evaluation(),
+        &queue,
+        &scan,
+        &repaired,
+    )
+    .unwrap();
     assert_eq!(
         reader
             .repair_succeeded(&repaired.repairs[0], &|| false)

@@ -17,20 +17,23 @@ mod retention;
 fn requested_image(
     demand: &Demand,
     source: &ViewImage,
+    frame: &Frame,
 ) -> Result<crate::gpu::evaluation::Value, Error> {
     crate::gpu::view::rendering::photograph(
-        &source.renderer,
+        &source.context.device().limits(),
         &demand.pixels.scan()?,
         demand.pixels.correction.gpu()?,
         &demand.capture,
         source.spec.clone(),
-        demand.target,
+        &frame.looks,
+        frame.targets.get(demand.target),
     )
     .map(|image| image.definition)
 }
 
-fn image_matches(demand: &Demand, source: &ViewImage) -> bool {
-    requested_image(demand, source).is_ok_and(|image| source.definition.same_definition(&image))
+fn image_matches(demand: &Demand, source: &ViewImage, frame: &Frame) -> bool {
+    requested_image(demand, source, frame)
+        .is_ok_and(|image| source.definition.same_definition(&image))
 }
 
 fn shares_inputs(before: &ViewImage, after: &ViewImage) -> bool {
@@ -95,12 +98,12 @@ fn fixture() -> (
         correction: Default::default(),
     };
     let scheduler = source_loading::SourceLoader::new();
-    e.source_services = Some(source::Services {
-        device: device.clone(),
-        queue: queue.clone(),
-        developments: scheduler.clone(),
-        renderers: Arc::default(),
-    });
+    e.source_services = Some(source::Services::fixture(
+        scheduler.clone(),
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
@@ -186,7 +189,11 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
             assert!(!e.document.visit.working_view.support_ready());
             let underlay = e.document.visit.working_view.underlay().unwrap();
             assert!(
-                !image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay),
+                !image_matches(
+                    &Demand::fixture(latest.clone(), input.clone()),
+                    underlay,
+                    e.document.visit.working_view.frame.as_ref().unwrap()
+                ),
                 "retained old pixels cannot supply the new neighbourhood"
             );
             assert!(
@@ -203,6 +210,8 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
             );
             assert!(e.document.visit.working_view.task.is_some());
             let working = &mut e.document.visit.working_view;
+            let current = working.frame.as_ref().unwrap();
+            let (looks, targets) = (current.looks.clone(), current.targets.clone());
             working.acquired(Completion {
                 owner: Arc::downgrade(&working.mailbox),
                 demand: Completion::fixture_demand(working, queued.clone()),
@@ -211,6 +220,8 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
+                    looks: looks.clone(),
+                    targets: targets.clone(),
                 })),
             });
             assert!(
@@ -227,6 +238,8 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     source: old.clone(),
                     underlay: None,
                     request: Arc::new(Demand::fixture(small.clone(), input.clone())),
+                    looks: looks.clone(),
+                    targets: targets.clone(),
                 })),
             });
             assert!(!e.document.visit.working_view.support_ready());
@@ -252,7 +265,11 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                     .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
             assert!(e.document.visit.working_view.underlay().is_some_and(
-                |underlay| image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay)
+                |underlay| image_matches(
+                    &Demand::fixture(latest.clone(), input.clone()),
+                    underlay,
+                    e.document.visit.working_view.frame.as_ref().unwrap()
+                )
             ));
         });
         app.enter(|e, access| request_working(e, small.clone(), input, access));
@@ -293,10 +310,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     let small = positive_spec(frame, &input, 0.25);
     let latest = positive_spec(frame, &input, 0.75);
     let services = e.source_services.as_ref().unwrap();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let scope = renderer.evaluation().materializations();
     scope.set_retention_enabled(false);
     let (started, starts) = std::sync::mpsc::channel();
@@ -358,7 +372,11 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
                     .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
             assert!(e.document.visit.working_view.underlay().is_some_and(
-                |underlay| image_matches(&Demand::fixture(latest.clone(), input.clone()), underlay)
+                |underlay| image_matches(
+                    &Demand::fixture(latest.clone(), input.clone()),
+                    underlay,
+                    e.document.visit.working_view.frame.as_ref().unwrap()
+                )
             ));
             assert!(e.document.visit.working_view.task.is_none());
         });
@@ -527,12 +545,12 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                 assert!(
                     value
                         .definition
-                        .same_definition(&requested_image(&ready.request, value).unwrap())
+                        .same_definition(&requested_image(&ready.request, value, &ready).unwrap())
                 );
                 assert!(
                     !value
                         .definition
-                        .same_definition(&requested_image(&changed, value).unwrap()),
+                        .same_definition(&requested_image(&changed, value, &ready).unwrap()),
                     "the requested snapshot must not read subsequent document edits"
                 );
             }
@@ -548,10 +566,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         });
         let (mut wanted, context) = app.read(|e| {
             let ready = e.document.visit.working_view.frame.as_ref().unwrap();
-            (
-                (*ready.request).clone(),
-                ready.source.renderer.evaluation.clone(),
-            )
+            ((*ready.request).clone(), ready.source.context.clone())
         });
         let scope = context.materializations();
         scope.set_retention_enabled(false);
@@ -709,7 +724,7 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
         );
         assert!(!old.satisfies(&changed));
         assert!(
-            !image_matches(&changed, &old.source),
+            !image_matches(&changed, &old.source, &old),
             "an old repaired raster cannot represent a changed donor calculation"
         );
         app.enter(|e, cx| e.request_working(changed.clone(), cx));
@@ -721,7 +736,7 @@ fn authored_repair_changes_require_new_values_without_prepared_patch_arguments()
             let ready = e.document.visit.working_view.frame.as_ref().unwrap();
             assert!(ready.request.same_calculation(&changed));
             for source in std::iter::once(&ready.source).chain(ready.underlay.as_ref()) {
-                assert!(image_matches(&changed, source));
+                assert!(image_matches(&changed, source, ready));
             }
         });
     });
@@ -997,7 +1012,11 @@ fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
             assert!(editor.document.write.pending() && editor.interaction_blocked());
             let source = editor.document.visit.working_view.source().unwrap();
             assert_eq!(source.spec.frame(), requested.frame);
-            assert!(image_matches(&requested, source));
+            assert!(image_matches(
+                &requested,
+                source,
+                editor.document.visit.working_view.frame.as_ref().unwrap()
+            ));
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
         });
         drop(release);

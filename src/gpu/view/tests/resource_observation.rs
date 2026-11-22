@@ -63,7 +63,7 @@ fn acquisition_execution_resources() {
                 .parse::<u64>()
                 .map_err(|e| e.to_string())?;
         }
-        let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
+        let renderer = pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(
             device,
             queue,
             policy,
@@ -227,7 +227,7 @@ fn neutral_image_retention_resources() {
         let composition=Composition::new(scan.area,Default::default(),Default::default()).unwrap();
         let frame=FrameRaster::new(composition,FramePoint([256.,256.]),FramePoint([1216.,976.]),[640,480]).unwrap();
         let policy=crate::gpu::evaluation::CachePolicy{generated_bytes:std::env::var("ANTITONE_GENERATED_CACHE_BYTES").ok().map(|v|v.parse::<u64>().unwrap()).unwrap_or(crate::gpu::evaluation::CachePolicy::default().generated_bytes)};
-        let renderer=pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(device,queue,policy)).unwrap();
+        let renderer=pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(device,queue,policy)).unwrap();
         let kernels=pollster::block_on(ViewKernels::new(device)).unwrap();
         let cache=renderer.evaluation().test_materializations(true);
         let spec=SourceRequest::new(frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::gpu::source::identity::Identity::camera(scan.source().identity()));

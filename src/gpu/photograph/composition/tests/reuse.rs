@@ -3,7 +3,7 @@ use crate::gpu::evaluation::{Image, ImageBacking, ImageFormat, ImageLayout, Mate
 use crate::gpu::photograph::request::PhotographRequest;
 
 pub(super) fn materialize(
-    renderer: &crate::renderer::GpuRenderer,
+    renderer: &crate::render_fixture::RenderFixture,
     queue: &crate::gpu::submission::Queue,
     scope: &Materializations,
     image: Value,
@@ -68,10 +68,14 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
 
     let target = crate::rendering::OutputTarget::Srgb;
     let plain_output = PhotographRequest::Recipe(plain_recipe.clone())
-        .display(&renderer, plain.processed, target)
+        .display(plain.processed, renderer.looks(), renderer.drt(target))
         .unwrap();
     let looked_output = request
-        .display(&renderer, looked.processed.clone(), target)
+        .display(
+            looked.processed.clone(),
+            renderer.looks(),
+            renderer.drt(target),
+        )
         .unwrap();
     assert!(!plain_output.same_definition(&looked_output));
     assert_ne!(

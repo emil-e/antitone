@@ -115,10 +115,10 @@ impl LayerInput {
         image: &mut Scan,
         field: Option<Arc<GpuFlatField>>,
         region: Coverage,
-        services: &super::source::Services,
+        gpu: measurement::Gpu<'_>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Balance, Error> {
-        query::layer(services, image, field, region, self, cancelled)
+        query::layer(gpu, image, field, region, self, cancelled)
     }
 }
 
@@ -126,7 +126,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, ROLL, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
-            editor.source_services.clone(),
+            measurement::capture_gpu(editor),
             roll_input(editor)?,
         ))
     })
@@ -134,7 +134,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, services, input) = match captured {
+    let (image, gpu, input) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -145,8 +145,8 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     let Some(value) = measurement::run(&cx, ROLL.label, async move {
         let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
-            query::roll(services, &mut image, field, region, input, &|| {
+            let gpu = measurement::query_gpu(gpu.as_ref())?;
+            query::roll(gpu, &mut image, field, region, input, &|| {
                 cancelled.is_cancelled()
             })
         })
@@ -167,7 +167,7 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, LAYER, |editor| {
         Ok::<_, String>((
             measurement::capture_input(editor)?,
-            editor.source_services.clone(),
+            measurement::capture_gpu(editor),
             LayerInput::capture(editor)?,
             (
                 editor
@@ -183,7 +183,7 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, services, input, target) = match captured {
+    let (image, gpu, input, target) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -194,10 +194,8 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     let Some(value) = measurement::run(&cx, LAYER.label, async move {
         let (mut image, field) = image.await?;
         measurement::query(&worker_cx, move |cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
-            input.measure(&mut image, field, region, services, &|| {
-                cancelled.is_cancelled()
-            })
+            let gpu = measurement::query_gpu(gpu.as_ref())?;
+            input.measure(&mut image, field, region, gpu, &|| cancelled.is_cancelled())
         })
         .await
     })

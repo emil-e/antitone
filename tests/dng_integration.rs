@@ -24,6 +24,9 @@ mod authored_export;
 mod highlight_consumers;
 #[path = "dng_integration/highlights.rs"]
 mod highlights;
+#[cfg(all(feature = "gpu", feature = "export"))]
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 
 #[cfg(all(
     feature = "gpu",

@@ -35,10 +35,7 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
     };
     editor.set_cache_limits(limits);
     let services = editor.source_services.as_ref().unwrap();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     let device = services.device.clone();
     let store = renderer.evaluation().materializations();
     store.set_test_pressure(Pressure::Normal);

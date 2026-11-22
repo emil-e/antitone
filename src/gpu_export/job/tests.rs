@@ -1,4 +1,14 @@
 use super::*;
+
+fn fixture_output(format: Format, renderer: &crate::render_fixture::RenderFixture) -> Output<'_> {
+    match format {
+        Format::Tiff(target) => Output::Tiff {
+            looks: renderer.looks(),
+            target: renderer.drt(target),
+        },
+        Format::Exr(precision) => Output::Exr(precision),
+    }
+}
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
     gpu::test_inputs::AuthoredPhotograph,
@@ -114,9 +124,14 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let mut local_source =
-        crate::gpu::repair_source::Source::from_recipe(field, &renderer, &queue, &scan, &recipe)
-            .unwrap();
+    let mut local_source = crate::gpu::repair_source::Source::from_recipe(
+        field,
+        renderer.evaluation(),
+        &queue,
+        &scan,
+        &recipe,
+    )
+    .unwrap();
     let local = crate::dust_repair::BaseImage::read(
         &mut local_source,
         crate::geometry::SourceRegion::from([area.x + 16, area.y + 16, 1, 1]),
@@ -221,14 +236,13 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         scan: &scan,
         field: None,
         recipe,
-        format: Format::Tiff(OutputTarget::Srgb),
+        output: fixture_output(Format::Tiff(OutputTarget::Srgb), &renderer),
     };
     let before = project.clone();
     {
         let (result, pixels) = crate::export_timing::pixels::capture(|| {
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 job(&recipe),
                 (&path, Overwrite::Refuse),
@@ -249,8 +263,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         let stopped = || true;
         assert!(matches!(
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 job(&recipe),
                 (&path, Overwrite::Confirmed),
@@ -274,8 +287,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     let stale = stale_project.image_recipe(id).unwrap();
     assert!(
         write(
-            &renderer,
-            &device,
+            renderer.evaluation(),
             &queue,
             job(&stale),
             (&path, Overwrite::Confirmed),
@@ -326,14 +338,13 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         ("edge.exr", Format::Exr(ExrPrecision::Full)),
     ] {
         write(
-            &renderer,
-            &device,
+            renderer.evaluation(),
             &queue,
             Job {
                 scan: &scan,
                 field: None,
                 recipe: &recipe,
-                format,
+                output: fixture_output(format, &renderer),
             },
             (&directory.path().join(name), Overwrite::Refuse),
             &mut Execution::default(),

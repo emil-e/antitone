@@ -3,7 +3,7 @@ use super::*;
 pub(crate) fn context() -> (
     wgpu::Device,
     crate::gpu::submission::Queue,
-    Arc<GpuRenderer>,
+    Arc<RenderFixture>,
 ) {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -11,7 +11,7 @@ pub(crate) fn context() -> (
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
+        let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     })
 }

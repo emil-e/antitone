@@ -1,4 +1,7 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+
+#[path = "support/render_fixture.rs"]
+mod render_fixture;
 use antitone::adjustment_layers::AdjustmentLayer;
 use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
@@ -155,8 +158,7 @@ fn local_reference(mut rgb: DVec3, pixel: [u32; 2]) -> DVec3 {
 }
 
 async fn image(
-    renderer: &Arc<antitone::renderer::GpuRenderer>,
-    device: &wgpu::Device,
+    renderer: &Arc<crate::render_fixture::RenderFixture>,
     geometry: SourceGeometry,
     size: [u32; 2],
     target: OutputTarget,
@@ -165,13 +167,13 @@ async fn image(
         .map(|i| codes(geometry.pixel(i).unwrap()))
         .collect();
     GpuImage::new_shared(
-        renderer,
-        device,
+        renderer.evaluation().clone(),
+        renderer.looks().clone(),
+        renderer.drt(target),
         size,
         &pixels,
         DMat3::IDENTITY,
         Some(geometry),
-        target,
     )
     .await
     .unwrap()
@@ -249,12 +251,12 @@ fn read_buffer(
 fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_cache() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let geometry =
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
-        let image = Arc::new(image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await);
+        let image = Arc::new(image(&renderer, geometry, [7, 5], OutputTarget::Srgb).await);
         let accepted = input(&device, calibration(), layers(), None);
         let duplicate = input(&device, calibration(), layers(), None);
         let accepted_definition = accepted(&image).unwrap();
@@ -364,7 +366,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             .unwrap();
             assert!(!accepted_definition.same_definition(&changed(&image).unwrap()));
         }
-        let second = self::image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await;
+        let second = self::image(&renderer, geometry, [7, 5], OutputTarget::Srgb).await;
         assert!(
             second
                 .prepare_calculation(
@@ -383,13 +385,13 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             "images share resources, not preparation state"
         );
         let unlocated = GpuImage::new_shared(
-            &renderer,
-            &device,
+            renderer.evaluation().clone(),
+            renderer.looks().clone(),
+            renderer.drt(OutputTarget::Srgb),
             [7, 5],
             &[[0; 4]; 35],
             DMat3::IDENTITY,
             None,
-            OutputTarget::Srgb,
         )
         .await
         .unwrap();
@@ -459,7 +461,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
 fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correction() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let field = Arc::new(
@@ -508,7 +510,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                 })
                 .collect();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let image = Arc::new(image(&renderer, &device, geometry, [7, 5], target).await);
+                let image = Arc::new(image(&renderer, geometry, [7, 5], target).await);
                 let paint = calculation::image_paint(
                     &presentation,
                     image.clone(),
@@ -600,13 +602,13 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
 fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_grade() {
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
         let geometry =
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
-        let image = Arc::new(image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await);
+        let image = Arc::new(image(&renderer, geometry, [7, 5], OutputTarget::Srgb).await);
         let mut layers = layers();
         layers[0].photo.contrast = 1.6;
         layers[0].photo.exposure = 2.;
@@ -725,7 +727,7 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
     };
     pollster::block_on(async {
         let (device, queue) = device().await;
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let field = Arc::new(
@@ -818,8 +820,9 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
                                 })
                                 .collect();
                             let tile = GpuImage::new_shared(
-                                &renderer,
-                                &device,
+                                renderer.evaluation().clone(),
+                                renderer.looks().clone(),
+                                renderer.drt(target),
                                 [6, 4],
                                 &pixels,
                                 DMat3::IDENTITY,
@@ -827,7 +830,6 @@ fn original_tiles_grade_pixels_before_rotated_target_averaging() {
                                     SourceGeometry::new([bounds.x + x, bounds.y + y, 6, 4], [6, 4])
                                         .unwrap(),
                                 ),
-                                target,
                             )
                             .await
                             .unwrap();

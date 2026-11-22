@@ -108,9 +108,9 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             sampling_inputs: Default::default(),
             initialization: Arc::default(),
             sources: scheduler.provider(None),
-            device,
+            device: device.clone(),
             queue,
-            renderers: Arc::new(crate::renderer::RendererCache::default()),
+            renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
         };
         let captured = input(&services, &request);
         let mut state = services.fit(request.clone(), captured.clone()).unwrap();
@@ -269,9 +269,9 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
         sources: scheduler.provider(None),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -385,9 +385,9 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
         sources: scheduler.provider(None),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -433,9 +433,9 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
         sources: scheduler.provider(None),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -489,9 +489,9 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
         sources: scheduler.provider(None),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
@@ -520,9 +520,9 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
         sources: scheduler.provider(None),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::new(crate::renderer::RendererCache::default()),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
     };
     let captured = input(&services, &request);
     let error = futures_lite::future::block_on(run(

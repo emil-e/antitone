@@ -131,7 +131,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
     let source =
         crate::preview_fixture::append(source.path(), [32, 32], &[128; 32 * 32 * 3], true, Some(2));
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let renderers = crate::renderer::RendererCache::default();
+    let renderers = crate::editor::display::DisplayFixture::for_device(&device);
     let directory = tempfile::tempdir().unwrap();
     for (sdk, path) in [
         (false, source.path().to_owned()),
@@ -238,7 +238,12 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                 assert_eq!(developed.context.reference, Some(baseline));
             }
             let ready = developed
-                .prepare_gpu(&renderers, &device, &queue, &|| false)
+                .prepare_gpu(
+                    renderers.evaluation().clone(),
+                    renderers.looks().clone(),
+                    &renderers.warmup(&queue),
+                    &|| false,
+                )
                 .unwrap();
             assert_eq!(ready.area, scan.area);
             let recipe = legacy.image_recipe(id).unwrap();
@@ -262,14 +267,16 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             let composition = recipe.composition;
             let output = directory.path().join(format!("legacy-{sdk}-{digital}.tif"));
             crate::gpu_export::job::write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: correction.as_ref().map(|field| field.gpu.clone()),
                     recipe: &recipe,
-                    format: crate::gpu_export::Format::Tiff(crate::rendering::OutputTarget::Srgb),
+                    output: crate::gpu_export::job::Output::Tiff {
+                        looks: renderer.looks(),
+                        target: renderer.drt(crate::rendering::OutputTarget::Srgb),
+                    },
                 },
                 (&output, crate::export::Overwrite::Refuse),
                 &mut crate::dust_repair::Execution::default(),

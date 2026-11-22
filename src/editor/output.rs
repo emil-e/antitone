@@ -43,22 +43,25 @@ enum PhotoResult {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub(super) renderers: Arc<crate::renderer::RendererCache>,
-    pub(super) device: wgpu::Device,
+    evaluation: crate::gpu::evaluation::Context,
+    looks: Arc<crate::gpu::lut3d::Looks>,
+    pub(super) display: Arc<super::display::Warmup>,
     pub(super) queue: crate::gpu::submission::Queue,
     pub(super) sources: source::Services,
 }
 
 impl Services {
     pub fn new(
-        renderers: Arc<crate::renderer::RendererCache>,
-        device: wgpu::Device,
+        evaluation: crate::gpu::evaluation::Context,
+        looks: Arc<crate::gpu::lut3d::Looks>,
+        display: Arc<super::display::Warmup>,
         queue: crate::gpu::submission::Queue,
         sources: source::Services,
     ) -> Self {
         Self {
-            renderers,
-            device,
+            evaluation,
+            looks,
+            display,
             queue,
             sources,
         }
@@ -297,23 +300,29 @@ impl Services {
                 return Err(WriteFailure::Photo(crate::Error::Cancelled));
             }
             let scan = request.input.scan()?;
-            let renderer = self
-                .renderers
-                .get(&self.device, &self.queue)
-                .map_err(WriteFailure::Infrastructure)?;
+            let targets;
+            let output = match request.format {
+                OutputFormat::Tiff(target) => {
+                    targets = self
+                        .display
+                        .targets()
+                        .map_err(WriteFailure::Infrastructure)?;
+                    crate::gpu_export::job::Output::Tiff {
+                        looks: &self.looks,
+                        target: targets.get(target),
+                    }
+                }
+                OutputFormat::Exr(precision) => crate::gpu_export::job::Output::Exr(precision),
+            };
             let stopped = || cancelled.load(Ordering::Relaxed);
             crate::gpu_export::job::write(
-                &renderer,
-                &self.device,
+                &self.evaluation,
                 &self.queue,
                 crate::gpu_export::job::Job {
                     scan: &scan,
                     field: request.input.correction.gpu()?,
                     recipe: &request.recipe,
-                    format: match request.format {
-                        OutputFormat::Tiff(target) => crate::gpu_export::Format::Tiff(target),
-                        OutputFormat::Exr(precision) => crate::gpu_export::Format::Exr(precision),
-                    },
+                    output,
                 },
                 (&request.path, request.overwrite),
                 &mut crate::dust_repair::Execution {

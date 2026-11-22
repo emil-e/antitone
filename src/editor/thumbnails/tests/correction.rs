@@ -54,13 +54,8 @@ fn failed_map_preserves_source_thumbnail_paint_but_still_fails_precision_acquisi
         .unwrap();
     assert!(failure.contains("coordinate"), "{failure}");
     let services = editor.source_services.as_ref().unwrap().clone();
-    editor.document.thumbnails = Thumbnails::with_disk(
-        services.device.clone(),
-        services.queue.clone(),
-        services.renderers.clone(),
-        None,
-    )
-    .with_sources(editor.document.cache.clone());
+    editor.document.thumbnails =
+        Thumbnails::without_disk_for_source(&services).with_sources(editor.document.cache.clone());
     let budgets = memory::CacheBudgets::new(
         cache_limits::CacheLimits {
             cpu_bytes: 8 << 20,
@@ -124,13 +119,8 @@ fn camera_thumbnail_paint_requests_its_map_without_waiting_or_using_an_absent_co
             map,
         )));
     let services = editor.source_services.as_ref().unwrap().clone();
-    editor.document.thumbnails = Thumbnails::with_disk(
-        services.device.clone(),
-        services.queue.clone(),
-        services.renderers.clone(),
-        None,
-    )
-    .with_sources(editor.document.cache.clone());
+    editor.document.thumbnails =
+        Thumbnails::without_disk_for_source(&services).with_sources(editor.document.cache.clone());
     let budgets = memory::CacheBudgets::new(
         cache_limits::CacheLimits {
             cpu_bytes: 8 << 20,
@@ -227,13 +217,8 @@ fn positive_thumbnail_waits_for_the_captured_map_and_cancellation_keeps_another_
             map.clone(),
         )));
     let services = editor.source_services.as_ref().unwrap().clone();
-    let thumbnails = Thumbnails::with_disk(
-        services.device.clone(),
-        services.queue.clone(),
-        services.renderers.clone(),
-        None,
-    )
-    .with_sources(editor.document.cache.clone());
+    let thumbnails =
+        Thumbnails::without_disk_for_source(&services).with_sources(editor.document.cache.clone());
     let (release, resume) = futures_channel::oneshot::channel();
     let started = Arc::new(AtomicBool::new(false));
     let observed = started.clone();

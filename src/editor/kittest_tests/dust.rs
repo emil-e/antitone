@@ -8,10 +8,7 @@ fn camera_images(
     let scan = editor.source_context().unwrap().scan().unwrap();
     let camera = crate::gpu::evaluation::camera_source(&scan).unwrap();
     let services = editor.source_services.as_ref().unwrap();
-    let renderer = services
-        .renderers
-        .get(&services.device, &services.queue)
-        .unwrap();
+    let renderer = services.render_fixture().unwrap();
     renderer
         .evaluation()
         .materializations()

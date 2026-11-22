@@ -36,7 +36,7 @@ fn fitting_waits_for_its_captured_map_and_cancellation_preserves_another_reader(
             },
         );
     let (scheduler, loads) = observed();
-    let renderer = crate::renderer::RendererCache::default()
+    let renderer = crate::editor::display::DisplayFixture::for_device(&device)
         .get(&device, &queue)
         .unwrap();
     let cancelled = Cancellation::default();

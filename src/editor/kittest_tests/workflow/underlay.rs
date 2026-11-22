@@ -37,10 +37,7 @@ fn warm_physical_view_underlay_keeps_navigation_covered_during_blocked_acquisiti
                 ..limits
             });
             let services = editor.source_services.as_ref().unwrap();
-            let renderer = services
-                .renderers
-                .get(&services.device, &services.queue)
-                .unwrap();
+            let renderer = services.render_fixture().unwrap();
             assert_eq!(
                 renderer.evaluation().cache_policy().generated_bytes,
                 limits.gpu_bytes
@@ -199,10 +196,7 @@ fn zero_retention_keeps_a_coherent_view_during_acquisition_and_publishes_the_lat
                 gpu_bytes: 0,
             });
             let services = editor.source_services.as_ref().unwrap();
-            let renderer = services
-                .renderers
-                .get(&services.device, &services.queue)
-                .unwrap();
+            let renderer = services.render_fixture().unwrap();
             assert_eq!(renderer.evaluation().cache_policy().generated_bytes, 0);
             assert_eq!(renderer.evaluation().retained_bytes(), 0);
         });

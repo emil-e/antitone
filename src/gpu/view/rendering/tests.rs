@@ -54,14 +54,14 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
     )
     .unwrap();
     let spec = SourceRequest::for_frame(frame).unwrap();
-    let make = |renderer: Arc<crate::renderer::GpuRenderer>, delta| {
+    let make = |renderer: Arc<crate::render_fixture::RenderFixture>, delta| {
         renderer
             .evaluation()
             .materializations()
             .set_retention_enabled(false);
         let request = Request::new(
             Preparation::new(
-                renderer.clone(),
+                renderer.evaluation().clone(),
                 kernels.clone(),
                 vec![ImageRequest::new(endpoint(input.clone(), delta), spec.clone()).unwrap()],
             )
@@ -78,14 +78,18 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
         .unwrap();
         let target = crate::rendering::OutputTarget::Srgb;
         let endpoint = capture
-            .display(&renderer, product.definition.clone(), target)
+            .display(
+                product.definition.clone(),
+                renderer.looks(),
+                renderer.drt(target),
+            )
             .unwrap();
         crate::gpu::view::RenderedView::from_value(&device, product, capture, target, endpoint)
             .unwrap()
     };
     let first = make(renderer.clone(), 3.);
     let independent =
-        pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let recomputed = make(independent, 3.);
     assert!(first.same_source_definition_as(&recomputed));
     assert!(!first.same_source_as(&recomputed));
@@ -102,10 +106,23 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
 
 #[test]
 fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue) = pollster::block_on(async {
+        let adapter = crate::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        crate::gpu::submission::request_device(&adapter, &Default::default())
+            .await
+            .unwrap()
+    });
+    let context = Context::new(
+        &device,
+        e::CachePolicy {
+            generated_bytes: 1 << 20,
+        },
+    );
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
-    renderer.evaluation().set_retention_limit(1 << 20);
-    let scope = renderer.evaluation().materializations();
+    let scope = context.materializations();
     scope.set_retention_enabled(true);
     scope.set_test_pressure(crate::sys::MemoryPressure::Normal);
     let count = Arc::new(AtomicUsize::new(0));
@@ -121,7 +138,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
     .unwrap();
     let prepare = |definition| {
         Preparation::new(
-            renderer.clone(),
+            context.clone(),
             kernels.clone(),
             vec![ImageRequest::new(definition, SourceRequest::for_frame(frame).unwrap()).unwrap()],
         )
@@ -170,8 +187,8 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         1,
         "a different endpoint uses the live input without another source read"
     );
-    assert!(renderer.evaluation().retained_bytes() > 0);
-    assert!(renderer.evaluation().retained_bytes() <= 1 << 20);
+    assert!(context.retained_bytes() > 0);
+    assert!(context.retained_bytes() <= 1 << 20);
     assert!(
         scope
             .find_ready::<e::ImageLayout>(&identity, |_| true)

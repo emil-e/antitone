@@ -14,7 +14,7 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = crate::renderer::RendererCache::default();
+        let renderers = crate::editor::display::DisplayFixture::for_device(&device);
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("edited.dng");
         let fixture =

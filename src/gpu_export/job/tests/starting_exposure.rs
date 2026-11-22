@@ -11,7 +11,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
         } else {
             exposure_fixture::neutral_dng(1.3)
         };
-        let (device, queue, renderer) = super::super::super::tests::context();
+        let (_device, queue, renderer) = super::super::super::tests::context();
         let directory = tempfile::tempdir().unwrap();
         let scene = 6000. / 65535. * 2_f64.powf(recorded.unwrap_or(1.3));
         let reference = CpuRenderer::new(OutputTarget::Srgb)
@@ -82,14 +82,13 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                 Format::Exr(_) => "cold.exr",
             });
             write(
-                &renderer,
-                &device,
+                renderer.evaluation(),
                 &queue,
                 Job {
                     scan: &scan,
                     field: None,
                     recipe: &recipe,
-                    format,
+                    output: fixture_output(format, &renderer),
                 },
                 (&output, Overwrite::Refuse),
                 &mut Execution::default(),

@@ -154,7 +154,8 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
         },
     ))
     .unwrap();
-    let renderer = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let renderer =
+        pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let file = crate::dng_fixture::Fixture {
         side: 64,
         ramp: true,
@@ -350,13 +351,13 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
             let frame = FrameRaster { output, ..frame };
             if output == [1, 1] {
                 let original = crate::gpu::photograph::authoring::original_chain(
-                    &device,
-                    &renderer,
+                    &device.limits(),
                     &scan,
                     None,
                     &input,
-                    target,
                     &input.definition(),
+                    renderer.looks(),
+                    renderer.drt(target),
                 )
                 .unwrap();
                 let domain = crate::gpu::evaluation::Domain {

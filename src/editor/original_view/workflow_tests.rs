@@ -18,12 +18,12 @@ fn editor() -> (Editor, source_loading::SourceLoader) {
             .unwrap()
     });
     let scheduler = source_loading::SourceLoader::new();
-    e.source_services = Some(source::Services {
-        device,
-        queue,
-        developments: scheduler.clone(),
-        renderers: Arc::default(),
-    });
+    e.source_services = Some(source::Services::fixture(
+        scheduler.clone(),
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     (e, scheduler)
 }
 

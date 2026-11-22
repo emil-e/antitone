@@ -33,12 +33,12 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     });
     editor.document.visit.working_view =
         crate::editor::working_view::WorkingView::new(device.clone(), queue.clone());
-    editor.source_services = Some(source::Services {
-        developments: scheduler,
-        renderers: Arc::default(),
-        device,
-        queue,
-    });
+    editor.source_services = Some(source::Services::fixture(
+        scheduler,
+        &device,
+        &queue,
+        &crate::editor::display::DisplayFixture::for_device(&device),
+    ));
     editor
 }
 
@@ -406,8 +406,9 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             assert!(e.correction().prepared().is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
+            let cold = crate::editor::display::DisplayFixture::for_device(&services.device);
             let (uncorrected, _) = crate::editor::prepare_source(
-                &services.renderers,
+                &cold,
                 &services.device,
                 &services.queue,
                 ready.path.clone(),

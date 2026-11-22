@@ -116,7 +116,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             .await
             .unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
+        let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
             .await
             .unwrap();
         let calibration = Calibration {
@@ -160,13 +160,13 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                 mapped_at_creation: false,
             });
             let image = GpuImage::new_shared(
-                &renderer,
-                &device,
+                renderer.evaluation().clone(),
+                renderer.looks().clone(),
+                renderer.drt(OutputTarget::Srgb),
                 [size[0], size[1]],
                 &pixels,
                 DMat3::IDENTITY,
                 Some(geometry),
-                OutputTarget::Srgb,
             )
             .await
             .unwrap();

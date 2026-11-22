@@ -1,18 +1,25 @@
 //! Immutable, source-validated preparation for the shared TIFF/EXR engine.
 use super::*;
+use crate::gpu::{drt, flat::GpuFlatField, lut3d::Looks};
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
-use crate::{gpu::flat::GpuFlatField, renderer::GpuRenderer};
 
 pub(crate) struct Job<'a> {
     pub scan: &'a Scan,
     pub field: Option<Arc<GpuFlatField>>,
     pub recipe: &'a ImageRecipe,
-    pub format: Format,
+    pub output: Output<'a>,
+}
+
+pub(crate) enum Output<'a> {
+    Tiff {
+        looks: &'a Looks,
+        target: &'a drt::Target,
+    },
+    Exr(ExrPrecision),
 }
 
 pub(crate) fn write(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
+    context: &evaluation::Context,
     gpu: &crate::gpu::submission::Queue,
     job: Job<'_>,
     destination: (&Path, Overwrite),
@@ -35,20 +42,21 @@ pub(crate) fn write(
         job.field,
         &recipe,
     )?;
-    let limits = device.limits();
-    let definition = match job.format {
-        Format::Tiff(target) => {
-            pipeline.display(&limits, &renderer.looks, renderer.drt.get(target))
-        }
-        Format::Exr(_) => pipeline.processed(&limits),
-    }?;
+    let limits = context.device().limits();
+    let (definition, format) = match job.output {
+        Output::Tiff { looks, target } => (
+            pipeline.display(&limits, looks, target)?,
+            Format::Tiff(target.output_target()),
+        ),
+        Output::Exr(precision) => (pipeline.processed(&limits)?, Format::Exr(precision)),
+    };
     super::area::write_calculation(
-        renderer.evaluation(),
+        context,
         gpu,
         Request {
             definition,
             composition: recipe.composition,
-            format: job.format,
+            format,
         },
         destination,
         check,
