@@ -127,7 +127,7 @@ fn foreground_and_candidate_reads_share_the_scope_cache() {
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
-        let renderers = crate::renderer::RendererCache::default();
+        let renderers = crate::renderer::RendererCache::for_device(&device);
         let (first, scan) = prepare(&document, &document.cache, &device, &queue, &renderers);
         let (_, warm) = prepare(&document, &document.cache, &device, &queue, &renderers);
         assert!(Arc::ptr_eq(scan.source(), warm.source()));
@@ -161,9 +161,9 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         let disk = disk::DiskCache::at(directory.path().to_owned());
         let (device, queue) = gpu().await;
         let mut thumbnails = Thumbnails::with_disk(
-            device,
+            device.clone(),
             queue,
-            Arc::default(),
+            Arc::new(crate::renderer::RendererCache::for_device(&device)),
             Some(disk::DiskCache::at(directory.path().to_owned())),
         );
         thumbnails.apply_test_budgets(memory::CacheBudgets::new(
@@ -231,7 +231,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let mut thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
         thumbnails.apply_test_budgets(memory::CacheBudgets::new(
@@ -291,7 +291,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             Ok(Some(worker_native.clone()))
         });
         let (device, queue) = gpu().await;
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let directory = tempfile::tempdir().unwrap();
         let disk = disk::DiskCache::at(directory.path().to_owned());
         let mut thumbnails = Thumbnails::with_developments(
@@ -426,9 +426,9 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
         let mut thumbnails = Thumbnails::with_developments(
-            device,
+            device.clone(),
             queue,
-            Arc::default(),
+            Arc::new(crate::renderer::RendererCache::for_device(&device)),
             Some(disk::DiskCache::at(directory.path().to_owned())),
             developments.clone(),
         );

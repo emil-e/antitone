@@ -84,9 +84,9 @@ fn read(
     image: Value,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<[f32; 4]>, Error> {
-    let renderer = services.renderers.get(&services.device, &services.queue)?;
+    let context = services.evaluation();
     let domain = image.domain();
-    let request = renderer.evaluation().request(
+    let request = context.request(
         image,
         Region {
             bounds: domain.finite()?,
@@ -95,8 +95,7 @@ fn read(
         BUDGET,
     )?;
     let mut pixels = Vec::new();
-    renderer
-        .evaluation()
+    context
         .read(&services.queue, &request, cancelled, |_, block| {
             pixels.extend_from_slice(block);
             Ok(())

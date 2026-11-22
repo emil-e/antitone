@@ -24,7 +24,7 @@ pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Edi
     let initial = source_loading::SourceLoader::new();
     editor.source_services = Some(source::Services {
         developments: initial.clone(),
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
         device,
         queue,
     });

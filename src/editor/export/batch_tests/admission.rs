@@ -47,7 +47,7 @@ fn cold_editor(limits: wgpu::Limits) -> (Editor, Arc<Mutex<Vec<PathBuf>>>) {
         .roll_selection
         .reconcile(&editor.document.project.order.clone(), Some(selected));
     editor.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
+    let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
     let sources = source::Services {
         device: device.clone(),
         queue: queue.clone(),

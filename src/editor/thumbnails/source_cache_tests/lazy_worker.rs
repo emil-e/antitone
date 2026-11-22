@@ -6,7 +6,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let (_, reference) = prepare(&document, &document.cache, &device, &queue, &renderers);
         let expected = reference.propose_flat_field_area().unwrap();
         let before = codes(&reference);

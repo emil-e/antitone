@@ -1,24 +1,35 @@
 use crate::{
     Error,
-    gpu::{drt, lut3d},
+    gpu::{
+        drt,
+        evaluation::{CachePolicy, Context},
+        lut3d,
+    },
 };
 use std::sync::Arc;
 
 #[cfg(feature = "editor")]
-#[derive(Default)]
 pub(crate) struct RendererCache {
+    evaluation: Context,
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
-    retention_budget: std::sync::Mutex<Option<u64>>,
 }
 
 #[cfg(feature = "editor")]
 impl RendererCache {
-    pub(crate) fn set_retention_budget(&self, bytes: u64) {
-        let mut budget = self.retention_budget.lock().unwrap();
-        *budget = Some(bytes);
-        if let Some(Ok(renderer)) = self.renderer.get() {
-            renderer.evaluation.set_retention_limit(bytes);
+    pub(crate) fn new(evaluation: Context) -> Self {
+        Self {
+            evaluation,
+            renderer: std::sync::OnceLock::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_device(device: &wgpu::Device) -> Self {
+        Self::new(Context::new(device, CachePolicy::default()))
+    }
+
+    pub(crate) fn evaluation(&self) -> &Context {
+        &self.evaluation
     }
 
     pub(crate) fn prewarm(
@@ -51,21 +62,12 @@ impl RendererCache {
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
     ) -> Result<Arc<GpuRenderer>, Error> {
-        let renderer = self
-            .renderer
+        self.evaluation.require_device(device)?;
+        self.renderer
             .get_or_init(|| {
-                let mut policy = crate::gpu::evaluation::CachePolicy::default();
-                if let Some(bytes) = *self.retention_budget.lock().unwrap() {
-                    policy.generated_bytes = bytes;
-                }
-                pollster::block_on(GpuRenderer::new_with_cache_policy(device, queue, policy))
+                pollster::block_on(GpuRenderer::with_evaluation(self.evaluation.clone(), queue))
             })
-            .clone()?;
-        // Serialize the final application with settings changes, including during initialization.
-        if let Some(bytes) = *self.retention_budget.lock().unwrap() {
-            renderer.evaluation.set_retention_limit(bytes);
-        }
-        Ok(renderer)
+            .clone()
     }
 }
 
@@ -102,11 +104,18 @@ impl GpuRenderer {
     pub async fn new_with_cache_policy(
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
-        policy: crate::gpu::evaluation::CachePolicy,
+        policy: CachePolicy,
     ) -> Result<Arc<Self>, Error> {
-        let evaluation = crate::gpu::evaluation::Context::new(device, policy);
-        let looks = lut3d::Looks::new(device);
-        let drt = drt::Targets::new(device, queue).await?;
+        Self::with_evaluation(Context::new(device, policy), queue).await
+    }
+
+    async fn with_evaluation(
+        evaluation: Context,
+        queue: &crate::gpu::submission::Queue,
+    ) -> Result<Arc<Self>, Error> {
+        let device = evaluation.device().clone();
+        let looks = lut3d::Looks::new(&device);
+        let drt = drt::Targets::new(&device, queue).await?;
         let renderer = Arc::new(Self {
             drt,
             looks,
@@ -123,9 +132,15 @@ impl GpuRenderer {
             ))?;
         crate::gpu::photograph::prewarm_output(&renderer.evaluation, &renderer.drt)?;
         #[cfg(feature = "editor")]
-        crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &renderer)?;
+        crate::gpu::photograph::PhotographGraph::prewarm_filtered(
+            &renderer.evaluation,
+            &renderer.drt,
+        )?;
         #[cfg(feature = "ui")]
-        crate::gpu::photograph::PhotographGraph::prewarm_resident(device, &renderer)?;
+        crate::gpu::photograph::PhotographGraph::prewarm_resident(
+            &renderer.evaluation,
+            &renderer.drt,
+        )?;
         Ok(renderer)
     }
 }

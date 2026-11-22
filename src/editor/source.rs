@@ -146,6 +146,10 @@ pub(super) struct Services {
 }
 
 impl Services {
+    pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
+        self.renderers.evaluation()
+    }
+
     pub fn provider(
         &self,
         cache: Option<Arc<crate::source::SourceCache>>,

@@ -10,9 +10,9 @@ fn sampled() -> (Fit, tempfile::TempDir, source_loading::SourceLoader) {
         sources: loader.provider(None),
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
     };
     let mut fit = resources.fit(request, None).unwrap();
     fit.geometry().unwrap();
@@ -56,9 +56,9 @@ fn direct_fitting_checks_its_picture_bounds_without_a_project_wide_gate() {
         sources: loader.provider(None),
         sampling_inputs: Default::default(),
         initialization: Arc::default(),
-        device,
+        device: device.clone(),
         queue,
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
     };
     let mut fit = resources.fit(request, None).unwrap();
     fit.geometry().unwrap();
@@ -225,7 +225,7 @@ fn actual_fit_and_acceptance_ignore_unrelated_look_capacity_and_replace_old_grad
             device: device.clone(),
             queue: queue.clone(),
             developments: loader.clone(),
-            renderers: Arc::default(),
+            renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
         });
         if warm {
             for id in editor.document.project.order.clone() {

@@ -91,7 +91,7 @@ fn non_cfa_import_reopen_view_and_bounded_exports() {
 
 pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
     let (device, queue, renderer) = crate::gpu_export::tests::context();
-    let renderers = crate::renderer::RendererCache::default();
+    let renderers = crate::renderer::RendererCache::for_device(&device);
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let directory =
         tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".cache")).unwrap();

@@ -42,7 +42,7 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
         .unwrap()
     });
     let scheduler = source_loading::SourceLoader::new();
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
+    let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
     e.source_services = Some(source::Services {
         developments: scheduler.clone(),
         renderers: renderers.clone(),

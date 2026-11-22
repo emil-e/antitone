@@ -19,10 +19,10 @@ fn editor() -> (Editor, source_loading::SourceLoader) {
     });
     let scheduler = source_loading::SourceLoader::new();
     e.source_services = Some(source::Services {
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
         device,
         queue,
         developments: scheduler.clone(),
-        renderers: Arc::default(),
     });
     (e, scheduler)
 }

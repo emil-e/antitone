@@ -9,7 +9,7 @@ mod adjustment_layers;
 #[test]
 fn calculation_retention_honors_the_full_settings_share_before_and_after_renderer_initialization() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let renderers = Arc::new(RendererCache::default());
+    let renderers = Arc::new(RendererCache::for_device(&device));
     let mut editor = Editor::state();
     editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
     editor.source_services = Some(crate::editor::source::Services {
@@ -24,6 +24,11 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_rendere
         gpu_bytes: 768 << 20,
     };
     editor.set_cache_limits(limits);
+    assert!(!renderers.is_initialized());
+    assert_eq!(
+        renderers.evaluation().cache_policy().generated_bytes,
+        limits.gpu_bytes
+    );
     let renderer = renderers.get(&device, &queue).unwrap();
     assert_eq!(
         renderer.evaluation.cache_policy().generated_bytes,
@@ -68,7 +73,7 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
 
     pollster::block_on(async {
         let (device, queue, _) = crate::gpu::test_support::render_context();
-        let renderers = Arc::new(RendererCache::default());
+        let renderers = Arc::new(RendererCache::for_device(&device));
         let mut editor = Editor::state();
         *editor.document = super::tests::fixture();
         editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), renderers.clone()));
@@ -190,7 +195,7 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(RendererCache::default());
+        let renderers = Arc::new(RendererCache::for_device(&device));
         let mut thumbnails = Thumbnails {
             gpu: Some((device.clone(), queue.clone(), renderers.clone())),
             ..Default::default()
@@ -383,7 +388,9 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             scan.area,
         )
         .unwrap();
-        let renderer = RendererCache::default().get(&device, &queue).unwrap();
+        let renderer = RendererCache::for_device(&device)
+            .get(&device, &queue)
+            .unwrap();
         let generation = AtomicU64::new(0);
         for angle in [-23.7_f64, 31.2] {
             let composition = Composition::with_crop(
@@ -523,7 +530,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(RendererCache::default());
+        let renderers = Arc::new(RendererCache::for_device(&device));
         renderers.prewarm(device.clone(), queue.clone());
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
         let paths = [
@@ -690,9 +697,9 @@ fn authored_project_relative_locator_develops_a_cold_thumbnail() {
             .await
             .unwrap();
         let mut thumbnails = Thumbnails::with_disk(
-            device,
+            device.clone(),
             queue,
-            Arc::new(RendererCache::default()),
+            Arc::new(RendererCache::for_device(&device)),
             Some(disk::DiskCache::at(directory.path().join("cache"))),
         );
         let key = tests::key(&document, id);

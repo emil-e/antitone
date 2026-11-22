@@ -59,6 +59,37 @@ fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_a
     assert!((actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6);
 }
 
+#[test]
+fn original_grid_measurement_does_not_require_display_initialization() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let mut scan = capture_scan(&editor).unwrap();
+    let mut services = editor.source_services.clone().unwrap();
+    let renderers = crate::renderer::RendererCache::for_device(&services.device);
+    let display_error = Error::Gpu("injected display initialization failure".into());
+    renderers.fail_initialization(display_error.clone());
+    services.renderers = Arc::new(renderers);
+
+    let coverage = Coverage::rectangle(Rect {
+        x: scan.area.x + 8,
+        y: scan.area.y + 8,
+        width: 32,
+        height: 32,
+    });
+    let expected = scan.reference_coverage(coverage).unwrap();
+    let samples = query::Samples::new(&services, &mut scan, None, coverage, &|| false).unwrap();
+    let actual = samples
+        .mean(samples.camera_light().unwrap(), &|| false)
+        .unwrap();
+    assert!((actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6);
+    assert_eq!(
+        services
+            .renderers
+            .get(&services.device, &services.queue)
+            .err(),
+        Some(display_error)
+    );
+}
+
 // Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
 // change the source beneath the captured measurement.
 #[cfg(target_os = "macos")]
@@ -73,7 +104,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let (ready, mut scan) = crate::editor::prepare_source(
             &renderers,
             &device,

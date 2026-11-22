@@ -26,7 +26,7 @@ fn editor() -> (Editor, crate::source::SourceLoader) {
     let scheduler = crate::source::SourceLoader::new();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
         device,
         queue,
     });

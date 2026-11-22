@@ -169,7 +169,7 @@ fn workload(
         );
         Ok(())
     });
-    let renderers = Arc::new(crate::renderer::RendererCache::default());
+    let renderers = Arc::new(crate::renderer::RendererCache::for_device(device));
     let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut editor = Editor::state();
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;

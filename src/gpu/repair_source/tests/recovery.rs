@@ -4,12 +4,7 @@ use super::*;
 fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poisoning_composition() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let renderer = pollster::block_on(GpuRenderer::new_with_cache_policy(
-        &device,
-        &queue,
-        evaluation::CachePolicy { generated_bytes: 0 },
-    ))
-    .unwrap();
+    let context = evaluation::Context::new(&device, evaluation::CachePolicy { generated_bytes: 0 });
     let scan = Scan::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         Some([1.; 4]),
@@ -18,7 +13,7 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     let recipe = recipe(&scan, InputSettings::Digital);
     let mut original = Source::from_recipe(
         prepared_field(&device, &scan),
-        &renderer,
+        &context,
         &queue,
         &scan,
         &recipe,
@@ -48,10 +43,10 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
     let image =
         crate::gpu::repairs::definition::compose(original.image().clone(), &[failed, healthy])
             .unwrap();
-    let mut repaired = Source::from_image(&renderer, &queue, image).unwrap();
+    let mut repaired = Source::from_image(&context, &queue, image).unwrap();
     assert_eq!(
         repaired.read(region, None, &|| false).unwrap().unwrap(),
         expected
     );
-    assert_eq!(renderer.evaluation().retained_bytes(), 0);
+    assert_eq!(context.retained_bytes(), 0);
 }

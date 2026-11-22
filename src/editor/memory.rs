@@ -41,12 +41,12 @@ pub(super) fn apply_budgets(
     budgets: CacheBudgets,
     sources: &crate::source::SourceCache,
     thumbnails: &mut super::Thumbnails,
-    renderers: Option<&crate::renderer::RendererCache>,
+    evaluation: Option<&crate::gpu::evaluation::Context>,
 ) {
     sources.set_budget(budgets.sources as u64);
     let presentation_bytes = thumbnails.apply_budgets(budgets);
-    if let Some(renderers) = renderers {
-        renderers.set_retention_budget(budgets.images.saturating_sub(presentation_bytes) as u64);
+    if let Some(evaluation) = evaluation {
+        evaluation.set_retention_limit(budgets.images.saturating_sub(presentation_bytes) as u64);
     }
 }
 
@@ -65,11 +65,11 @@ impl super::Editor {
     pub(super) fn apply_cache_budgets(&mut self) {
         let budgets = CacheBudgets::new(self.cache_limits(), self.memory_pressure);
         let sources = self.document.cache.clone();
-        let renderers = self
+        let evaluation = self
             .source_services
             .as_ref()
-            .map(|services| &*services.renderers);
-        apply_budgets(budgets, &sources, &mut self.document.thumbnails, renderers);
+            .map(super::source::Services::evaluation);
+        apply_budgets(budgets, &sources, &mut self.document.thumbnails, evaluation);
     }
 
     fn apply_memory_pressure(

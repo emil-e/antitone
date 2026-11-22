@@ -99,7 +99,7 @@ fn fixture() -> (
         device: device.clone(),
         queue: queue.clone(),
         developments: scheduler.clone(),
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
     });
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);

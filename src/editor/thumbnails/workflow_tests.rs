@@ -35,9 +35,9 @@ fn editor(
         editor.set_dmax(editor.document.state.project.dmax().map(DVec3::from_array));
 
         editor.document.thumbnails = (Thumbnails::with_developments(
-            device,
+            device.clone(),
             queue,
-            Arc::default(),
+            Arc::new(crate::renderer::RendererCache::for_device(&device)),
             Some(disk::DiskCache::at(disk.to_owned())),
             scheduler.clone(),
         ))

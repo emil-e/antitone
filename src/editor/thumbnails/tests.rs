@@ -1119,7 +1119,7 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let mut thumbnails = Thumbnails::with_disk(device, queue, renderers, None);
         let document = fixture();
         let id = document.project.order[0];
@@ -1691,7 +1691,11 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
         let mut editor = Editor::state();
         editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         *editor.document = fixture();
-        editor.document.thumbnails.gpu = Some((device.clone(), queue.clone(), Arc::default()));
+        editor.document.thumbnails.gpu = Some((
+            device.clone(),
+            queue.clone(),
+            Arc::new(crate::renderer::RendererCache::for_device(&device)),
+        ));
         editor.document.state.project.order.truncate(36);
         editor.set_cache_limits(cache_limits::CacheLimits {
             cpu_bytes: 0,
@@ -1881,7 +1885,7 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
             },
         )
         .unwrap();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::for_device(&device));
         let mut thumbnails =
             Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), Some(disk));
         let job = service_job(

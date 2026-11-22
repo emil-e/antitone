@@ -50,7 +50,7 @@ fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache
             capture: PhotographRequest::Recipe(recipe),
         };
         let services = editor.source_services.as_ref().unwrap();
-        services.renderers.set_retention_budget(128 << 20);
+        services.evaluation().set_retention_limit(128 << 20);
         let renderer = services
             .renderers
             .get(&services.device, &services.queue)

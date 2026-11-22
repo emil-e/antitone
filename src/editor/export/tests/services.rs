@@ -34,7 +34,7 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
             }
             Ok(())
         });
-    let cache = Arc::new(crate::renderer::RendererCache::default());
+    let cache = Arc::new(crate::renderer::RendererCache::for_device(&services.device));
     let injected = crate::Error::Gpu("controlled cached renderer initialization failure".into());
     cache.fail_initialization(injected.clone());
     services.renderers = cache;

@@ -295,7 +295,8 @@ impl Editor {
 
     pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
         let cache_limits = cache_limits::Hardware::current(Some(device)).defaults();
-        let renderers = Arc::new(crate::renderer::RendererCache::default());
+        let evaluation = crate::gpu::evaluation::Context::new(device, Default::default());
+        let renderers = Arc::new(crate::renderer::RendererCache::new(evaluation));
         renderers.prewarm(device.clone(), queue.clone());
         let developments = source_loading::SourceLoader::with_gpu(device, queue);
         let thumbnails = Thumbnails::new(

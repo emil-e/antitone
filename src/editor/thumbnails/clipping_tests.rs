@@ -194,8 +194,11 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     let mut editor = crate::editor::tests::fixture();
                     editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
-                    editor.document.thumbnails.gpu =
-                        Some((device.clone(), queue.clone(), Arc::default()));
+                    editor.document.thumbnails.gpu = Some((
+                        device.clone(),
+                        queue.clone(),
+                        Arc::new(crate::renderer::RendererCache::for_device(&device)),
+                    ));
                     if let Some(contrast) = contrast {
                         for source in &mut editor.document.state.project.sources {
                             source.adjustment_layers.as_mut().unwrap().layers[0]

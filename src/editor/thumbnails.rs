@@ -593,8 +593,11 @@ impl Thumbnails {
     #[cfg(test)]
     fn apply_test_budgets(&mut self, budgets: memory::CacheBudgets) {
         let sources = self.sources.clone();
-        let renderers = self.gpu.as_ref().map(|(_, _, renderers)| renderers.clone());
-        memory::apply_budgets(budgets, &sources, self, renderers.as_deref());
+        let evaluation = self
+            .gpu
+            .as_ref()
+            .map(|(_, _, renderers)| renderers.evaluation().clone());
+        memory::apply_budgets(budgets, &sources, self, evaluation.as_ref());
     }
 
     pub(super) fn apply_budgets(&mut self, budgets: memory::CacheBudgets) -> usize {

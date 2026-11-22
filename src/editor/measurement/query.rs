@@ -9,7 +9,6 @@ use crate::gpu::evaluation::Tiling;
 use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::photograph::PhotographGraph;
-use crate::renderer::GpuRenderer;
 use crate::scan::Scan;
 use glam::DVec3;
 use std::sync::Arc;
@@ -20,9 +19,9 @@ pub(in crate::editor) const FORWARD_RESIDUAL_FLOOR: f64 = 16. * f32::EPSILON as 
 mod tests;
 
 pub(in crate::editor) struct Samples<'a> {
-    services: &'a crate::editor::source::Services,
+    context: &'a evaluation::Context,
+    queue: &'a crate::gpu::submission::Queue,
     scan: &'a Scan,
-    renderer: Arc<GpuRenderer>,
     pub(in crate::editor) source: Value,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
@@ -42,13 +41,12 @@ impl<'a> Samples<'a> {
 
         coverage.bounds(scan.area)?;
 
-        let renderer = services.renderers.get(&services.device, &services.queue)?;
         let source = evaluation::camera_source(scan)?;
 
         Ok(Self {
-            services,
+            context: services.evaluation(),
+            queue: &services.queue,
             scan,
-            renderer,
             source,
             field,
             coverage,
@@ -61,7 +59,7 @@ impl<'a> Samples<'a> {
         cancelled: &dyn Fn() -> bool,
         mut consume: impl FnMut([u32; 2], [f32; 4], f64) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let evaluation = self.renderer.evaluation().request(
+        let evaluation = self.context.request(
             image,
             Region {
                 bounds: self.coverage.bounds(self.scan.area)?.try_into()?,
@@ -70,11 +68,9 @@ impl<'a> Samples<'a> {
             Tiling { tile: [512, 128] },
         )?;
 
-        let result = self.renderer.evaluation().read(
-            &self.services.queue,
-            &evaluation,
-            cancelled,
-            |region, pixels| {
+        let result = self
+            .context
+            .read(self.queue, &evaluation, cancelled, |region, pixels| {
                 let region = region.source()?;
                 for (index, pixel) in pixels.iter().enumerate() {
                     let point = [
@@ -87,8 +83,7 @@ impl<'a> Samples<'a> {
                     }
                 }
                 Ok(())
-            },
-        )?;
+            })?;
         result.ok_or(Error::Cancelled)?;
 
         Ok(())

@@ -6,7 +6,7 @@ use crate::processing::Calibration;
 #[test]
 fn editor_background_prewarm_initializes_the_shared_renderer() {
     let (device, queue, _) = super::tests::context();
-    let cache = Arc::new(crate::renderer::RendererCache::default());
+    let cache = Arc::new(crate::renderer::RendererCache::for_device(&device));
     cache.prewarm(device.clone(), queue.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !cache.is_initialized() && std::time::Instant::now() < deadline {

@@ -231,7 +231,7 @@ fn a_real_devices_lut_capacity_does_not_limit_saved_json() {
     loader.close_and_wait().unwrap();
     editor.source_services = Some(super::super::source::Services {
         developments: loader,
-        renderers: Arc::default(),
+        renderers: Arc::new(crate::renderer::RendererCache::for_device(&device)),
         device,
         queue,
     });

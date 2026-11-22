@@ -84,7 +84,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         let recipe = recipe(&scan, input);
         let mut source = Source::from_recipe(
             prepared_field(&device, &scan),
-            &renderer,
+            renderer.evaluation(),
             &queue,
             &scan,
             &recipe,
@@ -201,7 +201,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
         &Default::default(),
     )
     .unwrap();
-    let mut source = Source::from_image(&renderer, &queue, graph.neutral).unwrap();
+    let mut source = Source::from_image(renderer.evaluation(), &queue, graph.neutral).unwrap();
     assert_eq!(
         source
             .read(region, Some(&[false; 4]), &|| false)
@@ -238,7 +238,7 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
     });
     let mut source = Source::from_recipe(
         prepared_field(&device, &scan),
-        &renderer,
+        renderer.evaluation(),
         &queue,
         &scan,
         &recipe(&scan, input),
@@ -284,7 +284,7 @@ fn repair_inputs_accept_developed_zero_and_native_white() {
     let recipe = recipe(&scan, InputSettings::Digital);
     let mut source = Source::from_recipe(
         prepared_field(&device, &scan),
-        &renderer,
+        renderer.evaluation(),
         &queue,
         &scan,
         &recipe,
@@ -338,7 +338,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     let original = graph.interpreted().unwrap().unrepaired;
     let photograph = graph.photograph(&device.limits()).unwrap();
     let read = |image| {
-        Source::from_image(&renderer, &queue, image)
+        Source::from_image(renderer.evaluation(), &queue, image)
             .unwrap()
             .read(region, None, &|| false)
             .unwrap()
@@ -346,7 +346,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     };
     let mut search = Source::from_recipe(
         prepared_field(&device, &scan),
-        &renderer,
+        renderer.evaluation(),
         &queue,
         &scan,
         &recipe,
@@ -382,7 +382,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     let edge = SourceRegion::from([scan.area.x, scan.area.y, 3, 3]);
     let values = Source::from_recipe(
         prepared_field(&device, &scan),
-        &renderer,
+        renderer.evaluation(),
         &queue,
         &scan,
         &recipe,
@@ -402,7 +402,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     .photograph(&device.limits())
     .unwrap()
     .neutral;
-    let fallback = Source::from_image(&renderer, &queue, repaired)
+    let fallback = Source::from_image(renderer.evaluation(), &queue, repaired)
         .unwrap()
         .read(edge, None, &|| false)
         .unwrap()

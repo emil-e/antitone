@@ -95,9 +95,14 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
         .flat_field()
         .cloned()
         .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let reader =
-        crate::gpu::repair_source::Source::from_recipe(field, &renderer, &queue, &scan, &repaired)
-            .unwrap();
+    let reader = crate::gpu::repair_source::Source::from_recipe(
+        field,
+        renderer.evaluation(),
+        &queue,
+        &scan,
+        &repaired,
+    )
+    .unwrap();
     assert_eq!(
         reader
             .repair_succeeded(&repaired.repairs[0], &|| false)
