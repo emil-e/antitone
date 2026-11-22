@@ -158,15 +158,12 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
         let plan = {
-            let grain = crate::gpu::photograph::authoring::Grain {
-                parameters: parameters.grain(),
-                seed: 17,
-            };
+            let grain = parameters.grain();
             crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
                 if let Some(output) = output {
                     image = output.compose(image)?;
                 }
-                image = grain.compose(image)?;
+                image = grain.compose(image, 17);
                 Ok(image)
             })
         };

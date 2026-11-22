@@ -37,14 +37,7 @@ fn candidate(
 }
 
 fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
-    view.product
-        .as_ref()
-        .unwrap()
-        .commands
-        .as_ref()
-        .unwrap()
-        .cached_grain_field()
-        .unwrap()
+    cached_field(view).unwrap()
 }
 
 #[test]
@@ -224,29 +217,12 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             None,
         );
         assert!(
-            cold_zero
-                .product
-                .as_ref()
-                .unwrap()
-                .commands
-                .as_ref()
-                .unwrap()
-                .cached_grain_field()
-                .is_none(),
+            cached_field(&cold_zero).is_none(),
             "omitted grain does not allocate a field; warm reuse may retain an existing value"
         );
         drop(cold_zero);
         zero.ensure_submitted(&device, &queue, &egui::Context::default());
-        assert!(
-            zero.product
-                .as_ref()
-                .unwrap()
-                .commands
-                .as_ref()
-                .unwrap()
-                .cached_grain_field()
-                .is_none()
-        );
+        assert!(cached_field(&zero).is_none());
         assert!(
             !field(&base).ready(),
             "zero Amount must not compute or mark an uninitialized field ready"
@@ -485,14 +461,7 @@ fn grain_retention_limits_and_pressure_preserve_rendered_pixels() {
                     17,
                 );
                 assert!(
-                    view.product
-                        .as_ref()
-                        .unwrap()
-                        .commands
-                        .as_ref()
-                        .unwrap()
-                        .cached_grain_field()
-                        .is_some(),
+                    cached_field(&view).is_some(),
                     "a live recording owns its required field independently of optional retention"
                 );
                 view.ensure_submitted(&device, &queue, &egui::Context::default());

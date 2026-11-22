@@ -504,7 +504,7 @@ fn extreme_grading_stays_finite_through_actual_grain_generation_and_application(
         amplitude: 0.2,
         colour: 1.,
     };
-    let root = crate::gpu::evaluation::grain(base, model, 17).unwrap();
+    let root = model.compose(base, 17);
     let mut outputs = Vec::new();
     for value in [0.18, 1e35] {
         let input = buffer(&device, &vec![[value, value, value, 7.]; 64 * 64]);

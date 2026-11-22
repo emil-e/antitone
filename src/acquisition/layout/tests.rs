@@ -7,13 +7,10 @@ use crate::{
 fn stages(sigma: f64, amount: f64, seed: u64) -> Assembly {
     {
         let mtf = crate::image_mtf::ImageMtfParameters { sigma };
-        let grain = crate::gpu::photograph::authoring::Grain {
-            parameters: GrainParameters {
-                grain_size: 2.,
-                amplitude: amount,
-                colour: 0.5,
-            },
-            seed,
+        let grain = GrainParameters {
+            grain_size: 2.,
+            amplitude: amount,
+            colour: 0.5,
         };
         let pitch = [Some(mtf.sigma / 0.6)]
             .into_iter()
@@ -24,7 +21,7 @@ fn stages(sigma: f64, amount: f64, seed: u64) -> Assembly {
             if let Some(output) = output {
                 image = output.compose(image)?;
             }
-            image = grain.compose(image)?;
+            image = grain.compose(image, seed);
             Ok(image)
         })
         .with_view_pitch(pitch)

@@ -544,7 +544,7 @@ impl Assembly {
             image = output.compose(image)?;
         }
         if let Some(film) = self.grain.filter(|film| film.amplitude > 0.) {
-            image = crate::gpu::evaluation::grain(image, film.grain(), self.seed)?;
+            image = film.grain().compose(image, self.seed);
         }
         #[cfg(test)]
         let image = super::authoring::suffix(image)?;
