@@ -82,7 +82,7 @@ fn supplied_accelerator_does_not_change_prebalanced_non_cfa_development() {
             .unwrap()
     });
     let accelerator =
-        std::sync::Arc::new(antitone::gpu::demosaic::Demosaicer::new(&device, &queue, 0));
+        std::sync::Arc::new(antitone::raw::demosaic::Demosaicer::new(&device, &queue, 0));
     let file = sony_ycc::source();
     for wb in [[1.; 4], sony_ycc::WB, [4096., 1024., 1536., 65536.]] {
         let expected = Scan::open(file.path(), Some(wb)).unwrap();

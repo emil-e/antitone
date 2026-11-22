@@ -75,7 +75,7 @@ fn open(file: &fixture_path::FixturePath) -> Scan {
         let (device, queue) = gpu_context();
         let mut raw = antitone::raw::RawFile::open(file.path()).unwrap();
         raw.set_demosaicer(Some(std::sync::Arc::new(
-            antitone::gpu::demosaic::Demosaicer::new(device, queue, 4 << 30),
+            antitone::raw::demosaic::Demosaicer::new(device, queue, 4 << 30),
         )));
         Scan::from_raw(raw, Some([1.; 4])).unwrap()
     };

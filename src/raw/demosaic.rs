@@ -1,9 +1,11 @@
 use super::{NativeView, RawFile, antitone_raw_develop};
-use crate::gpu::demosaic::Demosaicer;
 use std::{
     ffi::{c_char, c_int, c_void},
     panic::{AssertUnwindSafe, catch_unwind},
 };
+
+mod gpu;
+pub use gpu::Demosaicer;
 
 #[repr(C)]
 struct NativeDemosaicer {

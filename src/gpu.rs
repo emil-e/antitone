@@ -3,8 +3,6 @@
 #[cfg(any(feature = "render", feature = "project"))]
 pub(crate) mod aces;
 pub(crate) mod allocation;
-#[cfg(feature = "raw")]
-pub mod demosaic;
 #[cfg(feature = "render")]
 pub mod drt;
 pub mod evaluation;
