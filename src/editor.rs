@@ -90,13 +90,12 @@ use correction::Correction;
 #[cfg(test)]
 use flat::FlatEdit;
 mod auto_crop;
-mod crop_editor;
-use crop_editor::CropEdit;
 #[cfg(test)]
 mod cache_preferences_tests;
 mod calibration;
 mod canvas;
 mod canvas_view;
+mod crop_editor;
 pub(crate) mod display;
 mod export;
 mod frame;
