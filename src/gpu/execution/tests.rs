@@ -188,6 +188,71 @@ fn common_area_averages_signed_hdr_samples_without_clipping() {
 }
 
 #[test]
+fn straightened_sdr_block_keeps_a_nearly_zero_channel_encodable() {
+    struct Impulse(evaluation::Domain);
+
+    impl evaluation::Source for Impulse {
+        fn domain(&self) -> evaluation::Domain {
+            self.0
+        }
+
+        fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            Ok((region.y..region.bottom())
+                .flat_map(|y| (region.x..region.right()).map(move |x| [x, y]))
+                .map(|position| {
+                    let blue = if position == [5014, 809] { 1.6e-5 } else { 0. };
+                    [0.001, 0.002, blue, 0.]
+                })
+                .collect())
+        }
+    }
+
+    let (_, queue, renderer) = crate::gpu::test_support::render_context();
+    let area = SourceRegion::from([12, 12, 8640, 5760]);
+    let composition = Composition::with_crop(
+        area,
+        RollOrientation {
+            turns: QuarterTurns::One,
+            ..Default::default()
+        },
+        PhotoOrientation::default(),
+        Some(Crop {
+            center: [4332., 2892.],
+            size: [8128, 5248],
+            angle: 0.015,
+        }),
+    )
+    .unwrap();
+    let definition = evaluation::source(std::sync::Arc::new(Impulse(evaluation::Domain {
+        bounds: Some([12, 12, 8640, 5760].into()),
+        grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+    })));
+
+    execute(
+        renderer.evaluation(),
+        &queue,
+        Request {
+            definition,
+            composition,
+            encoding: SampleEncoding::Rgb16(OutputTarget::Srgb),
+        },
+        |render, complete| {
+            let OutputBlock::Rgb16 { words, .. } = render([4608; 2], TILE)? else {
+                panic!("expected RGB16 block");
+            };
+            let codes = rgb16::decode(&words)?;
+            // The footprint at (4715, 4715) only grazes the blue impulse, so its
+            // blue mean rounds to zero. Other footprints must still show the impulse.
+            assert_eq!(codes[107 * TILE[0] as usize + 107], [847, 1693, 0]);
+            assert!(codes.iter().any(|pixel| pixel[2] > 0));
+            complete()
+        },
+        || Ok(()),
+    )
+    .unwrap();
+}
+
+#[test]
 fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origins_and_seams() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
