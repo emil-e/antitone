@@ -552,6 +552,87 @@ fn inline_rename_commits_before_selection_and_escape_preserves_the_accepted_name
 }
 
 #[test]
+fn starting_crop_commits_layer_rename_through_ordinary_focus_loss() {
+    workflow::calibrated_workflow(|mut harness, _, _directory| {
+        let ids = harness.update(install_layers);
+        harness.step();
+        show_layers(&mut harness);
+        begin_rename(&mut harness, "Sky");
+        harness.event(egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.event(egui::Event::Text("Renamed sky".into()));
+        harness.step();
+        let before = harness.read(|editor| editor.document.state.project.clone());
+        assert_eq!(
+            harness.read(|editor| layers(editor).layers[0].name.clone()),
+            "Sky"
+        );
+
+        click(&mut harness, "Crop & straighten");
+        harness.read(|editor| {
+            assert!(editor.cropping());
+            assert_eq!(
+                editor.adjustment_layer_target(),
+                super::super::adjustment_layers::Target::Layer(ids[0]),
+            );
+            let mut expected = before;
+            let source = expected
+                .source_mut(editor.document.visit.current_source.unwrap())
+                .unwrap();
+            source.adjustment_layers.as_mut().unwrap().layers[0].name = "Renamed sky".into();
+            assert_eq!(editor.document.state.project, expected);
+        });
+    });
+}
+
+#[test]
+fn dust_consumes_delete_before_the_retained_layer_selection() {
+    let toggle_dust = |harness: &mut Harness<'_, Editor>| {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        harness.step();
+        harness.try_run_realtime().unwrap();
+    };
+    workflow::calibrated_workflow(|mut harness, _, _directory| {
+        harness.update(install_layers);
+        harness.step();
+        show_layers(&mut harness);
+        click(&mut harness, "Sky");
+        let before = harness.read(|editor| editor.document.state.project.clone());
+
+        toggle_dust(&mut harness);
+        harness.read(|editor| {
+            assert!(editor.dusting());
+            assert!(editor.adjustment_layer_owns_delete());
+        });
+        harness.key_press(egui::Key::Delete);
+        harness.step();
+        harness.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.document.state.project, before);
+        });
+
+        toggle_dust(&mut harness);
+        harness.read(|editor| assert!(!editor.dusting()));
+        harness.key_press(egui::Key::Delete);
+        harness.step();
+        harness.get_by_label("Delete layer");
+        click(&mut harness, "Cancel");
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+    });
+}
+
+#[test]
 fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(install_layers);

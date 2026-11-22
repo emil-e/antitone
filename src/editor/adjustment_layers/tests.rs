@@ -376,7 +376,39 @@ fn selection_makes_itself_valid_after_arbitrary_stack_changes_without_resurrecti
 }
 
 #[test]
-fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade() {
+fn independent_tool_start_preserves_layer_workspace() {
+    pollster::block_on(async {
+        for dust in [false, true] {
+            let (mut editor, _, _) = processing::tests::fixture().await;
+            let id = ids(&editor)[1];
+            let source = editor.document.visit.current_source.unwrap();
+            editor
+                .apply_adjustment_layer_action(Action::RenameStart(id), &UiContext::render_only());
+            let rename = (source, id, "Private layer name".to_owned());
+            editor.document.visit.adjustment_layers.rename = Some(rename.clone());
+            editor.document.visit.adjustment_layers.show_coverage = true;
+            let before = editor.document.state.project.clone();
+            assert!(editor.adjustment_layer_owns_delete());
+
+            if dust {
+                editor.begin_dust_cleanup();
+                assert!(editor.dusting());
+            } else {
+                editor.begin_crop();
+                assert!(editor.cropping());
+            }
+
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
+            assert!(editor.adjustment_layer_owns_delete());
+            assert_eq!(editor.document.visit.adjustment_layers.rename, Some(rename));
+            assert!(editor.document.visit.adjustment_layers.show_coverage);
+            assert_eq!(editor.document.state.project, before);
+        }
+    });
+}
+
+#[test]
+fn starting_crop_preserves_the_selected_layer_and_accepted_grade() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
 
@@ -390,7 +422,8 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
                 editor.photo_settings(),
             )
             .unwrap();
-        editor.finish_adjustment_layer_interaction();
+        editor.begin_crop();
+        assert!(editor.cropping());
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
@@ -464,7 +497,6 @@ fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage(
         let key = editor.order_drag(id).unwrap().key;
         editor.adjustment_layer_order_input(Some(id), None, false);
         editor.tab = 0;
-        editor.finish_adjustment_layer_interaction();
         let before = editor.document.state.project.clone();
         editor.apply_adjustment_layer_action(Action::Enable(id, false), &UiContext::render_only());
         editor.adjustment_layer_order_input(None, Some((key, 2)), true);
@@ -481,7 +513,7 @@ fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage(
 }
 
 #[test]
-fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target() {
+fn ending_a_roll_pick_preserves_the_selected_layer() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
@@ -489,7 +521,6 @@ fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target
         editor.preview_picker(PickerCase::Dmin);
         assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display()));
         let before = editor.document.state.project.clone();
-        editor.finish_adjustment_layer_interaction();
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
         assert_eq!(editor.tab, 1);
