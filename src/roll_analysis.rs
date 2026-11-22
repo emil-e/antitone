@@ -13,6 +13,8 @@ use crate::{
 
 mod gamma;
 mod gi;
+#[cfg(feature = "editor")]
+pub(crate) mod gpu;
 mod grayness;
 mod model;
 

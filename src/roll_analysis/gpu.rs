@@ -1,7 +1,7 @@
-//! Shared pointwise photographic response over the captured camera samples used by roll fitting.
+//! GPU sampling and photographic response for roll analysis.
 
-use super::evaluation;
-use crate::{Error, processing::NegativeInput, roll_analysis::ForwardModel};
+use super::ForwardModel;
+use crate::{Error, gpu::evaluation, processing::NegativeInput};
 use glam::DVec3;
 use std::{
     cell::{Cell, RefCell},

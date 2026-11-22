@@ -1,7 +1,8 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::{
-    gpu::{analysis::CameraSampler, drt, evaluation, photograph::camera_response},
+    gpu::{drt, evaluation, photograph::camera_response},
     rendering::OutputTarget,
+    roll_analysis::gpu::{CameraSampler, ResponseModel},
 };
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
@@ -263,7 +264,7 @@ impl Fit {
         &mut self,
         index: usize,
         active: Rect,
-        sampler: &crate::gpu::analysis::CameraSampler<'_>,
+        sampler: &CameraSampler<'_>,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         if let Some(picture) = self.picture {
@@ -378,7 +379,7 @@ impl Fit {
                 picture: &frame.picture.pixels,
             })
             .collect();
-        let mut model = crate::gpu::analysis::ResponseModel::new(&self.evaluation, &self.queue);
+        let mut model = ResponseModel::new(&self.evaluation, &self.queue);
         let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
             &frames,
             floor,
