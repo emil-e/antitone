@@ -28,10 +28,8 @@ pub(super) struct AdjustmentLayerEditor {
 
     pub(super) show_coverage: bool,
     panel_collapsed: bool,
-    pub(super) reveal_controls: bool,
     reveal: bool,
     rename_focus: bool,
-    creation: Option<bool>,
 }
 
 impl AdjustmentLayerEditor {
@@ -171,15 +169,6 @@ impl Editor {
     pub(super) fn reveal_adjustment_layers(&mut self) {
         self.tab = 1;
         self.document.visit.adjustment_layers.reveal = true;
-    }
-
-    pub(super) fn finish_adjustment_layer_interaction(&mut self) {
-        self.finish_mask(false);
-        self.document.visit.adjustment_layers.rename = None;
-        self.document.visit.adjustment_layers.owns_delete = false;
-        self.document.visit.layer_order_drag = None;
-        self.document.visit.adjustment_layers.creation = None;
-        self.document.visit.adjustment_layers.reveal_controls = false;
     }
 
     fn adjustment_layer_actions_available(&self) -> bool {
@@ -479,12 +468,8 @@ impl Editor {
         mut photo: AdjustmentLayerSettings,
         editable: bool,
         can_pick: bool,
-        reveal: bool,
     ) -> bool {
         ui.add_enabled_ui(editable, |ui| {
-            if reveal {
-                ui.scroll_to_cursor(Some(egui::Align::Min));
-            }
             let (_, action) = ui::section(
                 ui,
                 "photo-exposure",
@@ -721,6 +706,7 @@ impl Editor {
         let mut action = None;
         let mut rename_finish = None;
         let mut invert_action = None;
+        let mut creation = None;
 
         let mut start_drag = None;
         let mut drop = None;
@@ -743,7 +729,7 @@ impl Editor {
                 },
                 ui::SectionLead::First,
                 |ui| {
-                    let (overlay, creation) = ui.horizontal(|ui| {
+                    let (overlay, requested_creation) = ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let mut overlay = None;
                             let mut creation = None;
@@ -802,9 +788,7 @@ impl Editor {
                     if overlay.is_some() {
                         action = overlay;
                     }
-                    if creation.is_some() {
-                        self.document.visit.adjustment_layers.creation = creation;
-                    }
+                    creation = requested_creation;
                     ui.add_enabled_ui(available, |ui| {
                         if records.is_empty() {
                             ui.weak("Add a layer to adjust this photo.");
@@ -984,10 +968,7 @@ impl Editor {
         }).inner;
         self.document.visit.adjustment_layers.panel_collapsed = !panel_expanded;
 
-        if action.is_some()
-            || rename_finish.is_some()
-            || self.document.visit.adjustment_layers.creation.is_some()
-            || start_drag.is_some()
+        if action.is_some() || rename_finish.is_some() || creation.is_some() || start_drag.is_some()
         {
             ui.ctx().memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
@@ -1000,7 +981,6 @@ impl Editor {
                 .is_some_and(|record| record.adjustment.enabled && record.adjustment.strength > 0.)
             && self.adjustment_layer_actions_available();
 
-        let reveal = std::mem::take(&mut self.document.visit.adjustment_layers.reveal_controls);
         let pick = ui
             .push_id(
                 ("photo-input", self.document.visit.current_source, target),
@@ -1015,7 +995,6 @@ impl Editor {
                             && selected.is_some_and(|record| {
                                 record.adjustment.enabled && record.adjustment.strength > 0.
                             }),
-                        reveal,
                     )
                 },
             )
@@ -1046,7 +1025,7 @@ impl Editor {
             ui.ctx().request_repaint();
         }
 
-        if let Some(radial) = self.document.visit.adjustment_layers.creation.take() {
+        if let Some(radial) = creation {
             if radial {
                 self.begin_radial_mask(None);
             } else {

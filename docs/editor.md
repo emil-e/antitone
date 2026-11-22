@@ -145,7 +145,7 @@ The creation icons and each gradient row's pencil enter the same photo-owned [ma
 
 The tool reads accepted geometry from the layer and retains only an unfinished gesture and its original target mask. Preview and release use current layer values; release changes only the target geometry, preserving later grading. Escape discards an unfinished refinement; Escape while idle or **Done** ends editing without undoing accepted changes. Changing the selected layer, leaving the photo or replacing the tool retires unfinished geometry. Handles and coverage follow tool activation, independently of Layers expansion or value adjustment. Drags outside handles navigate.
 
-Rows drag to reorder with an insertion line, double-click renames inline, and Delete/Backspace on the Photo stage removes the selected layer through a stale-safe confirmation.
+Rows drag to reorder with an insertion line. Double-click starts inline rename; Enter or focus loss commits it, and Escape cancels. Layers retains its selection and inline text independently of image-tool replacement. Delete/Backspace on the Photo stage requests stale-safe layer deletion, with text editing and active-tool shortcuts taking precedence.
 
 ## A stable working view while grading
 

@@ -162,15 +162,14 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         // Starting a gradient replaces the batch without accepting either draft.
         e.reveal_adjustment_layers();
         assert!(!e.masking());
-        assert!(!e.adjustment_layer_owns_delete());
+        assert!(e.adjustment_layer_owns_delete());
         e.begin_linear_mask(None);
         e.begin_radial_mask(None);
-        assert!(!e.adjustment_layer_owns_delete());
+        assert!(e.adjustment_layer_owns_delete());
         assert!(e.creating_mask());
         assert!(!e.document.auto_crop.reviewing());
         assert!(!e.dialogs.is_open());
         assert_eq!(e.document.state.project, before);
-        e.finish_adjustment_layer_interaction();
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
 
         if apply {
