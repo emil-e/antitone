@@ -40,9 +40,9 @@ Undo/Redo restores accepted interpretation settings and correction. The photo vi
 
 ### Gamma colour pivot
 
-The pin beside gamma's neutral picker opens the ordinary area picker. Apply captures the chosen colour; Cancel preserves an existing anchor. The pin is outlined while choosing and filled when locked; clicking it cancels selection or releases the lock. Capture and release are transient, outside dirty state and history. The document owns the chosen value until release, replacement or document departure; browsing and later project edits leave it in place.
+**Hold midtone colour** is on by default for a calibrated negative. The pin toggles compensation for future Gamma & Balance edits without changing the grade or history. Each gesture captures the selected photo when it first changes gamma; browsing does not change the grade or retarget a pending edit.
 
-Manual gamma controls display their proposal while the shared GPU response runs off-thread. The photograph retains its accepted gamma/WB pair until the document-owned pivot publishes its result in a short mutation, provided the calculation's input settings and Roll WB still match. Its calculation survives browsing and tabs without reserving editing authority; unrelated accepted changes remain intact. Continuous adjustments share one history entry. Replay restores accepted values without compensating again. [Processing](processing.md#picked-colour-gamma-pivot) owns the measurement and numerical model.
+Manual gamma controls display their proposal while the shared GPU response runs off-thread. The photograph retains its accepted gamma/WB pair until the document-owned pivot publishes its result in a short mutation, provided the calculation's input settings and Roll WB still match. Its calculation survives browsing and tabs without reserving editing authority; unrelated accepted changes remain intact. Continuous adjustments share one history entry. Replay restores accepted values without compensating again. [Processing](processing.md#gamma-colour-pivot) owns the measurement and numerical model.
 
 ### Auto-crop is an explicit accepted edit
 

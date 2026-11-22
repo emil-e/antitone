@@ -773,6 +773,52 @@ fn failed_save_and_unknown_schema_never_damage_the_previous_document() {
 }
 
 #[test]
+fn extended_white_balance_roundtrips_only_at_roll_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut project, source, _) = fixture(dir.path());
+    let extended = Balance {
+        warmth: -1.25,
+        tint: 1.5,
+    };
+    project.roll.wb = extended;
+    let saved = serde_json::to_value(&project).unwrap();
+    assert_eq!(
+        serde_json::from_value::<Project>(saved.clone()).unwrap(),
+        project
+    );
+
+    let mut invalid = saved;
+    invalid["roll"]["wb"]["warmth"] = (-1.51).into();
+    assert!(serde_json::from_value::<Project>(invalid).is_err());
+    project
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .wb = extended;
+    assert!(serde_json::to_value(&project).is_err());
+    project
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .wb = Balance::default();
+    let InputSettings::Negative { balance, .. } = &mut project.input else {
+        panic!("negative fixture")
+    };
+    *balance = extended;
+    assert!(serde_json::to_value(&project).is_err());
+}
+
+#[test]
 fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serialization() {
     let dir = tempfile::tempdir().unwrap();
     let (project, source_id, _) = fixture(dir.path());

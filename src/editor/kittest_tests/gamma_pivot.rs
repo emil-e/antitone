@@ -5,13 +5,6 @@ use super::*;
 fn gamma_calculation_preserves_independent_control_updates_with_an_unrenderable_layer() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
             .scroll_to_me();
         h.try_run_realtime().unwrap();
@@ -106,109 +99,95 @@ fn gamma_calculation_preserves_independent_control_updates_with_an_unrenderable_
     });
 }
 
-#[test]
-fn the_picked_value_stays_locked_and_usable_after_response_history_and_photo_removal() {
-    tools::calibrated_harness(|mut h| {
-        stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
-        let role = egui::accesskit::Role::Button;
-        scroll_to_control(&mut h, role, "Toe & shoulder");
-        h.get_by_role_and_label(role, "Toe & shoulder").click();
-        h.step();
-        enter_numeric(&mut h, "Toe", "1.2");
-        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
-        for redo in [false, true] {
-            let modifiers = if redo {
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
-            } else {
-                egui::Modifiers::COMMAND
-            };
-            h.key_press_modifiers(modifiers, egui::Key::Z);
-            h.step();
-            wait_for(&mut h, |editor| !editor.interaction_blocked());
-            h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
-        }
-        h.get_by_label("patches.dng").click_secondary();
-        h.step();
-        h.step();
-        h.get_by_label("Remove selected photos…").click();
-        wait_dialog_layout(&mut h);
-        h.get_by_label("Remove photos").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.project.order.is_empty() && !editor.interaction_blocked()
-        });
-        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
-        let before = h.read(|editor| editor.document.project.roll.wb);
-        enter_numeric(&mut h, "Gamma", "0.9");
-        wait_gamma(&mut h);
-        h.read(|editor| {
-            assert!(editor.document.gamma_pivot.locked());
-            assert_eq!(editor.document.project.input.gamma(), 0.9);
-            assert_ne!(editor.document.project.roll.wb, before);
-        });
-        scroll_to_control(&mut h, role, "Gamma colour pivot");
-        assert!(
-            !h.get_by_role_and_label(role, "Gamma colour pivot")
-                .accesskit_node()
-                .is_disabled()
-        );
-        save_capture(&h.render().unwrap(), "gamma-pivot-value-without-photo");
-        let accepted = h.read(|editor| editor.document.project.clone());
-        h.get_by_role_and_label(role, "Gamma colour pivot").click();
-        h.step();
-        h.read(|editor| {
-            assert!(!editor.document.gamma_pivot.locked());
-            assert_eq!(editor.document.project, accepted);
-        });
-    });
-}
-
-fn pin(h: &mut Harness<'_, Editor>) {
+fn click_pin(h: &mut Harness<'_, Editor>) {
     let role = egui::accesskit::Role::Button;
-    h.get_by_role_and_label(role, "Gamma colour pivot")
-        .scroll_to_me();
-    h.try_run_realtime().unwrap();
-    let button = h.get_by_role_and_label(role, "Gamma colour pivot");
+    scroll_to_control(h, role, "Hold midtone colour");
+    let button = h.get_by_role_and_label(role, "Hold midtone colour");
     assert!(!button.accesskit_node().is_disabled());
     button.click();
     h.step();
 }
 
-fn selected_patch(h: &mut Harness<'_, Editor>) {
-    wait_for(h, |editor| {
-        editor.document.visit.picker.display() == Some(crate::editor::gamma_pivot::DISPLAY)
-    });
-    draw_region(
-        h,
-        Rect {
+#[test]
+fn extended_roll_wb_is_editable_and_reaches_the_rendered_photo() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Roll");
+        let patch = Rect {
             x: 216,
             y: 88,
             width: 16,
             height: 16,
-        },
-    );
-}
-
-fn held_roll_colour(h: &Harness<'_, Editor>) -> DVec3 {
-    let mut scan = h.read(|editor| crate::editor::measurement::capture_scan(editor).unwrap());
-    scan_roll_colour(h, &mut scan)
-}
-
-fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
-    h.read(|editor| {
-        let coverage = crate::coverage::Coverage::rectangle(Rect {
-            x: 216,
-            y: 88,
-            width: 16,
-            height: 16,
+        };
+        let before = roll_colour(&h, patch);
+        h.get_by_label("White balance wheel").scroll_to_me();
+        h.try_run_realtime().unwrap();
+        let role = egui::accesskit::Role::SpinButton;
+        let number = h
+            .get_all_by_role_and_label(role, "Warmth")
+            .find(|node| node.accesskit_node().min_numeric_value() == Some(-1.5))
+            .expect("expanded Roll Warmth editor");
+        number.click();
+        h.step();
+        h.event(egui::Event::Text("-1.25".into()));
+        h.key_press(egui::Key::Enter);
+        h.step();
+        h.read(|editor| {
+            assert_eq!(
+                editor.document.state.project.roll.wb.warmth, -1.25,
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.balance(), Balance::default());
         });
+        workflow::wait_settled(&mut h);
+        let after = roll_colour(&h, patch);
+        assert!((after.x / before.x - (-1.25_f64 / 2_f64.sqrt()).exp()).abs() < 1e-5);
+        assert!((after.z / before.z - (1.25_f64 / 2_f64.sqrt()).exp()).abs() < 1e-5);
+    });
+}
+
+#[test]
+fn gamma_pivot_is_on_by_default_and_can_be_bypassed_without_a_project_edit() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Roll");
+        let before = h.read(|editor| editor.document.state.project.clone());
+        h.update(|editor| editor.set_dmax(None));
+        h.step();
+        assert!(
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Hold midtone colour")
+                .accesskit_node()
+                .is_disabled()
+        );
+        h.update(|editor| editor.set_dmax(before.dmax().map(DVec3::from_array)));
+
+        enter_numeric(&mut h, "Gamma", "0.9");
+        wait_gamma(&mut h);
+        let adjusted = h.read(|editor| {
+            assert!(editor.document.gamma_pivot.enabled());
+            assert!(editor.document.visit.picker.display().is_none());
+            let after = &editor.document.state.project;
+            assert_eq!(after.input.gamma(), 0.9);
+            assert_ne!(after.roll.wb, before.roll.wb);
+            after.clone()
+        });
+        click_pin(&mut h);
+        h.read(|editor| {
+            assert!(!editor.document.gamma_pivot.enabled());
+            assert_eq!(editor.document.state.project, adjusted);
+        });
+        enter_numeric(&mut h, "Gamma", "0.8");
+        h.read(|editor| {
+            assert!(!editor.document.gamma_pivot.calculating());
+            assert_eq!(editor.document.project.input.gamma(), 0.8);
+            assert_eq!(editor.document.project.roll.wb, adjusted.roll.wb);
+        });
+    });
+}
+
+fn roll_colour(h: &Harness<'_, Editor>, patch: Rect) -> DVec3 {
+    h.read(|editor| {
+        let mut scan = crate::editor::measurement::capture_scan(editor).unwrap();
+        let coverage = crate::coverage::Coverage::rectangle(patch);
         let source = editor.document.find_source(scan.source().path()).unwrap();
         let recipe = editor
             .positive_recipe_for_source(
@@ -218,12 +197,10 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
                 editor.photo_settings(),
             )
             .unwrap();
+        let services = editor.source_services.as_ref().unwrap();
         let samples = crate::editor::measurement::query::Samples::new(
-            (
-                &editor.source_services.as_ref().unwrap().evaluation,
-                &editor.source_services.as_ref().unwrap().queue,
-            ),
-            scan,
+            (&services.evaluation, &services.queue),
+            &mut scan,
             editor.correction().gpu().unwrap(),
             coverage,
             &|| false,
@@ -273,14 +250,6 @@ fn save_captures_accepted_values_during_gamma_calculation_and_source_preparation
                 .is_some_and(|ready| ready.path.file_name().unwrap() == "patches.dng")
         });
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
-        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
 
         let entered = Arc::new(AtomicBool::new(false));
         let observed = entered.clone();
@@ -406,17 +375,6 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         let photos = h.read(|editor| editor.document.project.sources.clone());
         assert_ne!(photos[0].adjustment_layers, photos[1].adjustment_layers);
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
-        h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
-        let mut captured =
-            h.read(|editor| crate::editor::measurement::capture_scan(editor).unwrap());
-        let held = scan_roll_colour(&h, &mut captured);
         let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         enter_numeric(&mut h, "Gamma", "0.9");
@@ -434,13 +392,11 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         });
         h.read(|editor| {
             assert!(editor.document.gamma_pivot.calculating());
+            assert_eq!(editor.document.project.input.gamma(), 0.75);
+            assert_eq!(editor.document.project.roll.wb, Balance::default());
             assert_eq!(editor.document.project.sources, photos);
             assert_eq!(editor.photo_settings().exposure, -1.75);
         });
-        assert!(
-            (held_roll_colour(&h) - held).abs().max_element() > 0.05,
-            "the destination source must have contrasting sampled colour"
-        );
         for tab in ["Photo", "Rendering"] {
             stage(&mut h, tab);
             h.read(|editor| assert!(editor.document.gamma_pivot.calculating()));
@@ -453,18 +409,11 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         });
         solve.run();
         wait_gamma(&mut h);
-        assert!(
-            (scan_roll_colour(&h, &mut captured) - held)
-                .abs()
-                .max_element()
-                < 1e-4,
-            "compensation must hold the captured source, not the newly selected one"
-        );
         h.read(|editor| {
             assert_eq!(editor.document.project.input.gamma(), 0.9);
             assert_ne!(editor.document.project.roll.wb, Balance::default());
             assert_eq!(editor.document.project.sources, photos);
-            assert!(editor.document.gamma_pivot.locked());
+            assert!(editor.document.gamma_pivot.enabled());
         });
     });
 }
@@ -473,17 +422,9 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
 fn a_gamma_balance_wheel_can_continue_its_own_drag_while_compensation_is_pending() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
         h.get_by_label("Gamma balance wheel").scroll_to_me();
         h.try_run_realtime().unwrap();
         let before = h.read(|editor| editor.document.project.clone());
-        let held = held_roll_colour(&h);
         let start = h.get_by_label("Gamma balance wheel").rect().center();
         let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
@@ -543,7 +484,6 @@ fn a_gamma_balance_wheel_can_continue_its_own_drag_while_compensation_is_pending
             assert_ne!(editor.document.project.roll.wb, before.roll.wb);
             assert!(!editor.editing());
         });
-        assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         h.step();
         wait_for(&mut h, |editor| !editor.interaction_blocked());
@@ -552,55 +492,24 @@ fn a_gamma_balance_wheel_can_continue_its_own_drag_while_compensation_is_pending
 }
 
 #[test]
-fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
+fn gamma_pivot_numeric_wheel_reset_history_and_reopen() {
     let directory = tempfile::tempdir().unwrap();
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
+        // The crop lies wholly inside one authored, flat-colour tile. Midtone selection
+        // cannot change the tile's colour, so the independent Roll prefix is an oracle.
+        let patch = Rect {
+            x: 216,
+            y: 88,
+            width: 16,
+            height: 16,
+        };
+        h.update(|editor| *editor.photo_crop_mut() = Some(crate::crop::Crop::from_region(patch)));
+        h.step();
+        let mut held = roll_colour(&h, patch);
+        assert!((held - DVec3::ONE).abs().max_element() > 0.1);
         let before = h.read(|editor| editor.document.state.project.clone());
-        save_capture(&h.render().unwrap(), "gamma-pivot-inactive");
-        pin(&mut h);
-        wait_for(&mut h, |editor| {
-            editor.document.visit.picker.display().is_some()
-        });
-        save_capture(&h.render().unwrap(), "gamma-pivot-choosing");
-        pin(&mut h);
-        wait_for(&mut h, |editor| {
-            editor.document.visit.picker.display().is_none()
-        });
-        h.read(|editor| assert_eq!(editor.document.state.project, before));
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.read(|editor| {
-            assert!(!editor.document.gamma_pivot.locked());
-            assert_eq!(editor.document.state.project, before);
-        });
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
-            .click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.visit.picker.display().is_none()
-        });
-        h.read(|editor| assert_eq!(editor.document.state.project, before));
-
-        pin(&mut h);
-        selected_patch(&mut h);
-        assert!(!h.get_by_label("Apply").accesskit_node().is_disabled());
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
-        h.read(|editor| {
-            assert!(editor.document.gamma_pivot.locked(), "{}", editor.status);
-            assert_eq!(editor.document.state.project, before);
-        });
-        h.try_run_realtime().unwrap();
-        save_capture(&h.render().unwrap(), "gamma-pivot-locked");
-        let held = held_roll_colour(&h);
-        assert!(
-            (held - DVec3::ONE).abs().max_element() > 0.1,
-            "the selected patch must be coloured"
-        );
+        save_capture(&h.render().unwrap(), "gamma-midtone-lock-on");
 
         let path = directory.path().join("pivot.antitone");
         let gate = crate::editor::measurement::testing::Gate::default();
@@ -641,7 +550,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
             assert_ne!(editor.document.project.roll.wb, before.roll.wb);
             editor.document.state.project.clone()
         });
-        assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
+        assert!((roll_colour(&h, patch) - held).abs().max_element() < 1e-4);
         // The actual production wheel must change both accepted curve balance and Roll WB.
         h.get_by_label("Gamma balance wheel").scroll_to_me();
         h.try_run_realtime().unwrap();
@@ -653,7 +562,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
             assert_ne!(editor.document.project.roll.wb, numeric.roll.wb);
             editor.document.state.project.clone()
         });
-        assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
+        assert!((roll_colour(&h, patch) - held).abs().max_element() < 1e-4);
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         h.step();
         wait_for(&mut h, |editor| !editor.interaction_blocked());
@@ -684,13 +593,15 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         h.key_press(egui::Key::Enter);
         h.step();
         h.read(|editor| assert_eq!(editor.document.project.roll.wb.warmth, 0.25));
-        let previous_colour = held;
-        let held = held_roll_colour(&h);
-        assert!((held - previous_colour).abs().max_element() > 0.01);
+        let shifted = roll_colour(&h, patch);
+        assert!((shifted - held).abs().max_element() > 0.01);
+        held = shifted;
+        let manually_adjusted = h.read(|editor| editor.document.project.roll.wb);
         enter_numeric(&mut h, "Gamma", "0.8");
         wait_gamma(&mut h);
-        assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
+        h.read(|editor| assert_ne!(editor.document.project.roll.wb, manually_adjusted));
 
+        assert!((roll_colour(&h, patch) - held).abs().max_element() < 1e-4);
         h.get_by_label("Reset Gamma & balance").scroll_to_me();
         h.try_run_realtime().unwrap();
         h.get_by_label("Reset Gamma & balance").click();
@@ -705,17 +616,19 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
             assert_ne!(editor.document.project.roll.wb, wheel.roll.wb);
             editor.document.state.project.clone()
         });
-        assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
+        assert!((roll_colour(&h, patch) - held).abs().max_element() < 1e-4);
         h.update(|editor| editor.document.path = Some(directory.path().join("pivot.antitone")));
         save_existing_project(&mut h);
         let path = h.read(|editor| editor.document.path.clone().unwrap());
         let saved = crate::project::Project::load(&path).unwrap();
         assert_eq!(saved.input, reset.input);
         assert_eq!(saved.roll, reset.roll);
+        click_pin(&mut h);
+        h.read(|editor| assert!(!editor.document.gamma_pivot.enabled()));
         open_project(&mut h, path);
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| {
-            assert!(!editor.document.gamma_pivot.locked());
+            assert!(editor.document.gamma_pivot.enabled());
             assert_eq!(editor.document.project.input, reset.input);
             assert_eq!(editor.document.project.roll, reset.roll);
         });
@@ -726,13 +639,6 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
 fn orientation_during_gamma_preparation_is_preserved_by_narrow_publication() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
         let before = h.read(|editor| editor.document.project.clone());
         let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
@@ -773,13 +679,6 @@ fn orientation_during_gamma_preparation_is_preserved_by_narrow_publication() {
 fn hiding_gamma_controls_preserves_their_independent_calculation() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Roll");
-        pin(&mut h);
-        selected_patch(&mut h);
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
         let before = h.read(|editor| editor.document.project.clone());
         h.get_by_role_and_label(egui::accesskit::Role::Slider, "Gamma")
             .scroll_to_me();

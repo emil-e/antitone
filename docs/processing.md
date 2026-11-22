@@ -96,11 +96,13 @@ The **Gamma & balance** eyedropper estimates relative channel gammas from the lo
 
 Standalone WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
 
-### Picked-colour gamma pivot
+### Gamma colour pivot
 
-The **Gamma colour pivot** holds a picked area's chromaticity through manual gamma and gamma-balance edits by compensating Roll WB. Its measurement boundary is after Roll WB, before Photo layers, look and output; brightness remains free, and nonlinear downstream processing can still change rendered appearance. Deliberate Roll WB establishes the colour held by subsequent gamma gestures.
+**Hold midtone colour** compensates Roll WB for changes to gamma and gamma balance. It holds the selected photo's existing midtone chromaticity after Roll WB and before Photo layers, look and output. Brightness, other densities and other photos can still shift.
 
-Capture retains fixed corrected camera-RGB samples before inversion, together with their camera-to-AP1 matrix. Later project edits leave these chosen values intact. Small selections retain exact source-cell coverage; large quadrilaterals use deterministic stratified evidence, bounded to 4096 weighted originals. Each proposed gamma individually inverts those frozen samples through the shared f32 GPU response before positive averaging. Camera-to-AP1 and Bradford conversion then give log-cone opponents; their difference is added to Roll WB. Undefined colour, source-floor evidence and out-of-range compensation reject the whole edit. A continuous gesture references its starting gamma/WB pair, allowing an exact return with no net edit.
+Each gesture samples the selected photo's crop, accepted picture area, or inset active raster, in that order. From up to 4096 original samples it retains corrected camera RGB for the middle luminance half of usable ungraded positives. The evidence and camera matrix stay fixed for the gesture.
+
+Each proposed gamma inverts the frozen originals through the shared GPU response before positive averaging. Camera-to-AP1 and Bradford conversion give log-cone opponents; the difference between starting and proposed chromaticity is added to Roll WB. Undefined colour, source-floor evidence and out-of-range compensation reject the whole edit. A continuous gesture references its starting gamma/WB pair, allowing an exact return with no net edit.
 
 ## Grade in a common working space
 

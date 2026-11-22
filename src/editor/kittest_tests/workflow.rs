@@ -156,7 +156,10 @@ pub(super) fn calibrated_workflow<R>(
         });
         harness.read(|editor| assert!(!editor.document.source));
         enter_numeric(&mut harness, "Gamma", "0.75");
-        harness.read(|editor| assert_eq!(editor.gamma(), 0.75));
+        wait_for(&mut harness, |editor| {
+            !editor.document.gamma_pivot.calculating()
+        });
+        harness.read(|editor| assert_eq!(editor.gamma(), 0.75, "{}", editor.status));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
         harness

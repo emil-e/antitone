@@ -468,7 +468,7 @@ impl Editor {
     fn validate_roll_values(project: &crate::project::Project) -> Result<(), Error> {
         project.input.validate_controls()?;
         crate::processing::exposure_multiplier(project.roll.exposure)?;
-        crate::color::wb_matrix(project.roll.wb)?;
+        project.roll.wb.validate_roll_wb()?;
         Ok(())
     }
 
@@ -489,17 +489,15 @@ impl Editor {
         let accepted = self.document.state.project.clone();
         edit.update(write);
         let proposed = edit.preview().snapshot().unwrap().input;
-        if !gamma_pivot::same_gamma(accepted.input, proposed)
-            && self.gamma_compensation_required(starting_input, proposed)
-        {
+        let gamma_changed = !gamma_pivot::same_gamma(accepted.input, proposed);
+        if gamma_changed && self.gamma_compensation_required(starting_input, proposed) {
             drop(edit);
             self.compensate_gamma((starting_input, starting_wb), proposed, response, cx);
             return;
         }
-        if !gamma_pivot::same_gamma(accepted.input, proposed) || self.gamma_input_pending(response)
-        {
+        if gamma_changed || self.gamma_input_pending(response) {
             self.clear_gamma_proposal();
-            if proposed == starting_input {
+            if self.document.gamma_pivot.enabled() && proposed == starting_input {
                 edit.update(|project| project.roll.wb = starting_wb);
             }
         }
@@ -508,6 +506,9 @@ impl Editor {
             return;
         }
         self.commit_control(edit, response);
+        if gamma_changed || !response.active {
+            self.gamma_value_accepted(response);
+        }
     }
 
     fn output_control(
@@ -1154,7 +1155,7 @@ impl Editor {
                                         }),
                                         default_open: Some(true),
                                     },
-                                    self.gamma_pivot_tool(can_pick),
+                                    self.gamma_pivot_tool(grade.input),
                                     |ui| {
                                         ui.add_enabled_ui(
                                             editable,
@@ -1205,9 +1206,7 @@ impl Editor {
                                 if reset.tool {
                                     start_pick = Some(|cx| Box::pin(calibration::pick_gamma(cx)));
                                 }
-                                if reset.secondary_tool {
-                                    toggle_pivot = true;
-                                }
+                                toggle_pivot |= reset.secondary_tool;
                                 if reset.reset {
                                     self.roll_control(
                                         ui::ControlResponse::action(
@@ -1312,6 +1311,7 @@ impl Editor {
                                 ui,
                                 "roll-white-balance",
                                 &mut wb,
+                                ui::ColorControl::RollWhiteBalance,
                                 editable,
                                 can_pick,
                             );
@@ -1485,7 +1485,7 @@ impl Editor {
             self.request_input(target, cx);
         }
         if toggle_pivot {
-            self.toggle_gamma_pivot(cx);
+            self.toggle_gamma_pivot();
         }
         if let Some(start) = start_pick
             && let Err(error) = self.start_interaction(cx, start)

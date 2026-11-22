@@ -43,7 +43,7 @@ fn floating_cancel_retires_only_crop_and_keeps_accepted_state() {
 
 #[test]
 fn pickers_keep_source_preference_and_remain_interactive_fullscreen() {
-    for kind in [PickerCase::Gamma, PickerCase::GammaPivot, PickerCase::Wb] {
+    for kind in [PickerCase::Gamma, PickerCase::Wb] {
         super::super::tools::calibrated_harness(|mut h| {
             h.update(|editor| {
                 let crop = Crop::from_region(Rect {

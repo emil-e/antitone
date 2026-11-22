@@ -531,6 +531,7 @@ impl Editor {
             ui,
             "photo-white-balance",
             &mut photo.wb,
+            ui::ColorControl::WhiteBalance,
             editable,
             can_pick,
         );

@@ -355,30 +355,6 @@ fn lightroom_return_captures_accepted_gamma_pair_without_waiting_for_its_proposa
         });
         workflow::wait_settled(&mut h);
         stage(&mut h, "Roll");
-        let role = egui::accesskit::Role::Button;
-        h.get_by_role_and_label(role, "Gamma colour pivot")
-            .scroll_to_me();
-        h.try_run_realtime().unwrap();
-        h.get_by_role_and_label(role, "Gamma colour pivot").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.visit.picker.display() == Some(crate::editor::gamma_pivot::DISPLAY)
-        });
-        draw_region(
-            &mut h,
-            Rect {
-                x: 216,
-                y: 88,
-                width: 16,
-                height: 16,
-            },
-        );
-        assert!(!h.get_by_label("Apply").accesskit_node().is_disabled());
-        h.get_by_label("Apply").click();
-        h.step();
-        wait_for(&mut h, |editor| {
-            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
-        });
         let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Gamma")

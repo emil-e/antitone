@@ -2,7 +2,7 @@
 
 use crate::{
     Error,
-    color::wb_matrix,
+    color::roll_wb_matrix,
     processing::{
         InputSettings, NegativeInput, RollSettings, exposure_multiplier, validate_camera_matrix,
     },
@@ -51,7 +51,7 @@ impl ProcessingParameters {
 
     // Working-view and repair entrypoints share this layout; only Roll fields are populated.
     pub(crate) fn photographic(roll: RollSettings) -> Result<Self, Error> {
-        let post = CameraMatrix::new(wb_matrix(roll.wb)?)?;
+        let post = CameraMatrix::new(roll_wb_matrix(roll.wb)?)?;
         let gain = exposure_multiplier(roll.exposure)?;
         let anchor = packed_constants(DVec3::ZERO, gain.ln())?;
         Ok(Self {
@@ -116,7 +116,7 @@ impl ProcessingParameters {
         CameraMatrix::new(camera_to_ap1)?;
         let response = negative.parameters()?;
         let gain = exposure_multiplier(roll.exposure)?;
-        let matrix = wb_matrix(roll.wb)?;
+        let matrix = roll_wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
         let reference = packed_constants(negative.calibration.dmin, 0.)?;
         let dmax = packed_constants(negative.calibration.dmax, 0.)?;
@@ -161,7 +161,7 @@ impl ProcessingParameters {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let gain = exposure_multiplier(roll.exposure)?;
-        let post = CameraMatrix::new(wb_matrix(roll.wb)? * gain)?;
+        let post = CameraMatrix::new(roll_wb_matrix(roll.wb)? * gain)?;
         Ok(Self {
             post: post.columns,
             stage: STAGE_DIGITAL,

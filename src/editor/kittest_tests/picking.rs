@@ -11,7 +11,6 @@ pub(super) fn open(h: &mut Harness<'_, Editor>, kind: PickerCase) {
         PickerCase::Dmin => ("Roll", "Pick Dmin (film base)"),
         PickerCase::Dmax => ("Roll", "Pick Dmax"),
         PickerCase::Gamma => ("Roll", calibration::GAMMA_PICK_LABEL),
-        PickerCase::GammaPivot => ("Roll", "Gamma colour pivot"),
         PickerCase::RollWb => ("Roll", "Pick neutral for white balance"),
         PickerCase::Wb => ("Photo", "Pick neutral for white balance"),
     };
@@ -122,16 +121,12 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                 PickerCase::Dmin,
                 PickerCase::Dmax,
                 PickerCase::Gamma,
-                PickerCase::GammaPivot,
                 PickerCase::RollWb,
                 PickerCase::Wb,
             ] {
                 let source_preference = matches!(
                     kind,
-                    PickerCase::Gamma
-                        | PickerCase::GammaPivot
-                        | PickerCase::RollWb
-                        | PickerCase::Wb
+                    PickerCase::Gamma | PickerCase::RollWb | PickerCase::Wb
                 );
                 h.update(|editor| editor.document.source = source_preference);
                 h.step();
@@ -187,7 +182,6 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                             PickerCase::Dmin => "dmin",
                             PickerCase::Dmax => "dmax",
                             PickerCase::Gamma => "gamma",
-                            PickerCase::GammaPivot => "gamma-pivot",
                             PickerCase::RollWb => "roll-wb",
                             PickerCase::Wb => "layer-wb",
                         }

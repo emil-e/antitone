@@ -240,6 +240,8 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 let original = h.read(|e| e.document.state.project.clone());
                 let regions = h.read(|e| e.document.spatial.ready());
                 workflow::enter_numeric(&mut h, "Gamma", "0.73");
+                wait_for(&mut h, |e| !e.document.gamma_pivot.calculating());
+                h.read(|e| assert_eq!(e.gamma(), 0.73, "{}", e.status));
                 stage(&mut h, "Photo");
                 workflow::enter_numeric(&mut h, "Exposure", "1.25");
                 let graded = h.read(|e| e.document.state.project.clone());

@@ -155,7 +155,6 @@ fn picker_preserves_display_and_manual_source_navigation() {
                     PickerCase::Dmin,
                     PickerCase::Dmax,
                     PickerCase::Gamma,
-                    PickerCase::GammaPivot,
                     PickerCase::RollWb,
                     PickerCase::Wb,
                 ] {

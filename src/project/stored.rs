@@ -1,6 +1,6 @@
 //! Persisted records establish data integrity; execution admission belongs to consumers.
 use super::*;
-use crate::{color::wb_matrix, processing::exposure_multiplier};
+use crate::processing::exposure_multiplier;
 
 // Format identifiers have no editable runtime value; parsing admits only this contract.
 macro_rules! fixed_field {
@@ -286,7 +286,7 @@ mod roll {
     use super::*;
 
     fn check(roll: &RollSettings) -> Result<()> {
-        wb_matrix(roll.wb)?;
+        roll.wb.validate_roll_wb()?;
         exposure_multiplier(roll.exposure)?;
         Ok(())
     }

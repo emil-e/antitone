@@ -66,15 +66,28 @@ impl std::hash::Hash for Balance {
     }
 }
 
+pub const ROLL_WB_LIMIT: f64 = 1.5;
+
 impl Balance {
-    pub fn validate(self) -> Result<Self, Error> {
+    fn within(self, limit: f64) -> bool {
         let coordinates = DVec2::new(self.warmth, self.tint);
-        if !coordinates.is_finite() || coordinates.abs().max_element() > 1.0 {
-            return Err(Error::InvalidParameter(
+        coordinates.is_finite() && coordinates.abs().max_element() <= limit
+    }
+
+    pub fn validate(self) -> Result<Self, Error> {
+        self.within(1.)
+            .then_some(self)
+            .ok_or(Error::InvalidParameter(
                 "balance coordinates must be within -1..1",
-            ));
-        }
-        Ok(self)
+            ))
+    }
+
+    pub(crate) fn validate_roll_wb(self) -> Result<Self, Error> {
+        self.within(ROLL_WB_LIMIT)
+            .then_some(self)
+            .ok_or(Error::InvalidParameter(
+                "Roll WB coordinates must be within -1.5..1.5",
+            ))
     }
 
     pub fn offsets(self) -> Result<DVec3, Error> {
@@ -88,15 +101,36 @@ pub fn ap1_to_cones() -> DMat3 {
 }
 
 pub fn wb_matrix(balance: Balance) -> Result<DMat3, Error> {
-    let gains = balance.offsets()?.exp();
+    Ok(validated_wb_matrix(balance.validate()?))
+}
+
+pub fn roll_wb_matrix(balance: Balance) -> Result<DMat3, Error> {
+    Ok(validated_wb_matrix(balance.validate_roll_wb()?))
+}
+
+fn validated_wb_matrix(balance: Balance) -> DMat3 {
     if balance == Balance::default() {
-        return Ok(DMat3::IDENTITY);
+        return DMat3::IDENTITY;
     }
+    let gains = opponent(balance.warmth, balance.tint).exp();
     let cones = ap1_to_cones();
-    Ok(cones.inverse() * DMat3::from_diagonal(gains) * cones)
+    cones.inverse() * DMat3::from_diagonal(gains) * cones
 }
 
 pub fn neutral_wb(mean: DVec3) -> Result<Balance, Error> {
+    neutral_balance(mean)?
+        .validate()
+        .map_err(|_| Error::UnusableSample("WB correction is outside the control range"))
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn neutral_roll_wb(mean: DVec3) -> Result<Balance, Error> {
+    neutral_balance(mean)?
+        .validate_roll_wb()
+        .map_err(|_| Error::UnusableSample("WB correction is outside the Roll WB range"))
+}
+
+fn neutral_balance(mean: DVec3) -> Result<Balance, Error> {
     if !mean.is_finite() {
         return Err(Error::UnusableSample("WB patch must have finite mean RGB"));
     }
@@ -109,11 +143,8 @@ pub fn neutral_wb(mean: DVec3) -> Result<Balance, Error> {
         ));
     }
     let coordinates = opponent_coordinates((white / sample).ln());
-    let result = Balance {
+    Ok(Balance {
         warmth: coordinates.x,
         tint: coordinates.y,
-    };
-    result
-        .validate()
-        .map_err(|_| Error::UnusableSample("WB correction is outside the control range"))
+    })
 }

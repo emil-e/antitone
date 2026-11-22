@@ -61,16 +61,13 @@ Gamma Balance and Roll white balance in one undoable edit, or changes neither if
 fit fails. Check other tones across the roll: one patch cannot tell whether they are
 balanced.
 
-The **Gamma colour pivot** pin beside that eyedropper lets you hold an arbitrary colour
-while changing Gamma or Balance. Click the pin, select an area, then **Apply**. The pin
-fills when locked; click it again to release. Cancel leaves the grade unchanged.
+With **Hold midtone colour** on, editing Gamma or Balance also adjusts Roll white
+balance to hold the current photo's midtone colour. This is on by default. Browsing
+doesn't change the grade; your next adjustment uses the new photo. Brightness, other
+tones and other photos can still shift.
 
-Gamma edits then adjust Roll white balance to hold the picked colour, while its
-brightness can change. Deliberate Roll white-balance edits establish a new held colour.
-The hold is measured before Photo grading and rendering, so a downstream look can still
-alter its appearance. The chosen value survives browsing, removal of the picked photo
-and later calibration, response or correction edits. Saving retains the accepted gamma
-and white balance, not the active lock.
+Click the pin beside the eyedropper to turn compensation off for future edits. This
+leaves the white balance you've already set in place.
 
 ## Toe & shoulder
 
@@ -85,8 +82,8 @@ This is ordinary photographic white balance, applied to the developed positive a
 by the roll: **Warmth** and **Tint**, the **White balance wheel** beside them, or the
 eyedropper in the section header on a grey/neutral area of the scene.
 
-(Each photograph can then fine-tune balance individually on the Photo tab — Roll WB is
-the shared baseline.)
+Roll Warmth and Tint range from −1.5 to +1.5, leaving room for gamma compensation.
+Photo white balance and Gamma Balance still range from −1 to +1.
 
 ## Exposure
 

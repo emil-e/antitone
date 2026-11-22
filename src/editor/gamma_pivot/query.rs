@@ -1,8 +1,8 @@
-//! Bounded original evidence and shared-GPU forward responses for a picked colour.
+//! Bounded original evidence and shared-GPU forward responses for the gamma pivot.
 
 use crate::{
     Error,
-    color::{Balance, ap1_to_cones, opponent_coordinates},
+    color::{AP1_TO_XYZ, Balance, ap1_to_cones, opponent_coordinates},
     coverage::Coverage,
     geometry::SourceRegion,
     gpu::{
@@ -80,10 +80,11 @@ fn plan(coverage: Coverage, area: SourceRegion) -> Result<Vec<([u32; 2], f64)>, 
 }
 
 fn read(
-    (context, queue): super::super::measurement::Gpu<'_>,
+    gpu: super::super::measurement::Gpu<'_>,
     image: Value,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<[f32; 4]>, Error> {
+    let (context, queue) = gpu;
     let domain = image.domain();
     let request = context.request(
         image,
@@ -103,47 +104,122 @@ fn read(
     Ok(pixels)
 }
 
+type Sample = ([f32; 4], f64);
+
+fn camera_samples(
+    gpu: super::super::measurement::Gpu<'_>,
+    scan: &Scan,
+    field: Option<Arc<GpuFlatField>>,
+    coverage: Coverage,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<Sample>, Error> {
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let selected = plan(coverage, scan.area)?;
+    if selected.is_empty() {
+        return Err(Error::UnusableSample("invalid gamma pivot coverage"));
+    }
+    let positions: Vec<_> = selected.iter().map(|(point, _)| *point).collect();
+    let source = scan.source().camera_image()?;
+    let codes = positions
+        .iter()
+        .map(|point| source.pixel_samples(point[0], point[1]))
+        .collect::<Result<Vec<_>, _>>()?;
+    let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
+        evaluation::source(Arc::new(Pixels { pixels: codes })),
+        field,
+        &positions,
+    )?;
+    Ok(read(gpu, camera, cancelled)?
+        .into_iter()
+        .zip(selected.into_iter().map(|(_, weight)| weight))
+        .collect())
+}
+
+fn usable_camera(pixel: &[f32; 4], floor: f32) -> bool {
+    pixel[..3]
+        .iter()
+        .all(|value| value.is_finite() && *value >= floor)
+}
+
+fn usable_positive(pixel: &[f32; 4]) -> bool {
+    pixel.iter().all(|value| value.is_finite()) && pixel[3] == 0.
+}
+
+fn rgb(pixel: [f32; 4]) -> DVec3 {
+    DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64)
+}
+
+fn midtones(
+    samples: Vec<Sample>,
+    positives: Vec<[f32; 4]>,
+    camera_to_ap1: DMat3,
+) -> Result<Vec<Sample>, Error> {
+    let cone_from_camera = ap1_to_cones() * camera_to_ap1;
+    let y_from_camera = (AP1_TO_XYZ * camera_to_ap1).row(1);
+    let mut eligible = Vec::new();
+    for (sample, positive) in samples.into_iter().zip(positives) {
+        if !usable_positive(&positive) {
+            continue;
+        }
+        let rgb = rgb(positive);
+        let cones = cone_from_camera * rgb;
+        let y = y_from_camera.dot(rgb);
+        if y.is_finite() && y > 0. && cones.is_finite() && cones.min_element() > 0. {
+            eligible.push((y, sample));
+        }
+    }
+    if eligible.len() < 32 {
+        return Err(Error::UnusableSample(
+            "not enough usable photo samples to lock gamma colour",
+        ));
+    }
+
+    // Keep the middle luminance half at lock time, including ties at the boundaries.
+    eligible.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    let quartile = eligible.len() / 4;
+    let low = eligible[quartile].0;
+    let high = eligible[eligible.len() - quartile - 1].0;
+    Ok(eligible
+        .into_iter()
+        .filter_map(|(y, sample)| (low <= y && y <= high).then_some(sample))
+        .collect())
+}
+
 impl Evidence {
-    pub(super) fn capture(
+    fn from_samples(samples: impl IntoIterator<Item = Sample>) -> Self {
+        let (pixels, weights) = samples.into_iter().unzip();
+        Self {
+            camera: evaluation::source(Arc::new(Pixels { pixels })),
+            weights,
+        }
+    }
+
+    pub(super) fn capture_midtones(
         gpu: super::super::measurement::Gpu<'_>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
+        negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
-        if cancelled() {
-            return Err(Error::Cancelled);
-        }
-        let selected = plan(coverage, scan.area)?;
-        if selected.is_empty() {
-            return Err(Error::UnusableSample("invalid gamma pivot coverage"));
-        }
-        let positions: Vec<_> = selected.iter().map(|(point, _)| *point).collect();
-        let source = scan.source().camera_image()?;
-        let codes = positions
-            .iter()
-            .map(|point| source.pixel_samples(point[0], point[1]))
-            .collect::<Result<Vec<_>, _>>()?;
-        let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
-            evaluation::source(Arc::new(Pixels { pixels: codes })),
-            field,
-            &positions,
-        )?;
-        let pixels = read(gpu, camera, cancelled)?;
+        let mut samples = camera_samples(gpu, scan, field, coverage, cancelled)?;
         let floor = scan.effective_floor() as f32;
-        if pixels.iter().any(|pixel| {
-            pixel[..3]
-                .iter()
-                .any(|value| !value.is_finite() || *value < floor)
-        }) {
+        samples.retain(|(pixel, _)| usable_camera(pixel, floor));
+        if samples.is_empty() {
             return Err(Error::UnusableSample(
-                "gamma pivot reaches the source precision floor",
+                "no usable camera samples for gamma pivot",
             ));
         }
-        Ok(Self {
-            camera: evaluation::source(Arc::new(Pixels { pixels })),
-            weights: selected.into_iter().map(|(_, weight)| weight).collect(),
-        })
+        let pixels = samples.iter().map(|(pixel, _)| *pixel).collect();
+        let camera = evaluation::source(Arc::new(Pixels { pixels }));
+        let positives = positive_samples(gpu, camera, negative, cancelled)?;
+        Ok(Self::from_samples(midtones(
+            samples,
+            positives,
+            scan.camera_to_ap1,
+        )?))
     }
 
     fn mean(
@@ -152,18 +228,16 @@ impl Evidence {
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<DVec3, Error> {
-        let readout =
-            crate::gpu::photograph::camera_response::normalized(self.camera.clone(), negative)?;
-        let pixels = read(gpu, readout, cancelled)?;
+        let pixels = positive_samples(gpu, self.camera.clone(), negative, cancelled)?;
         let mut sum = DVec3::ZERO;
         let mut total = 0.;
-        for (pixel, weight) in pixels.iter().zip(&self.weights) {
-            if !pixel.iter().all(|value| value.is_finite()) || pixel[3] != 0. {
+        for (pixel, weight) in pixels.into_iter().zip(&self.weights) {
+            if !usable_positive(&pixel) {
                 return Err(Error::UnusableSample(
                     "gamma pivot reaches the source precision floor",
                 ));
             }
-            sum += DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) * *weight;
+            sum += rgb(pixel) * *weight;
             total += weight;
         }
         let mean = sum / total;
@@ -192,9 +266,19 @@ impl Evidence {
             warmth: wb.warmth + correction.x,
             tint: wb.tint + correction.y,
         }
-        .validate()
+        .validate_roll_wb()
         .map_err(|_| Error::UnusableSample("gamma pivot compensation exceeds the Roll WB range"))
     }
+}
+
+fn positive_samples(
+    gpu: super::super::measurement::Gpu<'_>,
+    camera: Value,
+    negative: NegativeInput,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<[f32; 4]>, Error> {
+    let readout = crate::gpu::photograph::camera_response::normalized(camera, negative)?;
+    read(gpu, readout, cancelled)
 }
 
 fn chromaticity(mean: DVec3) -> Result<DVec2, Error> {

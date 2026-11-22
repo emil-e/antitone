@@ -78,7 +78,6 @@ fn filmstrip_and_arrows_retire_real_picker_callers_without_measuring_or_acceptin
                 PickerCase::Dmin,
                 PickerCase::Dmax,
                 PickerCase::Gamma,
-                PickerCase::GammaPivot,
                 PickerCase::RollWb,
                 PickerCase::Wb,
             ] {
