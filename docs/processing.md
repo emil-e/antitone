@@ -166,7 +166,7 @@ Coverage, inversion and strength produce a weight between zero and one: exposure
 
 ### Film texture
 
-Rendering owns coupled image-MTF/grain and independently enabled halation after the complete adjustment-layer stack, before LUT, Film & paper and ACES. Recipe assembly orders source-scale Gaussian image MTF, independently enabled halation, then multiplicative RGB log-light grain. Each composes its mathematics and upstream reads; [common execution](architecture.md#pixel-stages-and-spatial-support) manages the supplied work and resources.
+Rendering owns coupled image-MTF/grain and independently enabled halation after the complete adjustment-layer stack, before LUT, Film & paper and ACES. Recipe assembly orders source-scale Gaussian image MTF, independently enabled halation, then multiplicative RGB log-light [grain](../src/gpu/grain.rs). Each composes its mathematics and upstream reads; [common execution](architecture.md#pixel-stages-and-spatial-support) manages the supplied work and resources.
 
 Size is a percentage of the accepted cropped frame's shorter side, measured in original-source pixels. A tighter crop therefore reduces the source-unit MTF blur and grain scale instead of magnifying an uncropped-frame blur. Exact turns/flips, viewport zoom, pan and output resolution do not redefine that reference. Size uses a fixed grain-basis unit; spectrum scale is 1.375 times that value. GrainSettings stores both lengths; its shared Size control scales them proportionally, preserving the authored image-response/grain relationship rather than adding independently scaled noise over the image.
 

@@ -266,15 +266,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         )
         .unwrap();
         if budget > 1 {
-            let field = view
-                .product
-                .as_ref()
-                .unwrap()
-                .commands
-                .as_ref()
-                .unwrap()
-                .cached_grain_field()
-                .unwrap();
+            let field = super::grain::cached_field(&view).unwrap();
             assert!(!field.ready());
             assert_eq!(
                 field.pixels.size(),
@@ -318,22 +310,8 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         } else {
             expected_scratch = Some(scratch);
         }
-        let a = view
-            .product
-            .as_ref()
-            .unwrap()
-            .commands
-            .as_ref()
-            .unwrap()
-            .cached_grain_field();
-        let b = edited
-            .product
-            .as_ref()
-            .unwrap()
-            .commands
-            .as_ref()
-            .unwrap()
-            .cached_grain_field();
+        let a = super::grain::cached_field(&view);
+        let b = super::grain::cached_field(&edited);
         assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
         assert!(
             b.unwrap().ready(),

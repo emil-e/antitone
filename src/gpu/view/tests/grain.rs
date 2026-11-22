@@ -10,6 +10,18 @@ mod numerical;
 mod order;
 mod reference;
 
+pub(super) fn cached_field(
+    view: &RenderedView,
+) -> Option<&Arc<crate::gpu::evaluation::RetainedBuffer>> {
+    view.product
+        .as_ref()
+        .unwrap()
+        .commands
+        .as_ref()
+        .unwrap()
+        .cached_image_for_operation(crate::gpu::grain::is_field_key)
+}
+
 #[derive(Clone, Copy)]
 struct ProbeConfig {
     side: usize,

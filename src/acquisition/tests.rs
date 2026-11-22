@@ -8,13 +8,10 @@ fn pipeline() -> Assembly {
     use crate::grain::GrainParameters;
     {
         let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
-        let grain = crate::gpu::photograph::authoring::Grain {
-            parameters: GrainParameters {
-                grain_size: 2.,
-                amplitude: 0.055,
-                colour: 0.5,
-            },
-            seed: 17,
+        let grain = GrainParameters {
+            grain_size: 2.,
+            amplitude: 0.055,
+            colour: 0.5,
         };
         let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 7.5 };
         let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
@@ -23,7 +20,7 @@ fn pipeline() -> Assembly {
             .reduce(f64::min);
         crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
-            image = grain.compose(image)?;
+            image = grain.compose(image, 17);
             image = next_mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

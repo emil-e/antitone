@@ -59,17 +59,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         view.ensure_submitted(&device, &queue, &egui::Context::default());
         let graded = view.product.as_ref().unwrap();
         let actual = read(&device, &queue, &graded.pixels);
-        let field = read(
-            &device,
-            &queue,
-            &graded
-                .commands
-                .as_ref()
-                .unwrap()
-                .cached_grain_field()
-                .unwrap()
-                .pixels,
-        );
+        let field = read(&device, &queue, &cached_field(&view).unwrap().pixels);
         assert_eq!(
             field.len(),
             actual.len(),

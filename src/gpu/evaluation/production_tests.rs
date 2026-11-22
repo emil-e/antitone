@@ -210,7 +210,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
                             image = halo.compose(image)?;
                         }
                         let grain = definition.grain.unwrap().grain();
-                        crate::gpu::evaluation::grain(image, grain, definition.seed)
+                        Ok(grain.compose(image, definition.seed))
                     });
             }
             "repairs" => control.repairs = &[],

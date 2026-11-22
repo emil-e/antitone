@@ -1481,12 +1481,15 @@ impl Recorded {
     }
 
     #[cfg(all(test, feature = "editor"))]
-    pub(crate) fn cached_grain_field(&self) -> Option<&Arc<RetainedBuffer>> {
+    pub(crate) fn cached_image_for_operation(
+        &self,
+        mut matches: impl FnMut(&RetainedKey) -> bool,
+    ) -> Option<&Arc<RetainedBuffer>> {
         self.executor.retained.iter().find(|value| {
             value
                 .key
                 .get::<super::contract::ImageIdentity>()
-                .is_some_and(|image| super::grain::is_field_key(&image.operation))
+                .is_some_and(|image| matches(&image.operation))
         })
     }
 

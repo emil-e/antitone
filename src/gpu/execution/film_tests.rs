@@ -263,14 +263,12 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
     .unwrap();
     let pipeline = {
         let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1.5 };
-        let grain = crate::gpu::photograph::authoring::Grain {
-            parameters: GrainParameters {
-                grain_size: 2.,
-                amplitude: 0.,
-                colour: 0.5,
-            },
-            seed: (1 << 60) + 17,
+        let grain = GrainParameters {
+            grain_size: 2.,
+            amplitude: 0.,
+            colour: 0.5,
         };
+        let seed = (1 << 60) + 17;
         let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 2.25 };
         let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
             .into_iter()
@@ -278,7 +276,7 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
             .reduce(f64::min);
         crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
-            image = grain.compose(image)?;
+            image = grain.compose(image, seed);
             image = next_mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

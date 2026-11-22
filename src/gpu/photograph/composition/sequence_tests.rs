@@ -445,7 +445,7 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
     };
     let mtf = crate::gpu::gaussian::blur(input.clone(), response.image_mtf_sigma).unwrap();
     let halated = halo.compose(mtf).unwrap();
-    let original = crate::gpu::evaluation::grain(halated.clone(), response.grain(), 17).unwrap();
+    let original = response.grain().compose(halated.clone(), 17);
     assert!(
         definition
             .processed(input.clone(), None)
@@ -462,7 +462,7 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
         scale: [10., 16.],
     };
     let reconstructed = output.compose(halated).unwrap();
-    let expected = crate::gpu::evaluation::grain(reconstructed, response.grain(), 17).unwrap();
+    let expected = response.grain().compose(reconstructed, 17);
     let actual = definition.processed(input, Some(output)).unwrap();
     assert!(actual.same_definition(&expected));
     assert!(

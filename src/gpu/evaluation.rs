@@ -57,8 +57,6 @@ pub(crate) use execute::read as read_buffer;
 #[cfg(all(test, feature = "editor"))]
 mod fusion_tests;
 
-mod grain;
-
 mod materializations;
 mod materialized;
 mod supplied;
@@ -116,7 +114,6 @@ mod validation_tests;
 use crate::Error;
 pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
-pub(crate) use grain::grain;
 pub(crate) use operators::window;
 #[cfg(all(test, feature = "editor"))]
 use operators::{grade, interpret};

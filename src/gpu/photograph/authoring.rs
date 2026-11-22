@@ -109,18 +109,6 @@ impl crate::image_mtf::ImageMtfParameters {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Grain {
-    pub parameters: crate::grain::GrainParameters,
-    pub seed: u64,
-}
-
-impl Grain {
-    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        crate::gpu::evaluation::grain(input, self.parameters, self.seed)
-    }
-}
-
 thread_local! {
     static SUFFIX: std::cell::Cell<Option<Suffix>> = const { std::cell::Cell::new(None) };
 }
