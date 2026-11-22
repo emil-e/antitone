@@ -117,13 +117,17 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
                 crate::profiles::icc(OutputTarget::Srgb)
             );
         }
-        assert!(
-            !harness
-                .get_by_label("Show in Finder")
-                .accesskit_node()
-                .is_disabled()
-        );
-        harness.get_by_label("OK").click();
+        if cfg!(target_os = "macos") {
+            assert!(
+                !harness
+                    .get_by_label("Show in Finder")
+                    .accesskit_node()
+                    .is_disabled()
+            );
+        } else {
+            assert!(harness.query_by_label("Show in Finder").is_none());
+        }
+        harness.get_by_label("Done").click();
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
@@ -359,14 +363,31 @@ fn narrow_dialog_can_be_cancelled_without_exporting_or_changing_the_document() {
         harness.set_size(egui::vec2(800., 600.));
         open(&mut harness);
         harness.read(|editor| assert!(editor.workspace_input.is_blocked()));
-        let cancel = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel");
-        assert!(
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.))
-                .contains_rect(cancel.rect()),
-            "dialog actions must remain reachable"
-        );
-        let png = harness.render().unwrap();
-        save_capture(&png, "export-dialog-narrow-offscreen");
+        for (size, capture) in [
+            (egui::vec2(800., 600.), "export-dialog-narrow-offscreen"),
+            (egui::vec2(320., 400.), "export-dialog-short-offscreen"),
+        ] {
+            harness.set_size(size);
+            harness.try_run_realtime().unwrap();
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let dialog = harness
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("export-photos")).unwrap());
+            assert!(
+                screen.contains_rect(dialog),
+                "dialog outside viewport: {dialog:?}"
+            );
+            for name in ["Cancel", "Export 1 photo"] {
+                let action = harness
+                    .get_by_role_and_label(egui::accesskit::Role::Button, name)
+                    .rect();
+                assert!(
+                    dialog.contains_rect(action),
+                    "{name} outside dialog: {action:?}"
+                );
+            }
+            save_capture(&harness.render().unwrap(), capture);
+        }
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.try_run_realtime().unwrap();

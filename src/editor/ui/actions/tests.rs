@@ -9,7 +9,7 @@ fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
             for inherited_enabled in [true, false] {
                 for action in [
                     TextAction::new("Choose…").help("Explicit opt-in"),
-                    TextAction::new("Set up…"),
+                    TextAction::new("Choose reference…"),
                     TextAction::new("Cancel"),
                     TextAction::new("Discard"),
                     TextAction::new("Save"),
@@ -49,9 +49,9 @@ fn text_actions_fit_their_labels_and_keep_ids_and_supplied_availability() {
                         .unwrap();
                     let bounds = text.galley.rect.translate(text.pos.to_vec2());
                     assert!(after.rect.expand(0.5).contains_rect(bounds));
-                    if let Some(min_width) = action.toolbar_width {
+                    if action.min_size.y == CONTROL_HEIGHT {
                         assert_eq!(after.rect.height(), CONTROL_HEIGHT);
-                        assert!(after.rect.width() >= min_width);
+                        assert!(after.rect.width() >= action.min_size.x);
                     }
                 }
             }

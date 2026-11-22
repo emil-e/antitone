@@ -58,7 +58,7 @@ but skips the Negative/Paper/LUT colour treatment and display rendering.
 
 Click **Export N photo(s)**. Each photograph is rendered and written before the next
 begins; a photo that fails does not stop the batch. The summary shows exported, skipped,
-failed and remaining counts, with **Show in Finder** to inspect the results.
+failed and remaining counts. On macOS, use **Show in Finder** to inspect the results.
 
 ![The export dialog: photos, destination, format and file options](../assets/docs/export-dialog.png)
 

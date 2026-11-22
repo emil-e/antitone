@@ -14,7 +14,7 @@ This is scan correction, not film-base calibration, dust removal or a colour gra
 
 ## Choose the illuminated support
 
-Use **Set up…** in Roll's **Flat-field correction** section to select a reference and adjust the illuminated area, then Apply or Cancel. Once accepted, the section shows the reference filename and an enable control. Its Reset removes correction so setup can be run again.
+Use **Choose reference…** in Roll's **Flat-field correction** section to select a reference and adjust the illuminated area, then Apply or Cancel. Once accepted, the section shows the reference filename and an enable control. Its Reset removes correction so setup can be run again.
 
 Setup uses untransformed source with automatic embedded lens development. Adjust the suggested rectangle to exclude the holder and other unsuitable content, while retaining the image-centre patch used to establish the target.
 

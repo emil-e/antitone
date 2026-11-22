@@ -1,8 +1,7 @@
 # The viewer
 
-The viewer is where you look at the photograph; its controls sit in the bar above the
-image. Every icon button shows its name and shortcut on hover, and the **Viewer help**
-button (right end of the bar) lists navigation and the active tool's gestures.
+The viewer controls sit below the image. Hover over an icon for its name and any
+shortcut. **Viewer help** lists navigation and the active tool's gestures.
 
 ## Navigation
 
@@ -10,7 +9,8 @@ button (right end of the bar) lists navigation and the active tool's gestures.
   also pans; **Space-drag** or **middle-drag** always pans.
 - **Fit** (Z, or ⌘0) fits the image in view; **100%** shows one image pixel per display
   pixel — the honest sharpness check. Clicking outside the canvas tools toggles
-  Fit/100%.
+  Fit/100%. If an active tool leaves no room for the zoom readout, use **Zoom to 100%**
+  in **Viewer help**.
 - **Actual Size** (⌘1) and **Zoom In / Zoom Out** are in the **View** menu.
 
 ## Fullscreen

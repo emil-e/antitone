@@ -227,14 +227,40 @@ impl Editor {
                     0.
                 };
                 let trailing_width = trailing_width + view_error_width;
-                let source_controls = 2;
-                // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
-                let navigation_icons = 4 + source_controls;
-                let navigation_width = 50.
-                    + navigation_icons as f32 * ui::CONTROL_HEIGHT
-                    + (navigation_icons + 3) as f32 * VIEWER_ITEM_GAP;
-                let show_zoom_steps =
-                    tool.is_none() || ui.available_width() >= trailing_width + navigation_width;
+                let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
+                let zoom = layout.map_or("—".into(), |layout| {
+                    format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
+                });
+                let zoom_button = TextAction::new(&zoom)
+                    .readout()
+                    .enabled(navigating)
+                    .toolbar(50.)
+                    .name("100%")
+                    .help("Zoom to 100% (one image pixel per display pixel).");
+                // Source/inspection can occupy two slots. Fit, fullscreen and Help occupy three more.
+                let icon_slot = ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP;
+                let readout_slot = zoom_button.width(ui) + VIEWER_ITEM_GAP;
+                let divider = 6.;
+                let divider_slot = divider + VIEWER_ITEM_GAP;
+                let compact = tool_group
+                    .zip(hosted.as_ref())
+                    .is_some_and(|(group, tool)| {
+                        let actions = group.minimum_width_actions(
+                            ui,
+                            tool.primary.map(|primary| primary.label),
+                            tool.dismiss,
+                        );
+                        ui.available_width()
+                            < actions + 5. * icon_slot + readout_slot + divider_slot
+                    });
+                let navigation_width = 6. * icon_slot + readout_slot + divider_slot;
+                let show_zoom_steps = !compact
+                    && (tool.is_none()
+                        || ui.available_width() >= trailing_width + navigation_width);
+                if compact {
+                    // Reclaim the gaps, not the padding or hit targets, in the tight layout.
+                    ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP - 1.;
+                }
                 if ui::icons::button(
                     ui,
                     Icon::Fit,
@@ -246,18 +272,7 @@ impl Editor {
                 {
                     fit = true;
                 }
-                let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
-                let zoom = layout.map_or("—".into(), |layout| {
-                    format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
-                });
-                let zoom = TextAction::new(&zoom)
-                    .readout()
-                    .enabled(navigating)
-                    .toolbar(50.)
-                    .name("100%")
-                    .help("Zoom to 100% (one image pixel per display pixel).")
-                    .show(ui);
-                if zoom.clicked() {
+                if !compact && zoom_button.show(ui).clicked() {
                     zoom_action = Some(1.);
                 }
                 if show_zoom_steps {
@@ -290,7 +305,9 @@ impl Editor {
                 {
                     toggle_fullscreen = true;
                 }
-                ui.separator();
+                if !compact {
+                    ui.add(egui::Separator::default().spacing(divider));
+                }
                 let controls_width = (ui.available_width()
                     - trailing_width
                     - ui::CONTROL_HEIGHT
@@ -312,6 +329,19 @@ impl Editor {
                     .show(|ui| {
                         ui.set_width(290.);
                         ui.label(egui::RichText::new("Viewer navigation").strong());
+                        if compact {
+                            ui.horizontal(|ui| {
+                                ui.small(format!("Current zoom: {zoom}"));
+                                if TextAction::new("Zoom to 100%")
+                                    .enabled(navigating)
+                                    .show(ui)
+                                    .clicked()
+                                {
+                                    zoom_action = Some(1.);
+                                    ui.close();
+                                }
+                            });
+                        }
                         ui.small(
                             hosted
                                 .as_ref()

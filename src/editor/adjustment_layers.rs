@@ -1044,7 +1044,7 @@ impl Editor {
         let response = self.dialogs.show(move |context, dialog, escape| {
             ui::DecisionDialog::new(&title,
                 "This removes the layer and its coverage. Other layers and the RAW file are unchanged.",
-                "Delete layer").warning().show(context, dialog, escape)
+                "Delete layer").destructive().show(context, dialog, escape)
         });
         self.document.visit.interaction_action = cx.spawn(move |cx| async move {
             if response.await != Ok(ui::DialogChoice::Confirm) {

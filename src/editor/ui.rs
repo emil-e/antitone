@@ -13,7 +13,7 @@ mod cards;
 pub(super) use cards::ContactSheetLayout;
 
 mod dialogs;
-pub(super) use dialogs::{DecisionDialog, DialogChoice, escape_requested, focus_default, modal};
+pub(super) use dialogs::{DecisionDialog, Dialog, DialogAction, DialogChoice, DialogRole};
 
 mod feedback;
 pub(super) use feedback::{ContextualStatus, FeedbackDialog, Severity, StatusLevel, status_icon};

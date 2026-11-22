@@ -351,6 +351,19 @@ fn viewer_groups_keep_actions_ordered_contained_and_stable_across_frames() {
                         let action = node(&output, name);
                         assert_eq!(action.role(), egui::accesskit::Role::Button);
                         assert_eq!(action.is_disabled(), !response.enabled());
+                        let text = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) if text.galley.job.text == name => {
+                                    Some(text)
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        let label = text.galley.rect.translate(text.pos.to_vec2());
+                        assert!(label.left() >= response.rect.left() + 7.);
+                        assert!(label.right() <= response.rect.right() - 7.);
                     }
                 }
             }
@@ -382,9 +395,10 @@ fn complete_width_matches_allocation_without_changing_ids_or_layout() {
                             assert_eq!(ui.next_auto_id(), id);
                             assert_eq!(ui.available_rect_before_wrap(), available);
                             let response = group.show_actions(ui, Some("Apply"), "Cancel", None);
+                            let expected = measured.min(available.width());
                             assert!(
-                                (response.response.rect.width() - measured).abs() < 1e-5,
-                                "measured {measured}, allocated {:?}, scale {scale}, custom {custom}, framed {framed}, busy {busy}",
+                                (response.response.rect.width() - expected).abs() < 1e-5,
+                                "natural {measured}, expected {expected}, allocated {:?}, scale {scale}, custom {custom}, framed {framed}, busy {busy}",
                                 response.response.rect
                             );
                         });

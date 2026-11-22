@@ -2,6 +2,7 @@ use egui::{Color32, Ui};
 
 pub(in crate::editor) const CONTROL_HEIGHT: f32 = 28.;
 pub(in crate::editor) const INSCRIPTION: Color32 = Color32::from_rgb(223, 170, 96);
+pub(super) const DESTRUCTIVE_FILL: Color32 = Color32::from_rgb(102, 48, 47);
 
 const READING_FONT: &str = "plex-text";
 const INSTRUMENT_FONT: &str = "plex-medium";

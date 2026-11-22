@@ -396,7 +396,7 @@ async fn guarded_transition(cx: &UiContext<'_, Editor>, id: u64, transition: Tra
             };
             Some(editor.dialogs.show(move |context, dialog, escape| {
                 DecisionDialog::new("Save changes to this project?", explanation, "Save changes")
-                    .detail("Your RAW files are not changed.").alternative("Discard changes")
+                    .detail("Your RAW files are not changed.").destructive_alternative("Discard changes")
                     .show(context, dialog, escape)
             }))
         }).flatten();
@@ -452,7 +452,7 @@ async fn save_to(cx: &UiContext<'_, Editor>, id: u64, destination: Destination) 
         let response = cx.update(|editor| editor.dialogs.show(move |context, dialog, escape| {
             DecisionDialog::new("Replace this project file?",
                 "A project already exists at this location. Replacing it overwrites the saved project, not its RAW files.",
-                "Replace project").warning().detail(&detail).show(context, dialog, escape)
+                "Replace project").destructive().detail(&detail).show(context, dialog, escape)
         }))?;
         if response.await != Ok(DialogChoice::Confirm) {
             return None;

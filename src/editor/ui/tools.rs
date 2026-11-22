@@ -12,6 +12,8 @@ pub(in crate::editor) fn active_tool_fill(ui: &Ui) -> Color32 {
 const TOOL_ICON_SIZE: f32 = 16.;
 const TOOL_FRAME_MARGIN: i8 = 6;
 const TOOL_ACTION_SPACE: f32 = 8.;
+const TOOL_TRAILING_SPACE: f32 = 6.;
+const TOOL_CONTROL_PADDING: i8 = 8;
 
 /// Fixed stage-level home for immediate image commands and canvas-tool launchers.
 pub(in crate::editor) struct ToolShelf;
@@ -216,7 +218,7 @@ pub(in crate::editor) struct RoleActions {
     pub(in crate::editor) primary: Option<Response>,
 }
 
-fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
+fn tool_title_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
     egui::WidgetText::into_galley(
         identity.viewer_title().into(),
         ui,
@@ -225,17 +227,37 @@ fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
         egui::TextStyle::Body,
     )
     .size()
-    .x + TOOL_ICON_SIZE
+    .x
 }
 
-fn paint_tool_identity_warned(
+fn tool_identity_badge(
     ui: &mut Ui,
     identity: ToolIdentity<'_>,
     busy: bool,
     warning: Option<&str>,
+    title_slot: f32,
 ) {
-    identity.icon_warned(ui, busy, warning);
-    let label = ui.add(egui::Label::new(identity.viewer_title()));
+    let label = egui::Frame::NONE
+        .fill(active_tool_fill(ui))
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+        .inner_margin(egui::Margin::symmetric(TOOL_CONTROL_PADDING, 0))
+        .show(ui, |ui| {
+            let gap = ui.spacing().item_spacing.x.min(title_slot);
+            let title_width = title_slot - gap;
+            ui.spacing_mut().item_spacing.x = gap;
+            ui.set_min_height(CONTROL_HEIGHT);
+            identity.icon_warned(ui, busy, warning);
+            ui.allocate_ui_with_layout(
+                egui::vec2(title_width, CONTROL_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(title_width);
+                    ui.add(egui::Label::new(identity.viewer_title()).truncate())
+                },
+            )
+            .inner
+        })
+        .inner;
     label.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Label,
@@ -249,31 +271,26 @@ fn paint_tool_identity_warned(
     });
 }
 
-fn tool_group_frame<R>(
-    ui: &mut Ui,
-    width: f32,
-    contents: impl FnOnce(&mut Ui) -> R,
-) -> egui::InnerResponse<R> {
-    egui::Frame::NONE
-        .fill(active_tool_fill(ui))
-        .inner_margin(egui::Margin::symmetric(TOOL_FRAME_MARGIN, 0))
-        .show(ui, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, CONTROL_HEIGHT),
-                egui::Layout::left_to_right(egui::Align::Center),
-                contents,
-            )
-            .inner
-        })
-}
-
 impl ToolGroup<'_> {
     fn apply(self, label: &'static str) -> TextAction<'static> {
         TextAction::new(label)
             .enabled(self.apply_enabled)
             .primary()
             .toolbar(0.)
+            .horizontal_padding(f32::from(TOOL_CONTROL_PADDING))
             .help("Apply (Enter).")
+    }
+
+    fn dismiss(self, label: &'static str, has_primary: bool) -> TextAction<'static> {
+        let dismiss = TextAction::new(label)
+            .enabled(self.cancel_enabled)
+            .toolbar(0.)
+            .horizontal_padding(f32::from(TOOL_CONTROL_PADDING));
+        if has_primary {
+            dismiss
+        } else {
+            dismiss.primary()
+        }
     }
 
     pub(in crate::editor) fn width_actions(
@@ -282,12 +299,27 @@ impl ToolGroup<'_> {
         primary: Option<&'static str>,
         dismiss: &'static str,
     ) -> f32 {
-        tool_identity_width(ui, self.identity)
-            + TextAction::new(dismiss).toolbar(0.).width(ui)
-            + primary.map_or(0., |label| self.apply(label).width(ui))
-            + (if primary.is_some() { 3. } else { 2. }) * ui.spacing().item_spacing.x
+        self.minimum_width_actions(ui, primary, dismiss)
+            + self.natural_title_slot(ui)
             + TOOL_ACTION_SPACE
-            + 2. * f32::from(TOOL_FRAME_MARGIN)
+            + TOOL_TRAILING_SPACE
+    }
+
+    fn natural_title_slot(self, ui: &Ui) -> f32 {
+        ui.spacing().item_spacing.x + tool_title_width(ui, self.identity)
+    }
+
+    pub(in crate::editor) fn minimum_width_actions(
+        self,
+        ui: &Ui,
+        primary: Option<&'static str>,
+        dismiss: &'static str,
+    ) -> f32 {
+        TOOL_ICON_SIZE
+            + self.dismiss(dismiss, primary.is_some()).width(ui)
+            + primary.map_or(0., |label| self.apply(label).width(ui))
+            + (if primary.is_some() { 2. } else { 1. }) * ui.spacing().item_spacing.x
+            + 2. * f32::from(TOOL_CONTROL_PADDING)
     }
 
     pub(in crate::editor) fn show_actions(
@@ -297,23 +329,28 @@ impl ToolGroup<'_> {
         dismiss: &'static str,
         warning: Option<&str>,
     ) -> egui::InnerResponse<RoleActions> {
-        let width = self.width_actions(ui, primary, dismiss) - 2. * f32::from(TOOL_FRAME_MARGIN);
-        tool_group_frame(ui, width, |ui| {
-            paint_tool_identity_warned(ui, self.identity, self.busy, warning);
-            ui.add_space(TOOL_ACTION_SPACE);
-            let dismiss = TextAction::new(dismiss)
-                .enabled(self.cancel_enabled)
-                .toolbar(0.);
-            let dismiss = if primary.is_none() {
-                dismiss.primary()
-            } else {
-                dismiss
-            };
-            RoleActions {
-                dismiss: dismiss.show(ui),
-                primary: primary.map(|label| self.apply(label).show(ui)),
-            }
-        })
+        let fixed = self.minimum_width_actions(ui, primary, dismiss);
+        let flexible = (ui.available_width() - fixed).max(0.);
+        // Elide the title and yield surrounding whitespace before squeezing any control.
+        let trailing = flexible.min(TOOL_TRAILING_SPACE);
+        let action_space = (flexible - trailing).min(TOOL_ACTION_SPACE);
+        let title_slot = self
+            .natural_title_slot(ui)
+            .min(flexible - trailing - action_space);
+        let width = fixed + title_slot + action_space + trailing;
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, CONTROL_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(width);
+                tool_identity_badge(ui, self.identity, self.busy, warning, title_slot);
+                ui.add_space(action_space);
+                RoleActions {
+                    dismiss: self.dismiss(dismiss, primary.is_some()).show(ui),
+                    primary: primary.map(|label| self.apply(label).show(ui)),
+                }
+            },
+        )
     }
 }
 

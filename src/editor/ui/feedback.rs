@@ -1,4 +1,8 @@
-use super::{Icon, TextAction, dialogs, inspector};
+use super::{
+    Icon,
+    dialogs::{Dialog, DialogAction, DialogRole},
+    inspector,
+};
 use egui::{Context, Id, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,30 +137,23 @@ pub struct FeedbackDialog<'a> {
 
 impl FeedbackDialog<'_> {
     pub fn show(self, context: &Context, id: Id, escape_available: bool) -> bool {
-        let response = dialogs::modal(context, id, |ui| {
-            notice_heading(ui, self.severity, self.title);
-            ui.label(self.explanation);
-            inspector::dialog_disclosure(ui, "feedback-details", "Details", |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("feedback-details-scroll")
-                    .max_height((context.content_rect().height() * 0.25).min(160.))
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(self.details).wrap().selectable(true));
-                    });
+        let actions = [DialogAction::new((), "OK", DialogRole::Primary)];
+        let (_, acknowledge) = Dialog::new(&actions)
+            .initial_focus(())
+            .escape(escape_available, ())
+            .show(context, id, |ui| {
+                notice_heading(ui, self.severity, self.title);
+                ui.label(self.explanation);
+                inspector::dialog_disclosure(ui, "feedback-details", "Details", |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("feedback-details-scroll")
+                        .max_height((context.content_rect().height() * 0.25).min(160.))
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(self.details).wrap().selectable(true));
+                        });
+                });
             });
-            ui.add_space(4.);
-            let acknowledge = ui
-                .horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        TextAction::new("OK").primary().show(ui)
-                    })
-                    .inner
-                })
-                .inner;
-            dialogs::focus_default(ui, &acknowledge);
-            acknowledge.clicked()
-        });
-        response.inner || dialogs::escape_requested(&response, escape_available)
+        acknowledge.is_some()
     }
 }
 

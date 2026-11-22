@@ -114,7 +114,7 @@ impl Editor {
                             self.change_correction(Some(enabled), cx);
                         }
                         ui.add(egui::Label::new(name).truncate());
-                    } else if ui::TextAction::new("Set up…")
+                    } else if ui::TextAction::new("Choose reference…")
                         .help("Choose a film-free RAW of the light source from the same scanning setup.")
                         .show(ui)
                         .clicked()
