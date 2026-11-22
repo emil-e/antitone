@@ -103,7 +103,7 @@ pub(super) fn chain(
     )
     .unwrap();
     if sigma > 0. {
-        node = gaussian(node, sigma).unwrap();
+        node = crate::gpu::gaussian::blur(node, sigma).unwrap();
     }
     if let Some(target) = target {
         node = renderer.drt.get(target).apply(node).unwrap();

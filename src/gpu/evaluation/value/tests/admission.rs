@@ -12,7 +12,9 @@ fn fixed_tiles_preserve_rotated_masked_gaussian_math_and_complete_coverage() {
     let sigma = 0.65;
     let gain = 1.75;
     let offset = -0.5;
-    let node = gaussian(affine(source(Arc::new(plate.clone())), gain, offset), sigma).unwrap();
+    let node =
+        crate::gpu::gaussian::blur(affine(source(Arc::new(plate.clone())), gain, offset), sigma)
+            .unwrap();
     let allowance = Tiling { tile: [3, 2] };
     node.plan_unit(area, allowance)
         .unwrap()

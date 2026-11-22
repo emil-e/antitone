@@ -86,7 +86,7 @@ fn a_large_request_captures_output_without_expanding_calculations_under_its_full
     let region = Rect::new([0, 0], [1024, 1024]);
     let domain = output(map, region);
     let root = reconstruct_mapped(input, domain, map).unwrap();
-    let root = value::gaussian(root, 0.1).unwrap();
+    let root = crate::gpu::gaussian::blur(root, 0.1).unwrap();
     let ((job, described), created) = value::testing::observe(0, || {
         (
             super::super::super::super::plan::Job::new(

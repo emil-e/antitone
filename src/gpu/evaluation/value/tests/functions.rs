@@ -210,7 +210,7 @@ fn recorded_neighbourhoods_materialize_callable_inputs_when_their_combined_bindi
             .with_bindings(captures.bindings),
         )
         .unwrap();
-        let root = gaussian(input, 1.56).unwrap();
+        let root = crate::gpu::gaussian::blur(input, 1.56).unwrap();
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let query = context
             .request(

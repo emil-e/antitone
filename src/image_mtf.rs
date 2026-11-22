@@ -8,6 +8,6 @@ pub struct ImageMtfParameters {
 
 impl ImageMtfParameters {
     pub fn support(self, pitch: [f64; 2]) -> Support {
-        Support(pitch.map(|p| (4. * self.sigma as f32 / p as f32).ceil() as u32))
+        Support(crate::gaussian::support(self.sigma, pitch))
     }
 }

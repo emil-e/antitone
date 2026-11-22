@@ -105,7 +105,7 @@ impl Assembly {
 
 impl crate::image_mtf::ImageMtfParameters {
     pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        gaussian(input, self.sigma)
+        crate::gpu::gaussian::blur(input, self.sigma)
     }
 }
 

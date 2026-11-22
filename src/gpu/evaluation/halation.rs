@@ -17,7 +17,7 @@ pub(crate) fn halation(input: Value, parameters: HalationParameters) -> Result<V
             value::Access::Pointwise,
         ),
     )?;
-    let blurred = value::gaussian(positive, parameters.sigma)?;
+    let blurred = crate::gpu::gaussian::blur(positive, parameters.sigma)?;
     Ok(Value::from_operation(
         input.domain,
         [input, blurred],

@@ -238,7 +238,7 @@ fn completed_signed_mtf_precedes_positive_light_extraction() {
             .any(|(a, b)| (a[0] - b[0]).abs() > 0.01),
         "signed fixture distinguishes otherwise commuting Gaussians"
     );
-    let input = gaussian(source(Arc::new(data)), mtf_sigma).unwrap();
+    let input = crate::gpu::gaussian::blur(source(Arc::new(data)), mtf_sigma).unwrap();
     let actual = render(
         &device,
         &queue,

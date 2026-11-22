@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
+use crate::gpu::gaussian;
 use std::sync::Mutex;
 
 mod admission;
@@ -605,7 +606,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
 #[test]
 fn shared_neighbourhoods_preserve_individual_results_without_reacquiring_the_same_source() {
     let (input, reads) = fixture([128, 64], vec![[-2., 3., 4., 1.]; 128 * 64]);
-    let input = super::super::super::operators::gaussian(input, 1.).unwrap();
+    let input = gaussian::blur(input, 1.).unwrap();
     let roots: Vec<_> = [128., 127.]
         .into_iter()
         .map(|width| {
@@ -976,7 +977,7 @@ fn streamed_source_units_keep_real_neighbours_for_an_upstream_spatial_operation(
     let mut values = vec![[0., -2., 4., 1.]; 512 * 256];
     values[128 * 512 + 256][0] = 131_072.;
     let (input, reads) = fixture([512, 256], values);
-    let input = super::super::super::operators::gaussian(input, 1.).unwrap();
+    let input = gaussian::blur(input, 1.).unwrap();
     let input = cpu_boundary(input);
     let map = Mapping {
         start: [0.; 2],
@@ -1199,11 +1200,7 @@ fn invalid_addressing_rejects_before_io_and_valid_neighbourhoods_propagate_sourc
             Error::InvalidParameter("evaluation raster exceeds GPU cell addressing"),
         ),
     ] {
-        let input = super::super::super::operators::gaussian(
-            source(Arc::new(Unreadable(reads.clone()))),
-            sigma,
-        )
-        .unwrap();
+        let input = gaussian::blur(source(Arc::new(Unreadable(reads.clone()))), sigma).unwrap();
         let domain = Domain {
             bounds: Some(Rect::new([50_000; 2], [16; 2])),
             ..input.domain

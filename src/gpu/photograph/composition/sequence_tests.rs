@@ -443,7 +443,7 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
         seed: 17,
         ..Default::default()
     };
-    let mtf = gaussian(input.clone(), response.image_mtf_sigma).unwrap();
+    let mtf = crate::gpu::gaussian::blur(input.clone(), response.image_mtf_sigma).unwrap();
     let halated = crate::gpu::evaluation::halation(mtf, halo).unwrap();
     let original = crate::gpu::evaluation::grain(halated.clone(), response.grain(), 17).unwrap();
     assert!(

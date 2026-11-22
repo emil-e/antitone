@@ -94,7 +94,7 @@ fn requested_values_own_their_math_and_redescribe_smaller_neighbourhoods_without
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let reads = Arc::new(Mutex::new(Vec::new()));
     let input = source(Arc::new(WideRamp(reads.clone())));
-    let group = gaussian(input.clone(), 1.).unwrap();
+    let group = crate::gpu::gaussian::blur(input.clone(), 1.).unwrap();
     let full = group.domain().finite().unwrap();
     let weak_group = group.downgrade();
     let weak_input = input.downgrade();

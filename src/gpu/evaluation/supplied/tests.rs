@@ -373,7 +373,11 @@ fn produced_photographic_values_can_supply_their_captured_group_and_resolve_stag
         )
         .unwrap();
         let grade = grading.compose(input.clone()).unwrap();
-        let root = window(gaussian(grade.clone(), 0.9).unwrap(), [8, 3, 1, 1].into()).unwrap();
+        let root = window(
+            crate::gpu::gaussian::blur(grade.clone(), 0.9).unwrap(),
+            [8, 3, 1, 1].into(),
+        )
+        .unwrap();
         (grade, root)
     };
     let (grade, root) = make(1.0);

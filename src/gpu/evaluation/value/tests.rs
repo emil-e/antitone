@@ -337,7 +337,7 @@ fn gaussian_group_expands_reads_and_preserves_source_edges_without_two_shader_im
     let reads = plate.reads.clone();
     let sigma = 0.65;
     let region = CellRegion::new([-5, 3], [12, 11]);
-    let root = gaussian(source(Arc::new(plate.clone())), sigma).unwrap();
+    let root = crate::gpu::gaussian::blur(source(Arc::new(plate.clone())), sigma).unwrap();
     let value = root.request(region).unwrap();
     assert_eq!(reads.load(Ordering::Relaxed), 0);
     let source_bounds = plate.domain.finite().unwrap();
@@ -483,7 +483,7 @@ fn gaussian_opposite_extreme_signs_use_a_finite_convex_mean_and_preserve_metadat
     assert!((amplitude - (-amplitude)).is_infinite());
     let sigma: f64 = 0.8;
     let radius = (4. * sigma).ceil() as i32;
-    let root = gaussian(source(Arc::new(Extremes)), sigma).unwrap();
+    let root = crate::gpu::gaussian::blur(source(Arc::new(Extremes)), sigma).unwrap();
     let value = root.request([0, 0, 2, 1].into()).unwrap();
     for policy in [Policy::Materialized, Policy::Composed] {
         let (actual, _) = run(&device, &queue, &value, policy);

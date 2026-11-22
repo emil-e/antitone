@@ -535,7 +535,7 @@ impl Assembly {
             return author(image, output);
         }
         if let Some(film) = self.grain {
-            image = gaussian(image, film.image_mtf_sigma)?;
+            image = crate::gpu::gaussian::blur(image, film.image_mtf_sigma)?;
         }
         if let Some(halation) = self.halation {
             image = crate::gpu::evaluation::halation(image, halation)?;
