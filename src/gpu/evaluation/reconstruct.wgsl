@@ -15,7 +15,7 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
         return;
     }
     let xy = vec2u(index % size.x, index / size.x) + geometry.origins.zw;
-    let value = contribution(xy, geometry);
+    let value = block_contribution(xy, geometry);
     output[index] = vec4f(value.mean, covered_flags(value.flags, value.mass, geometry));
 }
 
@@ -37,7 +37,7 @@ fn accumulate(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups)
         return;
     }
     let xy = vec2u(index % size.x, index / size.x) + geometry.origins.zw;
-    let value = contribution(xy, geometry);
+    let value = block_contribution(xy, geometry);
     if value.mass <= 0.0 {
         return;
     }

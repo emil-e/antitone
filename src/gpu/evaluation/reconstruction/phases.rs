@@ -2,6 +2,27 @@
 use super::*;
 pub(super) const SOURCE_TILE: [u32; 2] = [512, 128];
 
+fn affine_axes(mapping: Mapping, output: Rect) -> Vec<[u32; 4]> {
+    // Separate integer position from fractions before narrowing to f32. Each
+    // coordinate is evaluated at its absolute output index, not a block offset.
+    let pack = |position: [f64; 2]| {
+        let cell = position.map(f64::floor);
+        [
+            cell[0] as i32 as u32,
+            cell[1] as i32 as u32,
+            ((position[0] - cell[0]) as f32).to_bits(),
+            ((position[1] - cell[1]) as f32).to_bits(),
+        ]
+    };
+    let x = (output.x..output.right()).map(|x| {
+        pack(std::array::from_fn(|i| {
+            mapping.start[i] + f64::from(x) * mapping.axes[0][i]
+        }))
+    });
+    let y = (output.y..output.bottom()).map(|y| pack(mapping.axes[1].map(|v| f64::from(y) * v)));
+    x.chain(y).collect()
+}
+
 impl Reconstruction {
     pub(super) fn express(
         &self,
@@ -140,12 +161,39 @@ impl Reconstruction {
                 } else {
                     "fn reconstruction_admitted(p:vec2i, geometry:Geometry)->bool{return true;}"
                 };
-                let code=[
-                    include_str!("../reconstruction_geometry.wgsl"),include_str!("../footprint.wgsl"),include_str!("../reconstruction_mean.wgsl"),
-                    "fn reconstruction_sample(p:vec2i)->vec4f{return input_0(p);}",admitted,
+                let affine = self.support.is_some() && !self.mapping.integral();
+                let (axis, affine_body, integrate) = if affine {
+                    let axis = if mask.is_some() {
+                        "fn affine_axis(i: u32) -> vec4u { return table_1(i); }"
+                    } else {
+                        "fn affine_axis(i: u32) -> vec4u { return table_0(i); }"
+                    };
+                    (
+                        axis,
+                        include_str!("affine_contribution.wgsl"),
+                        "affine_contribution(p, geometry)",
+                    )
+                } else {
+                    ("", "", "block_contribution(vec2u(p), geometry)")
+                };
+                let endpoint = format!(
+                    "fn pixel(p: vec2i, position: vec2f, geometry: Geometry) -> array<vec4f, 2> {{
+                        let value = {integrate};
+                        return array<vec4f, 2>(vec4f(value.mean, value.mass), vec4f(value.flags, 0.0, 0.0, 0.0));
+                    }}"
+                );
+                let code = [
+                    include_str!("../reconstruction_geometry.wgsl"),
+                    include_str!("../footprint.wgsl"),
+                    include_str!("../reconstruction_mean.wgsl"),
+                    "fn reconstruction_sample(p: vec2i) -> vec4f { return input_0(p); }",
+                    admitted,
                     include_str!("../reconstruction_contribution.wgsl"),
-                    "fn pixel(p:vec2i, position:vec2f, geometry:Geometry)->array<vec4f,2>{let value=contribution(vec2u(p),geometry);return array<vec4f,2>(vec4f(value.mean,value.mass),vec4f(value.flags,0.0,0.0,0.0));}"
-                ].join("\n");
+                    axis,
+                    affine_body,
+                    &endpoint,
+                ]
+                .join("\n");
                 let work = footprint
                     .min(f64::from(part.width) * f64::from(part.height))
                     .ceil() as u64;
@@ -168,6 +216,9 @@ impl Reconstruction {
                         rows[i / 4][i % 4] = word;
                     }
                     operation = operation.with_table(rows);
+                }
+                if affine {
+                    operation = operation.with_table(affine_axes(self.mapping, affected));
                 }
                 let input = source.request(if aligned_inputs { chunk } else { part })?;
                 let contribution = Calculation::new(domain, affected, vec![input], operation)?;

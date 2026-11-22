@@ -253,6 +253,105 @@ fn straightened_sdr_block_keeps_a_nearly_zero_channel_encodable() {
 }
 
 #[test]
+fn straightened_original_samples_are_independent_of_block_partition() {
+    fn sample([x, y]: [u32; 2]) -> [f32; 4] {
+        [
+            ((x ^ y) & 1) as f32,
+            ((x + 3 * y) % 7) as f32 / 4. - 0.5,
+            ((4 * x + 7 * y) % 13) as f32 / 16.,
+            0.,
+        ]
+    }
+
+    struct Pattern(evaluation::Domain);
+    impl evaluation::Source for Pattern {
+        fn domain(&self) -> evaluation::Domain {
+            self.0
+        }
+
+        fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            Ok((region.y..region.bottom())
+                .flat_map(|y| (region.x..region.right()).map(move |x| [x as u32, y as u32]))
+                .map(sample)
+                .collect())
+        }
+    }
+
+    let (_, queue, renderer) = crate::gpu::test_support::render_context();
+    let area = SourceRegion::from([101, 77, 592, 436]);
+    let definition = evaluation::source(std::sync::Arc::new(Pattern(evaluation::Domain {
+        bounds: Some([101, 77, 592, 436].into()),
+        grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+    })));
+    for angle in [0.015, -0.271, 0.389] {
+        let composition = composition(area, angle);
+        let [width, height] = composition.size();
+        let acquire = |[block_width, block_height]: [u32; 2]| {
+            let mut frame = vec![[f32::NAN; 4]; (width * height) as usize];
+            execute(
+                renderer.evaluation(),
+                &queue,
+                Request {
+                    definition: definition.clone(),
+                    composition,
+                    encoding: SampleEncoding::LinearFloat,
+                },
+                |render, complete| {
+                    for y in (0..height).step_by(block_height as usize) {
+                        for x in (0..width).step_by(block_width as usize) {
+                            let extent = [block_width.min(width - x), block_height.min(height - y)];
+                            let OutputBlock::Linear(block) = render([x, y], extent)? else {
+                                panic!("expected linear reconstruction");
+                            };
+                            for (row, samples) in block.chunks_exact(extent[0] as usize).enumerate()
+                            {
+                                let start = (y as usize + row) * width as usize + x as usize;
+                                frame[start..start + samples.len()].copy_from_slice(samples);
+                            }
+                        }
+                    }
+                    complete()
+                },
+                || Ok(()),
+            )
+            .unwrap();
+            frame
+        };
+        let standard = acquire(TILE);
+        let rectangular = acquire([67, 93]);
+        for (i, (a, b)) in standard.iter().zip(&rectangular).enumerate() {
+            assert_eq!(a, b, "angle {angle}, output cell {i}");
+        }
+
+        // Independently check the covered-cell average, including crop edges
+        // and both schedules' internal seams. Equality alone permits a shared error.
+        let raster = FrameRaster::full(composition).unwrap();
+        for y in [0, 92, 93, 127, 128, height - 1] {
+            for x in [0, 66, 67, 127, 128, width - 1] {
+                let expected =
+                    crate::sampling::weighted_mean_iter(
+                        raster.footprint([x, y]).unwrap().pixels(area).unwrap().map(
+                            |(p, weight)| {
+                                let [r, g, b, _] = sample(p);
+                                Ok((DVec3::new(r.into(), g.into(), b.into()), weight))
+                            },
+                        ),
+                    )
+                    .unwrap();
+                let pixel = standard[(y * width + x) as usize];
+                assert_eq!(pixel[3], 8., "empty or invalid footprint at {x},{y}");
+                let [r, g, b, _] = pixel;
+                let measured = DVec3::new(r.into(), g.into(), b.into());
+                assert!(
+                    (measured - expected).abs().max_element() <= 4e-6,
+                    "angle {angle}, output {x},{y}: {measured:?} versus {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origins_and_seams() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();

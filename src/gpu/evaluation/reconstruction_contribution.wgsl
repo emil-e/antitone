@@ -4,11 +4,16 @@ struct Contribution {
     flags: f32,
 }
 
-fn contribution(xy: vec2u, geometry: Geometry) -> Contribution {
+fn block_contribution(xy: vec2u, geometry: Geometry) -> Contribution {
+    let local_xy = vec2f(xy - geometry.origins.zw);
+    let start = geometry.start_dx.xy + local_xy.x * geometry.start_dx.zw
+        + local_xy.y * geometry.dy.xy;
+    return contribution(geometry, vec2i(geometry.sample_bounds.xy), start);
+}
+
+fn contribution(geometry: Geometry, anchor: vec2i, start: vec2f) -> Contribution {
     let dx = geometry.start_dx.zw;
     let dy = geometry.dy.xy;
-    let local_xy = vec2f(xy - geometry.origins.zw);
-    let start = geometry.start_dx.xy + local_xy.x * dx + local_xy.y * dy;
     let points = array<vec2f, 4>(start, start + dx, start + dx + dy, start + dy);
     var low = points[0];
     var high = points[0];
@@ -16,16 +21,17 @@ fn contribution(xy: vec2u, geometry: Geometry) -> Contribution {
         low = min(low, points[i]);
         high = max(high, points[i]);
     }
-    let anchor = vec2i(geometry.sample_bounds.xy);
+    let sample_low = vec2i(geometry.sample_bounds.xy) - anchor;
+    let sample_high = vec2i(geometry.sample_bounds.zw) - anchor;
     let first_cell = vec2i(geometry.source_bounds.xy) - anchor;
     let last_cell = vec2i(geometry.source_bounds.zw) - anchor - vec2i(1);
-    var first = max(vec2i(floor(low)), vec2i(0));
-    var end = min(vec2i(ceil(high)), vec2i(geometry.sample_bounds.zw - geometry.sample_bounds.xy));
+    var first = max(vec2i(floor(low)), sample_low);
+    var end = min(vec2i(ceil(high)), sample_high);
     if geometry.dy.w != 0.0 {
-        first = max(clamp(vec2i(floor(low)), first_cell, last_cell), vec2i(0));
+        first = max(clamp(vec2i(floor(low)), first_cell, last_cell), sample_low);
         end = min(
                 clamp(vec2i(ceil(high)), first_cell + vec2i(1), last_cell + vec2i(1)),
-                vec2i(geometry.sample_bounds.zw - geometry.sample_bounds.xy),
+                sample_high,
             );
     }
     var mean = vec3f(0.0);
