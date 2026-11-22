@@ -1311,7 +1311,7 @@ impl Editor {
                                 ui,
                                 "roll-white-balance",
                                 &mut wb,
-                                ui::ColorControl::RollWhiteBalance,
+                                ui::ColorControl::RollWb,
                                 editable,
                                 can_pick,
                             );

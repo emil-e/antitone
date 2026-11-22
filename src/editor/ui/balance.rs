@@ -11,7 +11,7 @@ use glam::{DMat2, DMat3, DVec2, DVec3};
 pub enum ColorControl {
     GammaBalance,
     WhiteBalance,
-    RollWhiteBalance,
+    RollWb,
 }
 
 // Resolve orientation: blue at 3 o'clock, yellow at 9; RGB/CMY proceed clockwise.
@@ -28,7 +28,7 @@ fn hue_direction(sector: f64) -> DVec2 {
 impl ColorControl {
     fn limit(self) -> f64 {
         match self {
-            Self::RollWhiteBalance => ROLL_WB_LIMIT,
+            Self::RollWb => ROLL_WB_LIMIT,
             Self::GammaBalance | Self::WhiteBalance => 1.,
         }
     }
@@ -36,7 +36,7 @@ impl ColorControl {
     fn matrix(self) -> DMat2 {
         let coordinate_to_rgb = match self {
             Self::GammaBalance => DMat2::IDENTITY,
-            Self::WhiteBalance | Self::RollWhiteBalance => {
+            Self::WhiteBalance | Self::RollWb => {
                 // Differential AP1 neutral-white response to log Bradford-cone gains.
                 let cones = ap1_to_cones();
                 let response = cones.inverse() * DMat3::from_diagonal(cones * DVec3::ONE);
@@ -107,9 +107,7 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance, size: f32) -> Res
             response.enabled(),
             match kind {
                 ColorControl::GammaBalance => "Gamma balance wheel",
-                ColorControl::WhiteBalance | ColorControl::RollWhiteBalance => {
-                    "White balance wheel"
-                }
+                ColorControl::WhiteBalance | ColorControl::RollWb => "White balance wheel",
             },
         )
     });

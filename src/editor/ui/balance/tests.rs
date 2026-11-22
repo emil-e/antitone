@@ -6,10 +6,10 @@ fn wheel_adapters_roundtrip_full_coordinate_square_and_do_not_change_processing(
     for kind in [
         ColorControl::GammaBalance,
         ColorControl::WhiteBalance,
-        ColorControl::RollWhiteBalance,
+        ColorControl::RollWb,
     ] {
         let limit = match kind {
-            ColorControl::RollWhiteBalance => 1.5,
+            ColorControl::RollWb => 1.5,
             _ => 1.,
         };
         for warmth in [-limit, -0.3, 0., 0.7, limit] {
@@ -622,7 +622,7 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
                                 ui,
                                 "roll-white-balance",
                                 value,
-                                ColorControl::RollWhiteBalance,
+                                ColorControl::RollWb,
                                 true,
                                 false,
                             );
@@ -690,7 +690,7 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
         }
         let kind = [
             ColorControl::GammaBalance,
-            ColorControl::RollWhiteBalance,
+            ColorControl::RollWb,
             ColorControl::WhiteBalance,
         ][index];
         // The radius comes from a pixel-rounded accesskit rect, so allow a sub-pixel error.
