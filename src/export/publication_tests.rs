@@ -50,7 +50,7 @@ fn final_stop_after_all_pixels_preserves_existing_destination_and_retires_tempor
                 (&path, Overwrite::Confirmed),
                 size,
                 OutputTarget::Srgb,
-                BlockOrder::RowMajor,
+                (BlockOrder::RowMajor, BLOCK),
                 |_, extent| {
                     completed.set(true);
                     Ok(vec![[12345; 3]; (extent[0] * extent[1]) as usize])
@@ -76,7 +76,7 @@ fn cancelled_completion_cannot_publish_a_ready_pixel_receipt() {
                 height: 2,
             },
             OutputTarget::Srgb,
-            BlockOrder::RowMajor,
+            (BlockOrder::RowMajor, BLOCK),
             |_, extent| Ok(vec![[12345; 3]; (extent[0] * extent[1]) as usize]),
             || Err(Error::Export("completion cancelled".into())),
         )

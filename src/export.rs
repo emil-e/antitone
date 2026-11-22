@@ -84,7 +84,7 @@ impl Plan {
         self,
         (path, overwrite): (&Path, Overwrite),
         size: ImageSize,
-        order: BlockOrder,
+        blocks: (BlockOrder, [u32; 2]),
         mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Samples>,
         before_publish: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
@@ -97,7 +97,7 @@ impl Plan {
                 && let Some(result) = crate::export_timing::pixels::intercept(
                     size,
                     target,
-                    order,
+                    blocks,
                     &mut |origin, extent| match block(origin, extent)? {
                         Samples::Rgb16(codes) => Ok(codes),
                         _ => Err(Error::InvalidParameter("expected RGB16 samples")),
@@ -114,7 +114,7 @@ impl Plan {
             overwrite,
             |file| {
                 self.format
-                    .encode(file, size, self.target, order, &mut block)
+                    .encode(file, size, self.target, blocks, &mut block)
             },
             before_publish,
         )
@@ -285,15 +285,24 @@ pub(crate) enum BlockOrder {
     Spatial2x2,
 }
 
+impl BlockOrder {
+    fn group_side(self) -> u32 {
+        match self {
+            Self::RowMajor => 1,
+            Self::Spatial2x2 => 2,
+        }
+    }
+}
+
+fn band_rows((order, block): (BlockOrder, [u32; 2])) -> u32 {
+    block[1] * order.group_side()
+}
+
 pub(crate) fn ordered_blocks(
     size: ImageSize,
-    order: BlockOrder,
+    (order, block): (BlockOrder, [u32; 2]),
 ) -> impl Iterator<Item = ([u32; 2], [u32; 2])> {
-    let step = match order {
-        BlockOrder::RowMajor => [1, 1],
-        BlockOrder::Spatial2x2 => [2, 2],
-    };
-    let group = [BLOCK[0] * step[0], BLOCK[1] * step[1]];
+    let group = block.map(|side| side * order.group_side());
     (0..size.height)
         .step_by(group[1] as usize)
         .flat_map(move |gy| {
@@ -301,16 +310,16 @@ pub(crate) fn ordered_blocks(
                 .step_by(group[0] as usize)
                 .flat_map(move |gx| {
                     (gy..(gy + group[1]).min(size.height))
-                        .step_by(BLOCK[1] as usize)
+                        .step_by(block[1] as usize)
                         .flat_map(move |y| {
                             (gx..(gx + group[0]).min(size.width))
-                                .step_by(BLOCK[0] as usize)
+                                .step_by(block[0] as usize)
                                 .map(move |x| {
                                     (
                                         [x, y],
                                         [
-                                            BLOCK[0].min(size.width - x),
-                                            BLOCK[1].min(size.height - y),
+                                            block[0].min(size.width - x),
+                                            block[1].min(size.height - y),
                                         ],
                                     )
                                 })
@@ -342,21 +351,28 @@ pub(crate) fn tiff_encoded_ordered(
     order: BlockOrder,
     block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
-    tiff_encoded_checked((path, overwrite), size, target, order, block, || Ok(()))
+    tiff_encoded_checked(
+        (path, overwrite),
+        size,
+        target,
+        (order, BLOCK),
+        block,
+        || Ok(()),
+    )
 }
 
 pub(crate) fn tiff_encoded_checked(
     (path, overwrite): (&Path, Overwrite),
     size: ImageSize,
     target: OutputTarget,
-    order: BlockOrder,
+    layout: (BlockOrder, [u32; 2]),
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     Plan::new(RenderTarget::Display(target), FileFormat::Tiff)?.write(
         (path, overwrite),
         size,
-        order,
+        layout,
         |origin, extent| block(origin, extent).map(Samples::Rgb16),
         before_publish,
     )
@@ -401,7 +417,7 @@ pub(crate) fn exr_blocks_checked(
     Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Exr(precision))?.write(
         (path, overwrite),
         size,
-        BlockOrder::RowMajor,
+        (BlockOrder::RowMajor, BLOCK),
         |origin, extent| encoding.pack(block(origin, extent)?.into_iter().map(Ok)),
         before_publish,
     )

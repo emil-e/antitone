@@ -11,11 +11,13 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         .evaluation()
         .materializations()
         .set_test_pressure(crate::sys::MemoryPressure::Warning);
-    let scan = Scan::open(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
-        None,
-    )
-    .unwrap();
+    let fixture = crate::dng_fixture::Fixture {
+        side: 896,
+        ramp: true,
+        ..Default::default()
+    }
+    .write();
+    let scan = Scan::open(fixture.path(), None).unwrap();
     let area = scan.area;
     let composition = Composition::with_crop(
         area,
@@ -26,7 +28,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
                 f64::from(area.x) + f64::from(area.width) / 2.,
                 f64::from(area.y) + f64::from(area.height) / 2.,
             ],
-            size: [area.width - 64, area.height - 64],
+            size: [area.width - 180, area.height - 180],
             angle: 0.17,
         }),
     )

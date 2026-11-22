@@ -82,6 +82,7 @@ fn native_output_resources() {
                 use crate::gpu::execution;
                 let plan = format.plan();
                 let encoding = super::area::sample_encoding(plan);
+                let layout = block_layout(composition, plan);
                 let photograph = crate::gpu::photograph::PhotographGraph::authored_original(
                     &device.limits(),
                     crate::gpu::source::camera_source(&scan)?,
@@ -109,7 +110,7 @@ fn native_output_resources() {
                     }
                     RenderTarget::SceneLinearAp0 => photograph.processed,
                 };
-                return execution::execute(
+                return execution::execute_blocks(
                     renderer.evaluation(),
                     &queue,
                     execution::Request {
@@ -117,14 +118,13 @@ fn native_output_resources() {
                         composition,
                         encoding,
                     },
+                    layout.1,
                     |render, complete| {
-                        let size = composition.size();
-                        for y in (0..size[1]).step_by(128) {
-                            for x in (0..size[0]).step_by(128) {
-                                let output =
-                                    render([x, y], [128.min(size[0] - x), 128.min(size[1] - y)])?;
-                                std::hint::black_box(output);
-                            }
+                        let [width, height] = composition.size();
+                        for (origin, extent) in
+                            export::ordered_blocks(ImageSize { width, height }, layout)
+                        {
+                            std::hint::black_box(render(origin, extent)?);
                         }
                         complete()
                     },

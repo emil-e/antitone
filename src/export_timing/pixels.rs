@@ -43,7 +43,7 @@ pub(crate) fn capture<T>(run: impl FnOnce() -> T) -> (T, Option<Pixels>) {
 pub(crate) fn intercept(
     size: ImageSize,
     target: OutputTarget,
-    order: export::BlockOrder,
+    layout: (export::BlockOrder, [u32; 2]),
     block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>, Error>,
     before_complete: impl FnOnce() -> Result<(), Error>,
 ) -> Option<Result<(), Error>> {
@@ -58,7 +58,7 @@ pub(crate) fn intercept(
             ));
         }
         let mut codes = super::timed!(FrameAllocation, vec![[0; 3]; count as usize]);
-        for (origin, extent) in export::ordered_blocks(size, order) {
+        for (origin, extent) in export::ordered_blocks(size, layout) {
             let encoded = block(origin, extent)?;
             if encoded.len() != (extent[0] * extent[1]) as usize {
                 return Err(Error::InvalidParameter("invalid TIFF block length"));
@@ -129,7 +129,7 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            export::BlockOrder::RowMajor,
+            (export::BlockOrder::RowMajor, export::BLOCK),
             &mut |_, _| unreachable!(),
             || Ok(())
         )
@@ -140,7 +140,7 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            export::BlockOrder::Spatial2x2,
+            (export::BlockOrder::Spatial2x2, export::BLOCK),
             &mut { make },
             || Ok(()),
         )
@@ -180,7 +180,7 @@ fn receipt_is_explicit_and_failure_or_unwind_cannot_publish_partial_pixels() {
         intercept(
             size,
             target,
-            export::BlockOrder::RowMajor,
+            (export::BlockOrder::RowMajor, export::BLOCK),
             &mut |_, _| Err(Error::Gpu("stop".into())),
             || Ok(()),
         )

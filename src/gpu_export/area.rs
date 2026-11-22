@@ -24,7 +24,8 @@ pub(super) fn write_calculation(
         composition,
         plan,
     } = request;
-    execution::execute(
+    let layout = block_layout(composition, plan);
+    execution::execute_blocks(
         context,
         gpu,
         execution::Request {
@@ -32,6 +33,7 @@ pub(super) fn write_calculation(
             composition,
             encoding: sample_encoding(plan),
         },
+        layout.1,
         |render, complete| encode_with_checked(composition, plan, destination, render, complete),
         check,
     )

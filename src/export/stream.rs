@@ -55,13 +55,10 @@ pub(super) fn tiff(
     file: &mut fs::File,
     size: ImageSize,
     profile: &'static [u8],
-    order: BlockOrder,
+    layout: (BlockOrder, [u32; 2]),
     block: &mut impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
 ) -> Result<()> {
-    let band_rows = match order {
-        BlockOrder::RowMajor => BLOCK[1],
-        BlockOrder::Spatial2x2 => 2 * BLOCK[1],
-    };
+    let band_rows = band_rows(layout);
     let count = workspace(
         size,
         band_rows,
@@ -131,7 +128,7 @@ pub(super) fn tiff(
                 width: size.width,
                 height: rows,
             },
-            order,
+            layout,
         ) {
             origin[1] += top;
             let values = block(origin, extent)?;

@@ -98,6 +98,63 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
 }
 
 #[test]
+fn gpu_tiff_preserves_codes_across_full_blocks_and_partial_edges() {
+    struct Ramp;
+    const SIZE: [u32; 2] = [519, 527];
+
+    fn code(x: u32, y: u32) -> [u16; 3] {
+        [(x * 97) as u16, (y * 101) as u16, (x + 2 * y) as u16]
+    }
+
+    impl Source for Ramp {
+        fn domain(&self) -> Domain {
+            Domain {
+                bounds: Some(CellRegion::new([0, 0], SIZE)),
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+            }
+        }
+
+        fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, antitone::Error> {
+            Ok((region.y..region.bottom())
+                .flat_map(|y| (region.x..region.right()).map(move |x| code(x as u32, y as u32)))
+                .map(|rgb| {
+                    let [r, g, b] = rgb
+                        .map(|c| OutputTarget::Srgb.decode(f64::from(c) / 65535.).unwrap() as f32);
+                    [r, g, b, 0.]
+                })
+                .collect())
+        }
+    }
+
+    let (context, queue) = context();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ramp.tif");
+    let [width, height] = SIZE;
+    antitone::gpu_export::write(
+        &context,
+        &queue,
+        Request {
+            definition: evaluation::source(Arc::new(Ramp)),
+            composition: Composition::new(
+                [0, 0, width, height].into(),
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
+            plan: Plan::new(RenderTarget::Display(OutputTarget::Srgb), FileFormat::Tiff).unwrap(),
+        },
+        &path,
+        Overwrite::Refuse,
+    )
+    .unwrap();
+
+    let expected: Vec<_> = (0..height)
+        .flat_map(|y| (0..width).flat_map(move |x| code(x, y)))
+        .collect();
+    assert_eq!(tiff(&path), expected);
+}
+
+#[test]
 fn one_authored_value_exports_to_both_scene_linear_sample_layouts() {
     use exr::prelude::{FlatSamples, Vec2, read_first_flat_layer_from_file};
 

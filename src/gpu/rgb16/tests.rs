@@ -149,7 +149,7 @@ fn rgb16_boundaries_and_binary_fallback_do_not_depend_on_the_float_estimate() {
 }
 
 #[test]
-fn rgb16_rejects_empty_oversized_and_undersized_units_before_encoding() {
+fn rgb16_rejects_empty_units_and_undersized_buffers_before_encoding() {
     let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
     let kernel = Rgb16::new(&device, OutputTarget::Srgb).unwrap();
     let input = device.create_buffer(&wgpu::BufferDescriptor {
@@ -164,16 +164,11 @@ fn rgb16_rejects_empty_oversized_and_undersized_units_before_encoding() {
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    for count in [
-        0,
-        crate::gpu::execution::TILE[0] * crate::gpu::execution::TILE[1] + 1,
-    ] {
-        let mut encoder = device.create_command_encoder(&Default::default());
-        assert!(matches!(
-            kernel.encode(&device, &mut encoder, &input, &output, count),
-            Err(Error::InvalidParameter(_))
-        ));
-    }
+    let mut encoder = device.create_command_encoder(&Default::default());
+    assert!(matches!(
+        kernel.encode(&device, &mut encoder, &input, &output, 0),
+        Err(Error::InvalidParameter(_))
+    ));
     let large_input = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: 32,

@@ -18,6 +18,7 @@ macro_rules! timed {
 }
 
 // Bounded execution granularity, independent of file codec tile layout.
+#[cfg(test)]
 pub(crate) const TILE: [u32; 2] = [128; 2];
 
 pub(crate) type RenderBlock<'a> = dyn FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error> + 'a;
@@ -69,7 +70,7 @@ impl Reconstructor {
 
     #[cfg(test)]
     fn new_test(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
-        let mut reconstruction = Self::new_output(device, target)?;
+        let mut reconstruction = Self::new_output(device, target, TILE)?;
         let bytes = u64::from(TILE[0]) * u64::from(TILE[1]) * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded reconstructed destination"),
@@ -86,10 +87,15 @@ impl Reconstructor {
         Ok(reconstruction)
     }
 
-    fn new_output(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
+    fn new_output(
+        device: &wgpu::Device,
+        target: Option<OutputTarget>,
+        [width, height]: [u32; 2],
+    ) -> Result<Self, Error> {
         #[cfg(test)]
         let (context, output) = (None, None);
-        let bytes = u64::from(TILE[0]) * u64::from(TILE[1]) * 16;
+        let cells = u64::from(width) * u64::from(height);
+        let bytes = cells * 16;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("destination-only reconstruction readback"),
             size: bytes,
@@ -101,7 +107,7 @@ impl Reconstructor {
                 let kernel = rgb16::Rgb16::new(device, target)?;
                 let packed = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("bounded RGB16 output records"),
-                    size: u64::from(TILE[0]) * u64::from(TILE[1]) * 8,
+                    size: cells * 8,
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
@@ -299,10 +305,22 @@ pub(crate) struct Stats {
 #[derive(Default)]
 pub(crate) struct Stats {}
 
+#[cfg(test)]
 pub(crate) fn execute(
     context: &evaluation::Context,
     queue: &crate::gpu::submission::Queue,
     request: Request,
+    sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
+    check: impl FnMut() -> Result<(), Error>,
+) -> Result<Stats, Error> {
+    execute_blocks(context, queue, request, TILE, sink, check)
+}
+
+pub(crate) fn execute_blocks(
+    context: &evaluation::Context,
+    queue: &crate::gpu::submission::Queue,
+    request: Request,
+    block: [u32; 2],
     sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
     mut check: impl FnMut() -> Result<(), Error>,
 ) -> Result<Stats, Error> {
@@ -327,7 +345,7 @@ pub(crate) fn execute(
         SampleEncoding::LinearFloat => None,
         SampleEncoding::Rgb16(target) => Some(target),
     };
-    let reconstruction = timed!(Setup, Reconstructor::new_output(device, target))?;
+    let reconstruction = timed!(Setup, Reconstructor::new_output(device, target, block))?;
     let size = request.composition.size();
     let domain = evaluation::Domain {
         bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
@@ -360,7 +378,7 @@ pub(crate) fn execute(
     sink(
         &mut |origin, extent| {
             check()?;
-            if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
+            if extent.contains(&0) || (0..2).any(|i| extent[i] > block[i]) {
                 return Err(Error::InvalidParameter(
                     "invalid processing destination unit",
                 ));
@@ -376,7 +394,7 @@ pub(crate) fn execute(
                             bounds: [origin[0], origin[1], extent[0], extent[1]].try_into()?,
                             grid: root.domain().grid
                         },
-                        evaluation::Tiling { tile: TILE }
+                        evaluation::Tiling { tile: block }
                     )?
                     .plans()
                     .next()
