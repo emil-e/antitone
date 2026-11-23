@@ -55,10 +55,12 @@ fn authored_dng_preview_worker_installs_and_releases_the_visible_placeholder_wit
     editor.document.thumbnails.embedded = EmbeddedPreviews::new();
     editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_embedded_previews(&visible, &context, cx));
-        assert!(app.read(|editor| editor.document.embedded_preview.is_some()));
+        app.enter(|editor, cx| {
+            super::workflow_tests::request_visible(editor, &visible, &context, cx)
+        });
+        assert!(app.read(|editor| editor.document.thumbnails.embedded.pending()));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
             assert_eq!(
@@ -176,20 +178,22 @@ fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf) {
 
 fn complete(
     previews: &mut EmbeddedPreviews,
-    request: Request,
+    (request, identity): (Request, Arc<AtomicBool>),
     document: &crate::editor::document_scope::DocumentScope,
     context: &egui::Context,
     available: bool,
 ) {
-    previews.complete(
-        request.ticket,
-        request.key,
-        Completion::Image(Ok(
-            available.then(|| egui::ColorImage::filled([2, 1], egui::Color32::RED))
-        )),
+    assert!(previews.complete(
+        Finished {
+            identity,
+            key: request.key,
+            image: Completion::Image(Ok(
+                available.then(|| egui::ColorImage::filled([2, 1], egui::Color32::RED))
+            )),
+        },
         document,
         context,
-    );
+    ));
 }
 
 #[test]
@@ -205,8 +209,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
     previews.request_visible(&wanted);
     assert!(
         previews
@@ -226,8 +229,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
     complete(&mut previews, second, &document, &context, true);
     assert!(previews.get(&wanted[1].1.source).is_some());
     previews.request_visible(&wanted[1..]);
@@ -254,25 +256,26 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
     for index in 0..36 {
         let wanted = vec![wanted(&document, index)];
         thumbnails.embedded.request_visible(&wanted);
-        let request = thumbnails
+        let (request, identity) = thumbnails
             .embedded
             .begin(
                 &document.state,
                 Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
                 &document.initialization,
             )
-            .unwrap()
-            .0;
-        thumbnails.embedded.complete(
-            request.ticket,
-            request.key,
-            Completion::Image(Ok(Some(egui::ColorImage::filled(
-                [256, 256],
-                egui::Color32::RED,
-            )))),
+            .unwrap();
+        assert!(thumbnails.embedded.complete(
+            Finished {
+                identity,
+                key: request.key,
+                image: Completion::Image(Ok(Some(egui::ColorImage::filled(
+                    [256, 256],
+                    egui::Color32::RED,
+                )))),
+            },
             &document,
             &context,
-        );
+        ));
         thumbnails.apply_test_budgets(thumbnails.budgets);
     }
     for index in (0..36).rev().chain(0..36) {
@@ -337,8 +340,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
     complete(&mut previews, request, &document, &context, false);
     previews.request_visible(&wanted);
     assert!(
@@ -359,8 +361,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
     previews.cancel();
     assert!(previews.pending());
     assert!(
@@ -382,18 +383,20 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
+    let (request, identity) = request;
     let key = request.key.clone();
-    previews.complete(
-        request.ticket,
-        request.key,
-        Completion::Stopped,
+    assert!(previews.complete(
+        Finished {
+            identity,
+            key: request.key,
+            image: Completion::Stopped
+        },
         &document,
         &context,
-    );
+    ));
     assert!(!previews.pending());
-    assert!(previews.services.is_none());
+    assert!(!previews.enabled);
     assert_eq!(previews.entries[0].0, key);
 }
 
@@ -423,8 +426,7 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
             Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
             &document.initialization,
         )
-        .unwrap()
-        .0;
+        .unwrap();
     thumbnails.apply_test_budgets(memory::CacheBudgets {
         images: 0,
         sources: 0,
@@ -457,8 +459,7 @@ fn retired_document_source_and_development_reject_previews() {
                 Some(crate::source::SourceLoader::new().provider(Some(document.cache.clone()))),
                 &document.initialization,
             )
-            .unwrap()
-            .0;
+            .unwrap();
         match stale {
             "document" => document = Document::default().into(),
             "source" => document.project.remove_from_filmstrip(id).unwrap(),
@@ -470,6 +471,37 @@ fn retired_document_source_and_development_reject_previews() {
         assert!(!previews.pending());
         assert!(previews.entries.is_empty(), "{stale} must not install");
     }
+}
+
+#[test]
+fn a_replacement_rejects_completion_even_when_requesting_the_same_source() {
+    let document: crate::editor::document_scope::DocumentScope = fixture().into();
+    let context = egui::Context::default();
+    let mut original = state();
+    let (request, identity) = original
+        .begin(&document.state, None, &document.initialization)
+        .unwrap();
+    let mut replacement = original.for_document();
+    drop(original);
+    let successor = replacement
+        .begin(&document.state, None, &document.initialization)
+        .unwrap();
+    assert_eq!(request.key, successor.0.key);
+
+    assert!(!replacement.complete(
+        Finished {
+            identity,
+            key: request.key,
+            image: Completion::Stopped
+        },
+        &document,
+        &context,
+    ));
+    assert!(replacement.pending());
+    assert!(replacement.enabled);
+    assert!(replacement.entries.is_empty());
+    complete(&mut replacement, successor, &document, &context, true);
+    assert!(replacement.get(&wanted(&document, 0).1.source).is_some());
 }
 
 #[test]

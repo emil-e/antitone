@@ -7,7 +7,6 @@ mod tests;
 mod workflow_tests;
 
 struct Request {
-    ticket: u64,
     key: SourceKey,
     #[cfg(test)]
     path: PathBuf,
@@ -22,6 +21,12 @@ enum Completion {
     Stopped,
 }
 
+pub(super) struct Finished {
+    identity: Arc<AtomicBool>,
+    key: SourceKey,
+    image: Completion,
+}
+
 #[cfg(test)]
 struct Work {
     request: Request,
@@ -29,67 +34,54 @@ struct Work {
     reply: futures_channel::oneshot::Sender<Result<Option<egui::ColorImage>, String>>,
 }
 
-#[derive(Clone)]
-enum Services {
-    Production,
-    #[cfg(test)]
-    Controlled(mpsc::Sender<Work>),
-}
+async fn load_preview(request: Request, cancelled: Arc<AtomicBool>) -> Completion {
+    if cancelled.load(Ordering::Relaxed) {
+        return Completion::Image(Ok(None));
+    }
+    let Some(sources) = request.sources else {
+        return Completion::Stopped;
+    };
 
-impl Services {
-    async fn load(self, request: Request, cancelled: Arc<AtomicBool>) -> Completion {
-        match self {
-            #[cfg(test)]
-            Self::Controlled(commands) => {
-                let (reply, result) = futures_channel::oneshot::channel();
-                if commands
-                    .send(Work {
-                        request,
-                        cancelled,
-                        reply,
-                    })
-                    .is_err()
-                {
-                    return Completion::Stopped;
-                }
-                match result.await {
-                    Ok(image) => Completion::Image(image),
-                    Err(_) => Completion::Stopped,
-                }
-            }
-            Self::Production => {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Completion::Image(Ok(None));
-                }
-                let Some(sources) = request.sources else {
-                    return Completion::Stopped;
-                };
-                let preview = request.physical.preview(sources.as_ref()).await;
-                match crate::background::run(move |_| {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(None);
-                    }
-                    preview.and_then(|preview| preview.as_deref().map(colour_image).transpose())
-                })
-                .await
-                {
-                    Ok(image) => Completion::Image(image),
-                    Err(_) => Completion::Stopped,
-                }
-            }
+    let preview = request.physical.preview(sources.as_ref()).await;
+    match crate::background::run(move |_| {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
         }
+        preview.and_then(|preview| preview.as_deref().map(colour_image).transpose())
+    })
+    .await
+    {
+        Ok(image) => Completion::Image(image),
+        Err(_) => Completion::Stopped,
     }
 }
 
-struct Projection {
-    ticket: u64,
+#[cfg(test)]
+async fn load_controlled(
+    commands: mpsc::Sender<Work>,
+    request: Request,
     cancelled: Arc<AtomicBool>,
+) -> Completion {
+    let (reply, result) = futures_channel::oneshot::channel();
+    if commands
+        .send(Work {
+            request,
+            cancelled,
+            reply,
+        })
+        .is_err()
+    {
+        return Completion::Stopped;
+    }
+    match result.await {
+        Ok(image) => Completion::Image(image),
+        Err(_) => Completion::Stopped,
+    }
 }
 
-pub(in crate::editor) struct Pending {
-    ticket: u64,
+struct Pending {
     cancelled: Arc<AtomicBool>,
-    _task: async_executor::Task<()>,
+    _task: Option<async_executor::Task<()>>,
 }
 
 impl Drop for Pending {
@@ -98,6 +90,7 @@ impl Drop for Pending {
     }
 }
 
+// Closing the executor drops the future before it drops the preview owner.
 struct Retire(Arc<AtomicBool>);
 impl Drop for Retire {
     fn drop(&mut self) {
@@ -123,9 +116,10 @@ impl CameraImage {
 
 pub(super) struct EmbeddedPreviews {
     entries: Vec<(SourceKey, CameraImage)>,
-    services: Option<Services>,
-    next: u64,
-    pending: Option<Projection>,
+    enabled: bool,
+    #[cfg(test)]
+    controlled_load: Option<mpsc::Sender<Work>>,
+    pending: Option<Pending>,
     visible: Vec<SourceKey>,
     budget: usize,
 }
@@ -133,7 +127,9 @@ pub(super) struct EmbeddedPreviews {
 impl EmbeddedPreviews {
     pub(super) fn for_document(&self) -> Self {
         Self {
-            services: self.services.clone(),
+            enabled: self.enabled,
+            #[cfg(test)]
+            controlled_load: self.controlled_load.clone(),
             ..Self::default()
         }
     }
@@ -143,8 +139,9 @@ impl Default for EmbeddedPreviews {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
-            services: None,
-            next: 0,
+            enabled: false,
+            #[cfg(test)]
+            controlled_load: None,
             pending: None,
             visible: Vec::new(),
             budget: 16 << 20,
@@ -155,7 +152,7 @@ impl Default for EmbeddedPreviews {
 impl EmbeddedPreviews {
     pub(super) fn new() -> Self {
         Self {
-            services: Some(Services::Production),
+            enabled: true,
             ..Default::default()
         }
     }
@@ -208,13 +205,68 @@ impl EmbeddedPreviews {
         }
     }
 
+    pub(super) fn start<'scope, T: 'scope>(
+        &mut self,
+        document: &Document,
+        sources: Option<Arc<dyn crate::source::SourceProvider>>,
+        initialization: &crate::source::Initialization,
+        context: &egui::Context,
+        cx: &UiContext<'scope, T>,
+        publish: impl FnOnce(UiContext<'scope, T>, Finished) + 'scope,
+    ) {
+        let Some((request, cancelled)) = self.begin(document, sources, initialization) else {
+            return;
+        };
+
+        let key = request.key.clone();
+        let fallback_key = key.clone();
+        let identity = cancelled.clone();
+        let retire = Retire(cancelled.clone());
+        #[cfg(test)]
+        let controlled = self.controlled_load.clone();
+        let task = cx.spawn(move |cx| async move {
+            let _retire = retire;
+            #[cfg(test)]
+            let image = if let Some(commands) = controlled {
+                load_controlled(commands, request, identity.clone()).await
+            } else {
+                load_preview(request, identity.clone()).await
+            };
+            #[cfg(not(test))]
+            let image = load_preview(request, identity.clone()).await;
+
+            publish(
+                cx,
+                Finished {
+                    identity,
+                    key,
+                    image,
+                },
+            );
+        });
+
+        if let Some(task) = task {
+            self.pending.as_mut().expect("admitted preview")._task = Some(task);
+        } else {
+            self.complete(
+                Finished {
+                    identity: cancelled,
+                    key: fallback_key,
+                    image: Completion::Stopped,
+                },
+                document,
+                context,
+            );
+        }
+    }
+
     fn begin(
         &mut self,
         document: &Document,
         sources: Option<Arc<dyn crate::source::SourceProvider>>,
         initialization: &crate::source::Initialization,
     ) -> Option<(Request, Arc<AtomicBool>)> {
-        if self.pending.is_some() || self.services.is_none() {
+        if self.pending.is_some() || !self.enabled {
             return None;
         }
         self.entries.retain(|(key, _)| current(key, document));
@@ -239,17 +291,14 @@ impl EmbeddedPreviews {
         let physical = document.source_input(key.id, initialization).ok()?;
         #[cfg(test)]
         let source = key.metadata_record(&_path);
-        self.next += 1;
-        let ticket = self.next;
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.pending = Some(Projection {
-            ticket,
+        self.pending = Some(Pending {
             cancelled: cancelled.clone(),
+            _task: None,
         });
         Some((
             Request {
-                ticket,
-                key: key.clone(),
+                key,
                 #[cfg(test)]
                 path: _path,
                 #[cfg(test)]
@@ -261,27 +310,31 @@ impl EmbeddedPreviews {
         ))
     }
 
-    fn complete(
+    /// Consume a current completion, even if cancellation or changed inputs prevent publication.
+    pub(super) fn complete(
         &mut self,
-        ticket: u64,
-        key: SourceKey,
-        image: Completion,
+        finished: Finished,
         document: &Document,
         context: &egui::Context,
-    ) {
+    ) -> bool {
+        let Finished {
+            identity,
+            key,
+            image,
+        } = finished;
         if !self
             .pending
             .as_ref()
-            .is_some_and(|pending| pending.ticket == ticket)
+            .is_some_and(|pending| Arc::ptr_eq(&pending.cancelled, &identity))
         {
-            return;
+            return false;
         }
         let pending = self.pending.take().unwrap();
         if matches!(&image, Completion::Stopped) {
-            self.services = None;
+            self.enabled = false;
         }
         if pending.cancelled.load(Ordering::Relaxed) || !current(&key, document) {
-            return;
+            return true;
         }
         let texture = match image {
             Completion::Image(Ok(Some(image))) => Some(context.load_texture(
@@ -305,6 +358,7 @@ impl EmbeddedPreviews {
             texture.map_or(CameraImage::Unavailable, CameraImage::Ready),
         ));
         self.trim();
+        true
     }
 
     pub(super) fn get(&self, key: &SourceKey) -> Option<&egui::TextureHandle> {
@@ -335,83 +389,6 @@ impl EmbeddedPreviews {
 
     pub(super) fn pending(&self) -> bool {
         self.pending.is_some()
-    }
-}
-
-impl Editor {
-    pub(super) fn request_embedded_previews(
-        &mut self,
-        wanted: &[(usize, ImageKey, PathBuf)],
-        context: &egui::Context,
-        cx: &UiContext<'_, Self>,
-    ) {
-        self.document.thumbnails.embedded.request_visible(wanted);
-        self.apply_cache_budgets();
-        self.acquire_embedded(context, cx);
-    }
-
-    pub(super) fn acquire_embedded(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
-        if self.document.thumbnails.budgets.pressure == memory::Pressure::Critical {
-            self.document.thumbnails.embedded.cancel();
-            return;
-        }
-        if self.document.embedded_preview.is_some() {
-            return;
-        }
-        let sources = self.document.thumbnails.acquisition();
-        let Some((request, cancelled)) = self.document.thumbnails.embedded.begin(
-            &self.document.state,
-            sources,
-            &self.document.initialization,
-        ) else {
-            return;
-        };
-        let ticket = request.ticket;
-        let key = request.key.clone();
-        let fallback_key = key.clone();
-        let services = self.document.thumbnails.embedded.services.clone().unwrap();
-        let retire = Retire(cancelled.clone());
-        let stopped = cancelled.clone();
-        let workflow_context = context.clone();
-        let Some(task) = cx.spawn(move |cx| async move {
-            let _retire = retire;
-            let image = services.load(request, stopped).await;
-            cx.update(|editor| {
-                if !editor
-                    .document
-                    .embedded_preview
-                    .as_ref()
-                    .is_some_and(|pending| pending.ticket == ticket)
-                {
-                    return;
-                }
-                let pending = editor.document.embedded_preview.take().unwrap();
-                editor.document.thumbnails.embedded.complete(
-                    ticket,
-                    key,
-                    image,
-                    &editor.document.state,
-                    &workflow_context,
-                );
-                drop(pending);
-                editor.apply_cache_budgets();
-                editor.acquire_embedded(&workflow_context, &cx);
-            });
-        }) else {
-            self.document.thumbnails.embedded.complete(
-                ticket,
-                fallback_key,
-                Completion::Stopped,
-                &self.document.state,
-                context,
-            );
-            return;
-        };
-        self.document.embedded_preview = Some(Pending {
-            ticket,
-            cancelled,
-            _task: task,
-        });
     }
 }
 

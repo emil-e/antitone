@@ -33,10 +33,11 @@ fn wanted(document: &Document) -> Vec<(usize, ImageKey, PathBuf)> {
         .collect()
 }
 
-fn editor(document: Document, services: Services) -> Editor {
+fn editor(document: Document, controlled_load: Option<mpsc::Sender<Work>>) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     editor.document = editor.document.replacement(document);
-    editor.document.thumbnails.embedded.services = Some(services);
+    editor.document.thumbnails.embedded = EmbeddedPreviews::new();
+    editor.document.thumbnails.embedded.controlled_load = controlled_load;
     editor.memory_pressure = memory::Pressure::Normal;
     editor.apply_cache_budgets();
     editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
@@ -45,12 +46,22 @@ fn editor(document: Document, services: Services) -> Editor {
 
 fn request(editor: &mut Editor, cx: &UiContext<'_, Editor>, context: &egui::Context) {
     let visible = wanted(&editor.document);
-    editor.request_embedded_previews(&visible, context, cx);
+    request_visible(editor, &visible, context, cx);
 }
 
-fn controlled() -> (Services, mpsc::Receiver<Work>) {
-    let (commands, requests) = mpsc::channel();
-    (Services::Controlled(commands), requests)
+pub(super) fn request_visible(
+    editor: &mut Editor,
+    visible: &[(usize, ImageKey, PathBuf)],
+    context: &egui::Context,
+    cx: &UiContext<'_, Editor>,
+) {
+    editor.document.thumbnails.embedded.request_visible(visible);
+    editor.apply_cache_budgets();
+    start_next_embedded_preview(editor, context, cx);
+}
+
+fn controlled() -> (mpsc::Sender<Work>, mpsc::Receiver<Work>) {
+    mpsc::channel()
 }
 
 fn finish(work: Work) {
@@ -62,12 +73,12 @@ fn finish(work: Work) {
 fn visible_authored_previews_advance_and_install_without_another_paint() {
     let (document, _directory) = document(2);
     let ids = document.project.order.clone();
-    let editor = editor(document, Services::Production);
+    let editor = editor(document, None);
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
             for id in ids {
@@ -90,7 +101,7 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
 fn composed_modal_keeps_camera_demand_and_textures_at_normal_and_narrow_sizes() {
     for width in [1100., 800.] {
         let (document, _directory) = document(2);
-        let editor = editor(document, Services::Production);
+        let editor = editor(document, None);
         let modal = editor
             .activities
             .start(crate::editor::ActivityOptions::new("Independent foreground operation").modal());
@@ -117,13 +128,13 @@ fn composed_modal_keeps_camera_demand_and_textures_at_normal_and_narrow_sizes() 
                 };
             for _ in 0..4 {
                 frame(app, vec![]);
-                if app.read(|editor| editor.document.embedded_preview.is_some()) {
+                if app.read(|editor| editor.document.thumbnails.embedded.pending()) {
                     break;
                 }
             }
-            assert!(app.read(|editor| editor.document.embedded_preview.is_some()));
+            assert!(app.read(|editor| editor.document.thumbnails.embedded.pending()));
             app.run_until(Duration::from_secs(5), |editor| {
-                editor.document.embedded_preview.is_none()
+                !editor.document.thumbnails.embedded.pending()
             });
             let textures: Vec<_> = app.read(|editor| {
                 editor
@@ -184,8 +195,8 @@ fn composed_modal_keeps_camera_demand_and_textures_at_normal_and_narrow_sizes() 
 fn modal_input_preserves_current_camera_preview_and_advances_visible_demand() {
     let (document, _directory) = document(2);
     let ids = document.project.order.clone();
-    let (services, requests) = controlled();
-    let editor = editor(document, services);
+    let (commands, requests) = controlled();
+    let editor = editor(document, Some(commands));
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, cx| request(editor, cx, &context));
@@ -217,7 +228,7 @@ fn modal_input_preserves_current_camera_preview_and_advances_visible_demand() {
         assert!(!second.cancelled.load(Ordering::Relaxed));
         finish(second);
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
             assert!(editor.interaction_blocked() && editor.workspace_input.is_blocked());
@@ -244,8 +255,8 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
     let (first, _first_directory) = document(1);
     let (second, _second_directory) = document(1);
     let next = wanted(&second);
-    let (services, requests) = controlled();
-    let editor = editor(first, services);
+    let (commands, requests) = controlled();
+    let editor = editor(first, Some(commands));
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
@@ -253,7 +264,7 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
         let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.enter(|editor, access| {
             editor.document = editor.document.replacement(second);
-            editor.request_embedded_previews(&next, &context, access);
+            request_visible(editor, &next, &context, access);
         });
         app.pump();
         assert!(first.cancelled.load(Ordering::Relaxed));
@@ -271,7 +282,7 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
         );
         finish(next_work);
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.thumbnails.embedded.entries.len(), 1);
@@ -306,8 +317,9 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
             |editor, cx| editor.add_raws(paths, cx),
         );
         let wanted = wanted(&editor.document);
-        let (services, requests) = controlled();
-        editor.document.thumbnails.embedded.services = Some(services);
+        let (commands, requests) = controlled();
+        editor.document.thumbnails.embedded.enabled = true;
+        editor.document.thumbnails.embedded.controlled_load = Some(commands);
         editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
         editor.set_cache_limits(cache_limits::CacheLimits {
             cpu_bytes: 0,
@@ -317,9 +329,7 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
         editor.apply_cache_budgets();
         let context = egui::Context::default();
         with_application(editor, |app| {
-            app.enter(|editor, access| {
-                editor.request_embedded_previews(&wanted[..1], &context, access)
-            });
+            app.enter(|editor, access| request_visible(editor, &wanted[..1], &context, access));
             app.pump();
             let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
             app.enter(|editor, access| {
@@ -348,7 +358,7 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
             });
             finish(second);
             app.run_until(Duration::from_secs(5), |editor| {
-                editor.document.embedded_preview.is_none()
+                !editor.document.thumbnails.embedded.pending()
             });
             app.read(|editor| {
                 assert_eq!(editor.document.thumbnails.embedded.entries.len(), 2);
@@ -381,7 +391,7 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
                         cpu_bytes: 0,
                         gpu_bytes: 64 << 20,
                     });
-                    editor.acquire_embedded(&context, access);
+                    start_next_embedded_preview(editor, &context, access);
                 });
                 for (_, image, _) in &wanted {
                     app.pump();
@@ -400,7 +410,7 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
                 app.read(|editor| {
                     assert!(editor.document.thumbnails.embedded.visible.is_empty());
                     assert!(editor.fullscreen.is_some());
-                    assert!(editor.document.embedded_preview.is_none());
+                    assert!(!editor.document.thumbnails.embedded.pending());
                 });
                 app.pump();
                 assert!(requests.try_recv().is_err());
@@ -412,8 +422,8 @@ fn document_camera_previews_finish_in_fullscreen_and_rewarm_when_resources_retur
 #[test]
 fn application_retirement_signals_stop_and_discards_the_private_producers_result() {
     let (document, _directory) = document(1);
-    let (services, requests) = controlled();
-    let editor = editor(document, services);
+    let (commands, requests) = controlled();
+    let editor = editor(document, Some(commands));
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
@@ -429,8 +439,8 @@ fn application_retirement_signals_stop_and_discards_the_private_producers_result
 #[test]
 fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
     let (document, _directory) = document(1);
-    let (services, requests) = controlled();
-    let editor = editor(document, services);
+    let (commands, requests) = controlled();
+    let editor = editor(document, Some(commands));
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
@@ -438,10 +448,10 @@ fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(work);
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
-            assert!(editor.document.thumbnails.embedded.services.is_none());
+            assert!(!editor.document.thumbnails.embedded.enabled);
             assert_eq!(editor.document.thumbnails.embedded.entries.len(), 1);
             assert!(matches!(
                 editor.document.thumbnails.embedded.entries[0].1,
@@ -457,8 +467,8 @@ fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
 #[test]
 fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
     let (document, _directory) = document(1);
-    let (services, requests) = controlled();
-    let editor = editor(document, services);
+    let (commands, requests) = controlled();
+    let editor = editor(document, Some(commands));
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
@@ -471,12 +481,12 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
         assert!(work.cancelled.load(Ordering::Relaxed));
         finish(work);
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| assert!(editor.document.thumbnails.embedded.entries.is_empty()));
         app.enter(|editor, access| request(editor, access, &context));
         app.pump();
-        app.read(|editor| assert!(editor.document.embedded_preview.is_none()));
+        app.read(|editor| assert!(!editor.document.thumbnails.embedded.pending()));
         assert!(
             requests.try_recv().is_err(),
             "critical pressure prevents a new request"
@@ -489,7 +499,7 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
         app.pump();
         finish(requests.recv_timeout(Duration::from_secs(5)).unwrap());
         app.run_until(Duration::from_secs(5), |editor| {
-            editor.document.embedded_preview.is_none()
+            !editor.document.thumbnails.embedded.pending()
         });
         app.read(|editor| {
             assert_eq!(

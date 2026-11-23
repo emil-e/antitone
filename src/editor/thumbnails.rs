@@ -12,7 +12,6 @@ mod disk;
 mod lru;
 use lru::Cache;
 mod embedded;
-pub(super) use embedded::Pending as EmbeddedWork;
 #[cfg(test)]
 mod worker_tests;
 #[cfg(test)]
@@ -1599,7 +1598,12 @@ impl Editor {
         self.document.thumbnails.protect_cpu();
         self.document.thumbnails.protect_images(protected);
         self.apply_cache_budgets();
-        self.request_embedded_previews(&camera_wanted, ui.ctx(), cx);
+        self.document
+            .thumbnails
+            .embedded
+            .request_visible(&camera_wanted);
+        self.apply_cache_budgets();
+        start_next_embedded_preview(self, ui.ctx(), cx);
         self.advance_thumbnail_demand(cx);
         if self.document.thumbnails.pending.is_some() || self.document.thumbnails.embedded.pending()
         {
@@ -1663,6 +1667,41 @@ impl ThumbnailWork {
     pub(super) fn pending(&self) -> bool {
         !self.tasks.is_empty()
     }
+}
+
+fn start_next_embedded_preview(
+    editor: &mut Editor,
+    context: &egui::Context,
+    cx: &UiContext<'_, Editor>,
+) {
+    let document = &mut editor.document;
+    if document.thumbnails.budgets.pressure == memory::Pressure::Critical {
+        document.thumbnails.embedded.cancel();
+        return;
+    }
+
+    let sources = document.thumbnails.acquisition();
+    let presentation = context.clone();
+    document.thumbnails.embedded.start(
+        &document.state,
+        sources,
+        &document.initialization,
+        context,
+        cx,
+        move |cx, finished| {
+            cx.update(|editor| {
+                let document = &mut editor.document;
+                if document
+                    .thumbnails
+                    .embedded
+                    .complete(finished, &document.state, &presentation)
+                {
+                    editor.apply_cache_budgets();
+                    start_next_embedded_preview(editor, &presentation, &cx);
+                }
+            });
+        },
+    );
 }
 
 impl Editor {
@@ -1774,7 +1813,7 @@ impl Editor {
     pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
         self.schedule_thumbnail(cx, std::time::Instant::now(), false);
         if let Some(context) = self.document.thumbnails.repaint.get().cloned() {
-            self.acquire_embedded(&context, cx);
+            start_next_embedded_preview(self, &context, cx);
         }
     }
 
