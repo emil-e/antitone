@@ -185,8 +185,8 @@ read-only and projects are plain files.
 Licensing and component notices: see Licenses/.
 "@ | Set-Content (Join-Path $stage 'README.txt') -Encoding UTF8
 
-Assert-PortableApplication -Directory $stage -Version $version
-
+# Archive and hash the staged files before executing them, so those reads do not
+# compete with file handles opened in response to launching the staged executable.
 if (Test-Path $archive) { Remove-Item -Force $archive }
 Compress-Archive -Path $stage -DestinationPath $archive -CompressionLevel Optimal
 
@@ -204,6 +204,7 @@ try {
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $unpacked $name)).Hash
         if ($expected -ne $actual) { throw "Archived file differs: $name" }
     }
+    Assert-PortableApplication -Directory $stage -Version $version
     Assert-PortableApplication -Directory $unpacked -Version $version
 } finally {
     if (Test-Path $relocated) { Remove-Item -Recurse -Force $relocated }
