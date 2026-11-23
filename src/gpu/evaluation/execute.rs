@@ -1398,7 +1398,7 @@ impl Recorded {
                 stats.include(encoded.counts);
                 resources.extend(&encoded.resources);
             }
-            resources.buffered(&prerequisite.pixels);
+            resources.buffer(&prerequisite.pixels);
         }
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(
@@ -1498,8 +1498,12 @@ impl Recorded {
         for prerequisite in &self.prerequisites {
             if let Some(commands) = &prerequisite.commands {
                 commands.submitted();
+                if let BufferImage::Produced(image) = &prerequisite.pixels {
+                    self.executor.scope.submitted_image(image);
+                }
+            } else {
+                prerequisite.pixels.submitted(&self.executor.scope);
             }
-            prerequisite.pixels.submitted(&self.executor.scope);
         }
         if let Some(relevance) = &self.relevance {
             self.executor.scope.refresh(relevance);
@@ -1507,21 +1511,12 @@ impl Recorded {
         self.executor.submitted();
     }
 
-    pub(crate) fn reusable_inputs(&self) -> Vec<Arc<ImageValue>> {
-        let mut images = Vec::new();
-        for image in self
-            .executor
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn image_inputs(&self) -> impl Iterator<Item = &Arc<ImageValue>> {
+        self.executor
             .used_images
             .iter()
             .chain(self.executor.retained.iter().map(|value| value.image()))
-        {
-            for input in std::iter::once(image).chain(image.reusable_inputs().iter()) {
-                if !images.iter().any(|prior| Arc::ptr_eq(prior, input)) {
-                    images.push(input.clone());
-                }
-            }
-        }
-        images
     }
 
     #[cfg(feature = "editor")]
@@ -1539,7 +1534,7 @@ impl Recorded {
             allocations.image(image);
         }
         for prerequisite in &self.prerequisites {
-            allocations.buffered(&prerequisite.pixels);
+            allocations.buffer(&prerequisite.pixels);
             if let Some(commands) = &prerequisite.commands {
                 commands.allocations(allocations);
             }

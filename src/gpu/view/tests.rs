@@ -127,7 +127,7 @@ fn processing_input(
 }
 
 fn independent_image(image: &Arc<ViewImage>) -> Arc<ViewImage> {
-    assert!(*image.submitted.lock().unwrap());
+    assert!(image.recording().is_none());
     ViewImage::from_recorded_fixture(
         image.context.clone(),
         image

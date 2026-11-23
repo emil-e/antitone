@@ -44,10 +44,12 @@ fn shares_inputs(before: &ViewImage, after: &ViewImage) -> bool {
     else {
         return false;
     };
+    let after = after.image.used_inputs();
     before
-        .inputs
+        .image
+        .used_inputs()
         .iter()
-        .any(|input| after.inputs.iter().any(|other| Arc::ptr_eq(input, other)))
+        .any(|input| input.strong_count() != 0 && after.iter().any(|other| input.ptr_eq(other)))
 }
 
 fn request_working(
@@ -490,6 +492,11 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     e.set_dmin(Some(DVec3::splat(0.8)));
     e.set_dmax(Some(DVec3::splat(0.2)));
     e.document.project.roll.exposure = 1.;
+    let context = &e.source_services.as_ref().unwrap().evaluation;
+    context.set_retention_limit(128 << 20);
+    context
+        .materializations()
+        .set_test_pressure(crate::sys::MemoryPressure::Normal);
     let recipe = Arc::new(
         e.view_recipe(e.input(), e.document.project.roll, e.photo_settings())
             .unwrap(),
@@ -538,7 +545,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                     crate::gpu::evaluation::BufferImage::Produced(_)
                 ));
                 assert!(
-                    value.commands.is_none(),
+                    value.recording().is_none(),
                     "publication owns a completed value, not unsubmitted grading work"
                 );
                 assert!(
@@ -568,7 +575,6 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             ((*ready.request).clone(), ready.source.context.clone())
         });
         let scope = context.materializations();
-        scope.set_retention_enabled(false);
         wanted.capture = PhotographRequest::Recipe(edited.clone());
         app.enter(|e, cx| e.request_working(wanted, cx));
         let definition = app.read(|e| {
@@ -576,7 +582,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             assert!(working.support_ready());
             let value = &working.frame.as_ref().unwrap().source;
             assert!(
-                value.commands.is_some(),
+                value.recording().is_some(),
                 "control: the resident edit must create recorded work"
             );
             assert!(matches!(
@@ -600,14 +606,28 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                 .render(&egui::Context::default())
                 .unwrap()
         });
-        let (rendered, queue) = app.read(|e| {
+        let (rendered, underlay, queue) = app.read(|e| {
+            let view = &e.document.visit.working_view;
             (
-                e.document.visit.working_view.rendered.clone().unwrap(),
+                view.rendered.clone().unwrap(),
+                view.underlay_rendered.clone().unwrap(),
                 e.source_services.as_ref().unwrap().queue.clone(),
             )
         });
-        rendered.ensure_submitted(&device, &queue, &egui::Context::default());
-        drop(rendered);
+        let ui = egui::Context::default();
+        let product = rendered.product().unwrap();
+        let second = RenderedView::from_image(
+            &device,
+            product.clone(),
+            rendered.capture.clone(),
+            rendered.target,
+        )
+        .unwrap();
+        assert!(product.recording().is_some());
+        for output in [&rendered, &underlay, &second] {
+            output.ensure_submitted(&device, &queue, &ui);
+            assert!(output.product().unwrap().recording().is_none());
+        }
         let layout = definition.domain();
         let evaluation = context
             .request(
@@ -632,6 +652,30 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         )
         .unwrap();
         assert_eq!(held.identity, *definition.identity().unwrap());
+        let inputs = held.image.used_inputs();
+        assert!(inputs.iter().any(|input| input.strong_count() > 0));
+        let expected = crate::viewer::readback::image_pixels(&device, &queue, &rendered.image);
+        assert_eq!(
+            crate::viewer::readback::image_pixels(&device, &queue, &second.image),
+            expected,
+            "both presentations must use the same submitted image"
+        );
+        scope.set_retention_enabled(false);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        assert!(inputs.iter().all(|input| input.upgrade().is_none()));
+        let redraw = RenderedView::from_image(
+            &device,
+            rendered.product().unwrap().clone(),
+            rendered.capture.clone(),
+            rendered.target,
+        )
+        .unwrap();
+        redraw.ensure_submitted(&device, &queue, &ui);
+        assert_eq!(
+            crate::viewer::readback::image_pixels(&device, &queue, &redraw.image),
+            expected,
+        );
+        drop((rendered, underlay, redraw));
         app.update(|e| e.document.visit.working_view.clear());
         assert!(
             scope

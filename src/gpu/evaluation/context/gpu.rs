@@ -125,7 +125,6 @@ impl GpuExecution {
             let image = input.materialize_image(&query, layout, counts)?;
             if let Some(identity) = output.identity() {
                 worker.scope.submitted_image(&Image {
-                    inputs: Default::default(),
                     identity: identity.clone(),
                     descriptor: Arc::new(layout),
                     image: image.clone(),

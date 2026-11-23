@@ -811,8 +811,7 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
             .unwrap();
         assert!(
             recorded
-                .reusable_inputs()
-                .iter()
+                .image_inputs()
                 .any(|image| Arc::ptr_eq(image, &cached.image)),
             "control: readout must actually consume the stored look value"
         );

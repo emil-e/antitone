@@ -52,15 +52,6 @@ impl Allocations {
         }
     }
 
-    pub(crate) fn buffered(&mut self, image: &BufferImage) {
-        self.buffer(image);
-        if let BufferImage::Produced(image) = image {
-            for input in image.inputs.iter() {
-                self.image(input);
-            }
-        }
-    }
-
     pub(super) fn shared(&mut self, resource: &Shared) {
         match resource {
             Shared::Buffer(buffer) => self.buffer(buffer),

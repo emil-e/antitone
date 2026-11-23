@@ -5,7 +5,7 @@ use crate::gpu::source::{ProcessingSource, SourceGeometry};
 use crate::gpu::view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest};
 
 #[test]
-fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_worker_production() {
+fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
     let mut document = tests::fixture();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
@@ -93,23 +93,11 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
         let BufferImage::Produced(output) = &recorded.pixels else {
             panic!("captured endpoint");
         };
+        let final_bytes = output.as_buffer().unwrap().size() + camera.input.size();
+        let dependencies = output.image.used_inputs();
         assert!(
-            !output.inputs.is_empty(),
-            "control: the endpoint leases real dependencies"
-        );
-        let mut buffers = vec![output.as_buffer().unwrap().clone()];
-        for input in output.inputs.iter().filter_map(|input| input.as_buffer()) {
-            if !buffers.contains(input) {
-                buffers.push(input.clone());
-            }
-        }
-        if !buffers.contains(&camera.input) {
-            buffers.push(camera.input.clone());
-        }
-        let minimum = buffers.iter().map(wgpu::Buffer::size).sum::<u64>();
-        assert!(
-            minimum > output.as_buffer().unwrap().size() + camera.input.size(),
-            "control: dependency allocations are additional payload"
+            !dependencies.is_empty(),
+            "control: real dependencies were prepared"
         );
         let region = definition.domain().finite().unwrap();
         let image = ViewImage::from_recorded(
@@ -121,18 +109,20 @@ fn complete_thumbnail_payload_charges_leased_dependencies_for_recording_and_work
             recorded,
         )
         .unwrap();
-        let view = RenderedView::from_image(&device, image, capture, OutputTarget::Srgb).unwrap();
-        assert!(
-            view.photographic_bytes() >= minimum,
-            "produce={produce}: {} < {minimum}",
-            view.photographic_bytes()
-        );
+        if produce {
+            assert_eq!(image.byte_len(), final_bytes);
+        } else {
+            assert!(
+                image.byte_len() > final_bytes,
+                "recording owns pending work"
+            );
+        }
+        let view =
+            RenderedView::from_image(&device, image.clone(), capture, OutputTarget::Srgb).unwrap();
         view.ensure_submitted(&device, &queue, &egui::Context::default());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        assert!(
-            view.photographic_bytes() >= minimum,
-            "submission does not retire leased dependencies"
-        );
+        assert_eq!(image.byte_len(), final_bytes);
+        assert!(dependencies.iter().all(|input| input.upgrade().is_none()));
         assert_eq!(renderer.evaluation().retained_bytes(), 0);
     }
 }

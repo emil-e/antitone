@@ -244,12 +244,11 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         let graded = view.product.as_ref().unwrap();
         graded.encode(&device, &mut abandoned);
         drop(abandoned);
-        assert!(!*graded.submitted.lock().unwrap());
+        assert!(graded.recording().is_some());
         view.ensure_submitted(&device, &queue, &egui::Context::default());
         let expected = read(&device, &queue, &graded.pixels);
         assert!(expected.iter().all(|p| *p == [0.5, 1., 2., 8.]));
         let mut deferred = device.create_command_encoder(&Default::default());
-        graded.encode(&device, &mut deferred);
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: graded.pixels.size(),

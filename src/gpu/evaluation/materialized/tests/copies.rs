@@ -94,7 +94,6 @@ fn publish(context: &Context, root: &Value, region: CellRegion, transfer: bool) 
                 backing: ImageBacking::Buffer,
             }),
             image: pixels.clone(),
-            inputs: Default::default(),
         },
         false,
     );

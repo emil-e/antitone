@@ -3,7 +3,6 @@ use super::*;
 fn image(device: &wgpu::Device, key: u32, value: f32) -> Image<ImageLayout> {
     let region: CellRegion = [0, 0, 2, 2].into();
     Image {
-        inputs: Default::default(),
         identity: RetainedKey::new(key),
         descriptor: Arc::new(ImageLayout {
             domain: Domain {

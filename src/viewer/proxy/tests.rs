@@ -148,8 +148,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         .unwrap();
     assert_eq!(count.load(Ordering::Relaxed), 0);
     let source = request.ready().expect("small resident proxy").remove(0);
-    assert!(source.commands.is_some());
-    assert!(!*source.submitted.lock().unwrap());
+    assert!(source.recording().is_some());
     assert!(crate::gpu::interpretation::has_filtered_inspection(
         &source.definition
     ));

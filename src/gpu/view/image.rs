@@ -14,8 +14,7 @@ pub struct ViewImage {
     pub definition: Value,
     pub region: e::CellRegion,
     pub pixels: BufferImage,
-    pub commands: Option<Recorded>,
-    pub submitted: Mutex<bool>,
+    pub(super) pending: Mutex<Option<Recorded>>,
     #[cfg(test)]
     pub(super) argument: Option<(SourceRequest, e::SuppliedImage)>,
 }
@@ -134,8 +133,7 @@ impl ViewImage {
             definition,
             region,
             pixels: image.pixels,
-            submitted: Mutex::new(image.commands.is_none()),
-            commands: image.commands,
+            pending: Mutex::new(image.commands),
             #[cfg(test)]
             argument: None,
         });
@@ -171,20 +169,25 @@ impl ViewImage {
 
     pub(crate) fn byte_len(&self) -> u64 {
         let mut allocations = e::Allocations::default();
-        allocations.buffered(&self.pixels);
+        allocations.buffer(&self.pixels);
         for camera in
             crate::gpu::photograph::PhotographGraph::resident_camera_buffers(&self.definition)
         {
             allocations.buffer(&camera);
         }
-        if let Some(commands) = &self.commands {
+        if let Some(commands) = self.recording().as_ref() {
             commands.allocations(&mut allocations);
         }
         allocations.bytes()
     }
 
-    pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        if let Some(commands) = &self.commands {
+    pub(crate) fn recording(&self) -> std::sync::MutexGuard<'_, Option<Recorded>> {
+        self.pending.lock().unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(commands) = self.recording().as_ref() {
             commands
                 .encode_result(device, encoder, &self.pixels)
                 .expect("validated image recording");
