@@ -567,7 +567,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
 }
 
 #[test]
-fn stale_metadata_evidence_authored_crops_order_and_document_cannot_be_promoted() {
+fn stale_evidence_authored_crops_membership_and_document_cannot_be_promoted() {
     for case in 0..8 {
         let (mut e, directory) = fixture();
         let ids = e.document.state.project.order.clone();
@@ -600,7 +600,12 @@ fn stale_metadata_evidence_authored_crops_order_and_document_cannot_be_promoted(
                     .active_area[2] -= 1
             }
             4 => e.document.state.project.source_mut(ids[1]).unwrap().crop = Some(small()),
-            5 => e.document.state.project.order.swap(1, 2),
+            5 => e
+                .document
+                .state
+                .project
+                .remove_from_filmstrip(ids[1])
+                .unwrap(),
             6 => {
                 let replacement = directory.path().join("replacement.ARW");
                 std::fs::write(&replacement, b"metadata-only source fixture").unwrap();

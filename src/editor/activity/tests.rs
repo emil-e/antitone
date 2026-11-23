@@ -196,7 +196,7 @@ fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
         let (_regions, receive) = futures_channel::oneshot::channel();
         app.enter(|editor, cx| {
             editor.document.spatial_reply = Some(receive);
-            editor.review_crop_proposals(editor.document.project.order.clone(), "roll", cx);
+            auto_crop::start_review(editor, editor.document.project.order.clone(), "roll", cx);
             assert!(!editor.analysis_fitting());
             assert!(cancelled.is_cancelled());
             let before = editor.activities.view().unwrap().measured;

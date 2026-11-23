@@ -88,7 +88,12 @@ fn request(app: &mut TestApplication<'_, Editor>) {
     let send = app.enter(|editor, cx| {
         let (send, receive) = oneshot::channel();
         editor.document.spatial_reply = Some(receive);
-        editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+        start_review(
+            editor,
+            editor.document.project.order.clone(),
+            "Whole roll",
+            cx,
+        );
         assert!(!editor.document.auto_crop.reviewing());
         send
     });
@@ -114,7 +119,7 @@ fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop()
         let reply = app.enter(|editor, cx| {
             let (reply, receive) = oneshot::channel();
             editor.document.spatial_reply = Some(receive);
-            editor.review_crop_proposals(vec![photo], "Entry selection", cx);
+            start_review(editor, vec![photo], "Entry selection", cx);
             reply
         });
         reply.send(Ok(Some(Default::default()))).unwrap();

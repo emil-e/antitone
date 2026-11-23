@@ -17,7 +17,8 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(
+            auto_crop::start_review(
+                editor,
                 editor
                     .document
                     .project
@@ -130,7 +131,12 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
     let reply = programmed(&mut editor);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
             let written = editor.document.capture().save(&path, Save::New).unwrap();
             editor.document.accept_save(written);
             assert!(

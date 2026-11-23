@@ -15,7 +15,8 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                 let (reply, old) = app.enter(|editor, cx| {
                     let (reply, receive) = oneshot::channel();
                     editor.document.spatial_reply = Some(receive);
-                    editor.review_crop_proposals(
+                    start_review(
+                        editor,
                         editor.document.project.order.clone(),
                         "Whole roll",
                         cx,
@@ -68,7 +69,8 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                 let reply = app.enter(|editor, cx| {
                     let (reply, receive) = oneshot::channel();
                     editor.document.spatial_reply = Some(receive);
-                    editor.review_crop_proposals(
+                    start_review(
+                        editor,
                         editor.document.project.order.clone(),
                         "Whole roll",
                         cx,
@@ -110,7 +112,8 @@ fn replacing_the_document_retires_a_preparing_batch_and_its_publication_rights()
             let (reply, state) = app.enter(|editor, cx| {
                 let (reply, receive) = oneshot::channel();
                 editor.document.spatial_reply = Some(receive);
-                editor.review_crop_proposals(
+                start_review(
+                    editor,
                     editor.document.project.order.clone(),
                     "Whole roll",
                     cx,

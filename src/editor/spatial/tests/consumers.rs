@@ -80,7 +80,12 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
     );
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.update(|editor| {
@@ -164,7 +169,8 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(
+            auto_crop::start_review(
+                editor,
                 editor
                     .document
                     .project
@@ -216,7 +222,8 @@ fn selected_targets_are_captured_at_request_time_and_cancel_does_not_accept_marg
     let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(
+            auto_crop::start_review(
+                editor,
                 editor
                     .document
                     .project
@@ -280,7 +287,12 @@ fn camera_limited_picture_metadata_is_a_usable_visible_crop_without_four_measure
     );
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.update(|editor| {
@@ -323,7 +335,12 @@ fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui
     editor.document.accept_save(written);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         await_native(app, &starts);
         let request = app.read(|editor| {

@@ -120,6 +120,7 @@ use crate::export::Overwrite;
 mod input_tests;
 mod roll_order;
 mod roll_selection;
+mod roll_ui;
 #[cfg(test)]
 mod tests;
 mod viewer_ui;
@@ -1033,7 +1034,7 @@ impl Editor {
         }
 
         if self.tab == 0 {
-            self.roll_tool_shelf(ui, cx);
+            roll_ui::tool_shelf(self, ui, cx);
         } else if self.tab == 1 {
             self.photo_tool_shelf(ui, cx);
         }

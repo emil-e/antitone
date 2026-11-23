@@ -144,7 +144,8 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             .unwrap();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.review_crop_proposals(
+                auto_crop::start_review(
+                    editor,
                     editor.document.project.order.clone(),
                     "Whole roll",
                     cx,

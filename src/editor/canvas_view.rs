@@ -206,6 +206,11 @@ impl super::Editor {
         &mut self.document.visit.canvas
     }
 
+    /// Fit the photograph's view, not the viewport of a temporary tool.
+    pub(super) fn fit_photo_view(&mut self) {
+        self.active_canvas_mut().viewport.fit();
+    }
+
     pub(super) fn canvas_inspection(&self) -> bool {
         self.document.source
     }

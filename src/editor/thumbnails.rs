@@ -1515,7 +1515,7 @@ impl Editor {
                                 }
                                 if ui
                                     .add_enabled(
-                                        self.auto_crop_entry_available() && selected,
+                                        auto_crop::review_available(self) && selected,
                                         egui::Button::new("Auto-crop selected photos"),
                                     )
                                     .clicked()
@@ -1528,7 +1528,7 @@ impl Editor {
                                         .copied()
                                         .filter(|id| self.document.roll_selection.contains(*id))
                                         .collect();
-                                    self.review_crop_proposals(photos, "Entry selection", cx);
+                                    auto_crop::start_review(self, photos, "Entry selection", cx);
                                     ui.close();
                                 }
                                 if ui

@@ -554,7 +554,7 @@ impl Editor {
             source.crop = crop;
         });
         self.commit_project(draft)?;
-        self.document.visit.canvas.viewport.fit();
+        self.fit_photo_view();
         Ok(())
     }
 
@@ -566,7 +566,7 @@ impl Editor {
             *crop = (draft != Crop::from_region(area)).then_some(draft);
             Ok(())
         })?;
-        self.document.visit.canvas.viewport.fit();
+        self.fit_photo_view();
         Ok(())
     }
 }

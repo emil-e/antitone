@@ -16,7 +16,8 @@ fn save_command_respects_shared_preparation_input_without_retiring_consumers_or_
                 if analyze {
                     editor.request_analysis(cx);
                 } else {
-                    editor.review_crop_proposals(
+                    auto_crop::start_review(
+                        editor,
                         editor.document.project.order.clone(),
                         "Whole roll",
                         cx,
@@ -72,7 +73,12 @@ fn save_after_finishing_the_consumer_reports_real_file_failure_without_losing_ac
     editor.document.path = Some(path.clone());
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
             editor.file_action(crate::editor::files::FileAction::Save, cx);
             assert!(!editor.document.write.pending());
         });

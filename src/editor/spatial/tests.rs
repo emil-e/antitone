@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::crop_editor::tests::request_auto_crop;
+use crate::editor::{auto_crop, crop_editor::tests::request_auto_crop};
 use crate::{
     application::test_support::{TestApplication, with_application},
     editor::{analysis, history, source_loading, tests::authored_fixture},
@@ -184,7 +184,12 @@ fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         let rasters: Vec<_> = app.read(|editor| {
@@ -217,7 +222,12 @@ fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
         app.enter(|editor, cx| {
             editor.finish_auto_crop(false);
             editor.document.spatial = crate::spatial_metadata::Store::default();
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
@@ -252,7 +262,12 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
     let path = directory.path().join("runtime-regions.antitone");
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         let ready = app.read(|editor| editor.document.spatial.ready());
@@ -281,7 +296,12 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
             assert_eq!(editor.document.state.project, accepted);
         });
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
@@ -318,7 +338,12 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         assert!(app.read(|editor| editor.document.spatial_preparing.is_some()));
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
@@ -359,7 +384,12 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
         app.enter(|editor, cx| {
             editor.finish_auto_crop(false);
             editor.auto_crop_margin = 1.;
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
@@ -449,7 +479,12 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
         app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         assert!(app.read(|editor| editor.document.analysis_review().is_none()));
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
@@ -479,7 +514,7 @@ fn restored_regions_collect_missing_sampling_pixels_without_replacing_finished_d
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.review_crop_proposals(e.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(e, e.document.project.order.clone(), "Whole roll", cx)
         });
         app.run_until(LIMIT, |e| e.document.spatial_preparing.is_none());
         let retained = app.read(|e| {
@@ -650,7 +685,12 @@ fn retiring_a_photo_visit_does_not_retire_document_region_preparation() {
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         await_native(app, &starts);
         let request = app.read(|editor| {
@@ -695,7 +735,12 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         await_native(app, &starts);
         let (cancelled, snapshot) = app.read(|editor| {
@@ -740,7 +785,12 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         await_native(app, &starts);
         let cancelled = app.read(|editor| {
@@ -786,7 +836,12 @@ fn shared_region_waiters_join_one_producer_and_modal_prevents_tool_replacement()
         let completed = std::rc::Rc::new(std::cell::Cell::new(false));
         let received = completed.clone();
         let _waiter = app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            );
             assert!(editor.document.analysis_operation().is_some());
             assert!(!editor.document.auto_crop.active());
             assert_eq!(
@@ -804,7 +859,12 @@ fn shared_region_waiters_join_one_producer_and_modal_prevents_tool_replacement()
             editor.document.analysis_review().is_some() && completed.get()
         });
         app.enter(|editor, cx| {
-            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+            auto_crop::start_review(
+                editor,
+                editor.document.project.order.clone(),
+                "Whole roll",
+                cx,
+            )
         });
         app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.read(|editor| {
