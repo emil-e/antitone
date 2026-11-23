@@ -1170,17 +1170,15 @@ impl Editor {
         ui: &mut egui::Ui,
         budgets: memory::CacheBudgets,
         cx: &UiContext<'_, Self>,
-    ) -> Option<(usize, egui::Modifiers)> {
+    ) {
         self.memory_pressure = budgets.pressure;
         if budgets.pressure == memory::Pressure::Normal {
             self.set_cache_limits(cache_limits::CacheLimits {
                 cpu_bytes: budgets.sources as u64,
                 gpu_bytes: budgets.images as u64,
             });
-        } else {
-            self.apply_cache_budgets();
         }
-        self.filmstrip_contents(ui, cx)
+        self.filmstrip(ui, cx);
     }
 }
 
@@ -1200,9 +1198,7 @@ fn filmstrip_frame(
         },
         |ui| {
             editor.disable_blocked_workspace(ui);
-            if let Some((index, modifiers)) = editor.filmstrip_with_budgets(ui, budgets, cx) {
-                editor.select_roll_photo(index, modifiers, cx);
-            }
+            editor.filmstrip_with_budgets(ui, budgets, cx);
         },
     );
     output.textures_delta.clear();

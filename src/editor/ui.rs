@@ -10,7 +10,7 @@ mod balance;
 pub(super) use balance::{BalanceControl, ColorControl, balance_pick_tool};
 
 mod cards;
-pub(super) use cards::ContactSheetLayout;
+pub(super) use cards::{ContactSheetCard, ContactSheetLayout};
 
 mod dialogs;
 pub(super) use dialogs::{DecisionDialog, Dialog, DialogAction, DialogChoice, DialogRole};
