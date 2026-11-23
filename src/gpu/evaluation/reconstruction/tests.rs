@@ -2,6 +2,56 @@ use super::*;
 mod input_slices;
 mod regional;
 
+#[test]
+fn complete_crop_mask_matches_cell_clipping_across_full_and_partial_rows() {
+    let samples: Rect = [5, 7, 107, 89].into();
+    let source = source(Arc::new(Pixels {
+        domain: Domain {
+            bounds: Some([0, 0, 128, 112].into()),
+            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        },
+        values: Vec::new(),
+    }));
+    for (origin, axes) in [
+        ([21., 25.], [[1., 0.], [0., 1.]]),
+        ([21.2, 25.5], [[1., 0.015], [-0.015, 1.]]),
+        ([91., 25.5], [[-1., 0.015], [0.015, 1.]]),
+        ([58.5, 9.5], [[0.5, 0.5], [-0.5, 0.5]]),
+        ([21.2, 25.5], [[1., 0.015], [-0.00015, 0.01]]),
+    ] {
+        let output: Rect = [0, 0, 70, 50].into();
+        let root = reconstruct_complete(
+            source.clone(),
+            Domain {
+                bounds: Some(output),
+                grid: Grid {
+                    origin,
+                    axes,
+                    pitch: axes.map(|[x, y]: [f64; 2]| x.hypot(y)),
+                    coverage: 8,
+                },
+            },
+        )
+        .unwrap();
+        let reconstruction = (root.operation.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<Reconstruction>()
+            .unwrap();
+        let mask = reconstruction.support_mask(output, samples).unwrap();
+        let coverage = reconstruction.support.unwrap().coverage;
+        for y in samples.y..samples.bottom() {
+            for x in samples.x..samples.right() {
+                let index = samples.index([x, y]);
+                let marked = mask[index / 32] & (1 << (index % 32)) != 0;
+                assert_eq!(
+                    marked,
+                    coverage.rectangle_weight([f64::from(x), f64::from(y)], [1.; 2]) > 0.,
+                    "source cell ({x}, {y}) for {origin:?}, {axes:?}"
+                );
+            }
+        }
+    }
+}
+
 struct Pixels {
     domain: Domain,
     values: Vec<[f32; 4]>,
