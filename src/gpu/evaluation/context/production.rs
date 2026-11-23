@@ -236,6 +236,53 @@ impl Worker<'_> {
         Executor::with_scope(self.context.programs.clone(), self.scope.clone())
             .with_working(self.working.clone())
     }
+
+    fn produce_input_into(
+        &self,
+        image: &value::Value,
+        output: PlannedImage,
+        pixels: &wgpu::Buffer,
+    ) -> Result<WorkCounts, Error> {
+        let evaluation = self
+            .context
+            .request(
+                image.clone(),
+                Region {
+                    bounds: output.region,
+                    grid: output.domain.grid,
+                },
+                Tiling::for_input(output.region),
+            )?
+            .with_materializations(self.scope.clone());
+        let mut counts = WorkCounts::default();
+        if let Some((region, host)) = self.host_image(image, output.region, &mut counts)? {
+            let values = host.as_host().expect("host image dependency");
+            // Only the parent's submission flushes these writes and publishes the GPU result.
+            for row in 0..output.region.height {
+                if (self.cancelled)() {
+                    return Err(Error::Cancelled);
+                }
+                let from = region.index([output.region.x, output.region.y + row as i32]);
+                self.queue.write_buffer(
+                    pixels,
+                    u64::from(row) * u64::from(output.region.width) * 16,
+                    bytemuck::cast_slice(&values[from..from + output.region.width as usize]),
+                );
+            }
+            return Ok(counts);
+        }
+        Production {
+            worker: *self,
+            layout: ImageLayout {
+                domain: output.domain,
+                region: output.region,
+                format: ImageFormat::Rgba32Float,
+                backing: ImageBacking::Buffer,
+            },
+            pixels,
+        }
+        .produce(&evaluation)
+    }
 }
 
 impl Context {
@@ -253,68 +300,24 @@ impl Context {
     {
         let scope = executor.materializations();
         let working = executor.working.clone();
+        let worker = Worker {
+            context: self,
+            queue,
+            scope: &scope,
+            working: &working,
+            cancelled,
+            progress,
+        };
         let result = executor.run_produced_sink(
             self.device(),
             queue,
             plan,
             cancelled,
             sink,
-            |image, output, pixels| {
-                let budget = Tiling {
-                    tile: [output.region.width.min(512), output.region.height.min(128)],
-                };
-                let evaluation = self
-                    .request(
-                        image.clone(),
-                        Region {
-                            bounds: output.region,
-                            grid: output.domain.grid,
-                        },
-                        budget,
-                    )?
-                    .with_materializations(scope.clone());
-                let worker = Worker {
-                    context: self,
-                    queue,
-                    scope: &scope,
-                    working: &working,
-                    cancelled,
-                    progress,
-                };
-                let mut counts = WorkCounts::default();
-                if let Some((region, host)) =
-                    worker.host_image(image, output.region, &mut counts)?
-                {
-                    let values = host.as_host().expect("host image dependency");
-                    // Produced arguments precede parent encoding. The parent's submission
-                    // flushes these writes; only that parent publishes its GPU result.
-                    for row in 0..output.region.height {
-                        if cancelled() {
-                            return Err(Error::Cancelled);
-                        }
-                        let from = region.index([output.region.x, output.region.y + row as i32]);
-                        queue.write_buffer(
-                            pixels,
-                            u64::from(row) * u64::from(output.region.width) * 16,
-                            bytemuck::cast_slice(
-                                &values[from..from + output.region.width as usize],
-                            ),
-                        );
-                    }
-                    return Ok(counts);
-                }
-                Production {
-                    worker,
-                    layout: ImageLayout {
-                        domain: output.domain,
-                        region: output.region,
-                        format: ImageFormat::Rgba32Float,
-                        backing: ImageBacking::Buffer,
-                    },
-                    pixels,
-                }
-                .produce(&evaluation)
-            },
+            (
+                |image, layout, counts| worker.direct_gpu_input(image, layout, counts),
+                |image, output, pixels| worker.produce_input_into(image, output, pixels),
+            ),
         );
         match result {
             Err(Error::Cancelled) if cancelled() => Ok(None),

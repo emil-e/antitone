@@ -633,11 +633,14 @@ impl Executor {
                 },
                 None,
             ),
-            |_, _, _| {
-                Err(Error::InvalidParameter(
-                    "evaluation requires bounded worker production",
-                ))
-            },
+            (
+                |_, _, _| Ok(None),
+                |_, _, _| {
+                    Err(Error::InvalidParameter(
+                        "evaluation requires bounded worker production",
+                    ))
+                },
+            ),
         )
     }
 
@@ -645,18 +648,24 @@ impl Executor {
         self.scope.clone()
     }
 
-    pub(in crate::gpu::evaluation) fn run_produced_sink<E, S>(
+    pub(in crate::gpu::evaluation) fn run_produced_sink<E, S, R, P>(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu::submission::Queue,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         (mut sink, destination): (Sink<E, S>, Option<&wgpu::Buffer>),
-        mut produce: impl FnMut(&value::Value, PlannedImage, &wgpu::Buffer) -> Result<WorkCounts, Error>,
+        (mut resolve, mut produce): (R, P),
     ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),
+        R: FnMut(
+            &value::Value,
+            ImageLayout,
+            &mut WorkCounts,
+        ) -> Result<Option<Arc<ImageValue>>, Error>,
+        P: FnMut(&value::Value, PlannedImage, &wgpu::Buffer) -> Result<WorkCounts, Error>,
     {
         if cancelled() {
             return Ok(None);
@@ -680,6 +689,21 @@ impl Executor {
                 return Ok(None);
             }
 
+            // Keep submission mode based on the original work, not on whether any
+            // individual dependency can avoid a transfer.
+            let had_production = tile
+                .fragment
+                .work
+                .iter()
+                .any(|work| matches!(work, Work::Produce { .. }));
+            let bound = match bind_produced_inputs(tile, &cancelled, &mut resolve, &mut stats) {
+                Err(Error::Cancelled) if cancelled() => return Ok(None),
+                result => result?,
+            };
+            if cancelled() {
+                return Ok(None);
+            }
+            let tile = bound.as_ref().unwrap_or(tile);
             self.materialize(device, tile, &mut stats, Materialization::Worker)?;
             for (id, storage) in tile.fragment.resources.iter().enumerate() {
                 if let Storage::Uniform(bytes) | Storage::Data(bytes) = storage {
@@ -730,11 +754,11 @@ impl Executor {
 
             stats.submitted();
             let gpu_only = destination.is_some()
+                && !had_production
                 && !tile.fragment.work.iter().any(|work| match work {
                     Work::Upload { output, .. } => {
                         !self.copied_uploads.contains_key(&output.resource.0)
                     }
-                    Work::Produce { .. } => true,
                     _ => false,
                 });
             if gpu_only {
@@ -1572,6 +1596,81 @@ pub(super) fn submit(
     )
     .map_err(|e| Error::Gpu(e.to_string()))?;
     Ok(())
+}
+
+fn bind_produced_inputs(
+    tile: &Tile,
+    cancelled: &dyn Fn() -> bool,
+    mut resolve: impl FnMut(
+        &value::Value,
+        ImageLayout,
+        &mut WorkCounts,
+    ) -> Result<Option<Arc<ImageValue>>, Error>,
+    stats: &mut WorkCounts,
+) -> Result<Option<Tile>, Error> {
+    let mut fragment = None::<Fragment>;
+    for (index, work) in tile.fragment.work.iter().enumerate() {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let Work::Produce { image, output } = work else {
+            break; // Scheduling puts all worker production first.
+        };
+        let resource = output.resource;
+        let Storage::Image {
+            key,
+            layout,
+            pixels: None,
+        } = &tile.fragment.resources[resource.0]
+        else {
+            continue;
+        };
+        if resource == tile.result.resource
+            || tile.last_use[resource.0] == index
+            || layout.domain != output.domain
+            || layout.region != output.region
+            || layout.backing != ImageBacking::Buffer
+            || layout.format != ImageFormat::Rgba32Float
+            || image.output(output.region)?.identity() != Some(key)
+            || tile
+                .fragment
+                .work
+                .iter()
+                .enumerate()
+                .any(|(i, work)| i != index && writes(work, resource))
+        {
+            continue;
+        }
+
+        if let Some(pixels) = resolve(image, *layout, stats)? {
+            let fragment = fragment.get_or_insert_with(|| tile.fragment.clone());
+            fragment.resources[resource.0] = Storage::ResidentBuffer(pixels);
+        }
+    }
+
+    fragment
+        .map(|mut fragment| {
+            fragment.work.retain(|work| {
+                !matches!(work, Work::Produce { output, .. }
+                if matches!(fragment.resources[output.resource.0], Storage::ResidentBuffer(_)))
+            });
+            plan::schedule(fragment, tile.result)
+        })
+        .transpose()
+}
+
+fn writes(work: &Work, resource: Resource) -> bool {
+    let bindings = match work {
+        Work::Produce { output, .. } | Work::Upload { output, .. } => {
+            return output.resource == resource;
+        }
+        Work::Copy { target, .. } => return *target == resource,
+        Work::Render { target, .. } if *target == resource => return true,
+        Work::Compute { bindings, .. } | Work::Render { bindings, .. } => bindings,
+    };
+    bindings
+        .iter()
+        .any(|(_, binding)| matches!(binding, Binding::Write(target) if *target == resource))
 }
 
 fn binding_type(resource: &Binding) -> wgpu::BindingType {

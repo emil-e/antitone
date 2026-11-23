@@ -20,6 +20,15 @@ pub struct Tiling {
     pub tile: [u32; 2],
 }
 
+impl Tiling {
+    pub(super) fn for_input(region: CellRegion) -> Self {
+        // Input transfer chunks follow the demand, not the consumer's output tile.
+        Self {
+            tile: [region.width.min(512), region.height.min(128)],
+        }
+    }
+}
+
 pub struct Tile {
     pub fragment: Fragment,
     pub result: PlannedImage,
