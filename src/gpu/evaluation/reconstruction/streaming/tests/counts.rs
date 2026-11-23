@@ -93,6 +93,102 @@ fn sink_binds_an_exact_produced_input_without_a_transfer_allocation() {
 }
 
 #[test]
+fn composed_reads_reuse_an_assembled_rectangle_until_eviction() {
+    let extent = [64, 2];
+    let source_pixels = (0..128)
+        .map(|i| [(i % 7 - 3) as f32, (i % 11 - 5) as f32, -2., 0.75])
+        .collect::<Vec<_>>();
+    let (source, reads) = fixture(extent, source_pixels.clone());
+    let domain = source.domain();
+    let input = Value::from_operation(domain, [source], TiledSquare);
+    let region = domain.finite().unwrap();
+    let identity = input.output(region).unwrap().identity().unwrap().clone();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy::default());
+    let scope = context.materializations();
+
+    for (gain, cold) in [(2., true), (3., false), (4., true)] {
+        if gain == 4. {
+            scope.evict_optional();
+        }
+        reads.lock().unwrap().clear();
+        let root = value::pointwise(
+            input.clone(),
+            value::Operation::new(
+                "scale assembled input",
+                NumericKey(gain),
+                "struct Params { gain: vec4f }\nfn pixel(p: vec2i, at: vec2f, v: vec4f, params: Params) -> vec4f { return vec4f(v.rgb * params.gain.x, v.w); }",
+                "pixel",
+                value::Access::Pointwise,
+            )
+            .with_uniform("Params", &[gain, 0., 0., 0.]),
+        )
+        .unwrap();
+        let evaluation = context
+            .request(
+                root,
+                Region {
+                    bounds: region,
+                    grid: domain.grid,
+                },
+                Tiling { tile: extent },
+            )
+            .unwrap();
+        let plan = evaluation.plans().next().unwrap().unwrap();
+        let deferred: Vec<_> = plan
+            .tiles
+            .iter()
+            .flat_map(|tile| &tile.fragment.work)
+            .filter_map(|work| match work {
+                Work::Produce { image, output } => Some((image, output.region)),
+                _ => None,
+            })
+            .collect();
+        if cold {
+            let [(producer, demand)] = deferred.as_slice() else {
+                panic!("expected one deferred input, found {}", deferred.len());
+            };
+            assert!(producer.same_definition(&input));
+            assert_eq!(*demand, region);
+        } else {
+            assert!(
+                deferred.is_empty(),
+                "warm consumer should bind the assembled input"
+            );
+        }
+        drop(plan);
+
+        let mut actual = Vec::new();
+        context
+            .read(
+                &queue,
+                &evaluation,
+                || false,
+                |_, pixels| {
+                    actual.extend_from_slice(pixels);
+                    Ok(())
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let expected: Vec<_> = source_pixels
+            .iter()
+            .map(|&[r, g, b, a]| [r * r * gain, g * g * gain, b * b * gain, a])
+            .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(reads.lock().unwrap().len(), if cold { 2 } else { 0 });
+        assert_eq!(
+            scope
+                .ready::<ImageLayout>(&identity)
+                .iter()
+                .filter(|image| image.descriptor.region == region)
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
 fn nested_production_counts_source_work_submissions_and_allocations() {
     let (input, reads) = fixture([512, 2560], vec![[2., -3., 4., 1.]; 512 * 2560]);
     let mapping = Mapping {

@@ -1,4 +1,4 @@
-//! Prove all hoisted units against one traversal of the stage-declared read DAG.
+//! Prove all deferred inputs against one traversal of the stage-declared read DAG.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -57,7 +57,7 @@ impl Required<'_> {
                 .ok_or(Error::InvalidParameter("read references an unknown input"))?;
             self.expanded.push(input.clone());
             if self.classify(input) || self.exact.is_none() {
-                self.visit(input, read.region)?;
+                self.visit(input, read.region, true)?;
             }
             if self.remaining == 0 {
                 break;
@@ -66,7 +66,12 @@ impl Required<'_> {
         Ok(())
     }
 
-    fn visit(&mut self, node: &value::Value, region: Rect) -> Result<(), Error> {
+    fn visit(
+        &mut self,
+        node: &value::Value,
+        region: Rect,
+        declared_read: bool,
+    ) -> Result<(), Error> {
         region.validate()?;
         let key = node.pointer();
         if self.remaining == 0
@@ -79,6 +84,19 @@ impl Required<'_> {
         let branch = &self.branches[&key];
         let targets = branch.targets.clone();
         let descend = !branch.inputs.is_empty();
+        // The worker checks the assembled coverage. Here a single declared read
+        // authorizes its exact rectangle, not a widened window or union of reads.
+        if declared_read && node.coverage().contains_region(region) {
+            for &index in &targets {
+                if !self.found[index] && self.targets[index].1 == region {
+                    self.found[index] = true;
+                    self.remaining -= 1;
+                }
+            }
+            if self.remaining == 0 {
+                return Ok(());
+            }
+        }
         for unit in node.operation.work_units(region, self.budget)? {
             let unit = unit.validate()?;
             for &index in &targets {
@@ -164,6 +182,6 @@ fn prove(
         expanded: Vec::new(),
     };
     required.classify(root);
-    required.visit(root, region)?;
+    required.visit(root, region, false)?;
     Ok(required.remaining == 0)
 }
