@@ -383,14 +383,36 @@ fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {
                 as usize
         ];
         for y in samples.y..samples.bottom() {
-            for x in samples.x..samples.right() {
-                if support
+            let weight = |x| {
+                support
                     .coverage
                     .rectangle_weight([f64::from(x), f64::from(y)], [1.; 2])
-                    > 0.
-                {
-                    let index = (y - samples.y) as u32 * samples.width + (x - samples.x) as u32;
-                    mask[index as usize / 32] |= 1 << (index % 32);
+            };
+            let mut admit = |x| {
+                let index = (y - samples.y) as u32 * samples.width + (x - samples.x) as u32;
+                mask[index as usize / 32] |= 1 << (index % 32);
+            };
+            let row = samples.x..samples.right();
+            let first_full = row.clone().find(|&x| {
+                let w = weight(x);
+                if w > 0. {
+                    admit(x);
+                }
+                w == 1.
+            });
+            let Some(first_full) = first_full else {
+                continue;
+            };
+            // Coverage is convex: between two fully covered cells on the same row,
+            // the whole span is covered. Partial boundary cells still use exact clipping.
+            for x in (first_full + 1..row.end).rev() {
+                let w = weight(x);
+                if w == 1. {
+                    (first_full + 1..=x).for_each(&mut admit);
+                    break;
+                }
+                if w > 0. {
+                    admit(x);
                 }
             }
         }
