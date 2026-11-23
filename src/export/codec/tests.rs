@@ -1,4 +1,5 @@
 use super::*;
+use crate::export::OutputTarget;
 
 fn noise(x: u32, y: u32) -> [u16; 3] {
     let mut word = (u64::from(y) << 32) | u64::from(x);
@@ -27,67 +28,72 @@ fn codecs_emit_compressed_data_before_requesting_later_bands_and_preserve_produc
             BlockOrder::Spatial2x2 => 256,
         };
         let mut visited = 0;
-        let error = stream::tiff(
-            &mut file,
-            size,
-            crate::profiles::icc(OutputTarget::Srgb),
-            (order, BLOCK),
-            &mut |origin, extent| {
-                visited += 1;
-                if origin[1] >= stop {
-                    assert!(
-                        observer.metadata().unwrap().len() > 32768,
-                        "completed strips must reach the file before acquiring another band"
-                    );
-                    return Err(Error::Cancelled);
-                }
-                Ok((origin[1]..origin[1] + extent[1])
-                    .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| noise(x, y)))
-                    .collect())
-            },
-        )
-        .unwrap_err();
+        let error = FileFormat::Tiff
+            .encode(
+                &mut file,
+                size,
+                RenderTarget::Display(OutputTarget::Srgb),
+                (order, crate::export::BLOCK),
+                |origin, extent| {
+                    visited += 1;
+                    if origin[1] >= stop {
+                        assert!(
+                            observer.metadata().unwrap().len() > 32768,
+                            "completed strips must reach the file before acquiring another band"
+                        );
+                        return Err(Error::Cancelled);
+                    }
+                    let samples = (origin[1]..origin[1] + extent[1])
+                        .flat_map(|y| (origin[0]..origin[0] + extent[0]).map(move |x| noise(x, y)))
+                        .collect();
+                    Ok(Samples::Rgb16(samples))
+                },
+            )
+            .unwrap_err();
         assert!(matches!(error, Error::Cancelled));
         assert!(visited > 1);
     }
-    fn check_exr<T: stream::FloatSample>(size: ImageSize, sample: impl Fn(u16) -> T) {
+    for precision in [FloatPrecision::Half, FloatPrecision::Full] {
         let mut file = tempfile::tempfile().unwrap();
         let observer = file.try_clone().unwrap();
-        let error = stream::exr(
-            &mut file,
-            size,
-            codec::ap0_metadata(),
-            &mut |origin, extent| {
-                if origin[1] >= 128 {
-                    assert!(
-                        observer.metadata().unwrap().len() > 32768,
-                        "completed ZIP16 chunks must precede the next input band"
-                    );
-                    return Err(Error::Cancelled);
-                }
-                Ok((origin[1]..origin[1] + extent[1])
-                    .flat_map(|y| {
-                        let sample = &sample;
-                        (origin[0]..origin[0] + extent[0]).map(move |x| noise(x, y).map(sample))
+        let error = FileFormat::Exr(precision)
+            .encode(
+                &mut file,
+                size,
+                RenderTarget::SceneLinearAp0,
+                (BlockOrder::RowMajor, crate::export::BLOCK),
+                |origin, extent| {
+                    if origin[1] >= 128 {
+                        assert!(
+                            observer.metadata().unwrap().len() > 32768,
+                            "completed ZIP16 chunks must precede the next input band"
+                        );
+                        return Err(Error::Cancelled);
+                    }
+                    let floats = (origin[1]..origin[1] + extent[1]).flat_map(|y| {
+                        (origin[0]..origin[0] + extent[0])
+                            .map(move |x| noise(x, y).map(|v| f32::from(v) / 4096. - 4.))
+                    });
+                    Ok(match precision {
+                        FloatPrecision::Half => {
+                            Samples::F16(floats.map(|rgb| rgb.map(half::f16::from_f32)).collect())
+                        }
+                        FloatPrecision::Full => Samples::F32(floats.collect()),
                     })
-                    .collect())
-            },
-        )
-        .unwrap_err();
+                },
+            )
+            .unwrap_err();
         assert!(
             matches!(error, Error::Cancelled),
             "producer errors must survive the EXR callback boundary"
         );
     }
-
-    check_exr(size, |v| half::f16::from_f32(f32::from(v) / 4096. - 4.));
-    check_exr(size, |v| f32::from(v) / 4096. - 4.);
 }
 
 #[test]
 fn large_output_workspace_is_independent_of_frame_height_and_admits_gfx_sized_full_float() {
     for (rows, bytes) in [(128, 6), (256, 6), (128, 12)] {
-        let gfx = stream::workspace(
+        let gfx = workspace(
             ImageSize {
                 width: 11648,
                 height: 8736,
@@ -97,7 +103,7 @@ fn large_output_workspace_is_independent_of_frame_height_and_admits_gfx_sized_fu
             10000,
         )
         .unwrap();
-        let taller = stream::workspace(
+        let taller = workspace(
             ImageSize {
                 width: 11648,
                 height: 17472,
@@ -111,7 +117,7 @@ fn large_output_workspace_is_independent_of_frame_height_and_admits_gfx_sized_fu
         assert!((gfx as u64) * bytes < 40 << 20);
     }
     assert!(
-        stream::workspace(
+        workspace(
             ImageSize {
                 width: i32::MAX as u32,
                 height: 128

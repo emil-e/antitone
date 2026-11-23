@@ -2,22 +2,43 @@
 use super::{
     BlockOrder, ImageSize, RenderTarget, Result,
     samples::{FloatPrecision, Layout, Samples},
-    stream,
 };
-use crate::{Error, profiles};
-use exr::{math::Vec2, meta::attribute::Chromaticities};
+use crate::Error;
 use std::fs;
 
-pub(super) fn ap0_metadata() -> (&'static str, Chromaticities) {
-    (
-        "scene-linear AP0",
-        Chromaticities {
-            red: Vec2(0.7347, 0.2653),
-            green: Vec2(0., 1.),
-            blue: Vec2(0.0001, -0.0770),
-            white: Vec2(0.32168, 0.33767),
-        },
-    )
+mod exr;
+mod tiff;
+pub use exr::exr;
+pub use tiff::tiff_encoded;
+#[cfg(feature = "ocio-reference")]
+pub use {
+    exr::exr_composed,
+    tiff::{tiff, tiff_composed},
+};
+#[cfg(all(test, target_os = "macos"))]
+pub(super) use {
+    exr::{exr_blocks, exr_blocks_checked},
+    tiff::{tiff_encoded_checked, tiff_encoded_ordered},
+};
+#[cfg(all(test, target_os = "macos"))]
+mod tests;
+
+fn sample_mismatch() -> Error {
+    Error::InvalidParameter("samples do not match the file encoding")
+}
+
+const MAX_WORKSPACE: u64 = 1 << 30;
+
+fn workspace(size: ImageSize, rows: u32, bytes: u64, metadata: u64) -> Result<usize> {
+    size.count()?;
+    let count = u64::from(size.width) * u64::from(size.height.min(rows));
+    // A band, prediction/compression scratch and the format's offset tables are bounded.
+    if (count * bytes + metadata) * 3 > MAX_WORKSPACE {
+        return Err(Error::Export(
+            "codec band exceeds the current 1 GiB workspace budget".into(),
+        ));
+    }
+    usize::try_from(count).map_err(|_| Error::NumericalOverflow)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,36 +70,13 @@ impl FileFormat {
         blocks: (BlockOrder, [u32; 2]),
         mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Samples>,
     ) -> Result<()> {
-        let mismatch = || Error::InvalidParameter("samples do not match the file encoding");
         match (self, target) {
-            (Self::Tiff, RenderTarget::Display(target)) => stream::tiff(
-                file,
-                size,
-                profiles::icc(target),
-                blocks,
-                &mut |origin, extent| match block(origin, extent)? {
-                    Samples::Rgb16(codes) => Ok(codes),
-                    _ => Err(mismatch()),
-                },
-            ),
-            (Self::Exr(FloatPrecision::Half), RenderTarget::SceneLinearAp0) => stream::exr(
-                file,
-                size,
-                ap0_metadata(),
-                &mut |origin, extent| match block(origin, extent)? {
-                    Samples::F16(codes) => Ok(codes),
-                    _ => Err(mismatch()),
-                },
-            ),
-            (Self::Exr(FloatPrecision::Full), RenderTarget::SceneLinearAp0) => stream::exr(
-                file,
-                size,
-                ap0_metadata(),
-                &mut |origin, extent| match block(origin, extent)? {
-                    Samples::F32(codes) => Ok(codes),
-                    _ => Err(mismatch()),
-                },
-            ),
+            (Self::Tiff, RenderTarget::Display(target)) => {
+                tiff::encode(file, size, target, blocks, &mut block)
+            }
+            (Self::Exr(precision), RenderTarget::SceneLinearAp0) => {
+                exr::encode(file, size, precision, &mut block)
+            }
             _ => unreachable!("the export plan admits only supported target and layout pairs"),
         }
     }
