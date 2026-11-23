@@ -227,7 +227,7 @@ fn composed_modal_keeps_processed_card_demand_at_normal_and_narrow_sizes() {
             assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
             app.run_until(Duration::from_secs(30), |editor| {
                 !editor.document.thumbnail_work.pending()
-                    && editor.document.embedded_preview.is_none()
+                    && !editor.document.thumbnails.embedded.pending()
             });
             app.read(|editor| {
                 assert_eq!(
