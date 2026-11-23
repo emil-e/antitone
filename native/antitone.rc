@@ -3,8 +3,8 @@
 1 ICON "../assets/branding/icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0, 1, 0, 0
-PRODUCTVERSION 0, 1, 0, 0
+FILEVERSION 0, 2, 0, 0
+PRODUCTVERSION 0, 2, 0, 0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -17,12 +17,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Emil Sahlén\0"
             VALUE "FileDescription", "Antitone\0"
-            VALUE "FileVersion", "0.1.0\0"
+            VALUE "FileVersion", "0.2.0\0"
             VALUE "InternalName", "antitone"
             VALUE "LegalCopyright", "Copyright (c) Emil Sahlén"
             VALUE "OriginalFilename", "antitone.exe"
             VALUE "ProductName", "Antitone"
-            VALUE "ProductVersion", "0.1.0"
+            VALUE "ProductVersion", "0.2.0"
         END
     END
     BLOCK "VarFileInfo"
