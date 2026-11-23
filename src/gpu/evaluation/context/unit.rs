@@ -25,15 +25,7 @@ impl Production<'_> {
                 "covered image exceeds its destination",
             ));
         }
-        let mut remaining = value::MAX_UNIT_VALUES;
-        let Some(cover) = super::super::materialized::CopyCover::find(
-            self.scope,
-            node,
-            self.layout.region,
-            value::MAX_UNIT_VALUES,
-            &mut remaining,
-        )?
-        else {
+        let Some(cover) = copy_cover(self.scope, node, self.layout.region)? else {
             return Ok(None);
         };
         if cover.regions.iter().any(|part| {
@@ -267,6 +259,62 @@ impl Worker<'_> {
         };
         counts.include(worker.produce(evaluation)?);
         Ok(ImageValue::new(pixels))
+    }
+
+    pub(super) fn direct_gpu_input(
+        &self,
+        node: &value::Value,
+        layout: ImageLayout,
+        counts: &mut WorkCounts,
+    ) -> Result<Option<Arc<ImageValue>>, Error> {
+        let limits = self.context.device().limits();
+        let budget = Tiling::for_input(layout.region);
+        let Some(identity) = node.output(layout.region)?.identity().cloned() else {
+            return Ok(None);
+        };
+        let ready = self.scope.ready::<ImageLayout>(&identity);
+        if ready.iter().any(|image| {
+            image.descriptor.backing == ImageBacking::Host
+                && image.descriptor.domain == layout.domain
+                && image.descriptor.region.contains_region(layout.region)
+        }) {
+            return Ok(None);
+        }
+        if let Some(image) = ready.into_iter().find(|image| {
+            *image.descriptor == layout
+                && image
+                    .as_buffer()
+                    .is_some_and(|buffer| buffer.usage().contains(wgpu::BufferUsages::COPY_SRC))
+        }) {
+            super::super::materialized::validate(node.domain(), layout, &image.image)?;
+            return Ok(Some(image.image));
+        }
+
+        let Some(unit) = matching_unit(node, layout.region, budget, Some(&limits))? else {
+            return Ok(None);
+        };
+        if unit.output != layout.region || !matches!(&unit.work, UnitWork::Gpu(_)) {
+            return Ok(None);
+        }
+        // Keep existing assembly for reusable pixels that cannot be bound as-is.
+        if Stored::find(Some(self.scope), &[], node, layout.region)?.is_some()
+            || copy_cover(self.scope, node, layout.region)?.is_some()
+        {
+            return Ok(None);
+        }
+
+        let unit = match unit.admit_for(&limits) {
+            Ok(unit) => unit,
+            Err(Error::EvaluationLimit(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let image = self.unit_image(node, unit, counts)?;
+        // The claim can also join an existing allocation. If it cannot serve as a
+        // copy source, leave the original delivery path in charge of the binding.
+        Ok(image
+            .as_buffer()
+            .is_some_and(|buffer| buffer.usage().contains(wgpu::BufferUsages::COPY_SRC))
+            .then_some(image))
     }
 
     fn unit_image(
@@ -505,13 +553,25 @@ impl Worker<'_> {
                     bounds: region,
                     grid: node.domain().grid,
                 },
-                // Input transfer chunks follow this read, not the consumer's output tile.
-                Tiling {
-                    tile: [region.width.min(512), region.height.min(128)],
-                },
+                Tiling::for_input(region),
             )?
             .with_materializations(self.scope.clone()))
     }
+}
+
+fn copy_cover(
+    scope: &Materializations,
+    node: &value::Value,
+    region: CellRegion,
+) -> Result<Option<super::super::materialized::CopyCover>, Error> {
+    let mut remaining = value::MAX_UNIT_VALUES;
+    super::super::materialized::CopyCover::find(
+        scope,
+        node,
+        region,
+        value::MAX_UNIT_VALUES,
+        &mut remaining,
+    )
 }
 
 pub(super) fn matching_unit(

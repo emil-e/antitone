@@ -1,5 +1,96 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[test]
+fn sink_binds_an_exact_produced_input_without_a_transfer_allocation() {
+    let (input, _) = fixture([64, 2048], vec![[2., -3., 4., 1.]; 64 * 2048]);
+    let mapping = Mapping {
+        start: [0.; 2],
+        axes: [[64., 0.], [0., 2048.]],
+    };
+    let region = [0, 0, 1, 1].into();
+    let domain = output(mapping, region);
+    let producer = reconstruct_mapped(cpu_boundary(input), domain, mapping).unwrap();
+    let identity = producer.output(region).unwrap().identity().unwrap().clone();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let mut completed = Vec::new();
+
+    for (direct, cancel) in [(false, false), (true, false), (true, true)] {
+        let context = Context::new(&device, CachePolicy::default());
+        let mut fragment = Fragment::default();
+        // Hold the consumer and producer fixed; the ordinary scratch slot is
+        // not a generated-image destination and must still be filled by copy.
+        let input = value::image_resource(&mut fragment, &producer, region, direct);
+        fragment.work.push(Work::Produce {
+            image: producer.clone(),
+            output: input,
+        });
+        let result = fragment.image(domain, region);
+        fragment.work.push(Work::Copy {
+            source: input.resource,
+            target: result.resource,
+            source_offset: 0,
+            target_offset: 0,
+            bytes: 16,
+        });
+        let plan = Plan::from_work(fragment, result).unwrap();
+        let stopped = AtomicBool::new(false);
+        let submissions = AtomicUsize::new(0);
+        let scope = context.materializations();
+        let mut executor = Executor::with_scope(context.programs.clone(), scope.clone());
+        let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 16,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let result = context
+            .run_sink(
+                &mut executor,
+                &queue,
+                &plan,
+                (&|| stopped.load(Ordering::Relaxed), &|| {}),
+                (
+                    Sink {
+                        encode: |encoder: &mut wgpu::CommandEncoder, _, output: &wgpu::Buffer| {
+                            assert_eq!(
+                                scope.ready::<ImageLayout>(&identity).len(),
+                                1,
+                                "only the independently submitted intermediate is ready"
+                            );
+                            encoder.copy_buffer_to_buffer(output, 0, &pixels, 0, 16);
+                            stopped.store(cancel, Ordering::Relaxed);
+                            Ok(())
+                        },
+                        submitted: || {
+                            submissions.fetch_add(1, Ordering::Relaxed);
+                        },
+                    },
+                    None,
+                ),
+            )
+            .unwrap();
+        assert_eq!(result.is_none(), cancel);
+        assert_eq!(submissions.load(Ordering::Relaxed), usize::from(!cancel));
+        assert_eq!(
+            scope.ready::<ImageLayout>(&identity).len(),
+            1,
+            "there must not be a second publication from a transfer destination"
+        );
+        if let Some(counts) = result {
+            assert_eq!(
+                super::super::super::super::execute::read(&device, &queue, &pixels),
+                [[2., -3., 4., 9.]]
+            );
+            completed.push(counts);
+        }
+    }
+    assert_eq!(
+        completed[0].buffer_allocations,
+        completed[1].buffer_allocations + 1
+    );
+    assert_eq!(completed[0].submissions, completed[1].submissions + 1);
+}
 
 #[test]
 fn nested_production_counts_source_work_submissions_and_allocations() {
