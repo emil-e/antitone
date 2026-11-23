@@ -11,14 +11,32 @@ pub enum FloatPrecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layout {
+    Rgb8,
     Rgb16,
     Float(FloatPrecision),
 }
 
 pub(crate) enum Samples {
+    Rgb8(Vec<[u8; 3]>),
     Rgb16(Vec<[u16; 3]>),
     F16(Vec<[f16; 3]>),
     F32(Vec<[f32; 3]>),
+}
+
+#[cfg(any(test, all(feature = "gpu", feature = "raw")))]
+pub(crate) fn pack_rgb8(
+    target: crate::rendering::OutputTarget,
+    pixels: impl IntoIterator<Item = Result<DVec3, Error>>,
+) -> Result<Vec<[u8; 3]>, Error> {
+    pixels
+        .into_iter()
+        .map(|pixel| {
+            let [r, g, b] = pixel?.to_array();
+            let encode =
+                |value| -> Result<u8, Error> { Ok((target.encode(value)? * 255.).round() as u8) };
+            Ok([encode(r)?, encode(g)?, encode(b)?])
+        })
+        .collect()
 }
 
 /// Scene-linear export uses AP0/D60. Keep the matrix calculation in f64 so finite
@@ -51,6 +69,26 @@ impl SceneEncoding {
                 pack(pixels, f64::from(f32::MAX), |v| v as f32).map(Samples::F32)
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rgb8_applies_target_transfer_before_rounding() {
+    for target in [
+        crate::rendering::OutputTarget::Srgb,
+        crate::rendering::OutputTarget::DisplayP3,
+    ] {
+        let samples = pack_rgb8(
+            target,
+            [
+                Ok(DVec3::new(0.001, 0.18, 1.)),
+                Ok(DVec3::new(0., 0.5, 0.002)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(samples, [[3, 118, 255], [0, 188, 7]]);
+        assert!(pack_rgb8(target, [Ok(DVec3::splat(1.1))]).is_err());
     }
 }
 

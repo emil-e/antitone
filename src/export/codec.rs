@@ -7,8 +7,10 @@ use crate::Error;
 use std::fs;
 
 mod exr;
+mod jpeg;
 mod tiff;
 pub use exr::exr;
+pub use jpeg::JpegQuality;
 pub use tiff::tiff_encoded;
 #[cfg(feature = "ocio-reference")]
 pub use {
@@ -44,6 +46,7 @@ fn workspace(size: ImageSize, rows: u32, bytes: u64, metadata: u64) -> Result<us
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileFormat {
     Tiff,
+    Jpeg(JpegQuality),
     Exr(FloatPrecision),
 }
 
@@ -51,6 +54,7 @@ impl FileFormat {
     pub fn extension(self) -> &'static str {
         match self {
             Self::Tiff => "tif",
+            Self::Jpeg(_) => "jpg",
             Self::Exr(_) => "exr",
         }
     }
@@ -58,6 +62,7 @@ impl FileFormat {
     pub(crate) fn layout(self) -> Layout {
         match self {
             Self::Tiff => Layout::Rgb16,
+            Self::Jpeg(_) => Layout::Rgb8,
             Self::Exr(precision) => Layout::Float(precision),
         }
     }
@@ -73,6 +78,9 @@ impl FileFormat {
         match (self, target) {
             (Self::Tiff, RenderTarget::Display(target)) => {
                 tiff::encode(file, size, target, blocks, &mut block)
+            }
+            (Self::Jpeg(quality), RenderTarget::Display(target)) => {
+                jpeg::encode(file, size, target, quality, blocks.1, &mut block)
             }
             (Self::Exr(precision), RenderTarget::SceneLinearAp0) => {
                 exr::encode(file, size, precision, &mut block)

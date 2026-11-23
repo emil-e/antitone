@@ -2,7 +2,7 @@
 
 Antitone is an editor for camera-scanned film negatives. You photograph your negatives
 with a digital camera; Antitone develops those scans into positive photographs, helps you
-establish a shared starting grade for the whole roll, and exports TIFF or EXR files.
+establish a shared starting grade for the whole roll, and exports JPEG, TIFF or EXR files.
 
 This guide teaches the workflow. It is organised by what you want to do:
 

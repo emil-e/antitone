@@ -5,11 +5,13 @@ use glam::DVec3;
 #[test]
 fn unsupported_target_and_layout_pairs_are_rejected_at_planning() {
     let display = RenderTarget::Display(OutputTarget::Srgb);
-    assert!(Plan::new(display, FileFormat::Tiff).is_ok());
-    assert!(matches!(
-        Plan::new(RenderTarget::SceneLinearAp0, FileFormat::Tiff),
-        Err(Error::InvalidParameter(_))
-    ));
+    for file in [FileFormat::Tiff, FileFormat::Jpeg(JpegQuality::default())] {
+        assert!(Plan::new(display, file).is_ok());
+        assert!(matches!(
+            Plan::new(RenderTarget::SceneLinearAp0, file),
+            Err(Error::InvalidParameter(_))
+        ));
+    }
     for precision in [FloatPrecision::Half, FloatPrecision::Full] {
         let file = FileFormat::Exr(precision);
         let scene = Plan::new(RenderTarget::SceneLinearAp0, file).unwrap();

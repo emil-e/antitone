@@ -7,7 +7,8 @@ use crate::gpu::execution::{self, SampleEncoding};
 pub(super) fn sample_encoding(plan: Plan) -> SampleEncoding {
     match (plan.target(), plan.format().layout()) {
         (RenderTarget::Display(target), Layout::Rgb16) => SampleEncoding::Rgb16(target),
-        (RenderTarget::SceneLinearAp0, Layout::Float(_)) => SampleEncoding::LinearFloat,
+        (RenderTarget::Display(_), Layout::Rgb8)
+        | (RenderTarget::SceneLinearAp0, Layout::Float(_)) => SampleEncoding::LinearFloat,
         _ => unreachable!("the export plan admits only supported target and layout pairs"),
     }
 }

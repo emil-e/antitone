@@ -3,12 +3,14 @@ use crate::{Error, rendering::OutputTarget};
 use std::{fs, path::Path};
 use tempfile::NamedTempFile;
 mod codec;
-pub use codec::{FileFormat, exr, tiff_encoded};
+pub use codec::{FileFormat, JpegQuality, exr, tiff_encoded};
 #[cfg(all(test, target_os = "macos"))]
 use codec::{exr_blocks, exr_blocks_checked, tiff_encoded_checked, tiff_encoded_ordered};
 #[cfg(feature = "ocio-reference")]
 pub use codec::{exr_composed, tiff, tiff_composed};
 mod samples;
+#[cfg(all(feature = "gpu", feature = "raw"))]
+pub(crate) use samples::pack_rgb8;
 pub use samples::{FloatPrecision, FloatPrecision as ExrPrecision};
 pub(crate) use samples::{Layout, Samples, SceneEncoding};
 #[cfg(all(test, target_os = "macos"))]
@@ -57,7 +59,7 @@ pub struct Plan {
 impl Plan {
     pub fn new(target: RenderTarget, format: FileFormat) -> Result<Self> {
         match (target, format.layout()) {
-            (RenderTarget::Display(_), Layout::Rgb16)
+            (RenderTarget::Display(_), Layout::Rgb8 | Layout::Rgb16)
             | (RenderTarget::SceneLinearAp0, Layout::Float(_)) => Ok(Self { target, format }),
             _ => Err(Error::InvalidParameter(
                 "file layout does not support the render target",
