@@ -1,7 +1,6 @@
 //! Actual image demands retain their preparation through recording or missing production.
 use super::*;
 use crate::gpu::allocation::DeviceAllocationExt;
-use crate::gpu::evaluation::materializations::ProducedImage;
 
 mod sharing;
 #[cfg(test)]
@@ -98,15 +97,10 @@ impl Preparation {
                     Some(pixels) => pixels,
                     None => BufferImage::recorded(root, region, output_buffer(context, region)?)?,
                 };
-                let pixels = match pixels {
-                    BufferImage::Produced(mut image) => {
-                        image.inputs =
-                            ProducedImage::new(image.image.clone(), commands.reusable_inputs())
-                                .inputs;
-                        BufferImage::Produced(image)
-                    }
-                    pixels => pixels,
-                };
+                #[cfg(test)]
+                if let BufferImage::Produced(image) = &pixels {
+                    image.image.observe_inputs(commands.image_inputs());
+                }
                 Ok(RecordedImage {
                     pixels,
                     commands: Some(commands),
@@ -118,13 +112,14 @@ impl Preparation {
         }
     }
 
-    fn produce(self, worker: &Worker<'_>, layout: ImageLayout) -> Result<ProducedImage, Error> {
-        // Recording/submission takes over physical ownership. Discovery is not a
-        // reason to make every input a reusable dependency of the completed image.
+    fn produce(self, worker: &Worker<'_>, layout: ImageLayout) -> Result<Arc<ImageValue>, Error> {
+        // Keep prepared bindings available until the consumer's execution takes over.
         let _captured_inputs = self.captured_inputs;
-        let mut execution_sources = Vec::new();
-        let mut owners = Vec::new();
+        let mut execution_inputs = Vec::new();
+        #[cfg(test)]
+        let mut observed = Vec::new();
         for dependency in self.dependencies {
+            #[cfg(test)]
             let kind = dependency.kind;
             let definition = dependency.evaluation.job.image().clone();
             let region = dependency.evaluation.job.region();
@@ -136,33 +131,24 @@ impl Preparation {
             };
             let own = Worker { ..*worker };
             let image = dependency.produce(&own, layout)?;
-            if kind == DependencyKind::SourceSlice {
-                // Keep acquired pixels through consumer execution, not the
-                // completed producer's reusable upstream allocations.
-                execution_sources.push(image.image.clone());
-            } else {
-                owners.extend(image.inputs.iter().cloned());
-                owners.push(image.image.clone());
+            #[cfg(test)]
+            if kind != DependencyKind::SourceSlice {
+                observed.push(image.clone());
             }
             if let Some(identity) = definition.output(region)?.identity() {
                 worker.scope.publish(
                     &Image {
                         identity: identity.clone(),
                         descriptor: Arc::new(layout),
-                        image: image.image,
-                        inputs: image.inputs,
+                        image: image.clone(),
                     },
                     true,
                 );
             }
+            execution_inputs.push(image);
         }
         let plan = match self.work {
-            PreparedWork::Cached(image) => {
-                return Ok(ProducedImage {
-                    image: image.image,
-                    inputs: image.inputs,
-                });
-            }
+            PreparedWork::Cached(image) => return Ok(image.image),
             PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan,
             PreparedWork::Units => {
                 let worker = Worker { ..*worker };
@@ -177,14 +163,13 @@ impl Preparation {
                         pixels: image.as_buffer().expect("prepared buffer destination"),
                     }
                     .produce(&self.evaluation)?;
-                    return Ok(ProducedImage::new(image, Vec::new()));
+                    return Ok(image);
                 }
-                let image = worker.materialize_image(
+                return worker.materialize_image(
                     &self.evaluation,
                     layout,
                     &mut WorkCounts::default(),
-                )?;
-                return Ok(image.into());
+                );
             }
         };
         worker.working.admit_gpu(worker.context.device())?;
@@ -199,7 +184,9 @@ impl Preparation {
             pixels: image.as_buffer().expect("prepared buffer destination"),
         }
         .deliver(&mut worker.executor(), plan)?;
-        Ok(ProducedImage::new(image, owners))
+        #[cfg(test)]
+        image.observe_inputs(&observed);
+        Ok(image)
     }
 }
 
@@ -354,8 +341,7 @@ impl Context {
         let image = Image {
             identity,
             descriptor: Arc::new(layout),
-            image: value.image,
-            inputs: value.inputs,
+            image: value,
         };
         scope.publish(&image, retain);
         Ok(image)
@@ -395,63 +381,33 @@ impl Context {
         }
         let (context, queue) = (self.clone(), queue.clone());
         let owned_scope = scope.clone();
-        Ok(
-            scope.obtain_many_owned(requests, move |missing| async move {
-                let progress = Arc::new(futures_util::task::AtomicWaker::new());
-                let wake = progress.clone();
-                let mut job = Box::pin(crate::background::run(move |stop| {
-                    let working = RunWorkingSet::default();
-                    let cancelled = || stop.is_cancelled();
-                    let progress = || wake.wake();
-                    if missing.len() > 1
-                        && missing
-                            .iter()
-                            .all(|index| prepared[*index].dependencies.is_empty())
-                    {
-                        let jobs = missing
-                            .iter()
-                            .map(|index| {
-                                let evaluation = prepared[*index].evaluation.clone();
-                                let layout = ImageLayout {
-                                    domain: evaluation.job.image().domain(),
-                                    region: evaluation.job.region(),
-                                    format: ImageFormat::Rgba32Float,
-                                    backing: ImageBacking::Buffer,
-                                };
-                                (evaluation, layout)
-                            })
-                            .collect::<Vec<_>>();
-                        let selected = jobs.iter().collect::<Vec<_>>();
-                        if !jobs.is_empty() {
-                            let worker = Worker {
-                                context: &context,
-                                queue: &queue,
-                                scope: &owned_scope,
-                                working: &working,
-                                cancelled: &cancelled,
-                                progress: &progress,
+        Ok(scope.obtain_many_for(requests, move |missing| async move {
+            let progress = Arc::new(futures_util::task::AtomicWaker::new());
+            let wake = progress.clone();
+            let mut job = Box::pin(crate::background::run(move |stop| {
+                let working = RunWorkingSet::default();
+                let cancelled = || stop.is_cancelled();
+                let progress = || wake.wake();
+                if missing.len() > 1
+                    && missing
+                        .iter()
+                        .all(|index| prepared[*index].dependencies.is_empty())
+                {
+                    let jobs = missing
+                        .iter()
+                        .map(|index| {
+                            let evaluation = prepared[*index].evaluation.clone();
+                            let layout = ImageLayout {
+                                domain: evaluation.job.image().domain(),
+                                region: evaluation.job.region(),
+                                format: ImageFormat::Rgba32Float,
+                                backing: ImageBacking::Buffer,
                             };
-                            if let Some(images) = worker.materialize_units_many(&selected)? {
-                                working.finish_gpu()?;
-                                return Ok(images.into_iter().map(ProducedImage::from).collect());
-                            }
-                        }
-                    }
-                    let mut images = Vec::new();
-                    for (index, preparation) in prepared.into_iter().enumerate() {
-                        if !missing.contains(&index) {
-                            continue;
-                        }
-                        if cancelled() {
-                            return Err(Error::Cancelled);
-                        }
-                        let evaluation = &preparation.evaluation;
-                        let layout = ImageLayout {
-                            domain: evaluation.job.image().domain(),
-                            region: evaluation.job.region(),
-                            format: ImageFormat::Rgba32Float,
-                            backing: ImageBacking::Buffer,
-                        };
+                            (evaluation, layout)
+                        })
+                        .collect::<Vec<_>>();
+                    let selected = jobs.iter().collect::<Vec<_>>();
+                    if !jobs.is_empty() {
                         let worker = Worker {
                             context: &context,
                             queue: &queue,
@@ -460,36 +416,63 @@ impl Context {
                             cancelled: &cancelled,
                             progress: &progress,
                         };
-                        let identity = evaluation
-                            .job
-                            .image()
-                            .output(layout.region)?
-                            .identity()
-                            .cloned()
-                            .unwrap();
-                        let retain = evaluation.retain;
-                        let image = preparation.produce(&worker, layout)?;
-                        owned_scope.publish(
-                            &Image {
-                                identity,
-                                descriptor: Arc::new(layout),
-                                image: image.image.clone(),
-                                inputs: image.inputs.clone(),
-                            },
-                            retain,
-                        );
-                        images.push(image);
+                        if let Some(images) = worker.materialize_units_many(&selected)? {
+                            working.finish_gpu()?;
+                            return Ok(images);
+                        }
                     }
-                    working.finish_gpu()?;
-                    Ok(images)
-                }));
-                futures_util::future::poll_fn(|cx| {
-                    progress.register(cx.waker());
-                    std::future::Future::poll(job.as_mut(), cx)
-                })
-                .await
-                .map_err(|_| Error::Gpu("image preparation worker panicked".into()))?
-            }),
-        )
+                }
+                let mut images = Vec::new();
+                for (index, preparation) in prepared.into_iter().enumerate() {
+                    if !missing.contains(&index) {
+                        continue;
+                    }
+                    if cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let evaluation = &preparation.evaluation;
+                    let layout = ImageLayout {
+                        domain: evaluation.job.image().domain(),
+                        region: evaluation.job.region(),
+                        format: ImageFormat::Rgba32Float,
+                        backing: ImageBacking::Buffer,
+                    };
+                    let worker = Worker {
+                        context: &context,
+                        queue: &queue,
+                        scope: &owned_scope,
+                        working: &working,
+                        cancelled: &cancelled,
+                        progress: &progress,
+                    };
+                    let identity = evaluation
+                        .job
+                        .image()
+                        .output(layout.region)?
+                        .identity()
+                        .cloned()
+                        .unwrap();
+                    let retain = evaluation.retain;
+                    let image = preparation.produce(&worker, layout)?;
+                    owned_scope.publish(
+                        &Image {
+                            identity,
+                            descriptor: Arc::new(layout),
+                            image: image.clone(),
+                        },
+                        retain,
+                    );
+                    images.push(image);
+                }
+                working.finish_gpu()?;
+                Ok(images)
+            }));
+            futures_util::future::poll_fn(|cx| {
+                progress.register(cx.waker());
+                std::future::Future::poll(job.as_mut(), cx)
+            })
+            .await
+            .map_err(|_| Error::Gpu("image preparation worker panicked".into()))?
+        }))
     }
 }

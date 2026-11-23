@@ -202,7 +202,7 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
 }
 
 #[test]
-fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_retention() {
+fn refined_views_preserve_grain_pixels_when_field_retention_is_unavailable() {
     let (device, queue, renderer, kernels) = pollster::block_on(context());
     let composition = Composition::new(
         [0, 0, 6000, 6000].into(),
@@ -236,7 +236,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         .unwrap()
     };
     let mut expected = None;
-    let mut expected_scratch = None;
+    let mut uncached_scratch = None;
     for budget in [256u64 << 20, 0, 1] {
         let renderer = if budget == 256 << 20 {
             renderer.clone()
@@ -265,6 +265,7 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             None,
         )
         .unwrap();
+        let first_field = super::grain::cached_field(&view).unwrap().pixels.clone();
         if budget > 1 {
             let field = super::grain::cached_field(&view).unwrap();
             assert!(!field.ready());
@@ -298,25 +299,25 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             .product
             .as_ref()
             .unwrap()
-            .commands
+            .recording()
             .as_ref()
             .unwrap()
             .scheduled_bytes();
-        if let Some(expected) = expected_scratch {
-            assert_eq!(
-                scratch, expected,
-                "retention does not change required work or its grid"
-            );
-        } else {
-            expected_scratch = Some(scratch);
+        if budget <= 1 {
+            if let Some(expected) = uncached_scratch {
+                assert_eq!(scratch, expected, "both budgets reject the field");
+            } else {
+                uncached_scratch = Some(scratch);
+            }
         }
-        let a = super::grain::cached_field(&view);
-        let b = super::grain::cached_field(&edited);
-        assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
-        assert!(
-            b.unwrap().ready(),
-            "Amount, Colour and fixed-support halation reuse the live initialized field even without optional retention"
-        );
+        let edited_field = super::grain::cached_field(&edited).unwrap();
+        if budget > 1 {
+            assert_eq!(first_field, edited_field.pixels);
+            assert!(edited_field.ready());
+        } else {
+            assert_ne!(first_field, edited_field.pixels);
+            assert!(!edited_field.ready());
+        }
         edited.ensure_submitted(&device, &queue, &egui::Context::default());
         let pixels = read(&device, &queue, &edited.product.as_ref().unwrap().pixels);
         assert!(

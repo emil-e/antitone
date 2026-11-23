@@ -336,9 +336,15 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
 }
 
 #[test]
-fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
+fn recorded_dependencies_enter_the_cache_only_after_submission() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 1 << 20,
+        },
+    );
+    context.materializations().set_retention_enabled(true);
     let input = source(Arc::new(Plane(Arc::new(AtomicUsize::new(0)))));
     let source_request = context
         .request(
@@ -422,7 +428,7 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
         .encode_result(&device, &mut encoder, &recorded.pixels)
         .unwrap();
     queue.submit([encoder.finish()]);
-    recorded.commands.as_ref().unwrap().submitted();
+    recorded.commands.unwrap().submitted();
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     assert!(
         context
@@ -433,9 +439,16 @@ fn abandoned_recording_does_not_publish_shared_dependency_pixels() {
 }
 
 #[test]
-fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable() {
+fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 1 << 20,
+        },
+    );
+    let store = context.materializations();
+    store.set_retention_enabled(true);
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Plane(reads.clone())));
     let domain = Domain {
@@ -504,6 +517,15 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
             );
         }
     }
+    let key = projected.output(domain.finite().unwrap()).unwrap();
+    let retained = store
+        .ready::<ImageLayout>(key.identity().unwrap())
+        .into_iter()
+        .find(|image| image.descriptor.region == domain.finite().unwrap())
+        .expect("projection prepared for the requested window");
+    let projection = Arc::downgrade(&retained.image);
+    drop(retained);
+
     let before = reads.load(Ordering::Relaxed);
     assert!(before > 0);
     let next = context.prepare_image(request(scale(3.))).unwrap();
@@ -514,7 +536,17 @@ fn missing_projected_inputs_are_fulfilled_before_consumers_and_remain_reusable()
     assert!(next.can_record());
     next.record(&context).unwrap();
     assert_eq!(reads.load(Ordering::Relaxed), before);
+
+    store.evict_optional();
     assert_eq!(context.retained_bytes(), 0);
+    assert!(projection.upgrade().is_none());
+    assert_eq!(
+        super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
+        pixels,
+        "the finished consumer image is still usable"
+    );
+    let miss = context.prepare_image(request(scale(4.))).unwrap();
+    assert!(!miss.can_record());
 }
 
 #[test]

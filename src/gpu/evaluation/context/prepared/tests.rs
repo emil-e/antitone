@@ -231,11 +231,10 @@ fn multiple_missing_operands_execute_without_completed_source_pins() {
     let image = prepared.produce(&worker, layout).unwrap();
     working.finish_gpu().unwrap();
     assert!(
-        image.inputs.is_empty(),
+        image.used_inputs().is_empty(),
         "completed results do not pin source operands"
     );
-    let pixels =
-        super::super::super::execute::read(&device, &queue, image.image.as_buffer().unwrap());
+    let pixels = super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
     assert_eq!(pixels[0], [0., 0., -4., 8.]);
     assert_eq!(pixels[31], [14., 6., -4., 8.]);
     assert_eq!(reads.load(Ordering::SeqCst), 2);
@@ -278,8 +277,7 @@ fn prepared_requests_share_production_without_pinning_finished_source_inputs() {
     let second = pollster::block_on(requests.remove(0)).unwrap();
     assert!(Arc::ptr_eq(&first.image, &second.image));
     assert_eq!(reads.load(Ordering::SeqCst), 1);
-    assert!(first.inputs.is_empty());
-    assert!(second.inputs.is_empty());
+    assert!(first.image.used_inputs().is_empty());
     assert!(
         context
             .materializations()

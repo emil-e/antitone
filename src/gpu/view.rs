@@ -319,6 +319,7 @@ impl RenderedView {
                 return Vec::new();
             };
             let scope = view.context.materializations();
+            let observed = pixels.image.used_inputs();
             view.definition
                 .ancestors()
                 .filter(|node| {
@@ -332,10 +333,8 @@ impl RenderedView {
                 .filter_map(|output| output.identity().cloned())
                 .flat_map(|key| scope.ready::<ImageLayout>(&key))
                 .filter(|stored| {
-                    pixels
-                        .inputs
-                        .iter()
-                        .any(|input| Arc::ptr_eq(input, &stored.image))
+                    let candidate = Arc::downgrade(&stored.image);
+                    observed.iter().any(|input| input.ptr_eq(&candidate))
                 })
                 .map(|stored| stored.image)
                 .collect()
@@ -383,15 +382,17 @@ impl RenderedView {
         if *submitted {
             return;
         }
-        let mut initialized = self.product.as_ref().map(|g| g.submitted.lock().unwrap());
+        let mut pending = self.product.as_ref().map(|image| image.recording());
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(composite) = &self.composite {
             composite.ensure_parents(device, queue, context);
             composite.encode(&mut encoder, &self.image);
         } else {
             let graded = self.product.as_ref().expect("unsubmitted working view");
-            if !**initialized.as_ref().unwrap() {
-                graded.encode(device, &mut encoder);
+            if let Some(commands) = pending.as_ref().and_then(|recording| recording.as_ref()) {
+                commands
+                    .encode_result(device, &mut encoder, &graded.pixels)
+                    .expect("validated image recording");
             }
             let binding = self.recording.as_ref().unwrap();
             binding
@@ -415,12 +416,9 @@ impl RenderedView {
             if repairs > 0 { log::info!(repairs = repairs, seconds = started.elapsed().as_secs_f64(); "working_colour_complete"); }
             context.request_repaint();
         });
-        if let Some(initialized) = initialized.as_mut() {
-            **initialized = true;
-        }
         if let Some(graded) = &self.product {
-            if let Some(stages) = &graded.commands {
-                stages.submitted();
+            if let Some(commands) = pending.as_mut().and_then(|recording| recording.take()) {
+                commands.submitted();
             }
             graded.pixels.submitted(&graded.context.materializations());
         }

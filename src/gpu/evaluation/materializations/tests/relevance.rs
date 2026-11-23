@@ -32,7 +32,6 @@ fn store(bytes: u64) -> Materializations {
 }
 fn publish(scope: &Materializations, value: &Value, region: CellRegion) -> Image<ImageLayout> {
     let image = Image {
-        inputs: Default::default(),
         identity: value.output(region).unwrap().identity().unwrap().clone(),
         descriptor: Arc::new(ImageLayout {
             domain: value.domain(),
@@ -203,7 +202,6 @@ fn evaluating_a_cached_descendant_into_a_sink_refreshes_upstream_relevance() {
     drop(publish(&scope, &upstream, region));
     drop(publish(&scope, &unrelated, region));
     let image = Image {
-        inputs: Default::default(),
         identity: root.output(region).unwrap().identity().unwrap().clone(),
         descriptor: Arc::new(ImageLayout {
             domain: domain(),
@@ -265,7 +263,6 @@ fn recorded_demand_and_selected_storage_promote_only_after_submission() {
         drop(publish(&scope, &upstream, region));
         drop(publish(&scope, &unrelated, region));
         let image = Image {
-            inputs: Default::default(),
             identity: root.output(region).unwrap().identity().unwrap().clone(),
             descriptor: Arc::new(ImageLayout {
                 domain: domain(),

@@ -176,7 +176,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
     let mut encoder = device.create_command_encoder(&Default::default());
     next.encode(&device, &mut encoder);
     queue.submit([encoder.finish()]);
-    next.commands.as_ref().unwrap().submitted();
+    next.recording().take().unwrap().submitted();
     next.pixels.submitted(&scope);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let pixels = e::read_buffer(&device, &queue, &next.pixels);

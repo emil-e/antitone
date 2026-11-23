@@ -30,8 +30,7 @@ impl ViewImage {
             definition,
             region,
             pixels: pixels.into(),
-            commands: None,
-            submitted: Mutex::new(true),
+            pending: Mutex::new(None),
             argument: None,
         }
     }
@@ -161,11 +160,10 @@ impl ViewImage {
         let mut encoder = device.create_command_encoder(&Default::default());
         image.encode(&device, &mut encoder);
         queue.submit([encoder.finish()]);
-        if let Some(commands) = &image.commands {
+        if let Some(commands) = image.recording().take() {
             commands.submitted();
         }
         image.pixels.submitted(&image.context.materializations());
-        *image.submitted.lock().unwrap() = true;
         Ok(image)
     }
 
@@ -341,12 +339,10 @@ impl ViewImage {
                 _ => {
                     old.same_value(&wanted)
                         && (previous.pixels == source.pixels
-                            || previous.commands.as_ref().is_some_and(|commands| {
-                                commands
-                                    .reusable_inputs()
-                                    .iter()
-                                    .any(|image| image.as_buffer() == Some(&*source.pixels))
-                            }))
+                            || previous
+                                .argument
+                                .as_ref()
+                                .is_some_and(|(_, input)| input.pixels() == &*source.pixels))
                 }
             };
             if same {
