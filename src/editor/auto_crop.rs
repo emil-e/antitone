@@ -1,324 +1,60 @@
 use super::*;
-use crate::{
-    auto_crop as framing, geometry::SourcePoint, project::SourceDevelopment,
-    scan_regions::PictureGeometry, viewport::CanvasLayout,
-};
+use crate::{auto_crop as framing, geometry::SourcePoint, viewport::CanvasLayout};
 #[cfg(test)]
 use std::rc::Weak;
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
-#[derive(Clone)]
-struct Entry {
-    source: SourceId,
-    proposal: Crop,
-    before: Option<Crop>,
-    draft: Option<Crop>,
-    file: thumbnails::FileKey,
-    development: SourceDevelopment,
-    geometry: Option<PictureGeometry>,
-    constraints: Vec<[f64; 3]>,
-    spatial: Option<Arc<crate::spatial_metadata::Metadata>>,
+mod review;
+use review::{Draft, Entry, Inputs, LoadedPhoto, Rejection, SelectedPhoto, accepted, reason};
+
+#[cfg(test)]
+mod testing;
+
+fn review_inputs(editor: &Editor) -> Inputs<'_> {
+    let scope = &editor.document;
+    let selected = scope.visit.current_source.map(|id| SelectedPhoto {
+        id,
+        effective_crop: editor.photo_crop(),
+        loaded: editor
+            .active_canvas()
+            .ready
+            .as_ref()
+            .map(|ready| LoadedPhoto {
+                file: &ready.file,
+                development: &ready.record.development,
+                area: ready.area,
+            }),
+    });
+    Inputs::new(
+        &scope.state,
+        selected,
+        scope.spatial.ready(),
+        &scope.initialization,
+    )
 }
 
-#[derive(Clone)]
-pub(super) struct Draft {
-    roll_photos: HashSet<SourceId>,
+pub(super) fn review_available(editor: &Editor) -> bool {
+    editor.tool_start_available()
+        && editor.selected_area().is_some()
+        && !editor.document.project.order.is_empty()
+}
+
+fn capture_review(
+    editor: &mut Editor,
+    photos: Vec<SourceId>,
     scope: &'static str,
-    attempted: usize,
-    summary: String,
-    entries: Vec<Entry>,
-    problems: Vec<(SourceId, String)>,
-    pub(super) reveal_controls: bool,
-    pub(super) show_outline: bool,
-}
-
-impl Draft {
-    fn valid(&self, editor: &Editor) -> bool {
-        self.belongs_to(editor)
-            && !self.entries.is_empty()
-            && self.entries.iter().all(|entry| {
-                entry.current(editor) && !self.problems.iter().any(|(id, _)| *id == entry.source)
-            })
+) -> Option<Draft> {
+    if photos.is_empty() || !review_available(editor) {
+        return None;
     }
-
-    fn belongs_to(&self, editor: &Editor) -> bool {
-        let order = &editor.document.state.project.order;
-        self.roll_photos.len() == order.len()
-            && order.iter().all(|id| self.roll_photos.contains(id))
-            && self
-                .entries
-                .iter()
-                .find_map(|entry| entry.spatial.as_ref())
-                .is_none_or(|metadata| {
-                    let document = editor.document.capture();
-                    metadata.matching(&document.project, &document.spatial_inputs()) == **metadata
-                })
-    }
-}
-
-impl Entry {
-    fn current(&self, editor: &Editor) -> bool {
-        let Ok(source) = editor.document.state.project.source(self.source) else {
-            return false;
-        };
-        editor
-            .document
-            .source_path(self.source)
-            .is_ok_and(|path| editor.document.file_key(&path) == self.file)
-            && source.crop == self.before
-            && (editor.document.visit.current_source != Some(self.source)
-                || editor.photo_crop() == self.before)
-            && source.development == self.development
-            && if let Some(metadata) = &self.spatial {
-                Arc::ptr_eq(metadata, &editor.document.spatial.ready())
-            } else {
-                editor
-                    .document
-                    .project
-                    .analysis_regions
-                    .iter()
-                    .find(|r| r.source == self.source)
-                    .is_some_and(|r| {
-                        !r.areas.picture_edited
-                            && r.areas.picture_observed == [true; 4]
-                            && r.areas.picture_weak == [false; 4]
-                            && r.areas.picture_geometry.as_ref() == self.geometry.as_ref()
-                            && r.areas.picture_constraints == self.constraints
-                    })
-            }
-    }
-}
-
-fn accepted(crop: Crop, active: Rect) -> Option<Crop> {
-    (crop != Crop::from_region(active)).then_some(crop)
-}
-
-fn reason(error: Error) -> String {
-    match error {
-        Error::UnusableSample(s) => s.to_owned(),
-        error => error.to_string(),
-    }
-}
-
-impl Editor {
-    pub(super) fn auto_crop_entry_available(&self) -> bool {
-        self.tool_start_available()
-            && self.selected_area().is_some()
-            && !self.document.project.order.is_empty()
-    }
-
-    fn loaded_crop_source_current(&self, id: SourceId, file: &thumbnails::FileKey) -> bool {
-        if self.document.visit.current_source != Some(id) {
-            return true;
-        }
-        self.document.visit.canvas.ready.as_ref().is_none_or(|r| {
-            self.document.state.project.source(id).is_ok_and(|s| {
-                r.record.development == s.development
-                    && r.area == Rect::from(s.development.active_area)
-                    // The captured key already contains the source locator and revision.
-                    && &r.file == file
-            })
-        })
-    }
-
-    fn crop_proposal(&self, id: SourceId) -> Result<Entry, Error> {
-        let source = self.document.state.project.source(id)?;
-        let path = self.document.source_path(id)?;
-        let file = self.document.file_key(&path);
-        if !self.loaded_crop_source_current(id, &file) {
-            return Err(Error::UnusableSample(
-                "loaded source changed; reopen the photo",
-            ));
-        }
-        let active = source.development.active_area.into();
-        let metadata = self.document.spatial.ready();
-        let regions = metadata
-            .groups
-            .iter()
-            .flat_map(|group| &group.sources)
-            .find(|row| row.input.source == id);
-        let (proposal, geometry, constraints, spatial) = if let Some(regions) = regions {
-            if regions.input.development != source.development
-                || file.revision.clone() != Some(regions.input.revision.clone())
-            {
-                return Err(Error::UnusableSample(
-                    "shared picture regions are out of date",
-                ));
-            }
-            (
-                framing::propose_spatial(regions)?,
-                None,
-                vec![],
-                Some(metadata.clone()),
-            )
-        } else {
-            let areas = &self
-                .document
-                .project
-                .analysis_regions
-                .iter()
-                .find(|r| r.source == id)
-                .ok_or(Error::UnusableSample(
-                    "no retained frame evidence or prepared picture regions",
-                ))?
-                .areas;
-            (
-                framing::propose(active, areas)?,
-                areas.picture_geometry.clone(),
-                areas.picture_constraints.clone(),
-                None,
-            )
-        };
-        let crop = framing::inward_margin(proposal, active, self.auto_crop_margin)?;
-        Ok(Entry {
-            source: id,
-            proposal,
-            before: source.crop,
-            draft: accepted(crop, active),
-            file,
-            development: source.development.clone(),
-            geometry,
-            constraints,
-            spatial,
-        })
-    }
-
-    fn capture_crop_review(&mut self, photos: Vec<SourceId>, scope: &'static str) -> Option<Draft> {
-        if photos.is_empty() || !self.auto_crop_entry_available() {
-            return None;
-        }
-        let attempted = photos.len();
-        let mut entries = Vec::new();
-        let mut problems = Vec::new();
-        for id in photos {
-            match self.crop_proposal(id) {
-                Ok(entry) => entries.push(entry),
-                Err(error) => problems.push((id, format!("No crop proposal: {}", reason(error)))),
-            }
-        }
-        self.status = format!(
-            "Auto-crop: {} proposed, {} skipped",
-            entries.len(),
-            problems.len()
-        );
-        Some(Draft {
-            roll_photos: self.document.state.project.order.iter().copied().collect(),
-            scope,
-            attempted,
-            summary: self.status.clone(),
-            entries,
-            problems,
-            reveal_controls: true,
-            show_outline: true,
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop_preview(&self, id: SourceId) -> Option<Option<Crop>> {
-        let state = self.document.auto_crop.current()?;
-        let state = state.borrow();
-        let edit = state.as_ref()?;
-        if !edit.belongs_to(self) {
-            return None;
-        }
-        edit.entries
-            .iter()
-            .find(|entry| entry.source == id)
-            .filter(|entry| entry.current(self))
-            .map(|entry| entry.draft)
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop_problem(&self, id: SourceId) -> Option<String> {
-        let state = self.document.auto_crop.current()?;
-        state.borrow().as_ref()?.problem(self, id)
-    }
-
-    fn commit_auto_crop(&mut self, edit: &Draft) -> Result<(), (Option<SourceId>, Error)> {
-        let mut transaction = self
-            .edit_project("Auto-crop")
-            .map_err(|error| (None, error))?;
-        let mut failed_source = None;
-        let candidate = (|| -> Result<_, Error> {
-            if !edit.valid(self) {
-                return Err(Error::UnusableSample(
-                    "document, crops or measurements changed",
-                ));
-            }
-
-            let ready = self.document.capture().ready_spatial_metadata();
-            if edit.entries.iter().any(|entry| {
-                entry
-                    .spatial
-                    .as_ref()
-                    .is_some_and(|metadata| **metadata != ready)
-            }) {
-                return Err(Error::UnusableSample(
-                    "shared region dependencies changed since the proposal",
-                ));
-            }
-            let mut candidate = self.document.state.project.clone();
-            for entry in &edit.entries {
-                failed_source = Some(entry.source);
-                if !self.loaded_crop_source_current(entry.source, &entry.file) {
-                    return Err(Error::UnusableSample("a source changed since the proposal"));
-                }
-                if let Some(crop) = entry.draft {
-                    crop.region(entry.development.active_area.into())?;
-                }
-                candidate.source_mut(entry.source)?.crop = entry.draft;
-            }
-            Ok(candidate)
-        })()
-        .map_err(|error| (failed_source, error))?;
-        transaction.replace_snapshot(candidate.snapshot());
-        self.commit_project(transaction)
-            .map_err(|error| (None, error))?;
-        self.document.visit.canvas.viewport.fit();
-        self.status = format!("Auto-crop applied to {} photos", edit.entries.len());
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(super) fn begin_auto_crop_review(&mut self, photos: Vec<SourceId>, scope: &'static str) {
-        if !self.prepare_tool() {
-            return;
-        }
-        if let Some(review) = self.capture_crop_review(photos, scope) {
-            AutoCropTool::new(Some(review)).install(self);
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn finish_auto_crop(&mut self, apply: bool) {
-        if self
-            .current_tool()
-            .is_some_and(|tool| tool.is::<AutoCropTool>())
-        {
-            self.hosted_action(if apply {
-                tool::Action::Primary
-            } else {
-                tool::Action::Dismiss
-            });
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop_valid(&self) -> bool {
-        self.document
-            .auto_crop
-            .current()
-            .is_some_and(|state| state.borrow().as_ref().is_some_and(|edit| edit.valid(self)))
-    }
-
-    #[cfg(test)]
-    pub(super) fn adjust_auto_crop_margin(&mut self, margin: f64) {
-        if let Some(state) = self.document.auto_crop.current()
-            && let Some(edit) = state.borrow_mut().as_mut()
-        {
-            edit.adjust_margin(self, margin);
-        }
-    }
+    let draft = Draft::capture(
+        &review_inputs(editor),
+        photos,
+        scope,
+        editor.auto_crop_margin,
+    );
+    editor.status.clone_from(&draft.summary);
+    Some(draft)
 }
 
 type Review = RefCell<Option<Draft>>;
@@ -392,15 +128,20 @@ impl tool::Tool for AutoCropTool {
         }
     }
     fn presentation(&self, editor: &Editor) -> tool::Presentation {
-        let review = self.review.borrow();
-        let warning = review.as_ref().and_then(|draft| {
-            editor
-                .document
-                .visit
-                .current_source
-                .and_then(|id| draft.problem(editor, id))
-                .or_else(|| draft.warning(editor).map(str::to_owned))
-        });
+        let (warning, enabled) = self
+            .review
+            .borrow()
+            .as_ref()
+            .map_or((None, false), |draft| {
+                let inputs = review_inputs(editor);
+                let blocked = editor.interaction_blocked();
+                let warning = inputs
+                    .selected
+                    .as_ref()
+                    .and_then(|photo| draft.problem(&inputs, photo.id, !blocked))
+                    .or_else(|| draft.warning(&inputs).map(str::to_owned));
+                (warning, !blocked && draft.valid(&inputs))
+            });
         tool::Presentation {
             identity: ui::ToolIdentity {
                 icon: ui::icons::Icon::BatchCrop,
@@ -408,7 +149,7 @@ impl tool::Tool for AutoCropTool {
             },
             primary: Some(tool::Primary {
                 label: "Apply",
-                enabled: review.as_ref().is_some_and(|draft| draft.editable(editor)),
+                enabled,
             }),
             dismiss: "Cancel",
             warning,
@@ -422,31 +163,31 @@ impl tool::Tool for AutoCropTool {
         if self.review.borrow().is_some() {
             &mut editor.document.visit.auto_crop_view.viewport
         } else {
-            &mut editor.document.visit.canvas.viewport
+            &mut editor.active_canvas_mut().viewport
         }
     }
 
     fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
         let mut preview = thumbnails::Preview::default();
         if let Some(draft) = self.review.borrow().as_ref() {
-            if draft.belongs_to(editor) {
+            let inputs = review_inputs(editor);
+            let project = &inputs.document.project;
+            if draft.belongs_to(&inputs) {
                 for entry in &draft.entries {
-                    if entry.current(editor)
-                        && let Ok(source) = editor.document.project.source(entry.source)
+                    if entry.current(&inputs)
+                        && let Ok(source) = project.source(entry.source)
                     {
-                        let crop = entry
-                            .draft
-                            .unwrap_or(Crop::from_region(entry.development.active_area.into()));
                         let composition = editor
                             .source_composition(source)
-                            .cropped(crop)
+                            .cropped(entry.crop())
                             .expect("validated proposal");
                         preview.compositions.push((entry.source, composition));
                     }
                 }
             }
-            for id in editor.document.project.order.iter().copied() {
-                if let Some(problem) = draft.problem(editor, id) {
+            let check_loaded = !editor.interaction_blocked();
+            for id in project.order.iter().copied() {
+                if let Some(problem) = draft.problem(&inputs, id, check_loaded) {
                     preview.warnings.push((id, problem));
                 }
             }
@@ -507,11 +248,13 @@ impl tool::Tool for AutoCropTool {
                     canvas.ui.ctx().set_cursor_icon(cursor);
                 }
                 canvas.paint_image(editor, layout, false, cx);
-                if let Some(draft) = tool.review.borrow().as_ref()
-                    && draft.artwork_visible(editor, canvas.ui)
-                    && let Some(outline) = draft.outline(editor, layout)
-                {
-                    crop_editor::paint_outline(canvas.ui, layout.canvas, outline, false, 64);
+                if let Some(draft) = tool.review.borrow().as_ref() {
+                    let inputs = review_inputs(editor);
+                    if draft.artwork_visible(canvas.ui)
+                        && let Some(outline) = draft.outline(&inputs, layout)
+                    {
+                        crop_editor::paint_outline(canvas.ui, layout.canvas, outline, false, 64);
+                    }
                 }
                 Some(layout)
             },
@@ -528,9 +271,14 @@ impl tool::Tool for AutoCropTool {
                     editor.status = "Auto-crop has no proposals to apply".into();
                     return;
                 }
-                match editor.commit_auto_crop(&snapshot) {
-                    Ok(()) => editor.end_tool(),
-                    Err((source, error)) => {
+                match apply_review(editor, &snapshot) {
+                    Ok(()) => {
+                        editor.fit_photo_view();
+                        editor.status =
+                            format!("Auto-crop applied to {} photos", snapshot.entries.len());
+                        editor.end_tool();
+                    }
+                    Err(Rejection { source, error }) => {
                         let reason = reason(error);
                         if let Some(source) = source
                             && let Some(draft) = self.review.borrow_mut().as_mut()
@@ -551,46 +299,21 @@ impl tool::Tool for AutoCropTool {
     }
 }
 
-impl Draft {
-    fn editable(&self, editor: &Editor) -> bool {
-        !editor.interaction_blocked() && self.valid(editor)
-    }
+fn apply_review(editor: &mut Editor, draft: &Draft) -> Result<(), Rejection> {
+    let mut transaction = editor.edit_project("Auto-crop").map_err(Rejection::batch)?;
+    let candidate = draft.candidate(&review_inputs(editor))?;
+    transaction.replace_snapshot(candidate);
+    editor.commit_project(transaction).map_err(Rejection::batch)
+}
 
-    fn warning(&self, editor: &Editor) -> Option<&'static str> {
+impl Draft {
+    fn warning(&self, inputs: &Inputs<'_>) -> Option<&'static str> {
         if self.entries.is_empty() {
             Some("No crop proposals are available for this batch")
-        } else if !self.valid(editor) {
+        } else if !self.valid(inputs) {
             Some("Crop batch is out of date; cancel and start again")
         } else {
             None
-        }
-    }
-
-    fn problem(&self, editor: &Editor, id: SourceId) -> Option<String> {
-        let entry = self.entries.iter().find(|entry| entry.source == id);
-        let problem = self.problems.iter().find(|(source, _)| *source == id);
-        if (entry.is_some() || problem.is_some()) && !self.belongs_to(editor) {
-            return Some("Crop proposals are out of date".into());
-        }
-        if let Some(entry) = entry {
-            if !entry.current(editor) {
-                return Some("Crop proposal is out of date".into());
-            }
-            if !editor.interaction_blocked()
-                && editor.document.visit.current_source == Some(id)
-                && !editor.loaded_crop_source_current(id, &entry.file)
-            {
-                return Some("Loaded photo no longer matches the crop proposal".into());
-            }
-        }
-        problem.map(|(_, reason)| reason.clone())
-    }
-
-    fn record_problem(&mut self, source: SourceId, reason: String) {
-        if let Some((_, old)) = self.problems.iter_mut().find(|(id, _)| *id == source) {
-            *old = reason;
-        } else {
-            self.problems.push((source, reason));
         }
     }
 
@@ -609,7 +332,7 @@ impl Draft {
         );
         let mut show = self.show_outline;
         let mut margin = editor.auto_crop_margin;
-        let editable = self.editable(editor);
+        let editable = !editor.interaction_blocked() && self.valid(&review_inputs(editor));
         ui::ToolIdentity {
             icon: ui::icons::Icon::BatchCrop,
             title: "Auto-crop",
@@ -647,7 +370,8 @@ impl Draft {
     }
 
     fn adjust_margin(&mut self, editor: &mut Editor, percent: f64) {
-        if !self.editable(editor) {
+        let inputs = review_inputs(editor);
+        if editor.interaction_blocked() || !self.valid(&inputs) {
             return;
         }
         if !percent.is_finite() || !(0.0..=framing::MAX_MARGIN_PERCENT).contains(&percent) {
@@ -660,7 +384,7 @@ impl Draft {
             .iter()
             .map(|entry| {
                 failed_source = Some(entry.source);
-                if !editor.loaded_crop_source_current(entry.source, &entry.file) {
+                if !inputs.loaded_source_matches(entry.source, &entry.file) {
                     return Err(Error::UnusableSample(
                         "source changed; Cancel and start Auto-crop again",
                     ));
@@ -709,47 +433,44 @@ pub(super) fn propose_photo_crop<'scope>(
     Some(async move {
         regions.await?;
         Some(cx.read(|editor| {
-            let entry = editor.crop_proposal(photo).map_err(reason)?;
-            Ok(entry
-                .draft
-                .unwrap_or_else(|| Crop::from_region(entry.development.active_area.into())))
+            let entry = Entry::propose(&review_inputs(editor), photo, editor.auto_crop_margin)
+                .map_err(reason)?;
+            Ok(entry.crop())
         }))
     })
 }
 
-impl Editor {
-    pub(super) fn review_crop_proposals(
-        &mut self,
-        photos: Vec<SourceId>,
-        scope: &'static str,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if photos.is_empty() || !self.auto_crop_entry_available() || !self.prepare_tool() {
+pub(super) fn start_review(
+    editor: &mut Editor,
+    photos: Vec<SourceId>,
+    scope: &'static str,
+    cx: &UiContext<'_, Editor>,
+) {
+    if photos.is_empty() || !review_available(editor) || !editor.prepare_tool() {
+        return;
+    }
+    let Some(regions) = editor.prepare_regions(cx) else {
+        return;
+    };
+    let mut tool = AutoCropTool::new(None);
+    let state = std::rc::Rc::downgrade(&tool.review);
+    let Some(task) = cx.spawn(move |cx| async move {
+        if regions.await.is_none() {
+            cx.update(Editor::end_tool);
             return;
         }
-        let Some(regions) = self.prepare_regions(cx) else {
-            return;
-        };
-        let mut tool = AutoCropTool::new(None);
-        let state = std::rc::Rc::downgrade(&tool.review);
-        let Some(task) = cx.spawn(move |cx| async move {
-            if regions.await.is_none() {
-                cx.update(Editor::end_tool);
-                return;
+        cx.update(|editor| {
+            let Some(state) = state.upgrade() else { return };
+            match capture_review(editor, photos, scope) {
+                Some(review) => *state.borrow_mut() = Some(review),
+                None => editor.end_tool(),
             }
-            cx.update(|editor| {
-                let Some(state) = state.upgrade() else { return };
-                match editor.capture_crop_review(photos, scope) {
-                    Some(review) => *state.borrow_mut() = Some(review),
-                    None => editor.end_tool(),
-                }
-            });
-        }) else {
-            return;
-        };
-        tool.preparation = Some(task);
-        tool.install(self);
-    }
+        });
+    }) else {
+        return;
+    };
+    tool.preparation = Some(task);
+    tool.install(editor);
 }
 
 #[derive(Clone, Copy)]
@@ -809,38 +530,15 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
 }
 
 impl Draft {
-    fn context(&self, editor: &Editor) -> bool {
-        self.belongs_to(editor)
+    fn artwork_visible(&self, ui: &egui::Ui) -> bool {
+        self.show_outline && !ui.input(|input| input.key_down(egui::Key::H))
     }
 
-    fn margin_entry(&self, editor: &Editor) -> Option<&Entry> {
-        let id = editor.document.visit.current_source?;
-        self.entries
-            .iter()
-            .find(|entry| entry.source == id)
-            .filter(|entry| {
-                entry.current(editor) && editor.loaded_crop_source_current(id, &entry.file)
-            })
-    }
-
-    fn artwork_visible(&self, editor: &Editor, ui: &egui::Ui) -> bool {
-        self.context(editor) && self.show_outline && !ui.input(|input| input.key_down(egui::Key::H))
-    }
-
-    fn outline(&self, editor: &Editor, layout: CanvasLayout) -> Option<[egui::Pos2; 4]> {
-        if !self.context(editor) {
+    fn outline(&self, inputs: &Inputs<'_>, layout: CanvasLayout) -> Option<[egui::Pos2; 4]> {
+        if !self.belongs_to(inputs) {
             return None;
         }
-        let entry = self.margin_entry(editor)?;
-        let crop = entry
-            .draft
-            .unwrap_or(Crop::from_region(entry.development.active_area.into()));
-        Some(
-            crop.coverage()
-                .ok()?
-                .corners()
-                .map(|point| layout.screen_frame_point(layout.composition.source_to_frame(point))),
-        )
+        self.margin_entry(inputs)?.outline(layout)
     }
 
     fn margin_interaction(
@@ -850,45 +548,45 @@ impl Draft {
         response: &egui::Response,
         layout: CanvasLayout,
     ) -> (bool, Option<egui::CursorIcon>) {
+        let inputs = review_inputs(editor);
         if !ui.is_enabled()
             || !response.enabled()
-            || !self.artwork_visible(editor, ui)
-            || !self.editable(editor)
+            || !self.artwork_visible(ui)
+            || editor.interaction_blocked()
             || ui.input(|input| input.key_down(egui::Key::Space))
+            || !self.valid(&inputs)
         {
             editor.document.visit.auto_crop_view.drag = None;
             return (false, None);
         }
-        let Some(outline) = self.outline(editor, layout) else {
+        let Some(entry) = self.margin_entry(&inputs) else {
             editor.document.visit.auto_crop_view.drag = None;
             return (false, None);
         };
+        let Some(outline) = entry.outline(layout) else {
+            editor.document.visit.auto_crop_view.drag = None;
+            return (false, None);
+        };
+
         let press = ui
             .input(|input| input.pointer.press_origin())
             .and_then(|point| hit(outline, point).map(|handle| (point, handle)));
+        let drag = &mut editor.document.visit.auto_crop_view.drag;
         if response.drag_started_by(egui::PointerButton::Primary) {
-            editor.document.visit.auto_crop_view.drag = None;
-            if let Some((point, handle)) = press {
-                let entry = self.margin_entry(editor).expect("outline retains source");
-                editor.document.visit.auto_crop_view.drag = Some(MarginDrag {
-                    source: entry.source,
-                    proposal: entry.proposal,
-                    handle,
-                    start: entry.proposal.local_point(
-                        layout
-                            .composition
-                            .frame_to_source(layout.frame_point(point)),
-                    ),
-                    percent: editor.auto_crop_margin,
-                });
-            }
+            *drag = press.map(|(point, handle)| MarginDrag {
+                source: entry.source,
+                proposal: entry.proposal,
+                handle,
+                start: entry.proposal.local_point(
+                    layout
+                        .composition
+                        .frame_to_source(layout.frame_point(point)),
+                ),
+                percent: editor.auto_crop_margin,
+            });
         }
-        let drag = editor.document.visit.auto_crop_view.drag.filter(|drag| {
-            editor.document.visit.current_source == Some(drag.source)
-                && self
-                    .margin_entry(editor)
-                    .is_some_and(|entry| entry.proposal == drag.proposal)
-        });
+        let drag =
+            drag.filter(|drag| drag.source == entry.source && drag.proposal == entry.proposal);
         let claimed = drag.is_some() && response.dragged_by(egui::PointerButton::Primary)
             || press.is_some() && response.clicked_by(egui::PointerButton::Primary);
         if let Some(drag) = drag
@@ -916,22 +614,15 @@ impl Draft {
     }
 }
 
-impl Editor {
-    #[cfg(test)]
-    pub(super) fn auto_crop_context(&self) -> bool {
-        self.document.auto_crop.current().is_some_and(|state| {
-            state
-                .borrow()
-                .as_ref()
-                .is_some_and(|draft| draft.context(self))
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop_outline(&self, layout: CanvasLayout) -> Option<[egui::Pos2; 4]> {
-        let state = self.document.auto_crop.current()?;
-        let state = state.borrow();
-        state.as_ref()?.outline(self, layout)
+impl Entry {
+    fn outline(&self, layout: CanvasLayout) -> Option<[egui::Pos2; 4]> {
+        Some(
+            self.crop()
+                .coverage()
+                .ok()?
+                .corners()
+                .map(|point| layout.screen_frame_point(layout.composition.source_to_frame(point))),
+        )
     }
 }
 
