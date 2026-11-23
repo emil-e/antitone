@@ -30,8 +30,8 @@ prepares a new treatment in the background; Cancel keeps the accepted choices.
 ## Display-rendered or scene-linear?
 
 - **Display-rendered** output is the finished photograph, with LUT and Film & paper
-  applied. Use it for viewing, printing or delivery. The TIFF preset writes it in sRGB
-  or Display P3 with an ICC profile.
+  applied. JPEG is useful for sharing; TIFF keeps 16-bit samples with lossless compression.
+  Both offer sRGB or Display P3 with an embedded ICC profile.
 - **Scene-linear** output is for continuing a grade or compositing in a scene-referred
   tool. It keeps source inversion, grading and Film texture, and skips LUT, Film & paper
   and display rendering. The EXR preset writes linear AP0 and declares that colour space
@@ -44,9 +44,9 @@ prepares a new treatment in the background; Cancel keeps the accepted choices.
 
 1. **Photos** — **Selected photos** (use the filmstrip selection) or **All photos**.
 2. **Destination** — **Choose…** a folder.
-3. **Output** — **Format** (TIFF/EXR). TIFF: **Target** (initialized from Rendering, but
-   independently choosable per export), 16-bit RGB, lossless Deflate. EXR: **Precision**
-   (half or full float).
+3. **Output** — choose **JPEG**, **TIFF** or **EXR**. For JPEG and TIFF, **Target** starts
+   from Rendering and can be overridden for this export. JPEG adds a **Quality** control
+   (1–100, default 95). EXR offers half or full float **Precision**.
 4. **Files** — filename is the **Original filename**, with an optional **Suffix**; the
    dialog shows an example. For existing files choose **Keep both**, **Skip** or
    **Replace…** (replacement asks for confirmation once).

@@ -115,7 +115,7 @@ Cancel signals the workflow's cooperative cancellation token. Export and Analyze
 
 ## Export photographs
 
-File → **Export…** captures Selected photos or All photos in the displayed filmstrip order on confirmation. Choose an existing destination folder and a file format. The TIFF preset pairs a display target (sRGB or Display P3) with 16-bit RGB and lossless Deflate. The EXR preset pairs scene-linear AP0 with half or full float. [Colour and output](colour-and-output.md#render-and-encode-a-file) explains what each target renders.
+File → **Export…** captures Selected photos or All photos in the displayed filmstrip order on confirmation. Choose an existing destination folder and a file format. JPEG and TIFF offer sRGB or Display P3. JPEG uses 8-bit RGB and adjustable quality; TIFF uses 16-bit RGB and lossless Deflate. EXR writes scene-linear AP0 in half or full float. [Colour and output](colour-and-output.md#render-and-encode-a-file) explains what each target renders.
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 

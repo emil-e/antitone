@@ -7,7 +7,7 @@
 
 **An editor for camera-scanned film negatives.** Photograph your negatives with a digital
 camera, and Antitone develops them into positive photographs you can grade with ordinary
-photographic controls — and export as TIFF or EXR.
+photographic controls and export.
 
 ![Antitone editing a roll of camera-scanned negatives](assets/docs/window-overview.png)
 

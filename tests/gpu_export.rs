@@ -5,7 +5,7 @@
     target_os = "macos"
 ))]
 use antitone::{
-    export::{FileFormat, FloatPrecision, Overwrite, Plan, RenderTarget},
+    export::{FileFormat, FloatPrecision, JpegQuality, Overwrite, Plan, RenderTarget},
     geometry::Composition,
     gpu::evaluation::{self, CellRegion, Domain, Grid, Source},
     gpu_export::Request,
@@ -95,6 +95,65 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
     );
     assert!(matches!(stopped, Err(antitone::Error::Cancelled)));
     assert_eq!(std::fs::read(path).unwrap(), published);
+}
+
+#[test]
+fn jpeg_uses_the_same_authored_display_value_as_tiff() {
+    use image::{ImageDecoder, codecs::jpeg::JpegDecoder};
+    use std::{fs::File, io::BufReader};
+
+    let (context, queue) = context();
+    let directory = tempfile::tempdir().unwrap();
+    let width = 137;
+    let definition = evaluation::source(Arc::new(Linear {
+        pixels: (0..width)
+            .map(|x| {
+                let linear = if x < 128 { 0.18 } else { 0.5 };
+                [linear, linear, linear, 0.]
+            })
+            .collect(),
+    }));
+    let target = OutputTarget::DisplayP3;
+    let write = |format: FileFormat| {
+        let path = directory
+            .path()
+            .join("authored")
+            .with_extension(format.extension());
+        antitone::gpu_export::write(
+            &context,
+            &queue,
+            Request {
+                definition: definition.clone(),
+                composition: composition(width),
+                plan: Plan::new(RenderTarget::Display(target), format).unwrap(),
+            },
+            &path,
+            Overwrite::Refuse,
+        )
+        .unwrap();
+        path
+    };
+
+    let jpeg = write(FileFormat::Jpeg(JpegQuality::new(100).unwrap()));
+    let mut decoder = JpegDecoder::new(BufReader::new(File::open(jpeg).unwrap())).unwrap();
+    assert_eq!(decoder.dimensions(), (width, 1));
+    assert_eq!(
+        decoder.icc_profile().unwrap().as_deref(),
+        Some(antitone::profiles::icc(target))
+    );
+    let mut pixels = vec![0; decoder.total_bytes() as usize];
+    decoder.read_image(&mut pixels).unwrap();
+    for (x, expected) in [(10, 118), (136, 188)] {
+        assert!(
+            pixels[x * 3..x * 3 + 3]
+                .iter()
+                .all(|v| v.abs_diff(expected) <= 2)
+        );
+    }
+
+    let pixels = tiff(&write(FileFormat::Tiff));
+    assert_eq!(&pixels[30..33], &[30235; 3]);
+    assert_eq!(&pixels[408..411], &[48192; 3]);
 }
 
 #[test]

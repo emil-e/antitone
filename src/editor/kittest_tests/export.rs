@@ -146,6 +146,55 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
 }
 
 #[test]
+fn jpeg_dialog_exposes_quality_and_exports_the_chosen_display_target() {
+    use image::{ImageDecoder, codecs::jpeg::JpegDecoder};
+    use std::{fs::File, io::BufReader};
+
+    fixture_editor(|mut harness, directory| {
+        let accepted = harness.read(|editor| editor.document.state.project.clone());
+        open(&mut harness);
+        choose(&mut harness, "Format", "JPEG");
+        choose(&mut harness, "Target", "sRGB");
+
+        let quality = harness.get_by_role_and_label(egui::accesskit::Role::Slider, "Quality");
+        quality.focus();
+        harness.step();
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.try_run_realtime().unwrap();
+        harness.read(|editor| {
+            let draft = &editor.document.export.form.as_ref().unwrap().draft;
+            assert!(draft.jpeg_quality.get() < crate::export::JpegQuality::default().get());
+        });
+
+        save_capture(&harness.render().unwrap(), "export-dialog-jpeg-offscreen");
+        harness.get_by_label("All photos (2)").click();
+        harness.step();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Export 2 photos").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            editor.document.export.summary.is_some() && editor.document.export.operation.is_none()
+        });
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.export.summary.as_ref().unwrap().exported(),
+                2
+            );
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        for name in ["patches.jpg", "roll-0.jpg"] {
+            let file = File::open(directory.path().join(name)).unwrap();
+            let mut decoder = JpegDecoder::new(BufReader::new(file)).unwrap();
+            assert_eq!(decoder.dimensions(), (16, 16));
+            assert_eq!(
+                decoder.icc_profile().unwrap().as_deref(),
+                Some(crate::profiles::icc(OutputTarget::Srgb))
+            );
+        }
+    });
+}
+
+#[test]
 fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected_photos() {
     fixture_editor(|mut harness, directory| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("bare-light.dng")], cx));

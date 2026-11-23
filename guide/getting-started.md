@@ -54,7 +54,7 @@ per-photograph — see [Grading a photograph](grading.md).
 
 Open **Rendering** to choose **Negative** and **Paper**, optionally apply a **LUT** before
 them, and set the **Target** output colour space. For an already inverted scan, Negative None
-keeps paper-only processing available. Then **File → Export…** writes TIFF or EXR;
+keeps paper-only processing available. Then **File → Export…** writes JPEG, TIFF or EXR;
 [Rendering and export](rendering-and-export.md) explains which format to choose and walks
 through the export dialog.
 

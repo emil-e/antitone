@@ -4,7 +4,9 @@ use crate::export_timing::timed;
 use crate::frame_raster::FrameRaster;
 use crate::{
     Error,
-    export::{self, ImageSize, Layout, Overwrite, Plan, RenderTarget, Samples, SceneEncoding},
+    export::{
+        self, ImageSize, Layout, Overwrite, Plan, RenderTarget, Samples, SceneEncoding, pack_rgb8,
+    },
     geometry::Composition,
 };
 #[cfg(test)]
@@ -100,7 +102,7 @@ fn block_layout(composition: Composition, plan: Plan) -> (export::BlockOrder, [u
             };
             (order, TIFF_BLOCK)
         }
-        Layout::Float(_) => (RowMajor, export::BLOCK),
+        Layout::Rgb8 | Layout::Float(_) => (RowMajor, export::BLOCK),
     }
 }
 
@@ -112,9 +114,10 @@ fn encode_with_checked(
     before_publish: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
     let [width, height] = composition.size();
-    let scene = match plan.format().layout() {
+    let layout = plan.format().layout();
+    let scene = match layout {
         Layout::Float(precision) => Some(SceneEncoding::new(precision)),
-        Layout::Rgb16 => None,
+        Layout::Rgb8 | Layout::Rgb16 => None,
     };
     plan.write(
         destination,
@@ -122,10 +125,10 @@ fn encode_with_checked(
         block_layout(composition, plan),
         |origin, extent| {
             let block = build(origin, extent)?;
-            match (plan.target(), scene.as_ref(), block) {
+            match (plan.target(), layout, block) {
                 (
                     RenderTarget::Display(target),
-                    None,
+                    Layout::Rgb16,
                     OutputBlock::Rgb16 {
                         target: encoded_target,
                         words,
@@ -133,11 +136,19 @@ fn encode_with_checked(
                 ) if encoded_target == target => {
                     timed!(WorkingPack, rgb16::decode(&words)).map(Samples::Rgb16)
                 }
-                (RenderTarget::SceneLinearAp0, Some(scene), OutputBlock::Linear(pixels)) => {
+                (RenderTarget::SceneLinearAp0, Layout::Float(_), OutputBlock::Linear(pixels)) => {
+                    let scene = scene.as_ref().expect("scene encoding");
                     timed!(WorkingPack, scene.pack(pixels.iter().map(linear_readback)))
                 }
+                (RenderTarget::Display(target), Layout::Rgb8, OutputBlock::Linear(pixels)) => {
+                    timed!(
+                        TargetEncode,
+                        pack_rgb8(target, pixels.iter().map(linear_readback))
+                    )
+                    .map(Samples::Rgb8)
+                }
                 #[cfg(test)]
-                (RenderTarget::Display(target), None, OutputBlock::Linear(pixels)) => {
+                (RenderTarget::Display(target), Layout::Rgb16, OutputBlock::Linear(pixels)) => {
                     encode_readback(target, pixels).map(Samples::Rgb16)
                 }
                 _ => Err(Error::Gpu("unexpected output representation".into())),

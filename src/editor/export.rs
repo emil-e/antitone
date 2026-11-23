@@ -5,7 +5,7 @@ use super::output::{Input, Photo, PhotoRequest, Services, destination, numbered,
 use super::*;
 use crate::{
     cancellation::Cancellation,
-    export::{FileFormat, FloatPrecision, Plan, RenderTarget},
+    export::{FileFormat, FloatPrecision, JpegQuality, Plan, RenderTarget},
 };
 
 #[cfg(test)]
@@ -163,6 +163,7 @@ impl Form {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Tiff,
+    Jpeg,
     Exr,
 }
 
@@ -172,6 +173,7 @@ pub(super) struct Draft {
     pub kind: Kind,
     pub target: OutputTarget,
     pub precision: FloatPrecision,
+    pub jpeg_quality: JpegQuality,
     pub suffix: String,
     pub collision: Collision,
 
@@ -186,6 +188,7 @@ impl Draft {
             kind: Kind::Tiff,
             target,
             precision: FloatPrecision::Half,
+            jpeg_quality: JpegQuality::default(),
             suffix: String::new(),
             collision: Collision::KeepBoth,
 
@@ -195,7 +198,7 @@ impl Draft {
 
     fn output(&self) -> Result<output::Options, Error> {
         let target = match self.kind {
-            Kind::Tiff => RenderTarget::Display(self.target),
+            Kind::Tiff | Kind::Jpeg => RenderTarget::Display(self.target),
             Kind::Exr => RenderTarget::SceneLinearAp0,
         };
         Ok(output::Options {
@@ -209,6 +212,7 @@ impl Draft {
     fn file_format(&self) -> FileFormat {
         match self.kind {
             Kind::Tiff => FileFormat::Tiff,
+            Kind::Jpeg => FileFormat::Jpeg(self.jpeg_quality),
             Kind::Exr => FileFormat::Exr(self.precision),
         }
     }
@@ -242,6 +246,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
         draft.kind,
         draft.target,
         draft.precision,
+        draft.jpeg_quality,
         draft.suffix.clone(),
         draft.collision,
     );
@@ -291,17 +296,19 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
             .truncate()
             .selected_text(match draft.kind {
                 Kind::Tiff => "TIFF",
+                Kind::Jpeg => "JPEG",
                 Kind::Exr => "EXR",
             })
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut draft.kind, Kind::Tiff, "TIFF");
+                ui.selectable_value(&mut draft.kind, Kind::Jpeg, "JPEG");
                 ui.selectable_value(&mut draft.kind, Kind::Exr, "EXR");
             })
             .response
             .labelled_by(label);
     });
     ui::labelled_row(ui, "Target", None, |ui, label| {
-        ui.add_enabled_ui(draft.kind == Kind::Tiff, |ui| {
+        ui.add_enabled_ui(draft.kind != Kind::Exr, |ui| {
             egui::ComboBox::from_id_salt("export-target")
                 .width(ui.available_width().min(240.))
                 .truncate()
@@ -346,6 +353,17 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
                 .labelled_by(label);
         });
         ui.small("Creative look and display rendering are not applied.");
+    } else if draft.kind == Kind::Jpeg {
+        ui::labelled_row(ui, "Quality", None, |ui, label| {
+            let mut value = draft.jpeg_quality.get();
+            let response = ui
+                .add(egui::Slider::new(&mut value, JpegQuality::RANGE))
+                .labelled_by(label);
+            if response.changed() {
+                draft.jpeg_quality =
+                    JpegQuality::new(value).expect("slider constrains JPEG quality");
+            }
+        });
     } else {
         ui::labelled_row(ui, "Bit depth", None, |ui, _| {
             ui.label("16-bit RGB");
@@ -395,6 +413,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
         draft.kind,
         draft.target,
         draft.precision,
+        draft.jpeg_quality,
         draft.suffix.clone(),
         draft.collision,
     );
