@@ -16,9 +16,9 @@ This is scan correction, not film-base calibration, dust removal or a colour gra
 
 Use **Choose reference…** in Roll's **Flat-field correction** section to select a reference and adjust the illuminated area, then Apply or Cancel. Once accepted, the section shows the reference filename and an enable control. Its Reset removes correction so setup can be run again.
 
-Setup uses untransformed source with automatic embedded lens development. Adjust the suggested rectangle to exclude the holder and other unsuitable content, while retaining the image-centre patch used to establish the target.
+Setup uses untransformed source with automatic embedded lens development. Adjust the suggested rectangle to exclude the holder and other unsuitable content while keeping the image centre inside it.
 
-The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target and smooths the resulting field, validating positive finite means and representable gains. Capture the reference without clipping: saturation erases the illumination differences needed for correction. For useful correction, match the reference's lighting, aperture, focus and positioning to the photographs being corrected. Developed values above one after embedded shading are valid headroom, not evidence of capture clipping.
+The estimator fits a smooth illumination surface per camera channel and corrects the field to match the centre. Each channel has unity gain at the centre, preserving its brightness and colour. Capture the reference without clipping: saturation erases the illumination differences needed for correction. For useful correction, match the reference's lighting, aperture, focus and positioning to the photographs being corrected. Developed values above one after embedded shading are valid headroom, not evidence of capture clipping.
 
 The [reference tool](../src/editor/flat.rs) owns preparation, selection and viewing; Cancel or replacement discards it. Apply captures the prepared uncorrected source and rectangle, then closes the reference view immediately. A [correction task](../src/editor/flat.rs) owns a document edit while it estimates the map and prepares its GPU copy before accepting the values and recording history. Map preparation depends on the map and GPU limits. Photographic consumers check their captured source identity, geometry and numerical execution when using it. Enable, disable and Reset use the same acceptance path. Selected-photo loading and reusable camera inputs remain with their existing visit. Failure preserves the previous correction and working photo, with [acknowledged feedback](editor.md#dialogs-return-answers-to-their-workflows). The reference filename is descriptive provenance.
 
@@ -34,7 +34,7 @@ Amplification increases quantization error along with the signal. Measurement us
 
 ## Save the accepted result
 
-The project's optional `flat_field` saves the map, enable state and reference filename as descriptive provenance.
+The project's optional `flat_field` saves the numeric map, enable state and reference filename as descriptive provenance. Choose and apply the reference again to re-estimate the saved map.
 
 Correction owns shared GPU preparation of the accepted numeric map. Processing requests retain the correction current when captured and await its working copy when needed; later edits or document replacement leave their inputs unchanged. Open and Undo/Redo restore accepted values independently of preparation. Failures appear here and the viewer falls back to source inspection; Save retains the enabled map.
 
