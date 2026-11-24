@@ -1409,12 +1409,14 @@ async fn fit_and_accept(
 }
 
 impl Editor {
+    #[cfg(test)]
     pub(super) fn analysis_preparing(&self) -> bool {
         self.document
             .analysis_operation()
             .is_some_and(|op| matches!(op.phase, Phase::Preparing))
     }
 
+    #[cfg(test)]
     pub(super) fn analysis_fitting(&self) -> bool {
         self.document
             .analysis_operation()
@@ -1505,6 +1507,7 @@ impl Editor {
             .flatten()
     }
 
+    #[cfg(test)]
     pub(super) fn cancel_analysis(&mut self) {
         self.with_analyze_tool(|tool, editor| tool.cancel(editor));
     }

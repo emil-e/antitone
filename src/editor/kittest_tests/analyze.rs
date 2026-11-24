@@ -269,7 +269,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     show_confirmation(harness);
     draw_picture(harness, picture);
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
-    harness.get_by_label("Cancel").click();
+    harness.key_press(egui::Key::Escape);
     harness.step();
     harness.read(|editor| assert!(editor.document.analysis_review().is_none()));
     harness.read(|editor| assert!(!editor.analysis_fitting()));

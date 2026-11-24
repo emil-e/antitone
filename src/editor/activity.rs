@@ -225,10 +225,19 @@ impl Activities {
             .any(|entry| entry.live() && entry.modal)
     }
 
-    pub fn modal(&self, context: &egui::Context, id: egui::Id) {
+    pub fn modal(&self, context: &egui::Context, id: egui::Id, escape_available: bool) {
         let Some(view) = self.view().filter(|view| view.modal) else {
             return;
         };
+
+        if escape_available
+            && context
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            && view.cancel.is_some()
+        {
+            view.request_cancel();
+        }
+
         let remaining = PROMINENCE_DELAY.saturating_sub(view.elapsed);
         if !remaining.is_zero() {
             context.request_repaint_after(remaining);

@@ -230,7 +230,13 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         assert!(!progress.accesskit_node().is_disabled());
         let png = harness.render().unwrap();
         save_capture(&png, "export-progress-modal-offscreen");
-        harness.get_by_label("Cancel export").click();
+        assert!(
+            !harness
+                .get_by_label("Cancel export")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.key_press(egui::Key::Escape);
         harness.step();
         harness.read(|editor| {
             assert!(editor.document.export.operation.is_some());

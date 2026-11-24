@@ -98,7 +98,9 @@ impl Editor {
         workspace_surface: Option<egui::Id>,
     ) {
         if self.document.roll_order.drag.is_some() {
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            if !self.workspace_input.is_blocked()
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
                 self.document.roll_order.drag = None;
                 ui.ctx().stop_dragging();
                 ui.ctx().request_repaint();
@@ -111,44 +113,7 @@ impl Editor {
                 .unwrap_or(false)
         });
         self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
-        self.analysis_shortcuts(ui, cx, text_was_focused, dialog_escape_available);
         self.workspace_shortcuts(ui, cx, text_was_focused, workspace_surface);
-    }
-
-    fn analysis_shortcuts(
-        &mut self,
-        ui: &mut egui::Ui,
-        _cx: &UiContext<'_, Self>,
-        text_was_focused: bool,
-        dialog_escape_available: bool,
-    ) {
-        if self.document.spatial_preparing.is_some()
-            && !self.document.write.pending()
-            && !self.dialogs.is_open()
-            && dialog_escape_available
-            && !text_was_focused
-            && !ui.ctx().egui_wants_keyboard_input()
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.cancel_spatial();
-        }
-        if self.analysis_preparing()
-            && dialog_escape_available
-            && !text_was_focused
-            && !ui.ctx().egui_wants_keyboard_input()
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.cancel_analysis();
-        }
-        if self.document.analysis_review().is_some()
-            && !self.analysis_fitting()
-            && dialog_escape_available
-            && !text_was_focused
-            && !ui.ctx().egui_wants_keyboard_input()
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.cancel_analysis();
-        }
     }
 
     fn workspace_shortcuts(
@@ -369,8 +334,11 @@ impl Editor {
 
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
         if !self.dialogs.is_open() {
-            self.activities
-                .modal(ui.ctx(), egui::Id::new("working-document"));
+            self.activities.modal(
+                ui.ctx(),
+                egui::Id::new("working-document"),
+                dialog_escape_available && !self.menus.text_focused,
+            );
         }
         if self.dialogs.is_open() {
             // The export form can submit a dialog after this pass's dialog check.

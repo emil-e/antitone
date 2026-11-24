@@ -147,7 +147,7 @@ impl ProgressContent<'_> {
     }
 
     pub fn modal(&self, context: &Context, id: Id) -> bool {
-        // No backdrop/Escape dismissal: a working view cannot silently cancel or hide a job.
+        // The activity owns Escape from the start of work, not just while this dialog is visible.
         let cancel = self
             .cancel
             .map(|label| DialogAction::new((), label, DialogRole::Cancel));

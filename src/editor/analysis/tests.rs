@@ -925,41 +925,47 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
 
 #[test]
 fn escape_cancels_preparation_without_changing_grade_or_requesting_original_work() {
-    let editor = ready_state();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            editor.photo_settings_mut().contrast = 1.2;
-            editor.document.source = false;
-            let ctx = egui::Context::default();
-            for _ in 0..4 {
-                super::super::tests::app_frame(editor, &ctx, vec![]);
-            }
-            editor.request_analysis(cx);
-            let before = editor.document.state.project.clone();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    events: vec![egui::Event::Key {
-                        key: egui::Key::Escape,
-                        physical_key: None,
-                        pressed: true,
-                        repeat: false,
-                        modifiers: egui::Modifiers::NONE,
-                    }],
-                    ..Default::default()
-                },
-                |ui| editor.frame_shortcuts(ui, cx, true, None),
-            );
-            output.textures_delta.clear();
-            assert!(!editor.analysis_fitting());
-            assert!(editor.document.spatial_preparing.is_none());
-            assert!(!editor.analysis_preparing());
+    let mut editor = ready_state();
+    editor.photo_settings_mut().contrast = 1.2;
+    editor.document.source = false;
+    editor.activities.freeze_time();
+    let (reply, receive) = futures_channel::oneshot::channel();
+    editor.document.spatial_reply = Some(receive);
 
+    crate::application::test_support::with_application(editor, |app| {
+        use super::super::{tests::app_frame, ui::test_support::key};
+
+        let ctx = egui::Context::default();
+        app_frame(app, &ctx, vec![]);
+        app_frame(app, &ctx, vec![]);
+        app.enter(|editor, cx| editor.request_analysis(cx));
+        let before = app.read(|editor| {
+            assert!(editor.document.spatial_preparing.is_some());
+            editor.document.state.project.clone()
+        });
+        let labels = app_frame(app, &ctx, key(egui::Key::Escape));
+        assert!(
+            !labels
+                .iter()
+                .any(|(label, _)| label == "Cancel region preparation")
+        );
+
+        // A worker response ready at the next poll must not outrun cancellation.
+        reply.send(Err("Late region result".into())).unwrap();
+        app.run_until(Duration::from_secs(5), |editor| {
+            editor.document.spatial_preparing.is_none()
+                && editor.document.analysis_operation().is_none()
+        });
+        app.read(|editor| {
+            assert_eq!(
+                editor.status,
+                "Region preparation cancelled; accepted edits unchanged"
+            );
             assert_eq!(editor.document.state.project, before);
             assert!(editor.document.visit.canvas.original.wanted.is_none());
             assert!(!editor.document.visit.canvas.original.refining());
+            assert!(editor.activities.view().is_none());
         });
-        app.pump();
-        app.read(|editor| assert!(editor.activities.view().is_none()));
     });
 }
 

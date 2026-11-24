@@ -111,7 +111,7 @@ New installs an empty document without resource preparation. Input-stage accepta
 
 [Workspace input](../src/editor/workspace_input.rs) observes scoped reservations held by modal activities, queued dialogs, Export forms, application panels and guarded file continuations. Each owner reserves input immediately and releases only its own reservation on destruction, independently of feedback delay. Workspace commands consult this shared authority rather than enumerating modal features. A modal's own controls route separately; input reservation neither grants edit authority nor prevents captured resource work from completing.
 
-Cancel signals the workflow's cooperative cancellation token. Export and Analyze retain their handles until acknowledgement; cancelling feedback replaces counts and the Cancel action. [Working presentation](../src/editor/ui/progress.rs) renders modal or local feedback. Modal activities take precedence over local feedback; within either class the newest live activity is shown.
+Escape invokes the active modal activity’s Cancel action, even before progress appears. Work without a Cancel action continues. Cancellation signals the workflow’s token; cancelling feedback replaces counts and the button until acknowledgement. [Working presentation](../src/editor/ui/progress.rs) renders modal or local feedback. Modal activities take precedence over local feedback; within either class the newest live activity is shown.
 
 ## Export photographs
 
@@ -119,7 +119,7 @@ File → **Export…** captures Selected photos or All photos in the displayed f
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 
-The [export action](../src/editor/export.rs) uses [shared photographic output](../src/editor/output.rs) to capture accepted recipes only for the requested photos, then processes full-resolution inputs one photo at a time without visiting them. Acquisition and execution validate each photo's actual interpretation, correction, numerical domain and resources for the selected target; unrelated photos do not participate in rendering admission. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and, on macOS, Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
+The [export action](../src/editor/export.rs) uses [shared photographic output](../src/editor/output.rs) to capture accepted recipes only for the requested photos, then processes full-resolution inputs one photo at a time without visiting them. Acquisition and execution validate each photo's actual interpretation, correction, numerical domain and resources for the selected target; unrelated photos do not participate in rendering admission. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal stays open until cancellation is acknowledged. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and, on macOS, Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
 
 ## External edit sessions
 
@@ -243,7 +243,7 @@ Use [`Segments`](../src/editor/ui/segments.rs) for a short set of mutually exclu
 
 ### Dialog bodies and actions
 
-Supply modal content and typed actions separately to [`Dialog`](../src/editor/ui/dialogs.rs). It scrolls the body as needed and keeps the action footer visible. The footer follows macOS order: Cancel leads a row or sits last in a stack. Use primary emphasis for a recommended action and the destructive role for an action that discards work or replaces data. Initial focus and Escape are explicit and independent of visual emphasis; progress uses the same footer without treating Escape as a cancellation request.
+Supply modal content and typed actions separately to [`Dialog`](../src/editor/ui/dialogs.rs). It scrolls the body as needed and keeps the action footer visible. The footer follows macOS order: Cancel leads a row or sits last in a stack. Use primary emphasis for a recommended action and the destructive role for an action that discards work or replaces data. Initial focus and Escape are explicit and independent of visual emphasis.
 
 ### Inspector density and value grammar
 

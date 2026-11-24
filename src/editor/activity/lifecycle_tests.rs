@@ -61,6 +61,54 @@ fn modal_precedence_does_not_destroy_overlapping_local_feedback() {
 }
 
 #[test]
+fn escape_targets_only_the_foremost_modal_activity() {
+    use crate::editor::ui::test_support::key;
+
+    let activities = Activities::default();
+    activities.freeze_time();
+    let signal = Cancellation::default();
+    let cancellable = activities.start(Options::new("Working").modal().cancellable(
+        "Cancel",
+        "Cancelling",
+        signal.clone(),
+    ));
+    let blocking = activities.start(Options::new("Saving").modal());
+    let context = egui::Context::default();
+    let escape = |available| {
+        let mut unconsumed = false;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events: key(egui::Key::Escape),
+                ..Default::default()
+            },
+            |ui| {
+                activities.modal(ui.ctx(), egui::Id::new("working"), available);
+                unconsumed = ui.input(|input| input.key_pressed(egui::Key::Escape));
+            },
+        );
+        output.textures_delta.clear();
+        unconsumed
+    };
+
+    assert!(!escape(true));
+    assert!(!signal.is_cancelled());
+    assert_eq!(activities.view().unwrap().title, "Saving");
+
+    drop(blocking);
+    assert!(escape(false));
+    assert!(!signal.is_cancelled());
+
+    assert!(!escape(true));
+    assert!(signal.is_cancelled());
+    assert!(activities.input.is_blocked());
+    assert_eq!(activities.view().unwrap().title, "Cancelling");
+
+    drop(cancellable);
+    assert!(escape(true));
+    assert!(!activities.input.is_blocked());
+}
+
+#[test]
 fn phase_completion_and_zero_totals_remain_indeterminate_until_scope_exit() {
     let activities = Activities::default();
     let activity = activities.start(Options::new("Working"));
