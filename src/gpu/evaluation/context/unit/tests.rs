@@ -39,7 +39,7 @@ fn regional_callable_candidates_do_not_bypass_reusable_unit_boundaries() {
         offset: [32, 32],
     };
     let composition = crate::gpu::repairs::definition::compose(input, &[repair]).unwrap();
-    let root = crate::gpu::evaluation::reconstruct_tiled(composition, domain).unwrap();
+    let root = crate::reconstruction::reconstruct_tiled(composition, domain).unwrap();
     let full = domain.finite().unwrap();
     let unit = CellRegion::new([0, 0], [256, 128]);
     let budget = Tiling { tile: [512, 128] };

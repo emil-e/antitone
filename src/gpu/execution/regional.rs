@@ -61,7 +61,7 @@ pub(crate) fn definition(
         )),
         grid,
     };
-    evaluation::reconstruct(root, domain)
+    crate::reconstruction::reconstruct(root, domain)
 }
 
 pub(crate) fn execute(

@@ -1,6 +1,7 @@
 use super::*;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::gaussian;
+use crate::reconstruction::reconstruct_tiled;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod acquisition;

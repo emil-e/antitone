@@ -234,7 +234,7 @@ fn filter_authored_repairs(
     let repaired =
         crate::gpu::repairs::definition::compose_images(base, replacements.to_vec()).unwrap();
     let spec = source.spec.clone().with_frame(frame).unwrap();
-    let root = e::reconstruct(
+    let root = crate::reconstruction::reconstruct(
         repaired,
         e::Domain {
             bounds: Some(spec.input_region().unwrap()),

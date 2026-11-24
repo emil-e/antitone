@@ -52,7 +52,7 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [128., 64.]),
     };
-    let root = crate::gpu::evaluation::reconstruct_cells(
+    let root = crate::reconstruction::reconstruct_cells(
         source(Arc::new(Constant(reads.clone()))),
         domain,
         [0.; 2],

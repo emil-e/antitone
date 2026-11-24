@@ -149,8 +149,7 @@ fn awaiting_a_composed_image_submits_its_gpu_work_without_a_consumer_submission(
         bounds: Some([0, 0, 4, 3].into()),
         grid,
     };
-    let root =
-        super::super::super::reconstruction::reconstruct(source(Arc::new(data)), output).unwrap();
+    let root = crate::reconstruction::reconstruct(source(Arc::new(data)), output).unwrap();
     let key = root.identity().unwrap().clone();
     let gate = queue.clone();
     let submits = Arc::new(AtomicUsize::new(0));

@@ -1,4 +1,6 @@
 use super::*;
+use crate::reconstruction::reconstruct_tiled;
+use CellRegion as Rect;
 use std::sync::Mutex;
 
 struct Plane {
@@ -104,7 +106,7 @@ fn check(
             })
             .sum::<f64>()
     };
-    let pixels = super::super::super::execute::read(device, queue, image.as_buffer().unwrap());
+    let pixels = crate::gpu::evaluation::read_buffer(device, queue, image.as_buffer().unwrap());
     assert_eq!(pixels.len(), 64 * 32);
     for (i, pixel) in pixels.iter().enumerate() {
         let expected = [
@@ -305,7 +307,7 @@ fn rotated_slice_padding_does_not_contribute_pixels_or_flags() {
         .unwrap();
         let image = render_root(&context, &queue, root, [0, 0, 1, 1].into());
         let pixels =
-            super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+            crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap());
         assert_eq!(pixels.len(), 1);
         let expected = if ramp {
             // Reflection about x=y=128 pairs source cells i and 255-i. Their
@@ -397,7 +399,7 @@ fn source_prefetch_preserves_renderability_without_reserving_a_consumer_byte_all
             .expect("ordinary bounded execution must admit the control")
         };
         let pixels =
-            super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+            crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap());
         assert!(pixels.iter().all(|pixel| *pixel == [1., -2., 3., 9.]));
     }
 }
@@ -470,7 +472,7 @@ fn a_large_view_acquires_source_slices_once_and_reuses_ordinary_retention_across
             .all(|new| acquired.iter().all(|old| !overlaps(*new, *old))),
         "crossing a source-slice edge must acquire new slices, not reread the viewport interior"
     );
-    let pixels = super::super::super::execute::read(&device, &queue, exposed.as_buffer().unwrap());
+    let pixels = crate::gpu::evaluation::read_buffer(&device, &queue, exposed.as_buffer().unwrap());
     assert!(pixels.iter().all(|pixel| *pixel == [1., 4., 9., 9.]));
     assert!(
         context
@@ -547,7 +549,7 @@ fn source_slices_survive_execution_but_retire_while_completed_outputs_remain_liv
             "the independently completed output must not extend source-slice residency"
         );
         let pixels =
-            super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+            crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap());
         let expected = if downstream {
             [1., 16., 81., 9.]
         } else {

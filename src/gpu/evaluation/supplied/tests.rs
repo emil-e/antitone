@@ -101,7 +101,7 @@ fn recorded_arguments_keep_the_complete_unnamed_calculation_and_own_values_witho
     assert!(input.definition.source().is_none());
     let weak = Arc::downgrade(&input.image);
     let domain = first_square.domain();
-    let root = reconstruct(
+    let root = crate::reconstruction::reconstruct(
         square(first_square.clone()),
         Domain {
             bounds: Some([0, 0, 1, 1].into()),
@@ -163,7 +163,8 @@ fn supplied_coverage_requires_the_actual_value_and_its_signed_storage_extent() {
         bounds: None,
         ..data.domain()
     };
-    let calculation = || reconstruct(source(Arc::new(data.clone())), domain).unwrap();
+    let calculation =
+        || crate::reconstruction::reconstruct(source(Arc::new(data.clone())), domain).unwrap();
     let definition = calculation();
     assert!(definition.identity().is_some());
     let region = CellRegion::new([-3, -2], [2, 1]);
@@ -184,9 +185,10 @@ fn supplied_coverage_requires_the_actual_value_and_its_signed_storage_extent() {
     }
     let mut other = data.clone();
     other.values[0][0] = 3.;
-    let different_value = reconstruct(source(Arc::new(other)), domain).unwrap();
+    let different_value =
+        crate::reconstruction::reconstruct(source(Arc::new(other)), domain).unwrap();
     assert!(!supplied.covers(&different_value, region));
-    let different_grid = reconstruct(
+    let different_grid = crate::reconstruction::reconstruct(
         source(Arc::new(data.clone())),
         Domain {
             grid: Grid::axis_aligned([0.25, -2.], [1., 1.25]),
@@ -197,7 +199,7 @@ fn supplied_coverage_requires_the_actual_value_and_its_signed_storage_extent() {
     assert!(!supplied.covers(&different_grid, region));
     let mut unnamed = data;
     unnamed.named = false;
-    let unnamed = reconstruct(source(Arc::new(unnamed)), domain).unwrap();
+    let unnamed = crate::reconstruction::reconstruct(source(Arc::new(unnamed)), domain).unwrap();
     assert!(unnamed.identity().is_none());
     assert!(!supplied.covers(&unnamed, region));
 }
@@ -211,8 +213,8 @@ fn stored_values_match_reauthored_operations_above_the_same_opaque_argument() {
         bounds: None,
         ..argument.domain()
     };
-    let definition = reconstruct(argument.clone(), domain).unwrap();
-    let reauthored = reconstruct(argument, domain).unwrap();
+    let definition = crate::reconstruction::reconstruct(argument.clone(), domain).unwrap();
+    let reauthored = crate::reconstruction::reconstruct(argument, domain).unwrap();
     assert!(!definition.same_capture(&reauthored));
     assert!(definition.identity().is_none() && reauthored.identity().is_none());
     let region = data.domain().finite().unwrap();
@@ -223,7 +225,8 @@ fn stored_values_match_reauthored_operations_above_the_same_opaque_argument() {
         supplied.covers(&reauthored, region),
         "a new operation wrapper does not change its actual calculation"
     );
-    let independent_argument = reconstruct(source(Arc::new(data)), domain).unwrap();
+    let independent_argument =
+        crate::reconstruction::reconstruct(source(Arc::new(data)), domain).unwrap();
     assert!(
         !supplied.covers(&independent_argument, region),
         "equal fixture bytes do not identify an independent opaque argument"

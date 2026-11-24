@@ -150,7 +150,11 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
                     pitch,
                 ),
             };
-            let root = reconstruct(source(Arc::new(Constant(source_domain))), output).unwrap();
+            let root = crate::reconstruction::reconstruct(
+                source(Arc::new(Constant(source_domain))),
+                output,
+            )
+            .unwrap();
             let plan = make_plan(root, [3, 2]);
             let result = execute::Executor::default()
                 .run(&device, &queue, &plan, || false)
@@ -208,7 +212,8 @@ fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples
         output.grid.origin[0] += shift;
         output.grid.origin[1] += shift;
         let expected = super::tests::reconstruct_scalar(&samples, domain, output);
-        let root = reconstruct(source(Arc::new(Grid(domain))), output).unwrap();
+        let root =
+            crate::reconstruction::reconstruct(source(Arc::new(Grid(domain))), output).unwrap();
         let plan = make_plan(root, [4, 3]);
         let result = execute::Executor::default()
             .run(&device, &queue, &plan, || false)

@@ -133,7 +133,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             stages,
         )
         .unwrap();
-        reconstruct(photograph.processed, domain).unwrap()
+        crate::reconstruction::reconstruct(photograph.processed, domain).unwrap()
     };
     let read = |root: Value, image_delivery: bool| {
         let request = context

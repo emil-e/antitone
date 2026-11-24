@@ -79,7 +79,7 @@ fn sink_binds_an_exact_produced_input_without_a_transfer_allocation() {
         );
         if let Some(counts) = result {
             assert_eq!(
-                super::super::super::super::execute::read(&device, &queue, &pixels),
+                crate::gpu::evaluation::read_buffer(&device, &queue, &pixels),
                 [[2., -3., 4., 9.]]
             );
             completed.push(counts);
@@ -201,7 +201,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
         mapping,
     )
     .unwrap();
-    let root = Value::from_operation(inner.domain, Some(inner), Square);
+    let root = Value::from_operation(inner.domain(), Some(inner), Square);
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let budget = Tiling { tile: [1, 1] };
@@ -209,8 +209,8 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
         .request(
             root.clone(),
             Region {
-                bounds: root.domain.finite().unwrap(),
-                grid: root.domain.grid,
+                bounds: root.domain().finite().unwrap(),
+                grid: root.domain().grid,
             },
             budget,
         )
@@ -281,8 +281,8 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
                     progress: &|| {},
                 },
                 layout: ImageLayout {
-                    domain: root.domain,
-                    region: root.domain.finite().unwrap(),
+                    domain: root.domain(),
+                    region: root.domain().finite().unwrap(),
                     format: ImageFormat::Rgba32Float,
                     backing: ImageBacking::Buffer,
                 },
@@ -316,7 +316,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
         assert_eq!(stats.source_cells, 512 * 2560);
         drop(reads);
         if delivery != "read" {
-            actual = super::super::super::super::execute::read(&device, &queue, &pixels);
+            actual = crate::gpu::evaluation::read_buffer(&device, &queue, &pixels);
         }
         assert_eq!(actual, vec![[4., 9., 16., 9.]]);
     }

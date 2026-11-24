@@ -133,7 +133,7 @@ impl Reconstructor {
         texture: &wgpu::Texture,
         working: &wgpu::Buffer,
     ) -> Result<(), Error> {
-        evaluation::encode_reconstruction_test(
+        crate::reconstruction::encode_supplied(
             self.context.as_ref().unwrap(),
             encoder,
             (
@@ -148,7 +148,7 @@ impl Reconstructor {
                     [0, 0],
                     [unit.mapping.sizes[2], unit.mapping.sizes[3]],
                 ),
-                evaluation::ReconstructionMapping {
+                crate::reconstruction::Mapping {
                     start: [unit.mapping.origin[0], unit.mapping.origin[1]].map(f64::from),
                     axes: [
                         [unit.mapping.dx[0], unit.mapping.dx[1]],
@@ -356,7 +356,7 @@ pub(crate) fn execute_blocks(
             )?)
         },
     };
-    let root = evaluation::reconstruct_complete(original, domain)?;
+    let root = crate::reconstruction::reconstruct_complete(original, domain)?;
     let mut executor = context.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {

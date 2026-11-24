@@ -577,7 +577,7 @@ fn an_owned_gpu_unit_materialization_executes_without_joining_its_own_pending_re
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let region = CellRegion::new([0, 0], [4, 1]);
-    let root = reconstruct(
+    let root = crate::reconstruction::reconstruct(
         source(Arc::new(UniformPlate)),
         Domain {
             bounds: Some(region),

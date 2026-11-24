@@ -13,6 +13,7 @@ use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::reconstruction::reconstruct_cells;
 use std::sync::Arc;
 
 pub(crate) mod admission;
@@ -477,7 +478,7 @@ impl NeutralInput {
             .map(|frame| {
                 let mut grid = Grid::from_frame(frame);
                 grid.coverage = 8;
-                reconstruct(neutral.clone(), Domain { bounds: None, grid })
+                crate::reconstruction::reconstruct(neutral.clone(), Domain { bounds: None, grid })
             })
             .collect()
     }

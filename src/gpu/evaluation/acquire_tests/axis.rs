@@ -69,7 +69,7 @@ fn reconstructed(
             .unwrap(),
         );
     }
-    let mapping = super::super::reconstruction::Mapping {
+    let mapping = crate::reconstruction::Mapping {
         start: affine[0].map(f64::from),
         axes: [affine[1].map(f64::from), affine[2].map(f64::from)],
     };
@@ -82,7 +82,7 @@ fn reconstructed(
             coverage: 8,
         },
     };
-    let root = super::super::reconstruction::reconstruct_mapped(input, output, mapping).unwrap();
+    let root = crate::reconstruction::reconstruct_mapped(input, output, mapping).unwrap();
     let request = context
         .request(
             root,

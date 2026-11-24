@@ -12,6 +12,11 @@ mod authoring_tests;
 #[cfg(all(test, feature = "editor"))]
 mod boundary_tests;
 
+#[cfg(all(test, feature = "editor"))]
+mod reconstruction_slice_tests;
+#[cfg(all(test, feature = "editor"))]
+mod reconstruction_streaming_tests;
+
 mod allocations;
 pub(crate) use allocations::Allocations;
 
@@ -75,9 +80,6 @@ mod operators;
 
 mod plan;
 
-#[cfg(all(test, feature = "editor"))]
-mod reconstruction_tests;
-
 mod resident;
 
 #[cfg(all(test, feature = "editor"))]
@@ -107,17 +109,8 @@ pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use operators::window;
 #[cfg(all(test, feature = "editor"))]
 use operators::{grade, interpret};
-pub use value::Value;
-mod reconstruction;
 pub use operators::{pointwise, source};
 pub(crate) use plan::{Job, Plan, Policy, Tile};
-#[cfg(test)]
-pub(crate) use reconstruction::{
-    Mapping as ReconstructionMapping, encode_supplied as encode_reconstruction_test,
-    supplied_mask as reconstruction_mask_for_test,
-};
-pub(crate) use reconstruction::{
-    accumulate_supplied, reconstruct, reconstruct_cells, reconstruct_complete, reconstruct_tiled,
-};
 pub(crate) use sampling::{Access, SampleInput, Sampled};
 use std::sync::Arc;
+pub use value::Value;

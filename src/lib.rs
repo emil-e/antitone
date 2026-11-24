@@ -103,11 +103,11 @@ mod working_precision;
 
 #[cfg(all(feature = "ui", feature = "render"))]
 pub mod gpu_scopes;
+#[cfg(feature = "gpu")]
+mod reconstruction;
 #[cfg(all(test, feature = "gpu", feature = "render"))]
 #[path = "../tests/support/render_fixture.rs"]
 mod render_fixture;
-#[cfg(all(feature = "ui", feature = "render"))]
-pub mod resample;
 #[cfg(feature = "render")]
 pub mod scopes;
 #[cfg(all(feature = "ui", feature = "render"))]

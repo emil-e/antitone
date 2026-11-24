@@ -9,7 +9,7 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.materializations();
     scope.set_retention_enabled(false);
-    let source_region = input.domain.finite().unwrap();
+    let source_region = input.domain().finite().unwrap();
     let resident = pollster::block_on(
         context
             .materialize(
@@ -20,7 +20,7 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
                         input.clone(),
                         Region {
                             bounds: source_region,
-                            grid: input.domain.grid,
+                            grid: input.domain().grid,
                         },
                         Tiling { tile: size },
                     )
@@ -43,7 +43,7 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
             root.clone(),
             Region {
                 bounds: region,
-                grid: root.domain.grid,
+                grid: root.domain().grid,
             },
             Tiling { tile: [1, 1] },
         )
@@ -59,7 +59,7 @@ fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording(
     assert!(!work.can_record());
     let image = context.produce_prepared(&queue, work, || false).unwrap();
     assert_eq!(
-        super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap()),
+        crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap()),
         vec![[-2., 3., 10_000., 8.]]
     );
     assert!(
@@ -90,8 +90,8 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
                     .request(
                         input.clone(),
                         Region {
-                            bounds: input.domain.finite().unwrap(),
-                            grid: input.domain.grid,
+                            bounds: input.domain().finite().unwrap(),
+                            grid: input.domain().grid,
                         },
                         budget,
                     )
@@ -116,7 +116,7 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
                     root.clone(),
                     Region {
                         bounds: region,
-                        grid: root.domain.grid,
+                        grid: root.domain().grid,
                     },
                     budget,
                 )
@@ -143,7 +143,7 @@ fn related_small_reconstructions_keep_resident_callable_execution() {
     assert!(reads.lock().unwrap().is_empty());
     for (image, width) in images.iter().zip([2, 3]) {
         for (i, pixel) in
-            super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap())
+            crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap())
                 .iter()
                 .enumerate()
         {

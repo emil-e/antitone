@@ -364,7 +364,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                     bounds: Some([0, 0, 1, 1].into()),
                     grid: crate::gpu::evaluation::Grid::from_frame(frame),
                 };
-                let root = crate::gpu::evaluation::reconstruct(original, domain).unwrap();
+                let root = crate::reconstruction::reconstruct(original, domain).unwrap();
                 let cold = crate::gpu::evaluation::Context::new(
                     &device,
                     crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },

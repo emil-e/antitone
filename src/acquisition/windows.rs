@@ -2,21 +2,6 @@
 
 pub(crate) type Window = ([u32; 2], [u32; 2]);
 
-#[cfg(any(test, all(feature = "gpu", feature = "render")))]
-pub(crate) fn affine_output(
-    affine: [[f32; 2]; 3],
-    output: [u32; 2],
-    origin: [u32; 2],
-    tile: [u32; 2],
-) -> Window {
-    affine_output_rect(
-        affine,
-        output,
-        origin.map(f64::from),
-        std::array::from_fn(|i| f64::from(origin[i]) + f64::from(tile[i])),
-    )
-}
-
 pub(crate) fn affine_output_rect(
     affine: [[f32; 2]; 3],
     output: [u32; 2],
@@ -64,11 +49,6 @@ pub(crate) fn affine_output_rect(
     )
 }
 
-#[cfg(any(test, all(feature = "gpu", feature = "render")))]
-pub(crate) fn bounded(window: Window) -> Vec<Window> {
-    bounded_by(window, [512, 128])
-}
-
 pub(crate) fn bounded_by((origin, extent): Window, tile: [u32; 2]) -> Vec<Window> {
     let mut result = Vec::new();
     for y in (0..extent[1]).step_by(tile[1] as usize) {
@@ -89,14 +69,14 @@ mod tests {
     #[test]
     fn magnified_support_is_bounded_without_changing_coverage_or_resolution() {
         let output = [5120, 2880];
-        let full = affine_output(
+        let full = affine_output_rect(
             [[0., 0.], [0.001, 0.], [0., 0.001]],
             output,
-            [0, 0],
-            [512, 128],
+            [0., 0.],
+            [512., 128.],
         );
         assert_eq!(full, ([0, 0], output));
-        let windows = bounded(full);
+        let windows = bounded_by(full, [512, 128]);
         assert!(windows.len() > 1);
         assert!(windows.iter().all(|(_, n)| n[0] <= 512 && n[1] <= 128));
         assert_eq!(

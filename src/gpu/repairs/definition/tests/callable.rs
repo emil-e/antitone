@@ -174,13 +174,14 @@ fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermed
             bounds: Some([0, 0, 64, 64].into()),
             grid: Grid::from_frame(frame),
         };
-        let damaged = reconstruct(base.clone(), domain).unwrap();
+        let damaged = crate::reconstruction::reconstruct(base.clone(), domain).unwrap();
         let control = read_frame(&context, &queue, damaged);
         assert!(
             control.iter().any(|pixel| pixel[0] < 0.05),
             "the visible defect must distinguish healing from a no-op"
         );
-        let healed = reconstruct(compose(base, &[repair]).unwrap(), domain).unwrap();
+        let healed =
+            crate::reconstruction::reconstruct(compose(base, &[repair]).unwrap(), domain).unwrap();
         count.store(0, Ordering::Relaxed);
         let pixels = read_frame(&context, &queue, healed);
         for pixel in pixels {

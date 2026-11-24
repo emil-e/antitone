@@ -35,7 +35,7 @@ fn render(
             ],
         ),
     };
-    let image = reconstruct(display, domain).unwrap();
+    let image = crate::reconstruction::reconstruct(display, domain).unwrap();
     let request = renderer
         .evaluation()
         .request(

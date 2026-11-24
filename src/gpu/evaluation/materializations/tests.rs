@@ -770,10 +770,10 @@ fn original_and_reconstruction_definitions_own_their_value_identity() {
         bounds: Some([0, 0, 4, 3].into()),
         grid: Grid::axis_aligned([1., 2.], [2., 3.]),
     };
-    let reduced = super::super::reconstruction::reconstruct(first, output).unwrap();
-    let same = super::super::reconstruction::reconstruct(second.clone(), output).unwrap();
+    let reduced = crate::reconstruction::reconstruct(first, output).unwrap();
+    let same = crate::reconstruction::reconstruct(second.clone(), output).unwrap();
     assert_eq!(reduced.identity(), same.identity());
-    let shifted = super::super::reconstruction::reconstruct(
+    let shifted = crate::reconstruction::reconstruct(
         second,
         Domain {
             grid: Grid::axis_aligned([1.25, 2.], [2., 3.]),

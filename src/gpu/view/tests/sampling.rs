@@ -182,7 +182,7 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
         let offset = source.spec.plan().output_offset().unwrap().map(f64::from);
         let scale = std::array::from_fn(|i| f64::from(source.spec.plan().output().output[i]) / 50.);
         assert!(
-            crate::gpu::evaluation::reconstruct_cells(
+            crate::reconstruction::reconstruct_cells(
                 crate::gpu::evaluation::borrowed_input(domain),
                 output,
                 [offset[0] + 0.25, offset[1]],

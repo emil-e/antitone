@@ -296,7 +296,7 @@ fn a_common_grid_reuses_actual_tiles_across_mosaic_edits_and_compatible_panning(
     };
     let check = |image: &Image<ImageLayout>, blue, phase: f32| {
         let pixels =
-            crate::gpu::evaluation::execute::read(&device, &queue, image.as_buffer().unwrap());
+            crate::gpu::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap());
         let region = image.descriptor.region;
         assert_eq!(pixels.len(), region.width as usize * region.height as usize);
         for y in region.y..region.bottom() {

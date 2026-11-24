@@ -149,7 +149,7 @@ fn repair_demand(
     device: &wgpu::Device,
     index: usize,
 ) -> Vec<crate::gpu::evaluation::CellRegion> {
-    use crate::gpu::evaluation::{self as ev, CellRegion, Domain, Grid, Tiling};
+    use crate::gpu::evaluation::{CellRegion, Domain, Grid, Tiling};
     let photo = crate::gpu::photograph::PhotographGraph::from_recipe(
         &device.limits(),
         crate::gpu::source::camera_source(scan).unwrap(),
@@ -162,7 +162,7 @@ fn repair_demand(
             .unwrap();
     let frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     let region = CellRegion::new([0, 0], frame.output);
-    let root = ev::reconstruct(
+    let root = crate::reconstruction::reconstruct(
         photo.processed.clone(),
         Domain {
             bounds: Some(region),

@@ -21,7 +21,7 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
         grid: crate::gpu::evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
     };
     let frame = FrameRaster::full(composition).unwrap();
-    let root = crate::gpu::evaluation::reconstruct_complete(
+    let root = crate::reconstruction::reconstruct_complete(
         crate::gpu::evaluation::borrowed_input(input),
         crate::gpu::evaluation::Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new(
@@ -36,7 +36,7 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
     let mut included = 0;
     for origin in [[0, 0], [384, 128], [128, 384], [0, 384]] {
         let unit = Unit::new(composition, origin, [128; 2]).unwrap();
-        let bits = crate::gpu::evaluation::reconstruction_mask_for_test(
+        let bits = crate::reconstruction::supplied_mask(
             &root,
             [origin[0], origin[1], 128, 128].try_into().unwrap(),
             unit.bounds.try_into().unwrap(),
@@ -62,7 +62,7 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
     );
     let interior = Unit::new(composition, [128; 2], [128; 2]).unwrap();
     assert!(
-        crate::gpu::evaluation::reconstruction_mask_for_test(
+        crate::reconstruction::supplied_mask(
             &root,
             [128, 128, 128, 128].into(),
             interior.bounds.try_into().unwrap()

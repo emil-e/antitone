@@ -89,12 +89,7 @@ fn a_large_request_captures_output_without_expanding_calculations_under_its_full
     let root = crate::gpu::gaussian::blur(root, 0.1).unwrap();
     let ((job, described), created) = value::testing::observe(0, || {
         (
-            super::super::super::super::plan::Job::new(
-                root.clone(),
-                region,
-                Tiling { tile: [1024; 2] },
-            )
-            .unwrap(),
+            Job::new(root.clone(), region, Tiling { tile: [1024; 2] }).unwrap(),
             root.output(region).unwrap(),
         )
     });

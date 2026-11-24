@@ -348,7 +348,7 @@ impl PhotographRequest {
                 },
             },
         };
-        reconstruct(root, output)
+        crate::reconstruction::reconstruct(root, output)
     }
 
     pub fn retained_prefix(

@@ -1,15 +1,21 @@
 //! Cell-area reconstruction between affine image grids, independent of photographic position.
-use super::CellRegion as Rect;
-use super::*;
+use crate::Error;
+use crate::gpu::evaluation::{CellRegion as Rect, *};
 use glam::{DMat2, DVec2};
+use std::sync::Arc;
 
+pub(crate) const SOURCE_TILE: [u32; 2] = [512, 128];
 const MAX_UNIT_SIDE: u32 = 256;
 
+#[cfg(all(test, feature = "editor"))]
+mod affine_tests;
+#[cfg(all(test, feature = "editor"))]
+mod coverage_tests;
 #[cfg(test)]
 mod fixture;
-mod phases;
 #[cfg(all(test, feature = "editor"))]
-mod streaming;
+mod numeric_tests;
+mod phases;
 mod support;
 #[cfg(test)]
 pub(crate) use fixture::{encode_supplied, supplied_mask};
@@ -84,22 +90,6 @@ impl Mapping {
     }
 }
 
-pub(crate) fn accumulate_supplied(
-    image: &Value,
-    fragment: &mut Fragment,
-    input: Sampled,
-    (samples, affected): (Rect, Rect),
-    output: PlannedImage,
-    metadata: Resource,
-) -> Result<(), Error> {
-    let operation = (image.operation.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<Reconstruction>()
-        .ok_or(Error::InvalidParameter(
-            "supplied accumulation requires a reconstruction",
-        ))?;
-    operation.accumulate(fragment, input, (samples, affected), output, metadata)
-}
-
 pub(crate) fn reconstruct(input: Value, output: Domain) -> Result<Value, Error> {
     reconstructed(input, output, false, false)
 }
@@ -118,12 +108,13 @@ fn reconstructed(
     complete: bool,
     tiled: bool,
 ) -> Result<Value, Error> {
-    let source = DMat2::from_cols_array_2d(&input.domain.grid.axes);
+    let source = DMat2::from_cols_array_2d(&input.domain().grid.axes);
     if !source.is_finite() || source.determinant() == 0. {
         return Err(Error::InvalidParameter("invalid reconstruction input grid"));
     }
     let inverse = source.inverse();
-    let start = inverse * (DVec2::from(output.grid.origin) - DVec2::from(input.domain.grid.origin));
+    let start =
+        inverse * (DVec2::from(output.grid.origin) - DVec2::from(input.domain().grid.origin));
     let axes = output
         .grid
         .axes
@@ -178,7 +169,7 @@ fn mapped(
     let packed = mapping.packed();
     let determinant =
         |map: Mapping| map.axes[0][0] * map.axes[1][1] - map.axes[0][1] * map.axes[1][0];
-    if (input.domain.grid.coverage != 0 && output.grid.coverage != input.domain.grid.coverage)
+    if (input.domain().grid.coverage != 0 && output.grid.coverage != input.domain().grid.coverage)
         || mapping
             .start
             .iter()
@@ -190,10 +181,10 @@ fn mapped(
     {
         return Err(Error::InvalidParameter("invalid reconstruction mapping"));
     }
-    let origin = input.domain.grid.point(mapping.start);
+    let origin = input.domain().grid.point(mapping.start);
     let axes: [[f64; 2]; 2] = mapping.axes.map(|v| {
         std::array::from_fn(|i| {
-            v[0] * input.domain.grid.axes[0][i] + v[1] * input.domain.grid.axes[1][i]
+            v[0] * input.domain().grid.axes[0][i] + v[1] * input.domain().grid.axes[1][i]
         })
     });
     let close = |a: f64, b: f64, magnitude: f64| {
@@ -203,9 +194,9 @@ fn mapped(
                 <= 8. * f64::from(f32::EPSILON) * magnitude.max(a.abs()).max(b.abs()).max(1.)
     };
     for i in 0..2 {
-        let magnitude = input.domain.grid.origin[i].abs()
+        let magnitude = input.domain().grid.origin[i].abs()
             + (0..2)
-                .map(|axis| (mapping.start[axis] * input.domain.grid.axes[axis][i]).abs())
+                .map(|axis| (mapping.start[axis] * input.domain().grid.axes[axis][i]).abs())
                 .sum::<f64>();
         if !close(origin[i], output.grid.origin[i], magnitude)
             || (0..2).any(|a| !close(axes[a][i], output.grid.axes[a][i], 0.))
@@ -226,7 +217,7 @@ fn mapped(
         Some(input.clone()),
         Reconstruction {
             tiled,
-            input: input.domain,
+            input: input.domain(),
             mapping,
             packed,
             support: if complete {
@@ -246,7 +237,7 @@ fn mapped(
             } else {
                 None
             },
-            coverage: if input.domain.grid.coverage == 0 {
+            coverage: if input.domain().grid.coverage == 0 {
                 output.grid.coverage
             } else {
                 0
@@ -268,7 +259,7 @@ struct Geometry {
     vectors: [[f32; 4]; 2],
 }
 
-pub(super) struct Reconstruction {
+struct Reconstruction {
     tiled: bool,
     input: Domain,
     mapping: Mapping,
@@ -277,35 +268,7 @@ pub(super) struct Reconstruction {
     support: Option<Support>,
 }
 impl Reconstruction {
-    fn accumulate(
-        &self,
-        fragment: &mut Fragment,
-        input: Sampled,
-        (samples, affected): (Rect, Rect),
-        output: PlannedImage,
-        metadata: Resource,
-    ) -> Result<(), Error> {
-        let geometry = self.geometry(fragment, affected, output.region, samples);
-        let support = self.support_binding(fragment, affected, samples);
-        let code = Reconstruction::code(&input, support.is_some());
-        let mut bindings = input.bindings;
-        if let Some(support) = support {
-            bindings.push((25, support));
-        }
-        bindings.extend([
-            (21, Binding::Write(output.resource)),
-            (22, geometry),
-            (23, Binding::Write(metadata)),
-        ]);
-        fragment.compute(
-            code,
-            "accumulate",
-            bindings,
-            affected.width * affected.height,
-        );
-        Ok(())
-    }
-
+    #[cfg(test)]
     fn code(input: &Sampled, masked: bool) -> Arc<str> {
         let support = if masked {
             r#"@group(0) @binding(25) var<storage,read> reconstruction_support:array<u32>;
@@ -320,25 +283,26 @@ fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {
         format!(
             "{}\n{}\nfn reconstruction_sample(p: vec2i) -> vec4f {{ return {}(p); }}\n{}\n{}",
             [
-                include_str!("reconstruction_geometry.wgsl"),
-                include_str!("footprint.wgsl")
+                include_str!("reconstruction/reconstruction_geometry.wgsl"),
+                include_str!("reconstruction/footprint.wgsl")
             ]
             .join("\n"),
             input.code,
             input.symbol,
             support,
             [
-                include_str!("reconstruction_status.wgsl"),
-                include_str!("reconstruction_mean.wgsl"),
-                include_str!("reconstruction_contribution.wgsl"),
-                include_str!("reconstruction_flags.wgsl"),
-                include_str!("reconstruct.wgsl")
+                include_str!("reconstruction/reconstruction_status.wgsl"),
+                include_str!("reconstruction/reconstruction_mean.wgsl"),
+                include_str!("reconstruction/reconstruction_contribution.wgsl"),
+                include_str!("reconstruction/reconstruction_flags.wgsl"),
+                include_str!("reconstruction/reconstruct.wgsl")
             ]
             .join("\n"),
         )
         .into()
     }
 
+    #[cfg(test)]
     fn support_binding(
         &self,
         fragment: &mut Fragment,
@@ -411,6 +375,7 @@ fn reconstruction_admitted(p:vec2i, geometry: Geometry)->bool {
         Some(mask)
     }
 
+    #[cfg(test)]
     fn geometry(
         &self,
         fragment: &mut Fragment,
@@ -627,4 +592,10 @@ impl Reconstruction {
         )
         .validate()
     }
+}
+
+#[cfg(all(test, feature = "editor"))]
+fn make_plan(value: Value, tile: [u32; 2]) -> Plan {
+    let region = value.domain().finite().unwrap();
+    Plan::new(value, region, Tiling { tile }).unwrap()
 }
