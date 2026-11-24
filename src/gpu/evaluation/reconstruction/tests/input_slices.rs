@@ -348,6 +348,9 @@ impl Source for WidePlane {
     fn identity(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new("viewport-wide source coverage"))
     }
+    fn acquisition_tile(&self) -> Option<[u32; 2]> {
+        Some([256, 256])
+    }
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         self.0.lock().unwrap().push(region);
         Ok(vec![

@@ -477,7 +477,14 @@ pub(crate) fn execute_blocks(
                 stats.buffer_allocations += _executed.buffer_allocations as u64;
                 stats.generated_initializations += _executed.initializations as u64;
                 for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
-                    if let evaluation::Work::Upload { output, .. } = work
+                    let source_read = match work {
+                        evaluation::Work::Upload { output, .. } => Some(output),
+                        evaluation::Work::Produce { image, output } if image.source().is_some() => {
+                            Some(output)
+                        }
+                        _ => None,
+                    };
+                    if let Some(output) = source_read
                         && previous_source_size != Some(output.size())
                     {
                         stats.planned_source_layout_changes += 1;

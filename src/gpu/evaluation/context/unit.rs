@@ -95,7 +95,7 @@ impl Production<'_> {
             let image = match unit {
                 Unit::Ready(image) => {
                     self.scope.used(&image.image);
-                    self.working.hold(image.image.clone());
+                    self.hold_unit(node, image.image.clone());
                     image.image
                 }
                 Unit::Produce(unit) => {
@@ -381,8 +381,19 @@ impl Worker<'_> {
             counts.include(physical);
             image
         };
-        self.working.hold(image.clone());
+        self.hold_unit(node, image.clone());
         Ok(image)
+    }
+
+    fn hold_unit(&self, node: &value::Value, image: Arc<ImageValue>) {
+        if node
+            .source()
+            .is_some_and(|source| source.acquisition_tile().is_some())
+        {
+            self.working.hold_source_tile(image);
+        } else {
+            self.working.hold(image);
+        }
     }
 
     pub(super) fn compute_unit(
@@ -449,6 +460,7 @@ impl Worker<'_> {
             }
             UnitWork::Source(source) => {
                 let values = source.read(unit.output)?;
+                counts.source_read(values.len() as u64);
                 if values.len() != cells(unit.output)?
                     || values.iter().flatten().any(|value| !value.is_finite())
                 {

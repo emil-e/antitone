@@ -61,6 +61,12 @@ impl Production<'_> {
         if let Some(counts) = self.copy_ready(node)? {
             return Ok(counts);
         }
+        if node
+            .source()
+            .is_some_and(|source| source.acquisition_tile().is_some())
+        {
+            return self.produce_units(node, tiling);
+        }
         let stored = super::super::materialized::Stored::find(
             Some(self.scope),
             &[],

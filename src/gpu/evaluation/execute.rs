@@ -766,12 +766,12 @@ impl Executor {
                 resources.buffer(destination.unwrap());
                 self.working
                     .submit_gpu(device, queue, encoder, resources, || {
-                        self.submitted();
+                        self.submitted_tile(tile);
                         (sink.submitted)()
                     })?;
             } else {
                 submit(device, queue, encoder, || {
-                    self.submitted();
+                    self.submitted_tile(tile);
                     (sink.submitted)()
                 })?;
             }
@@ -995,6 +995,19 @@ impl Executor {
         Ok(())
     }
 
+    fn submitted_tile(&self, tile: &Tile) {
+        self.submitted();
+        for work in &tile.fragment.work {
+            if let Work::Upload { source, output } = work
+                && source.acquisition_tile().is_some()
+                && let Some(Allocation::Retained(value)) =
+                    &self.pool[tile.assignment[output.resource.0]]
+            {
+                self.working.hold_source_tile(value.image().clone());
+            }
+        }
+    }
+
     pub fn submitted(&self) {
         for value in &self.retained {
             value.submitted();
@@ -1043,8 +1056,6 @@ impl Executor {
             plan,
             preparation,
             relevance: None,
-            #[cfg(feature = "editor")]
-            prerequisites: Vec::new(),
         })
     }
 
@@ -1280,23 +1291,12 @@ pub(crate) struct Recorded {
     plan: Plan,
     pub(super) preparation: WorkCounts,
     relevance: Option<super::materializations::Relevance>,
-    #[cfg(feature = "editor")]
-    prerequisites: Vec<super::context::RecordedImage>,
 }
 
 impl Recorded {
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn scheduled_bytes(&self) -> u64 {
         self.plan.scheduled_bytes()
-    }
-
-    #[cfg(feature = "editor")]
-    pub(super) fn with_prerequisites(
-        mut self,
-        prerequisites: Vec<super::context::RecordedImage>,
-    ) -> Self {
-        self.prerequisites = prerequisites;
-        self
     }
 
     pub(super) fn with_request(mut self, value: &value::Value, region: CellRegion) -> Self {
@@ -1414,16 +1414,6 @@ impl Recorded {
         let mut stats = WorkCounts::default();
         execution.materialize(device, tile, &mut stats, Materialization::Record)?;
         let mut resources = Allocations::default();
-        #[cfg(feature = "editor")]
-        for prerequisite in &self.prerequisites {
-            if let Some(commands) = &prerequisite.commands {
-                let encoded =
-                    commands.encode_result_owned(device, encoder, &prerequisite.pixels)?;
-                stats.include(encoded.counts);
-                resources.extend(&encoded.resources);
-            }
-            resources.buffer(&prerequisite.pixels);
-        }
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(
             device,
@@ -1518,17 +1508,6 @@ impl Recorded {
     }
 
     pub fn submitted(&self) {
-        #[cfg(feature = "editor")]
-        for prerequisite in &self.prerequisites {
-            if let Some(commands) = &prerequisite.commands {
-                commands.submitted();
-                if let BufferImage::Produced(image) = &prerequisite.pixels {
-                    self.executor.scope.submitted_image(image);
-                }
-            } else {
-                prerequisite.pixels.submitted(&self.executor.scope);
-            }
-        }
         if let Some(relevance) = &self.relevance {
             self.executor.scope.refresh(relevance);
         }
@@ -1557,25 +1536,10 @@ impl Recorded {
         for image in &self.executor.used_images {
             allocations.image(image);
         }
-        for prerequisite in &self.prerequisites {
-            allocations.buffer(&prerequisite.pixels);
-            if let Some(commands) = &prerequisite.commands {
-                commands.allocations(allocations);
-            }
-        }
     }
 
     pub fn byte_len(&self) -> u64 {
-        let bytes = self.executor.pool_bytes();
-        #[cfg(feature = "editor")]
-        let bytes = bytes
-            + self
-                .prerequisites
-                .iter()
-                .filter_map(|work| work.commands.as_ref())
-                .map(Recorded::byte_len)
-                .sum::<u64>();
-        bytes
+        self.executor.pool_bytes()
     }
 }
 

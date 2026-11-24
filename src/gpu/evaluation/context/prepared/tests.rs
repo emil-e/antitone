@@ -1,4 +1,6 @@
 use super::*;
+
+mod planning;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -38,15 +40,15 @@ fn request(context: &Context, root: Value) -> Evaluation {
 }
 
 #[test]
-fn recording_capacity_includes_prerequisites_not_only_the_root_plan() {
+fn recording_capacity_bounds_the_complete_plan() {
     let (device, _, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let reads = Arc::new(AtomicUsize::new(0));
     let evaluation = request(&context, source(Arc::new(Pixels(reads.clone()))));
-    let plan = || {
+    let plan = |passes| {
         let mut fragment = Fragment::default();
         let output = fragment.image(evaluation.job.image().domain(), evaluation.job.region());
-        for _ in 0..=Plan::MAX_RECORDING_PASSES / 2 {
+        for _ in 0..passes {
             fragment.compute(
                 "@group(0) @binding(0) var<storage,read_write> output:array<vec4f>;\n                 @compute @workgroup_size(64) fn coordinates(@builtin(global_invocation_id) p:vec3u) {\n                 if p.x < 32u { output[p.x]=vec4f(f32(p.x%8u),f32(p.x/8u),-2.,8.); } }",
                 "coordinates", vec![(0, Binding::Write(output.resource))], 1,
@@ -54,19 +56,18 @@ fn recording_capacity_includes_prerequisites_not_only_the_root_plan() {
         }
         Plan::from_work(fragment, output).unwrap()
     };
-    let mut prepared = Preparation::new(evaluation.clone(), PreparedWork::Gpu(plan()));
     assert!(
-        prepared.can_record(),
-        "each program separately fits the recording capacity"
+        Preparation::new(
+            evaluation.clone(),
+            PreparedWork::Gpu(plan(Plan::MAX_RECORDING_PASSES)),
+        )
+        .can_record()
     );
-    prepared.dependencies.push(Preparation::new(
+    let prepared = Preparation::new(
         evaluation.clone(),
-        PreparedWork::Gpu(plan()),
-    ));
-    assert!(
-        !prepared.can_record(),
-        "the caller's encoder would contain both programs"
+        PreparedWork::Gpu(plan(Plan::MAX_RECORDING_PASSES + 1)),
     );
+    assert!(!prepared.can_record());
     assert!(matches!(
         prepared.record(&context),
         Err(Error::InvalidParameter(
@@ -126,9 +127,7 @@ fn incomplete_read_descriptions_use_ordinary_preparation() {
     let input = source(Arc::new(Pixels(reads.clone())));
     let root = Value::from_operation(input.domain(), [input.clone(), input], UndeclaredReads);
     let evaluation = request(&context, root.clone());
-    assert!(context.prepare_dependencies(&evaluation).unwrap().is_none());
     let prepared = context.prepare_image(evaluation).unwrap();
-    assert!(prepared.dependencies.is_empty());
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     let image = pollster::block_on(
         context
@@ -210,7 +209,6 @@ fn multiple_missing_operands_execute_without_completed_source_pins() {
     let evaluation = request(&context, root);
     let prepared = context.prepare_image(evaluation).unwrap();
     assert!(matches!(prepared.work, PreparedWork::Produce(_)));
-    assert!(prepared.dependencies.is_empty());
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     let scope = context.materializations();
     let working = RunWorkingSet::default();

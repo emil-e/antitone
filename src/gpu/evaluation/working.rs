@@ -1,4 +1,4 @@
-//! A run owns reusable host values and outstanding GPU work independently of optional retention.
+//! A run owns active input reuse and outstanding GPU work independently of optional retention.
 use super::*;
 use std::{collections::VecDeque, sync::Mutex};
 
@@ -8,16 +8,48 @@ mod tests;
 
 // A bounded live working set, not a bound on an algorithm's required host arrays.
 const HOST_REUSE_BYTES: u64 = 64 << 20;
+const SOURCE_REUSE_BYTES: u64 = 64 << 20;
 
 #[derive(Clone)]
 pub struct RunWorkingSet {
     host: Arc<Mutex<Owned>>,
+    source_tiles: Arc<Mutex<Owned>>,
     gpu: Arc<gpu::GpuRun>,
 }
 struct Owned {
-    images: VecDeque<Arc<ImageValue>>,
+    images: VecDeque<(Arc<ImageValue>, u64)>,
     bytes: u64,
     limit: u64,
+}
+impl Owned {
+    fn new(limit: u64) -> Self {
+        Self {
+            images: VecDeque::new(),
+            bytes: 0,
+            limit,
+        }
+    }
+
+    fn hold(&mut self, image: Arc<ImageValue>, bytes: u64) {
+        if bytes > self.limit {
+            return;
+        }
+        if let Some(index) = self
+            .images
+            .iter()
+            .position(|(value, _)| Arc::ptr_eq(value, &image))
+        {
+            let held = self.images.remove(index).unwrap();
+            self.images.push_back(held);
+            return;
+        }
+        while self.bytes + bytes > self.limit {
+            let (_, bytes) = self.images.pop_front().unwrap();
+            self.bytes -= bytes;
+        }
+        self.images.push_back((image, bytes));
+        self.bytes += bytes;
+    }
 }
 impl Default for RunWorkingSet {
     fn default() -> Self {
@@ -27,11 +59,8 @@ impl Default for RunWorkingSet {
 impl RunWorkingSet {
     pub(super) fn new(limit: u64) -> Self {
         Self {
-            host: Arc::new(Mutex::new(Owned {
-                images: VecDeque::new(),
-                bytes: 0,
-                limit,
-            })),
+            host: Arc::new(Mutex::new(Owned::new(limit))),
+            source_tiles: Arc::new(Mutex::new(Owned::new(SOURCE_REUSE_BYTES))),
             gpu: Arc::default(),
         }
     }
@@ -65,24 +94,16 @@ impl RunWorkingSet {
             return;
         };
         let bytes = pixels.len() as u64 * 16;
-        let mut owned = self.host.lock().unwrap();
-        if bytes > owned.limit {
+        self.host.lock().unwrap().hold(image, bytes);
+    }
+
+    /// Adjacent units may use a source tile after its first submission completes.
+    /// Keep that bounded working set through execution, not through the finished image.
+    pub(super) fn hold_source_tile(&self, image: Arc<ImageValue>) {
+        let Some(buffer) = image.as_buffer() else {
             return;
-        }
-        if let Some(index) = owned
-            .images
-            .iter()
-            .position(|value| Arc::ptr_eq(value, &image))
-        {
-            let image = owned.images.remove(index).unwrap();
-            owned.images.push_back(image);
-            return;
-        }
-        while owned.bytes + bytes > owned.limit {
-            let oldest = owned.images.pop_front().unwrap();
-            owned.bytes -= oldest.as_host().unwrap().len() as u64 * 16;
-        }
-        owned.images.push_back(image);
-        owned.bytes += bytes;
+        };
+        let bytes = buffer.size();
+        self.source_tiles.lock().unwrap().hold(image, bytes);
     }
 }

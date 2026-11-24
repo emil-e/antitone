@@ -93,10 +93,6 @@ pub(super) fn validate(
 }
 
 impl Stored {
-    pub(super) fn images(&self) -> impl Iterator<Item = &Arc<ImageValue>> {
-        self.parts.iter().map(|part| &part.image)
-    }
-
     pub(super) fn find(
         scope: Option<&Materializations>,
         supplied: &[SuppliedImage],
