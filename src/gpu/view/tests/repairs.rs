@@ -1,7 +1,7 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     color::{Balance, wb_matrix},
@@ -492,7 +492,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let acquired = &first.product.as_ref().unwrap().fixture_input();
             let mut captured = acquired.spec.processing_fixture();
             captured.replacements = patches.clone();
-            let (definition, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+            let (definition, _) = crate::photographic::graph::PhotographGraph::preview_with_input(
                 &device.limits(),
                 crate::gpu::source::camera_source(&scan).unwrap(),
                 None,

@@ -94,7 +94,7 @@ impl ForwardModel for ResponseModel<'_> {
             domain,
             points: points.to_vec().into(),
         }));
-        let readout = crate::gpu::photograph::camera_response::normalized(camera, negative)?;
+        let readout = crate::photographic::graph::camera_response::normalized(camera, negative)?;
         let request = self.context.request(
             readout.clone(),
             evaluation::Region {

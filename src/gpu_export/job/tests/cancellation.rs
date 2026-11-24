@@ -98,7 +98,7 @@ fn export_cancellation_reaches_the_real_healer_after_its_inputs_arrive_and_prese
         )
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();
-    let photograph = crate::gpu::photograph::PhotographGraph::from_recipe(
+    let photograph = crate::photographic::graph::PhotographGraph::from_recipe(
         &device.limits(),
         camera_source(&scan).unwrap(),
         None,

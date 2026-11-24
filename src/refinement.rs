@@ -50,7 +50,7 @@ pub(crate) fn refine_cancellable(
         return Ok(None);
     }
     scan.validate_area(view.area)?;
-    let root = crate::gpu::photograph::authoring::original_chain(
+    let root = crate::photographic::graph::authoring::original_chain(
         &device.limits(),
         scan,
         field,

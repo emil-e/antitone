@@ -1,9 +1,10 @@
 use super::*;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     frame_raster::FrameRaster,
     gpu::{
         evaluation::*,
-        view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest},
+        view::{RenderedView, ViewImage, ViewKernels},
     },
 };
 
@@ -97,7 +98,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
     .unwrap()
     .with_definition({
         let operation = ShiftBlend;
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = operation.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

@@ -1,7 +1,9 @@
-//! Signed AP1 photographic grade and ACEScct look-interchange helpers.
+//! Photographic stages, grading mathematics and graph composition.
 #[cfg(feature = "project")]
 mod acescct;
 mod contrast;
+#[cfg(feature = "gpu")]
+pub mod graph;
 mod tonal_ranges;
 
 pub(crate) use tonal_ranges::MAX_EV as MAX_TONAL_EV;

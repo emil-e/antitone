@@ -16,7 +16,6 @@ pub mod grading;
 mod halation;
 pub mod interpretation;
 pub mod lut3d;
-pub mod photograph;
 #[cfg(all(
     feature = "raw",
     feature = "render",
@@ -126,3 +125,6 @@ mod flat_tests;
 mod input_grading_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod shader_layout_tests;

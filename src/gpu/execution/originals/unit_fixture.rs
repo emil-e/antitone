@@ -31,7 +31,7 @@ impl Unit {
         composition: Composition,
         origin: [u32; 2],
         extent: [u32; 2],
-        pipeline: &crate::gpu::photograph::assembly::Assembly,
+        pipeline: &crate::photographic::graph::assembly::Assembly,
     ) -> Result<(Self, Plan), Error> {
         if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
             return Err(Error::InvalidParameter(

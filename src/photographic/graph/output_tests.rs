@@ -1,6 +1,7 @@
 use crate::{
     Error,
-    gpu::{evaluation::*, lut3d, photograph::display_output},
+    gpu::{evaluation::*, lut3d},
+    photographic::graph::display_output,
 };
 use crate::{
     looks::{LookAsset, LookOrigin, Lut3D},

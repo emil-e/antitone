@@ -1,9 +1,9 @@
 use super::*;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::photograph::PhotographGraph;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::PhotographGraph;
 
 #[test]
 fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction() {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn equal_acquired_calculations_share_inspection_work_across_independent_view_handles() {
@@ -67,7 +67,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             .unwrap(),
         ))
         .with_definition(
-            crate::gpu::photograph::assembly::Assembly::emulation(
+            crate::photographic::graph::assembly::Assembly::emulation(
                 crate::grain::GrainPreset::ThirtyFiveMm.settings(),
                 crate::halation::HalationSettings {
                     enabled: true,

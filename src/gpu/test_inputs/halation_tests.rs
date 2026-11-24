@@ -1,6 +1,6 @@
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::{gpu::photograph::assembly::Assembly, halation::HalationSettings};
+use crate::{halation::HalationSettings, photographic::graph::assembly::Assembly};
 
 fn base() -> AuthoredPhotograph {
     AuthoredPhotograph::from(

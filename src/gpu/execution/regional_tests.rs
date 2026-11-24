@@ -299,7 +299,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         .unwrap(),
     );
     let input = AuthoredPhotograph::from(gpu).with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             crate::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
@@ -350,7 +350,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         for output in [[147, 113], [1, 1], [515, 131]] {
             let frame = FrameRaster { output, ..frame };
             if output == [1, 1] {
-                let original = crate::gpu::photograph::authoring::original_chain(
+                let original = crate::photographic::graph::authoring::original_chain(
                     &device.limits(),
                     &scan,
                     None,

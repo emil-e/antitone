@@ -1,6 +1,6 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
@@ -265,7 +265,7 @@ fn creative_operators_preserve_identity_oklab_lightness_hue_and_finite_signed_va
             label: Some("direct photographic primitive gate"),
             source: wgpu::ShaderSource::Wgsl(
                 [
-                    crate::gpu::photograph::shader::functions(),
+                    crate::photographic::graph::shader::functions(),
                     r#"
 struct PrimitiveParameters { amounts: vec4f, vibrance: vec4f }
 @group(0) @binding(2) var<uniform> primitive: PrimitiveParameters;

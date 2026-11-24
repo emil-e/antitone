@@ -1,18 +1,13 @@
 //! Test-side operation authoring; the production file writer receives only the resulting node.
 #![allow(dead_code)]
+use antitone::photographic::graph::{PhotographGraph, display_output};
 use antitone::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::Repair,
     export::{FileFormat, FloatPrecision, Overwrite, Plan, RenderTarget},
     geometry::Composition,
-    gpu::{
-        evaluation::Value,
-        flat::GpuFlatField,
-        grading::Grading,
-        photograph::{PhotographGraph, display_output},
-        source::camera_source,
-    },
+    gpu::{evaluation::Value, flat::GpuFlatField, grading::Grading, source::camera_source},
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::{ImageSource, Scan},

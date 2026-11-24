@@ -2,8 +2,6 @@
 
 use crate::Error;
 use crate::gpu::evaluation::*;
-#[cfg(any(test, feature = "editor"))]
-use crate::gpu::flat::FieldGeometry;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::grading::Grading;
 #[cfg(any(test, feature = "editor"))]
@@ -54,6 +52,8 @@ mod resident;
 pub(crate) mod shader;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
+#[cfg(feature = "editor")]
+pub(crate) mod view_source;
 use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, ResidentCamera};
 #[cfg(feature = "render")]
 mod prewarm;
@@ -220,23 +220,22 @@ impl PhotographGraph {
             },
             Interpretation::Unavailable,
         )?;
-        let geometry = if let Some(field) = &captured.field {
-            let mapping = SourceGeometry::new(field.field().area(), [1, 1])?;
-            FieldGeometry::new(field, mapping)
-        } else {
-            FieldGeometry::uncorrected(None)
-        };
+        let geometry = captured
+            .field
+            .as_ref()
+            .map(|field| SourceGeometry::new(field.field().area(), [1, 1]))
+            .transpose()?;
         let function = Function::new(
             format!(
                 "{}\n{}",
-                crate::gpu::photograph::shader::functions(),
-                include_str!("photograph/gathered.wgsl")
+                crate::photographic::graph::shader::functions(),
+                include_str!("graph/gathered.wgsl")
             ),
             "gathered_camera_light",
         )
         .with_storage(18, bytemuck::cast_slice(origins).to_vec())
         .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
-        let function = captured.bind_field(function, &geometry);
+        let function = GpuFlatField::bind(captured.field.as_deref(), geometry, function)?;
         Ok(pointwise(source, function))
     }
 
@@ -307,7 +306,7 @@ impl PhotographGraph {
                 "frame belongs to a different source grid",
             ));
         }
-        Self::original_assembly(limits, &source, field, input, program.matrix)?.preview(
+        Self::original_assembly(limits, &source, field, input, program.matrix())?.preview(
             source,
             frame,
             native_grid,
@@ -403,7 +402,7 @@ impl PhotographGraph {
         let matrix = definition.matrix;
         let mapping = definition.mapping;
         if let Some(program) = input.source_transform() {
-            if program.matrix != matrix {
+            if program.matrix() != matrix {
                 return Err(Error::InvalidParameter(
                     "photographic conversion matrix differs from captured input",
                 ));

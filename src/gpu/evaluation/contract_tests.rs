@@ -1,7 +1,7 @@
 use super::tests::{fixture, make_plan, make_plan_with_policy};
 use super::*;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
-use crate::gpu::photograph::test_support::{matrix, settings};
+use crate::photographic::graph::test_support::{matrix, settings};
 use crate::{gpu::evaluation::CellRegion as Rect, gpu::grading::Grading};
 
 #[test]

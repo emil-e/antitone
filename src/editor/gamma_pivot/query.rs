@@ -126,7 +126,7 @@ fn camera_samples(
         .iter()
         .map(|point| source.pixel_samples(point[0], point[1]))
         .collect::<Result<Vec<_>, _>>()?;
-    let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
+    let camera = crate::photographic::graph::PhotographGraph::camera_samples(
         evaluation::source(Arc::new(Pixels { pixels: codes })),
         field,
         &positions,
@@ -277,7 +277,7 @@ fn positive_samples(
     negative: NegativeInput,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<[f32; 4]>, Error> {
-    let readout = crate::gpu::photograph::camera_response::normalized(camera, negative)?;
+    let readout = crate::photographic::graph::camera_response::normalized(camera, negative)?;
     read(gpu, readout, cancelled)
 }
 

@@ -69,7 +69,7 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
             .unwrap()
             .unwrap()
             .remove(0);
-        let capture = crate::gpu::photograph::request::PhotographRequest::inspection(
+        let capture = crate::photographic::graph::request::PhotographRequest::inspection(
             crate::gpu::parameters::ProcessingParameters::source(),
         )
         .unwrap();

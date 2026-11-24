@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 fn rotated_frame(pitch: [f64; 2]) -> FrameRaster {
     let composition = Composition::with_crop(
@@ -38,7 +38,7 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -81,7 +81,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             .unwrap(),
         ))
         .with_definition(
-            crate::gpu::photograph::assembly::Assembly::emulation(
+            crate::photographic::graph::assembly::Assembly::emulation(
                 crate::grain::GrainSettings {
                     enabled: true,
                     size: 0.1,

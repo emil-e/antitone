@@ -31,7 +31,7 @@ impl ViewImage {
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-        request: &crate::gpu::photograph::request::PhotographRequest,
+        request: &PhotographRequest,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
         request.require_proxy(proxy)?;
@@ -51,10 +51,13 @@ impl ViewImage {
             ));
         }
         let area = spec.area;
-        let spec = spec.with_sampling(crate::acquisition::Sampling::CameraCells {
-            region: area,
-            size: proxy.dimensions(),
-        })?;
+        let spec = request.plan_sampling(
+            spec,
+            crate::acquisition::Sampling::CameraCells {
+                region: area,
+                size: proxy.dimensions(),
+            },
+        )?;
         let device = context.device();
         let camera = ProcessingSource::new_continuous(
             device,
@@ -72,6 +75,7 @@ impl ViewImage {
 
     pub(super) fn proxy_request(
         source: &Arc<ProcessingSource>,
+        capture: &PhotographRequest,
         spec: SourceRequest,
     ) -> Result<SourceRequest, Error> {
         let spec = if spec.identity.captured() {
@@ -91,10 +95,13 @@ impl ViewImage {
             ));
         }
         let area = spec.area;
-        spec.with_sampling(crate::acquisition::Sampling::CameraProxy {
-            region: area,
-            size: geometry.size(),
-        })
+        capture.plan_sampling(
+            spec,
+            crate::acquisition::Sampling::CameraProxy {
+                region: area,
+                size: geometry.size(),
+            },
+        )
     }
 
     pub(crate) fn kernels(&self) -> &Arc<ViewKernels> {
@@ -167,7 +174,7 @@ impl ViewImage {
         let mut allocations = e::Allocations::default();
         allocations.buffer(&self.pixels);
         for camera in
-            crate::gpu::photograph::PhotographGraph::resident_camera_buffers(&self.definition)
+            crate::photographic::graph::PhotographGraph::resident_camera_buffers(&self.definition)
         {
             allocations.buffer(&camera);
         }

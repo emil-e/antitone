@@ -1,5 +1,5 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::photograph::test_support::CameraFixture;
+use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use glam::{DMat3, DVec3};

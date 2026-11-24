@@ -164,7 +164,15 @@ impl Grading {
         self.layers.len() as u64 + std::mem::size_of::<AdjustmentLayerContext>() as u64
     }
 
-    pub(super) fn require_extent(&self, area: SourceRegion) -> Result<(), Error> {
+    pub(crate) fn area(&self) -> SourceRegion {
+        self.area
+    }
+
+    pub(crate) fn roll_settings(&self) -> RollSettings {
+        self.roll
+    }
+
+    pub(crate) fn require_extent(&self, area: SourceRegion) -> Result<(), Error> {
         if self.spatial && self.area != area {
             return Err(Error::Gpu(
                 "photographic grade and input coordinate extents differ".into(),
@@ -173,7 +181,7 @@ impl Grading {
         Ok(())
     }
 
-    pub(super) fn require_geometry(&self, geometry: Option<SourceGeometry>) -> Result<(), Error> {
+    pub(crate) fn require_geometry(&self, geometry: Option<SourceGeometry>) -> Result<(), Error> {
         if self.spatial {
             let geometry = geometry.ok_or_else(|| {
                 Error::Gpu("adjustment layer grade requires original-source geometry".into())

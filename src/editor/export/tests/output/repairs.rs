@@ -86,7 +86,7 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
     let limits = editor.source_services.as_ref().unwrap().device.limits();
     let requires_repair = |recipe: &crate::image_recipe::ImageRecipe| {
         use crate::gpu::evaluation::{CellRegion, Tiling};
-        let graph = crate::gpu::photograph::PhotographGraph::from_recipe(
+        let graph = crate::photographic::graph::PhotographGraph::from_recipe(
             &limits,
             crate::gpu::source::camera_source(&scan).unwrap(),
             None,

@@ -2,14 +2,15 @@ use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::view_source::SourceRequest;
 #[cfg(feature = "editor")]
 use crate::render_fixture::RenderFixture;
 
 #[cfg(feature = "editor")]
 #[test]
 fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_proxy() {
-    use crate::gpu::photograph::{PhotographGraph, request::PhotographRequest};
-    use crate::gpu::view::{RenderedView, ViewKernels, request::SourceRequest};
+    use crate::gpu::view::{RenderedView, ViewKernels};
+    use crate::photographic::graph::{PhotographGraph, request::PhotographRequest};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let size = [32, 16];
@@ -110,7 +111,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     )
     .unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-    let spec = crate::gpu::view::request::SourceRequest::inspection(frame).unwrap();
+    let spec = crate::photographic::graph::view_source::SourceRequest::inspection(frame).unwrap();
     let gate = queue.clone();
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
@@ -124,7 +125,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
         proxy
             .preview(
                 kernels.clone(),
-                &crate::gpu::photograph::request::PhotographRequest::Fixture(invalid),
+                &crate::photographic::graph::request::PhotographRequest::Fixture(invalid),
                 None,
                 spec.clone(),
                 OutputTarget::Srgb,
@@ -140,7 +141,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     let request = proxy
         .preview(
             kernels,
-            &crate::gpu::photograph::request::PhotographRequest::Fixture(valid.clone()),
+            &crate::photographic::graph::request::PhotographRequest::Fixture(valid.clone()),
             None,
             spec,
             OutputTarget::Srgb,
@@ -155,7 +156,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     let rendered = crate::gpu::view::RenderedView::from_image(
         &device,
         source,
-        crate::gpu::photograph::request::PhotographRequest::Fixture(valid),
+        crate::photographic::graph::request::PhotographRequest::Fixture(valid),
         OutputTarget::Srgb,
     )
     .unwrap();
@@ -212,7 +213,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         )
         .unwrap();
         let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-        let spec = crate::gpu::view::request::SourceRequest::new(
+        let spec = crate::photographic::graph::view_source::SourceRequest::new(
             frame,
             crate::processing::InputSettings::Digital,
             DMat3::IDENTITY,

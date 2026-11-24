@@ -83,7 +83,7 @@ fn native_output_resources() {
                 let plan = format.plan();
                 let encoding = super::area::sample_encoding(plan);
                 let layout = block_layout(composition, plan);
-                let photograph = crate::gpu::photograph::PhotographGraph::authored_original(
+                let photograph = crate::photographic::graph::PhotographGraph::authored_original(
                     &device.limits(),
                     crate::gpu::source::camera_source(&scan)?,
                     None,
@@ -98,7 +98,7 @@ fn native_output_resources() {
                         scan.area,
                     )?,
                     Default::default(),
-                    &crate::gpu::photograph::assembly::Assembly::film(
+                    &crate::photographic::graph::assembly::Assembly::film(
                         film,
                         composition.size(),
                         (1 << 60) + 17,
@@ -145,7 +145,7 @@ fn native_output_resources() {
                     composition,
                     format,
                     calculation: Some(std::sync::Arc::new({
-                        let definition = crate::gpu::photograph::assembly::Assembly::film(
+                        let definition = crate::photographic::graph::assembly::Assembly::film(
                             film,
                             composition.crop().size,
                             (1 << 60) + 17,

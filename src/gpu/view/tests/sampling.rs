@@ -1,10 +1,10 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 use crate::{
-    gpu::photograph::assembly::Assembly, halation::HalationParameters,
-    image_mtf::ImageMtfParameters,
+    halation::HalationParameters, image_mtf::ImageMtfParameters,
+    photographic::graph::assembly::Assembly,
 };
 
 // The control uses identical operations without acquisition refinement.
@@ -144,7 +144,7 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
         .into_iter()
         .flatten()
         .reduce(f64::min);
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             image = halo.compose(image)?;
             if let Some(output) = output {

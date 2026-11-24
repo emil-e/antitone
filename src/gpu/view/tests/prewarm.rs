@@ -1,7 +1,7 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
@@ -64,7 +64,7 @@ fn fresh_resident_camera_reuses_warm_programs_after_the_startup_handles_retire()
         let targets = crate::gpu::drt::Targets::new(&device, &queue)
             .await
             .unwrap();
-        crate::gpu::photograph::prewarm_viewer(&evaluation, &targets).unwrap();
+        crate::photographic::graph::prewarm_viewer(&evaluation, &targets).unwrap();
         let image = GpuImage::new_shared(
             evaluation.clone(),
             looks,
@@ -147,7 +147,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
         let context = egui::Context::default();
         let complete = |source: Arc<ViewImage>, input: &AuthoredPhotograph, target| {
             let capture =
-                crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone());
+                crate::photographic::graph::request::PhotographRequest::Fixture(input.clone());
             let (prefix, plan) = capture
                 .filtered(&device.limits(), &source.spec, source.definition.clone())
                 .unwrap();
@@ -160,9 +160,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 .evaluation()
                 .record_supplied(evaluation, vec![source.supplied().unwrap()])
                 .unwrap();
-            let spec = capture
-                .planned_request(&device.limits(), source.spec.clone(), plan)
-                .unwrap();
+            let spec = source.spec.clone().with_plan(plan);
             let region = endpoint.domain().finite().unwrap();
             let image = ViewImage::from_recorded(
                 renderer.evaluation().clone(),

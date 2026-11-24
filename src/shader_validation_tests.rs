@@ -29,7 +29,7 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 fn photographic_functions_and_masked_composition_validate() {
     validate(
         "photographic functions",
-        &gpu::photograph::shader::functions(),
+        &crate::photographic::graph::shader::functions(),
         &[],
     );
     use gpu::evaluation::*;

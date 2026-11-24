@@ -10,7 +10,7 @@ mod workflow_tests;
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Demand {
-    pub capture: crate::gpu::photograph::request::PhotographRequest,
+    pub capture: crate::photographic::graph::request::PhotographRequest,
     pub target: OutputTarget,
     pub view: Option<ViewRequest>,
     pub composition: Composition,
@@ -27,7 +27,7 @@ impl Demand {
         source: source::Context,
     ) -> Self {
         Self {
-            capture: crate::gpu::photograph::request::PhotographRequest::Fixture(input),
+            capture: crate::photographic::graph::request::PhotographRequest::Fixture(input),
             target,
             view,
             composition,
@@ -274,9 +274,7 @@ impl OriginalView {
         };
         let identity =
             crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
-        let spec = wanted
-            .capture
-            .source_request(frame)?
+        let spec = crate::photographic::graph::view_source::SourceRequest::for_frame(frame)?
             .with_identity(identity);
         if let Some(rendered) = &owner.rendered
             && Arc::ptr_eq(&rendered.image, &image)

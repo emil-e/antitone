@@ -25,7 +25,7 @@ fn candidate(
         .unwrap(),
     );
     let input = AuthoredPhotograph::from(grade).with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             film,
             Default::default(),
             source.spec.frame().composition.crop().size,
@@ -71,7 +71,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
             )
             .unwrap()
             .with_definition(
-                crate::gpu::photograph::assembly::Assembly::emulation(
+                crate::photographic::graph::assembly::Assembly::emulation(
                     GrainSettings {
                         enabled: true,
                         size: 2. / 6000. * 100.,

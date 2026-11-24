@@ -45,7 +45,7 @@ Channel gammas are proportional to their spans: a channel that travelled farther
 
 ## 4. Set shared photographic WB
 
-After setting gamma, Analyze initially estimates WB and exposure from the full eligible picture population. The [photographic graph](../src/gpu/photograph/camera_response.rs) uses that provisional grade to build a target-linear sRGB endpoint. Analyze orients and encodes those pixels for CPU segmentation. The segmentation vetoes confident sky, vegetation and earth at original WB sample sites; it does not treat other materials as neutral. Chroma comes from the original camera samples after inversion and that photograph's camera mapping, not from the previews.
+After setting gamma, Analyze initially estimates WB and exposure from the full eligible picture population. The [photographic graph](../src/photographic/graph/camera_response.rs) uses that provisional grade to build a target-linear sRGB endpoint. Analyze orients and encodes those pixels for CPU segmentation. The segmentation vetoes confident sky, vegetation and earth at original WB sample sites; it does not treat other materials as neutral. Chroma comes from the original camera samples after inversion and that photograph's camera mapping, not from the previews.
 
 Each photo with at least 256 retained sites contributes one negative mean log-chroma vote. The coordinate-wise median of these votes sets the shared Roll WB, limited to the control range. If fewer than half the photos can vote, Analyze keeps the unfiltered grade. If no photo has usable colour measurements in the initial fit, Analyze declines to install a grade.
 

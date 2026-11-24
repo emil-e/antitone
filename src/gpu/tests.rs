@@ -2,8 +2,8 @@ use crate::gpu::parameters::CameraMatrix;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::parameters::matrix_columns;
 use crate::gpu::parameters::source_preview_gain;
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
+use crate::photographic::graph::test_support::CameraFixture;
 use glam::{DMat3, DVec3, Vec4};
 
 mod adjustment_layer_performance;
@@ -18,7 +18,7 @@ mod photographic_reference;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = crate::gpu::photograph::shader::functions();
+    let shader = crate::photographic::graph::shader::functions();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.

@@ -1,5 +1,5 @@
 #![cfg(all(feature = "raw", feature = "gpu", target_os = "macos"))]
-use crate::gpu::photograph::test_support::CameraFixture;
+use crate::photographic::graph::test_support::CameraFixture;
 use crate::raw_test_support::train_raw;
 use antitone as api;
 use antitone::adjustment_layers::AdjustmentLayerSettings;

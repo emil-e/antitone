@@ -4,7 +4,7 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
-use crate::gpu::photograph::test_support::CameraFixture;
+use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use crate::raw_test_support::train_raw;

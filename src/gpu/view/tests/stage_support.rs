@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
@@ -52,7 +52,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;

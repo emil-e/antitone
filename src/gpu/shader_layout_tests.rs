@@ -1,9 +1,9 @@
-use super::*;
 use crate::gpu::{
     flat::FieldGeometry,
     grading::{AdjustmentLayerContext, AdjustmentLayerParameters},
     parameters::{CameraMatrix, ProcessingParameters},
 };
+use crate::photographic::graph::shader::functions;
 use naga::{AddressSpace, TypeInner};
 use std::mem::size_of;
 

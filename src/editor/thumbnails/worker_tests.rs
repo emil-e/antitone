@@ -75,14 +75,16 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
             .unwrap();
         let view = product.positive.as_ref().unwrap();
         let native = view.product().unwrap();
-        let crate::gpu::photograph::request::PhotographRequest::Recipe(captured) = &view.capture
+        let crate::photographic::graph::request::PhotographRequest::Recipe(captured) =
+            &view.capture
         else {
             panic!("photographic thumbnail must retain its resolved recipe")
         };
         assert_eq!(captured.neutral.reference.as_ref(), Some(&reference));
-        let program = crate::gpu::photograph::PhotographGraph::input_transform(&native.definition)
-            .unwrap()
-            .expect("thumbnail retains one source interpretation");
+        let program =
+            crate::photographic::graph::PhotographGraph::input_transform(&native.definition)
+                .unwrap()
+                .expect("thumbnail retains one source interpretation");
         assert_eq!(program.matrix(), scan.camera_to_ap1 * ev.exp2());
     }
     loader.close_and_wait().unwrap();

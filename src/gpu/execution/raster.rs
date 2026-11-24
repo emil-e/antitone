@@ -109,7 +109,7 @@ impl<'a> Request<'a> {
                 .unwrap_or_else(|| Raster::native([0, 0, self.layout[0], self.layout[1]].into()))
         });
         let device = context.device();
-        let root = crate::gpu::photograph::PhotographGraph::from_resident_fixture(
+        let root = crate::photographic::graph::PhotographGraph::from_resident_fixture(
             &device.limits(),
             self.source,
             self.input,

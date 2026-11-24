@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 const N: usize = 96;
 
@@ -124,7 +124,7 @@ fn configured_probe(
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_definition(
-            crate::gpu::photograph::assembly::Assembly::film(
+            crate::photographic::graph::assembly::Assembly::film(
                 acquisition,
                 [config.frame_extent; 2],
                 seed,
@@ -174,7 +174,7 @@ fn configured_probe(
         .unwrap(),
     );
     let input = AuthoredPhotograph::from(grade).with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             settings,
             Default::default(),
             composition.crop().size,

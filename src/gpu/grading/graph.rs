@@ -165,7 +165,7 @@ impl Grading {
 
     pub(crate) fn shader() -> String {
         [
-            crate::gpu::photograph::shader::functions(),
+            crate::photographic::graph::shader::functions(),
             include_str!("view_bindings.wgsl").to_owned(),
             include_str!("view.wgsl").to_owned(),
         ]

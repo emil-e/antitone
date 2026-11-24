@@ -1,7 +1,7 @@
 use super::*;
 use crate::gpu::evaluation as e;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_headroom() {
@@ -52,7 +52,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 scan.area,
             )
             .unwrap();
-            let capture = crate::gpu::photograph::request::PhotographRequest::Fixture(input);
+            let capture = crate::photographic::graph::request::PhotographRequest::Fixture(input);
             let original = capture
                 .neutral_input(
                     None,

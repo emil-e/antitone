@@ -26,11 +26,11 @@ use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
 use crate::gpu::execution::test_support::OutputReference;
-use crate::gpu::photograph::assembly::Assembly;
-use crate::gpu::photograph::test_effects::NeighbourEffect;
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::assembly::Assembly;
+use crate::photographic::graph::test_effects::NeighbourEffect;
 use crate::processing::InputSettings;
 use crate::rendering::OutputTarget;
 use glam::{DMat3, DVec3};
@@ -42,7 +42,7 @@ fn recipe() -> Assembly {
             radius: 0.8,
             gain: 1.4,
         };
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = neighbour.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -261,7 +261,7 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
     use crate::gpu::view::RenderedView;
     use crate::gpu::view::ViewImage;
     use crate::gpu::view::ViewKernels;
-    use crate::gpu::view::request::SourceRequest;
+    use crate::photographic::graph::view_source::SourceRequest;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let area = [100, 80, 6000, 4000].into();

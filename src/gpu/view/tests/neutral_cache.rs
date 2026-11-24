@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::interpretation::InputTransform;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
@@ -28,9 +28,11 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
             spec.clone()
                 .with_definition({
                     let operation_0 =
-                        crate::gpu::photograph::authoring_examples::TentConvolution::new(radius)
-                            .unwrap();
-                    crate::gpu::photograph::assembly::Assembly::authored(
+                        crate::photographic::graph::authoring_examples::TentConvolution::new(
+                            radius,
+                        )
+                        .unwrap();
+                    crate::photographic::graph::assembly::Assembly::authored(
                         move |mut image, output| {
                             image = operation_0.compose(image)?;
                             if let Some(output) = output {

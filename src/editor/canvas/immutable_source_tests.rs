@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::interpretation::InspectionView;
-use crate::gpu::photograph::request::PhotographRequest;
+use crate::photographic::graph::request::PhotographRequest;
 
 #[test]
 fn same_proxy_inspection_reuses_unchanged_correction_but_refreshes_changed_project_gains() {

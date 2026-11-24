@@ -185,7 +185,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
     let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
     let scalar = crate::processing::InputPipeline::new(input, matrix).unwrap();
     assert!(scalar.apply(DVec3::ZERO).unwrap().rgb.min_element() > f64::from(f32::MAX));
-    let graph = crate::gpu::photograph::PhotographGraph::authored_original(
+    let graph = crate::photographic::graph::PhotographGraph::authored_original(
         &device.limits(),
         crate::gpu::source::camera_source(&scan).unwrap(),
         None,
@@ -329,7 +329,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     }];
     let (scan, mut recipe) = crate::photo_preparation::native_image(&scan, &recipe).unwrap();
     let region = SourceRegion::from([66, 86, 9, 9]);
-    let graph = crate::gpu::photograph::RecipeGraph::originals(
+    let graph = crate::photographic::graph::RecipeGraph::originals(
         crate::gpu::source::camera_source(&scan).unwrap(),
         None,
         &recipe,
@@ -393,7 +393,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     .unwrap();
     assert_eq!(values.len(), 9);
     assert!(values.iter().flatten().all(|value| value.is_finite()));
-    let repaired = crate::gpu::photograph::RecipeGraph::originals(
+    let repaired = crate::photographic::graph::RecipeGraph::originals(
         crate::gpu::source::camera_source(&scan).unwrap(),
         None,
         &recipe,

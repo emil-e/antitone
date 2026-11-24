@@ -19,7 +19,7 @@ pub use footprints::WindowBudget;
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, feature = "gpu"))]
-use crate::gpu::photograph::assembly::Assembly;
+use crate::photographic::graph::assembly::Assembly;
 
 /// Margins measured in original developed-source cells.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

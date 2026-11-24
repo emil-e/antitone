@@ -1,3 +1,4 @@
+use crate::gpu::evaluation::{Function, Shared};
 use crate::gpu::parameters::CameraMatrix;
 use crate::gpu::source::SourceGeometry;
 use crate::{Error, flat_field::FlatField};
@@ -12,7 +13,7 @@ pub(crate) mod resources;
 /// Immutable roll resource; no expanded or corrected full-resolution source is retained.
 pub struct GpuFlatField {
     pub(super) nodes: wgpu::Buffer,
-    pub(super) field: Arc<FlatField>,
+    field: Arc<FlatField>,
     bounds: (DVec3, DVec3),
 }
 
@@ -48,6 +49,26 @@ impl GpuFlatField {
 
     pub fn field(&self) -> &Arc<FlatField> {
         &self.field
+    }
+
+    pub(crate) fn bind(
+        field: Option<&Self>,
+        geometry: Option<SourceGeometry>,
+        function: Function,
+    ) -> Result<Function, Error> {
+        Ok(match field {
+            Some(field) => {
+                let geometry = geometry.ok_or(Error::InvalidParameter(
+                    "corrected source requires geometry",
+                ))?;
+                function
+                    .with_uniform(5, &FieldGeometry::new(field, geometry))
+                    .with_shared(4, Shared::Buffer(field.nodes.clone()))
+            }
+            None => function
+                .with_uniform(5, &FieldGeometry::uncorrected(geometry))
+                .with_storage(4, bytemuck::bytes_of(&[1f32; 4]).to_vec()),
+        })
     }
 
     pub(crate) fn validate_matrix(&self, matrix: DMat3, source_gain: f64) -> Result<(), Error> {

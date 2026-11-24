@@ -67,7 +67,7 @@ fn preview_can_choose_an_existing_finer_grid_but_rejects_insufficient_or_differe
     let reads = Arc::new(AtomicUsize::new(0));
     let source = e::source(samples(reads.clone()));
     let input = input(&limits, 1.);
-    let (default, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+    let (default, _) = crate::photographic::graph::PhotographGraph::preview_with_input(
         &limits,
         source.clone(),
         None,
@@ -80,7 +80,7 @@ fn preview_can_choose_an_existing_finer_grid_but_rejects_insufficient_or_differe
         output: [8, 6],
         ..frame()
     };
-    let (finer, plan) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+    let (finer, plan) = crate::photographic::graph::PhotographGraph::preview_with_input(
         &limits,
         source.clone(),
         None,
@@ -104,7 +104,7 @@ fn preview_can_choose_an_existing_finer_grid_but_rejects_insufficient_or_differe
         },
     ] {
         assert!(
-            crate::gpu::photograph::PhotographGraph::preview_with_input(
+            crate::photographic::graph::PhotographGraph::preview_with_input(
                 &limits,
                 source.clone(),
                 None,
@@ -125,7 +125,7 @@ fn original_to_processed_definition_requires_no_device_or_source_read() {
     let samples = samples(reads.clone());
     let camera = e::source(samples.clone());
     let photographs = [1., 2.].map(|exposure| {
-        crate::gpu::photograph::PhotographGraph::preview_with_input(
+        crate::photographic::graph::PhotographGraph::preview_with_input(
             &limits,
             camera.clone(),
             None,
@@ -175,17 +175,19 @@ fn native_view_regions_follow_the_graphs_neighbourhood_contracts() {
                     .into_iter()
                     .flatten()
                     .reduce(f64::min);
-                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
-                    image = mtf.compose(image)?;
-                    if let Some(output) = output {
-                        image = output.compose(image)?;
-                    }
-                    Ok(image)
-                })
+                crate::photographic::graph::assembly::Assembly::authored(
+                    move |mut image, output| {
+                        image = mtf.compose(image)?;
+                        if let Some(output) = output {
+                            image = output.compose(image)?;
+                        }
+                        Ok(image)
+                    },
+                )
                 .with_view_pitch(pitch)
             });
         }
-        let (photo, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+        let (photo, _) = crate::photographic::graph::PhotographGraph::preview_with_input(
             &limits,
             source.clone(),
             None,
@@ -243,7 +245,7 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let context = e::Context::new(&device, e::CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
         let reads = Arc::new(AtomicUsize::new(0));
-        let (photograph, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+        let (photograph, _) = crate::photographic::graph::PhotographGraph::preview_with_input(
             &device.limits(),
             e::source(samples(reads.clone())),
             None,

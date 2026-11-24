@@ -551,8 +551,8 @@ impl Editor {
     fn thumbnail_request(
         &self,
         source: &Source,
-    ) -> Result<crate::gpu::photograph::request::PhotographRequest, String> {
-        use crate::gpu::photograph::request::PhotographRequest;
+    ) -> Result<crate::photographic::graph::request::PhotographRequest, String> {
+        use crate::photographic::graph::request::PhotographRequest;
         if let Some((_, parameters)) = self
             .document
             .thumbnails
@@ -617,7 +617,7 @@ pub(super) struct NavigationImage<'a> {
 
 pub(super) struct NavigationPhotograph<'a> {
     image: Arc<GpuImage>,
-    parameters: Option<crate::gpu::photograph::request::PhotographRequest>,
+    parameters: Option<crate::photographic::graph::request::PhotographRequest>,
     composition: Composition,
     correction: correction::Resources,
     presentation: &'a Result<Presentation, Error>,

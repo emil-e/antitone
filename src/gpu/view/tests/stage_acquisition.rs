@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
@@ -26,7 +26,7 @@ fn capture(
         .unwrap(),
     ))
     .with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             film,
             Default::default(),
             frame_size,

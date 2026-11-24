@@ -1,6 +1,6 @@
 //! Bounded authored workload; run alone for comparable cold/warm and allocator observations.
 use super::*;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{adjustment_layers::AdjustmentLayer, gpu::test_inputs::AuthoredPhotograph};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -90,7 +90,7 @@ fn acquisition_execution_resources() {
                 )
                 .unwrap(),
             ))
-            .with_definition(crate::gpu::photograph::assembly::Assembly::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
+            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
         };
         let input = make_input(0.);
         let spec = SourceRequest::new( frame, InputSettings::Digital, matrix, None)

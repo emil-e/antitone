@@ -75,7 +75,7 @@ impl PhotographGraph {
         };
         grading.require_geometry(geometry)?;
         if let Some(geometry) = geometry.filter(|geometry| geometry.is_pair()) {
-            let area = grading.area;
+            let area = grading.area();
             if geometry.regions().any(|region| {
                 region.x < area.x
                     || region.y < area.y

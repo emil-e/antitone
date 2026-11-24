@@ -6,8 +6,8 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::view::request::SourceRequest;
 use crate::gpu::{drt, evaluation, lut3d::Looks};
+use crate::photographic::graph::view_source::SourceRequest;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
@@ -15,7 +15,7 @@ mod tests;
 #[cfg(test)]
 mod workflow_tests;
 
-use crate::gpu::photograph::request::PhotographRequest;
+use crate::photographic::graph::request::PhotographRequest;
 
 /// One captured view request and the immutable pixels needed to produce it.
 pub(super) struct Demand {

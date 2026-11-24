@@ -477,7 +477,7 @@ fn original_requests_and_scopes_capture_the_same_immutable_stack_and_reject_stal
         let layout = editor.document.visit.canvas.last_layout.unwrap().0;
         let raster = layout.physical_frame_raster(1.);
         let demand = original_view::Demand {
-            capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+            capture: crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(
                 editor
                     .positive_recipe(
                         editor.input(),
@@ -503,7 +503,7 @@ fn original_requests_and_scopes_capture_the_same_immutable_stack_and_reject_stal
         assert_eq!(request.demand.target, editor.document.target());
         assert!(matches!(
             request.demand.capture,
-            crate::gpu::photograph::request::PhotographRequest::Recipe(_)
+            crate::photographic::graph::request::PhotographRequest::Recipe(_)
         ));
         let (captured, view) = (
             request.demand.capture.processing(&device.limits()).unwrap(),
@@ -570,9 +570,9 @@ fn original_requests_and_scopes_capture_the_same_immutable_stack_and_reject_stal
 #[test]
 fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
     use crate::gpu::evaluation::Value;
-    use crate::gpu::photograph::request::PhotographRequest;
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use crate::image_recipe::ImageRecipe;
+    use crate::photographic::graph::request::PhotographRequest;
 
     use std::{sync::Weak, time::Instant};
 

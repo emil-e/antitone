@@ -56,7 +56,7 @@ impl GpuImage {
         let evaluation = evaluation::Context::new(device, Default::default());
         let looks = Arc::new(Looks::new(device));
         let targets = drt::Targets::new(device, queue).await?;
-        crate::gpu::photograph::prewarm_viewer(&evaluation, &targets)?;
+        crate::photographic::graph::prewarm_viewer(&evaluation, &targets)?;
         Self::new_shared(
             evaluation,
             looks,

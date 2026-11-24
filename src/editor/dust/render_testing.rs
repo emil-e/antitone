@@ -136,7 +136,7 @@ impl Editor {
         }
         let scan = self.source_context().unwrap().scan().unwrap();
         let (scan, capture) = crate::photo_preparation::native_image(&scan, &capture).unwrap();
-        let graph = crate::gpu::photograph::RecipeGraph::originals(
+        let graph = crate::photographic::graph::RecipeGraph::originals(
             crate::gpu::source::camera_source(&scan).unwrap(),
             self.correction()
                 .prepared()

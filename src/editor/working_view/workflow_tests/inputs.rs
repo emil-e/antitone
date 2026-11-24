@@ -92,7 +92,7 @@ fn working_request_awaits_its_captured_correction_without_an_inspector_observer(
                 .ancestors()
                 .find_map(|node| {
                     (node.operation().as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<crate::gpu::photograph::operations::Camera>()
+                        .downcast_ref::<crate::photographic::graph::operations::Camera>()
                 })
                 .expect("completed graph must contain corrected camera light");
             assert!(Arc::ptr_eq(
@@ -133,7 +133,7 @@ fn replacing_a_working_request_does_not_wait_for_the_retired_corrections_prepara
             );
             assert!(working.error.is_none());
             let frame = working.frame.as_ref().unwrap();
-            assert!(crate::gpu::photograph::PhotographGraph::has_correction(
+            assert!(crate::photographic::graph::PhotographGraph::has_correction(
                 &frame.source.definition,
                 None
             ));

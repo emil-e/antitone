@@ -3,9 +3,7 @@
 use crate::Error;
 use crate::gpu::evaluation::*;
 use crate::gpu::{
-    flat::{FieldGeometry, GpuFlatField},
-    interpretation::InputTransform,
-    parameters::ProcessingParameters,
+    flat::GpuFlatField, interpretation::InputTransform, parameters::ProcessingParameters,
     source::SourceGeometry,
 };
 use crate::processing::{InputSettings, RollSettings};
@@ -37,14 +35,14 @@ impl Hash for Interpretation {
         std::mem::discriminant(self).hash(state);
         match self {
             Self::Program(program) => {
-                std::mem::discriminant(&program.input).hash(state);
+                std::mem::discriminant(&program.input()).hash(state);
                 if let InputSettings::Negative {
                     dmin,
                     dmax,
                     response,
                     gamma,
                     balance,
-                } = program.input
+                } = program.input()
                 {
                     for anchor in [dmin, dmax] {
                         anchor.is_some().hash(state);
@@ -62,7 +60,7 @@ impl Hash for Interpretation {
                         hash_f64(control, state);
                     }
                 }
-                for coefficient in program.matrix.to_cols_array() {
+                for coefficient in program.matrix().to_cols_array() {
                     hash_f64(coefficient, state);
                 }
             }
@@ -76,7 +74,7 @@ impl Interpretation {
     fn parameters(&self) -> Result<ProcessingParameters, Error> {
         match self {
             Self::Program(program) => ProcessingParameters::interpret(
-                program.input,
+                program.input(),
                 RollSettings::default(),
                 glam::DMat3::IDENTITY,
             ),
@@ -122,7 +120,7 @@ impl CameraInput {
         field: Option<Arc<GpuFlatField>>,
     ) -> Self {
         Self {
-            matrix: program.matrix,
+            matrix: program.matrix(),
             field,
             continuous: source.continuous,
             mapping: Mapping::Resident(source.geometry()),
@@ -165,18 +163,6 @@ impl Captured {
             mapping,
         }))
     }
-
-    pub(in crate::gpu) fn bind_field(
-        &self,
-        function: Function,
-        geometry: &FieldGeometry,
-    ) -> Function {
-        let function = function.with_uniform(5, geometry);
-        match &self.field {
-            Some(field) => function.with_shared(4, Shared::Buffer(field.nodes.clone())),
-            None => function.with_storage(4, bytemuck::bytes_of(&[1f32; 4]).to_vec()),
-        }
-    }
 }
 
 pub struct Camera {
@@ -213,7 +199,7 @@ impl Camera {
                 .captured
                 .field
                 .as_ref()
-                .map(|field| field.field.clone()),
+                .map(|field| field.field().clone()),
             original_mapping,
             geometry,
         }
@@ -245,15 +231,6 @@ impl Operation for Camera {
         } else {
             capture.mapping.geometry(output)?
         };
-        let field = match &capture.field {
-            Some(field) => FieldGeometry::new(
-                field,
-                geometry.ok_or(Error::InvalidParameter(
-                    "corrected source requires geometry",
-                ))?,
-            ),
-            None => FieldGeometry::uncorrected(geometry),
-        };
         let source = if original {
             "source=vec2u(floor(position));"
         } else {
@@ -261,11 +238,14 @@ impl Operation for Camera {
         };
         let code = format!(
             "{}\nfn pixel(cell:vec2i, position:vec2f, value:vec4f)->vec4f {{ if value.w<0.0 {{return value;}} var source=vec2u(0u); {source} return vec4f(camera_light_at(value.rgb,source),0.0); }}",
-            crate::gpu::photograph::shader::functions()
+            crate::photographic::graph::shader::functions()
         );
-        let bindings = capture
-            .bind_field(Function::new(code.clone(), "pixel"), &field)
-            .bindings;
+        let bindings = GpuFlatField::bind(
+            capture.field.as_deref(),
+            geometry,
+            Function::new(code.clone(), "pixel"),
+        )?
+        .bindings;
         value::Calculation::new(
             domain,
             output,
@@ -344,7 +324,7 @@ impl Native {
         Function::new(
             format!(
                 "{}\n{}",
-                crate::gpu::photograph::shader::functions(),
+                crate::photographic::graph::shader::functions(),
                 include_str!("native.wgsl")
             ),
             "native_response",
@@ -426,7 +406,7 @@ impl Working {
         Function::new(
             format!(
                 "{}\n{}",
-                crate::gpu::photograph::shader::functions(),
+                crate::photographic::graph::shader::functions(),
                 include_str!("working.wgsl")
             ),
             "native_to_working",

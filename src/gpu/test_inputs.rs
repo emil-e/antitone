@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub struct AuthoredPhotograph {
     processing: Processing,
     luts: crate::looks::LutChain,
-    definition: Arc<crate::gpu::photograph::assembly::Assembly>,
+    definition: Arc<crate::photographic::graph::assembly::Assembly>,
     pub(crate) repairs: Vec<crate::dust_repair::Repair>,
     pub(crate) replacements: Vec<super::repairs::fixtures::Replacement>,
     pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
@@ -127,8 +127,15 @@ impl AuthoredPhotograph {
         matrix: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        super::photograph::admission::prepare(limits, input.into(), roll, layers, matrix, area)
-            .map(|_| ())
+        crate::photographic::graph::admission::prepare(
+            limits,
+            input.into(),
+            roll,
+            layers,
+            matrix,
+            area,
+        )
+        .map(|_| ())
     }
 
     pub(crate) fn validate_controls(&self, limits: &wgpu::Limits) -> Result<(), Error> {
@@ -138,7 +145,7 @@ impl AuthoredPhotograph {
             area,
         } = &self.processing
         {
-            super::photograph::admission::prepare(
+            crate::photographic::graph::admission::prepare(
                 limits,
                 source.input,
                 grading.roll,
@@ -199,7 +206,7 @@ impl AuthoredPhotograph {
         )?
         .with_luts(recipe.luts.clone())
         .with_definition({
-            let mut definition = super::photograph::assembly::Assembly::default();
+            let mut definition = crate::photographic::graph::assembly::Assembly::default();
             definition.resolve_source_scale(recipe)?;
             definition
         });
@@ -226,7 +233,10 @@ impl AuthoredPhotograph {
         &self.luts
     }
 
-    pub fn with_definition(mut self, pipeline: crate::gpu::photograph::assembly::Assembly) -> Self {
+    pub fn with_definition(
+        mut self,
+        pipeline: crate::photographic::graph::assembly::Assembly,
+    ) -> Self {
         self.definition = Arc::new(if self.is_positive() {
             pipeline
         } else {
@@ -235,7 +245,7 @@ impl AuthoredPhotograph {
         self
     }
 
-    pub(crate) fn definition(&self) -> crate::gpu::photograph::assembly::Assembly {
+    pub(crate) fn definition(&self) -> crate::photographic::graph::assembly::Assembly {
         self.definition.as_ref().clone()
     }
 }
@@ -362,8 +372,8 @@ mod halation_tests;
 mod tests {
     use super::*;
     use crate::{
-        gpu::photograph::assembly::Assembly,
         grain::{GrainPreset, GrainSettings},
+        photographic::graph::assembly::Assembly,
     };
 
     #[cfg(all(

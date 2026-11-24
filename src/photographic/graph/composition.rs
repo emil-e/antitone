@@ -216,7 +216,7 @@ impl<'a> RecipeGraph<'a> {
     fn interpretation(&self) -> Result<Assembly, Error> {
         let program = InputTransform::from_recipe(&self.recipe.neutral)?;
         let mut camera = self.source.input.clone();
-        camera.matrix = program.matrix;
+        camera.matrix = program.matrix();
         Ok(Assembly::captured(Captured::new(
             camera,
             Interpretation::Program(program),
@@ -232,7 +232,7 @@ impl<'a> RecipeGraph<'a> {
         let program = InputTransform::from_recipe(&self.recipe.neutral)?;
         let area = self.recipe.neutral.source_development.active_area().into();
         let mut camera = self.source.input.clone();
-        camera.matrix = program.matrix;
+        camera.matrix = program.matrix();
         let mut grading = Grading::new(limits, self.recipe.roll, self.recipe.grade.clone(), area)?
             .for_grid(coverage);
         if let Mapping::Resident(geometry) = camera.mapping {
@@ -562,6 +562,33 @@ impl Assembly {
         self.processed(graded, None)
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn processing_plan(
+        &self,
+        source: &super::view_source::SourceRequest,
+    ) -> Result<crate::acquisition::Plan, Error> {
+        use crate::acquisition::{Plan, Request};
+
+        let available = source.plan();
+        let sampling = available.sampling();
+        let wanted = self.view_sampling(source.frame(), sampling);
+        if !wanted.is_ok_and(|wanted| {
+            (0..2).all(|i| available.output().output[i] >= wanted.plan.output().output[i])
+        }) {
+            return Err(Error::InvalidParameter(
+                "acquired view grid is too coarse for processing",
+            ));
+        }
+        Plan::for_graph(
+            Request {
+                output: available.output(),
+                sampling,
+            },
+            |input| self.sampling_image(input),
+        )?
+        .using_input(available)
+    }
+
     #[cfg(any(test, feature = "editor"))]
     pub(crate) fn view_sampling(
         &self,
@@ -629,7 +656,7 @@ impl PhotographGraph {
     #[cfg(feature = "editor")]
     pub(crate) fn filtered_recipe(
         limits: &wgpu::Limits,
-        spec: &crate::gpu::view::request::SourceRequest,
+        spec: &crate::photographic::graph::view_source::SourceRequest,
         neutral: Value,
         recipe: &ImageRecipe,
     ) -> Result<(Value, crate::acquisition::Plan), Error> {
@@ -642,15 +669,15 @@ impl PhotographGraph {
         }
         admission::prepare(
             limits,
-            program.input,
+            program.input(),
             recipe.roll,
             &recipe.grade,
-            program.matrix,
+            program.matrix(),
             area,
         )?;
         let mut assembly = Assembly::filtered(grading.for_grid(neutral.domain().grid.coverage));
         assembly.resolve_source_scale(recipe)?;
-        let plan = spec.processing_plan(&assembly)?;
+        let plan = assembly.processing_plan(spec)?;
         let output = ViewOutput::new(spec.frame(), plan.output(), neutral.domain().grid.coverage);
         let finished = assembly.finish(neutral, Some(output))?;
         Ok((finished.processed, plan))
@@ -714,7 +741,7 @@ impl PhotographGraph {
         Assembly::photographic(
             limits,
             CameraInput {
-                matrix: program.matrix,
+                matrix: program.matrix(),
                 field,
                 continuous: true,
                 mapping: Mapping::Originals,

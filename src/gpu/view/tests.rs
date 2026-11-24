@@ -2,7 +2,7 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::processing::Calibration;
 use crate::processing::{InputSettings, RollSettings};
 use crate::{

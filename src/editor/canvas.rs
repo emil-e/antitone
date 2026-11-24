@@ -1,5 +1,5 @@
 use super::*;
-use crate::{gpu::photograph::request::PhotographRequest, viewport::CanvasLayout};
+use crate::{photographic::graph::request::PhotographRequest, viewport::CanvasLayout};
 
 #[cfg(test)]
 mod immutable_source_tests;
@@ -663,7 +663,7 @@ impl Editor {
         &mut self,
         proxy: &crate::viewer::GpuProxy,
         geometry: CanvasLayout,
-        capture: &crate::gpu::photograph::request::PhotographRequest,
+        capture: &crate::photographic::graph::request::PhotographRequest,
         source_outside_frame: bool,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,

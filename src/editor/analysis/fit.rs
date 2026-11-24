@@ -1,6 +1,7 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::{
-    gpu::{drt, evaluation, photograph::camera_response},
+    gpu::{drt, evaluation},
+    photographic::graph::camera_response,
     rendering::OutputTarget,
     roll_analysis::gpu::{CameraSampler, ResponseModel},
 };
@@ -576,7 +577,7 @@ impl Fit {
                 return Ok(None);
             }
             let record = candidate.project.source(*id)?;
-            crate::gpu::photograph::admission::prepare(
+            crate::photographic::graph::admission::prepare(
                 &self.evaluation.device().limits(),
                 candidate.project.input,
                 candidate.project.roll,

@@ -117,7 +117,7 @@ impl<'a> CameraSampler<'a> {
             indices: indices.into(),
             domain,
         }));
-        crate::gpu::photograph::PhotographGraph::camera_samples(
+        crate::photographic::graph::PhotographGraph::camera_samples(
             codes,
             self.field.clone(),
             &positions,

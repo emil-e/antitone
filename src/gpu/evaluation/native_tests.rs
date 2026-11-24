@@ -61,7 +61,7 @@ fn case(
         .unwrap(),
     ))
     .with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             film,
             Default::default(),
             composition.crop().size,

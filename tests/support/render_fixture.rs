@@ -59,7 +59,7 @@ impl RenderFixture {
             looks,
             evaluation,
         });
-        antitone::gpu::photograph::prewarm_viewer(&renderer.evaluation, &renderer.drt)?;
+        antitone::photographic::graph::prewarm_viewer(&renderer.evaluation, &renderer.drt)?;
         Ok(renderer)
     }
 }

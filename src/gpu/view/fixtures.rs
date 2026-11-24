@@ -7,6 +7,12 @@ mod authoring;
 
 pub(crate) type FixtureDisplay = (Arc<crate::gpu::lut3d::Looks>, Arc<crate::gpu::drt::Targets>);
 
+impl SourceRequest {
+    pub fn underlay(&self) -> Result<Self, Error> {
+        self.clone().with_frame(underlay_frame(self.frame())?)
+    }
+}
+
 impl ViewImage {
     pub(super) fn from_neutral_samples(
         spec: SourceRequest,
@@ -137,12 +143,9 @@ impl ViewImage {
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
         let device = context.device().clone();
-        let spec = Self::proxy_request(&source, spec)?;
-        let (spec, root) = PhotographRequest::Fixture(input.clone()).sampled_prefix(
-            &source,
-            input.field.clone(),
-            spec,
-        )?;
+        let capture = PhotographRequest::Fixture(input.clone());
+        let spec = Self::proxy_request(&source, &capture, spec)?;
+        let (spec, root) = capture.sampled_prefix(&source, input.field.clone(), spec)?;
         let region = spec.input_region()?;
         let evaluation = context.request(
             root.clone(),
@@ -354,11 +357,7 @@ impl ViewImage {
             Self::evaluation(context, root.clone())?,
             vec![source.supplied()?],
         )?;
-        let spec = capture.planned_request(
-            &source.context.device().limits(),
-            source.spec.clone(),
-            plan,
-        )?;
+        let spec = source.spec.clone().with_plan(plan);
         let mut image = Self::from_recorded_fixture(
             source.context.clone(),
             source

@@ -3,7 +3,7 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     cache_observation as observation,

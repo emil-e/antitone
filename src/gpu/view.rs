@@ -4,12 +4,12 @@ use crate::Error;
 #[cfg(test)]
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::ProcessingSource;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
 use crate::grain::GrainSettings;
+use crate::photographic::graph::request::PhotographRequest;
 #[cfg(test)]
 use crate::scan::Scan;
 use crate::{
@@ -27,10 +27,9 @@ mod composite;
 mod fixtures;
 mod image;
 pub(crate) mod rendering;
-pub mod request;
 mod storage;
 
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use storage::uniform;
 
 pub struct ViewKernels {
@@ -52,6 +51,14 @@ impl ViewKernels {
     }
 }
 
+fn underlay_frame(detail: FrameRaster) -> Result<FrameRaster, Error> {
+    let mut frame = FrameRaster::full(detail.composition)?;
+    // Navigation needs broad coverage, not the detail frame's pixel density.
+    let scale = (f64::from(frame.output[0].max(frame.output[1])) / 1024.).max(1.);
+    frame.output = frame.output.map(|n| (f64::from(n) / scale).ceil() as u32);
+    Ok(frame)
+}
+
 pub use image::ViewImage;
 
 /// One immutable target-linear raster and its exact logical authority. Viewer/scopes share this.
@@ -71,7 +78,7 @@ impl RenderedView {
     #[cfg(test)]
     pub fn has_correction(&self, field: Option<&Arc<GpuFlatField>>) -> bool {
         self.product.as_ref().is_some_and(|graded| {
-            crate::gpu::photograph::PhotographGraph::has_correction(&graded.definition, field)
+            crate::photographic::graph::PhotographGraph::has_correction(&graded.definition, field)
         })
     }
 
@@ -307,7 +314,7 @@ impl RenderedView {
             return false;
         };
         if a.pixels == b.pixels
-            || crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+            || crate::photographic::graph::PhotographGraph::shares_resident_camera(
                 &a.definition,
                 &b.definition,
             )
@@ -359,7 +366,7 @@ impl RenderedView {
                 a.definition.ancestors().any(|left| {
                     let operation = left.operation().as_ref() as &dyn std::any::Any;
                     (left.source().is_some()
-                        || operation.is::<crate::gpu::photograph::operations::ResidentCamera>())
+                        || operation.is::<crate::photographic::graph::operations::ResidentCamera>())
                         && b.definition
                             .ancestors()
                             .any(|right| left.same_definition(right))

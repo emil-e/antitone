@@ -12,8 +12,8 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::view::request::SourceRequest;
 use crate::gpu_export::authored::Request;
+use crate::photographic::graph::view_source::SourceRequest;
 use std::time::{Duration, Instant};
 
 #[test]

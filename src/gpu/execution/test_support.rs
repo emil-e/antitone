@@ -1,15 +1,13 @@
 //! Authored original-cell arguments retained by fixtures for independent controls and comparisons.
 
 use super::*;
+use crate::photographic::graph::PhotographGraph;
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::Composition,
-    gpu::photograph::assembly::Assembly,
-    gpu::{
-        flat::GpuFlatField, grading::Grading, interpretation::InputTransform,
-        photograph::PhotographGraph,
-    },
+    gpu::{flat::GpuFlatField, grading::Grading, interpretation::InputTransform},
+    photographic::graph::assembly::Assembly,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::Scan,
@@ -69,7 +67,7 @@ impl OriginalControls<'_> {
         )?;
         let definition = match self.output {
             OutputReference::SceneReferred => photograph.processed,
-            OutputReference::DisplayReferred(target) => crate::gpu::photograph::display_output(
+            OutputReference::DisplayReferred(target) => crate::photographic::graph::display_output(
                 photograph.processed,
                 &self.luts,
                 &renderer.looks,

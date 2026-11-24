@@ -47,7 +47,7 @@ fn original_request_is_readonly_and_its_owner_rejects_departed_completion() {
         let captured = owner.request().unwrap();
         assert!(
             captured.demand.capture
-                == crate::gpu::photograph::request::PhotographRequest::Fixture(input)
+                == crate::photographic::graph::request::PhotographRequest::Fixture(input)
         );
         assert!(!owner.refining(), "capturing input does not stage work");
         let completion = captured.begin().unwrap();

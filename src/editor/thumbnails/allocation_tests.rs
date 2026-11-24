@@ -1,8 +1,9 @@
 use super::*;
 use crate::gpu::evaluation::{BufferImage, ImageDelivery};
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::{ProcessingSource, SourceGeometry};
-use crate::gpu::view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest};
+use crate::gpu::view::{RenderedView, ViewImage, ViewKernels};
+use crate::photographic::graph::request::PhotographRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
@@ -52,14 +53,16 @@ fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
         )
         .unwrap();
         frame.output = size.map(|v| v as u32);
-        let spec = SourceRequest::for_recipe(frame, &recipe)
-            .unwrap()
-            .with_sampling(crate::acquisition::Sampling::CameraCells {
-                region: area,
-                size: frame.output,
-            })
-            .unwrap();
         let capture = PhotographRequest::Recipe(recipe.clone());
+        let spec = capture
+            .plan_sampling(
+                SourceRequest::for_frame(frame).unwrap(),
+                crate::acquisition::Sampling::CameraCells {
+                    region: area,
+                    size: frame.output,
+                },
+            )
+            .unwrap();
         let (definition, spec) = capture
             .sampled_output(
                 &device.limits(),

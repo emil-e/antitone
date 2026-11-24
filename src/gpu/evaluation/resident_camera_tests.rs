@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::photograph::PhotographGraph;
+use crate::photographic::graph::PhotographGraph;
 
 mod regions;
 use crate::adjustment_layers::AdjustmentLayer;
@@ -73,7 +73,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let size = [13, 11];
-    let matrix = crate::gpu::photograph::test_support::matrix();
+    let matrix = crate::photographic::graph::test_support::matrix();
     for region in [
         SourceRegion::from([23, 37, 13, 11]),
         SourceRegion::from([23, 37, 31, 25]),
@@ -344,7 +344,7 @@ fn resident_camera_execution_resources() {
         let region = SourceRegion::from([17, 29, side, side]);
         let renderer =
             pollster::block_on(crate::render_fixture::RenderFixture::new(device, queue)).unwrap();
-        let matrix = crate::gpu::photograph::test_support::matrix();
+        let matrix = crate::photographic::graph::test_support::matrix();
         let values: Vec<_> = (0..side * side)
             .map(|i| {
                 let x = (i % side) as f32 / side as f32;
@@ -382,7 +382,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = AuthoredPhotograph::from(pipeline.clone())
-            .with_definition(crate::gpu::photograph::assembly::Assembly::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
+            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();
@@ -425,7 +425,7 @@ fn resident_camera_execution_resources() {
                         renderer.evaluation.clone(),
                     )
                     .unwrap();
-                    crate::gpu::photograph::test_support::CameraFixture::with_context(renderer.evaluation.clone())
+                    crate::photographic::graph::test_support::CameraFixture::with_context(renderer.evaluation.clone())
                         .encode_grade(device, &mut encoder, &source, &output, &pipeline)
                         .unwrap();
                     prepared

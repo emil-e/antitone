@@ -358,7 +358,8 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                     )
                     .unwrap();
                 let capture =
-                    crate::gpu::photograph::request::PhotographRequest::inspection(source).unwrap();
+                    crate::photographic::graph::request::PhotographRequest::inspection(source)
+                        .unwrap();
                 let calculation = selected.capture_calculation(&capture, None).unwrap();
                 assert!(
                     selected
