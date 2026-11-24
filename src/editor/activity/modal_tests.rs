@@ -9,6 +9,43 @@ use crate::{
 };
 
 #[test]
+fn a_decision_gets_escape_before_the_activity_underneath_it() {
+    use crate::editor::ui::{self, test_support::key};
+
+    with_application(fixture(), |app| {
+        let signal = Cancellation::default();
+        let (activity, _decision) = app.update(|editor| {
+            editor.activities.freeze_time();
+            let activity = editor
+                .activities
+                .start(Options::new("Working").modal().cancellable(
+                    "Stop work",
+                    "Stopping",
+                    signal.clone(),
+                ));
+            let decision = editor.dialogs.show(|context, id, escape| {
+                ui::DecisionDialog::new("Continue?", "Decide before continuing.", "Continue")
+                    .show(context, id, escape)
+            });
+            (activity, decision)
+        });
+        let context = egui::Context::default();
+        app_frame(app, &context, vec![]);
+        app_frame(app, &context, vec![]);
+        assert!(app.read(|editor| editor.dialogs.is_open()));
+
+        app_frame(app, &context, key(egui::Key::Escape));
+        assert!(!app.read(|editor| editor.dialogs.is_open()));
+        assert!(!signal.is_cancelled());
+
+        app_frame(app, &context, key(egui::Key::Escape));
+        assert!(signal.is_cancelled());
+        assert!(app.read(|editor| editor.workspace_input.is_blocked()));
+        drop(activity);
+    });
+}
+
+#[test]
 fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result() {
     let mut editor = with_document_services(fixture());
     add_ready_fixture(&mut editor);

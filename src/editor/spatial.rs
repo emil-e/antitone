@@ -146,7 +146,8 @@ impl Editor {
                     cancelled.wait().await;
                     None
                 };
-                let result = futures_lite::future::or(async { Some(work.await) }, stop).await;
+                // Prefer an already requested cancellation to a result ready on the same poll.
+                let result = futures_lite::future::or(stop, async { Some(work.await) }).await;
 
                 drop(activity);
                 cx.update(|editor| match result {

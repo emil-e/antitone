@@ -133,8 +133,12 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_a
                     .unwrap()
                     .1
                     .center();
-                for pressed in [true, false] {
-                    app_frame(editor, &context, pointer(cancel, pressed));
+                if tab == 0 {
+                    for pressed in [true, false] {
+                        app_frame(editor, &context, pointer(cancel, pressed));
+                    }
+                } else {
+                    app_frame(editor, &context, key(egui::Key::Escape));
                 }
                 assert!(editor.interaction_blocked() && editor.analysis_fitting());
                 assert!(
