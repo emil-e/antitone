@@ -356,6 +356,19 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.read(|editor| assert_eq!(editor.auto_crop_margin, 0.5));
         h.read(|editor| assert_eq!(editor.auto_crop_preview(source), initial));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
+        let active_photo = h.read(|editor| {
+            let id = editor.document.visit.current_source.unwrap();
+            editor
+                .document
+                .source_path(id)
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        });
+        h.get_by_label(&active_photo).click();
+        h.step();
         h.key_press(egui::Key::Delete);
         h.step();
         h.read(|editor| assert!(editor.dialogs.is_open()));

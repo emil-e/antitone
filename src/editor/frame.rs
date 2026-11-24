@@ -94,8 +94,8 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-        file_action: &mut Option<FileAction>,
         dialog_escape_available: bool,
+        workspace_surface: Option<egui::Id>,
     ) {
         if self.document.roll_order.drag.is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -112,7 +112,7 @@ impl Editor {
         });
         self.fullscreen_shortcuts(ui, text_was_focused, dialog_escape_available);
         self.analysis_shortcuts(ui, cx, text_was_focused, dialog_escape_available);
-        self.workspace_shortcuts(ui, cx, file_action, text_was_focused);
+        self.workspace_shortcuts(ui, cx, text_was_focused, workspace_surface);
     }
 
     fn analysis_shortcuts(
@@ -155,20 +155,31 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-        file_action: &mut Option<FileAction>,
         text_was_focused: bool,
+        workspace_surface: Option<egui::Id>,
     ) {
-        if !self.workspace_input.is_blocked()
-            && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
-            && !ui.ctx().egui_wants_keyboard_input()
-            && !egui::Popup::is_any_open(ui.ctx())
+        if self.workspace_input.is_blocked()
+            || (text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
+            || egui::Popup::is_any_open(ui.ctx())
         {
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
-                self.with_tool_viewport(Viewport::fit);
-            }
+            return;
+        }
+
+        if !ui.ctx().text_edit_focused()
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
+        {
+            self.with_tool_viewport(Viewport::fit);
+        }
+        if ui.memory(|memory| {
+            memory
+                .focused()
+                .is_none_or(|id| Some(id) == workspace_surface)
+        }) {
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);
-            self.selection_shortcuts(ui, cx, file_action);
+            if let Some(step) = roll_selection::take_navigation_step(ui.ctx()) {
+                self.browse_adjacent_roll_photo(step, cx);
+            }
         }
     }
 
@@ -199,54 +210,6 @@ impl Editor {
             {
                 self.dispatch_tool(tool::Action::Primary, cx);
                 ui.ctx().request_repaint();
-            }
-        }
-    }
-
-    fn selection_shortcuts(
-        &mut self,
-        ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
-        file_action: &mut Option<FileAction>,
-    ) {
-        let adjustment_delete = self.adjustment_layer_owns_delete();
-        if adjustment_delete
-            && ui.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-            })
-        {
-            self.delete_selected_adjustment_layer(cx);
-        }
-        if !self.dusting()
-            && !adjustment_delete
-            && !self.editing()
-            && ui.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-            })
-        {
-            *file_action = Some(FileAction::Remove);
-        }
-        if !self.document.state.project.order.is_empty() {
-            let previous = ui
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
-            let next = ui
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
-            if previous || next {
-                let order = self.document.displayed_order();
-                let active = order
-                    .iter()
-                    .position(|id| Some(*id) == self.document.visit.current_source)
-                    .unwrap_or(0);
-                let index = if previous {
-                    active.saturating_sub(1)
-                } else {
-                    (active + 1).min(order.len() - 1)
-                };
-                if index != active {
-                    self.select_roll_photo(index, egui::Modifiers::NONE, cx);
-                }
             }
         }
     }

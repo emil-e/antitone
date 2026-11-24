@@ -64,7 +64,6 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
                 .map(str::to_owned);
             editor.replace_photo_scope(editor.document.visit.current_source);
             assert!(!editor.masking());
-            assert!(!editor.adjustment_layer_owns_delete());
             assert!(!editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(
                 editor.adjustment_layer_target(),

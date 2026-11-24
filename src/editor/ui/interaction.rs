@@ -1,4 +1,15 @@
-use egui::{Response, Ui};
+use egui::{Key, Modifiers, Response, Ui};
+
+pub(in crate::editor) fn focused_delete(response: &Response) -> bool {
+    if !response.enabled() || !response.has_focus() || egui::Popup::is_any_open(&response.ctx) {
+        return false;
+    }
+    response.ctx.input_mut(|input| {
+        let delete = input.consume_key(Modifiers::NONE, Key::Delete);
+        let backspace = input.consume_key(Modifiers::NONE, Key::Backspace);
+        delete || backspace
+    })
+}
 
 /// egui 0.36 retains cancelled text for a second lost-focus pass; reject both writes.
 pub(in crate::editor) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {

@@ -398,7 +398,6 @@ fn independent_tool_start_preserves_layer_workspace() {
             editor.document.visit.adjustment_layers.rename = Some(rename.clone());
             editor.document.visit.adjustment_layers.show_coverage = true;
             let before = editor.document.state.project.clone();
-            assert!(editor.adjustment_layer_owns_delete());
 
             if dust {
                 editor.begin_dust_cleanup();
@@ -409,7 +408,6 @@ fn independent_tool_start_preserves_layer_workspace() {
             }
 
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
-            assert!(editor.adjustment_layer_owns_delete());
             assert_eq!(editor.document.visit.adjustment_layers.rename, Some(rename));
             assert!(editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(editor.document.state.project, before);

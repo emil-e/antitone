@@ -54,6 +54,16 @@ fn filmstrip_sort_controls_navigation_and_reordering() {
                 < h.get_by_label("frame10.dng").rect().left()
         );
 
+        h.get_by_label("100%").click();
+        h.step();
+        h.get_by_label("frame10.dng").click();
+        h.step();
+        assert!(h.get_by_label("frame10.dng").is_focused());
+        h.read(|e| assert!(e.active_canvas().viewport.zoom.is_some()));
+        h.key_press(egui::Key::Z);
+        h.step();
+        h.read(|e| assert!(e.active_canvas().viewport.zoom.is_none()));
+
         h.key_press(egui::Key::ArrowLeft);
         h.step();
         h.read(|e| assert_eq!(e.document.visit.current_source, Some(c)));
