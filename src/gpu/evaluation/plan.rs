@@ -4,6 +4,7 @@ use super::CellRegion as Rect;
 use super::*;
 
 mod required;
+mod sharing;
 mod values;
 use required::productions_are_required;
 
@@ -98,35 +99,50 @@ impl Job {
         self
     }
 
-    #[cfg(feature = "editor")]
-    pub(super) fn supplied(&self) -> &[SuppliedImage] {
-        &self.supplied
-    }
-
     pub(super) fn with_supplied(mut self, supplied: Arc<[SuppliedImage]>) -> Self {
         self.supplied = supplied;
         self
     }
 
     pub(super) fn probe(&self, region: Rect) -> Result<Plan, Error> {
-        let mut fragment = Fragment::with_programs(
-            self.materializations
-                .as_ref()
-                .map(|scope| scope.programs().clone()),
-        );
-        let result = evaluate_region(
-            &self.root,
-            region,
-            &mut fragment,
-            Planning {
-                policy: self.policy,
-                scope: self.materializations.as_ref(),
-                supplied: &self.supplied,
-                tile: self.tiling.tile,
-                limits: self.limits.as_ref(),
-            },
-        )?;
-        Plan::from_work(fragment, result)
+        self.plan_region(region, |fragment, planning| {
+            evaluate_region(&self.root, region, fragment, planning).map(Some)
+        })?
+        .ok_or(Error::InvalidParameter("image has no raster plan"))
+    }
+
+    fn plan_region(
+        &self,
+        region: Rect,
+        lower: impl Fn(&mut Fragment, Planning<'_>) -> Result<Option<PlannedImage>, Error>,
+    ) -> Result<Option<Plan>, Error> {
+        let planning = Planning {
+            policy: self.policy,
+            scope: self.materializations.as_ref(),
+            supplied: &self.supplied,
+            tile: self.tiling.tile,
+            limits: self.limits.as_ref(),
+            shared: None,
+        };
+        if let Some(shared) = sharing::Reads::plan(&self.root, region, planning)? {
+            let mut fragment = shared.fragment.clone();
+            let result = lower(
+                &mut fragment,
+                Planning {
+                    shared: Some(&shared),
+                    ..planning
+                },
+            )?;
+            if let Some(result) = result
+                && shared.consumed_by(&fragment)
+            {
+                return Plan::from_work(fragment, result).map(Some);
+            }
+        }
+        let mut fragment = planning.fragment();
+        lower(&mut fragment, planning)?
+            .map(|result| Plan::from_work(fragment, result))
+            .transpose()
     }
 
     #[cfg(feature = "render")]
@@ -146,71 +162,42 @@ impl Job {
                 "texture attachment differs from composed image",
             ));
         }
-        let planning = Planning {
-            policy: self.policy,
-            scope: self.materializations.as_ref(),
-            supplied: &self.supplied,
-            tile: self.tiling.tile,
-            limits: self.limits.as_ref(),
-        };
-        for callable in [true, false] {
-            let mut fragment = Fragment::with_programs(
-                self.materializations
-                    .as_ref()
-                    .map(|scope| scope.programs().clone()),
-            );
-            let sample = if callable {
-                sample_region(&self.root, self.region, &mut fragment, planning)
-            } else {
-                evaluate_region(&self.root, self.region, &mut fragment, planning)
-                    .map(|image| Sampled::raster(&mut fragment, image))
-            };
-            if let Ok(sample) = sample
-                && productions_are_required(&self.root, self.region, &fragment.work, planning)
-                    .unwrap_or(false)
-            {
-                let output = PlannedImage {
-                    domain: self.root.domain,
-                    region: self.region,
-                    resource: fragment.resource(Storage::RenderTarget(texture.clone())),
+        self.plan_region(self.region, |prefix, planning| {
+            for callable in [true, false] {
+                let mut fragment = prefix.clone();
+                let sample = if callable {
+                    sample_region(&self.root, self.region, &mut fragment, planning)
+                } else {
+                    evaluate_region(&self.root, self.region, &mut fragment, planning)
+                        .map(|image| Sampled::raster(&mut fragment, image))
                 };
-                sample.render(&mut fragment, output)?;
-                if planning.fits(&fragment, output)? {
-                    return Plan::from_work(fragment, output);
+                if let Ok(sample) = sample
+                    && productions_are_required(&self.root, self.region, &fragment.work, planning)
+                        .unwrap_or(false)
+                {
+                    let output = PlannedImage {
+                        domain: self.root.domain,
+                        region: self.region,
+                        resource: fragment.resource(Storage::RenderTarget(texture.clone())),
+                    };
+                    sample.render(&mut fragment, output)?;
+                    if planning.fits(&fragment, output)? {
+                        *prefix = fragment;
+                        return Ok(Some(output));
+                    }
                 }
             }
-        }
-        Err(Error::InvalidParameter(
+            Ok(None)
+        })?
+        .ok_or(Error::InvalidParameter(
             "image cannot be recorded into the texture attachment",
         ))
     }
 
     pub fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
-        let area = self.region;
-
-        (area.y..area.bottom())
-            .step_by(self.tiling.tile[1] as usize)
-            .flat_map(move |y| {
-                (area.x..area.right())
-                    .step_by(self.tiling.tile[0] as usize)
-                    .map(move |x| {
-                        let r = Rect {
-                            x,
-                            y,
-                            width: self.tiling.tile[0].min((area.right() - x) as u32),
-                            height: self.tiling.tile[1].min((area.bottom() - y) as u32),
-                        };
-                        Plan::with_materializations(
-                            self.root.clone(),
-                            r,
-                            self.tiling,
-                            self.policy,
-                            self.materializations.as_ref(),
-                            &self.supplied,
-                            self.limits.as_ref(),
-                        )
-                    })
-            })
+        tiled_units(self.region, self.tiling.tile)
+            .expect("job validates its region and tile size")
+            .map(|region| self.probe(region))
     }
 }
 
@@ -288,56 +275,13 @@ impl Plan {
         tiling: Tiling,
         policy: Policy,
     ) -> Result<Self, Error> {
-        Self::with_materializations(root.into(), region, tiling, policy, None, &[], None)
-    }
-
-    fn with_materializations(
-        root: value::Value,
-        region: Rect,
-        tiling: Tiling,
-        policy: Policy,
-        scope: Option<&Materializations>,
-        supplied: &[SuppliedImage],
-        limits: Option<&wgpu::Limits>,
-    ) -> Result<Self, Error> {
-        region.validate()?;
-        if tiling.tile.contains(&0) || !root.domain.contains_region(region) {
-            return Err(Error::InvalidParameter("invalid evaluation demand"));
-        }
-
+        let job = Job::new(root, region, tiling)?.with_policy(policy);
         let mut tiles = Vec::new();
-
-        for y in (region.y..region.bottom()).step_by(tiling.tile[1] as usize) {
-            for x in (region.x..region.right()).step_by(tiling.tile[0] as usize) {
-                let region = Rect {
-                    x,
-                    y,
-                    width: tiling.tile[0].min((region.right() - x) as u32),
-                    height: tiling.tile[1].min((region.bottom() - y) as u32),
-                };
-
-                let mut fragment =
-                    Fragment::with_programs(scope.map(|scope| scope.programs().clone()));
-                let result = evaluate_region(
-                    &root,
-                    region,
-                    &mut fragment,
-                    Planning {
-                        policy,
-                        scope,
-                        supplied,
-                        tile: tiling.tile,
-                        limits,
-                    },
-                )?;
-                let tile = schedule(fragment, result)?;
-
-                tiles.push(tile);
-            }
+        for plan in job.plans() {
+            tiles.extend(plan?.tiles);
         }
-
         Ok(Self {
-            domain: root.domain,
+            domain: job.root.domain,
             region,
             tiles,
         })
@@ -351,9 +295,22 @@ pub(super) struct Planning<'a> {
     pub supplied: &'a [SuppliedImage],
     pub tile: [u32; 2],
     pub limits: Option<&'a wgpu::Limits>,
+    shared: Option<&'a sharing::Reads>,
 }
 
 impl Planning<'_> {
+    fn fragment(self) -> Fragment {
+        Fragment::with_programs(self.scope.map(|scope| scope.programs().clone()))
+    }
+
+    fn operand(self) -> Fragment {
+        let fragment = self.fragment();
+        match self.shared {
+            Some(shared) => shared.arguments(fragment),
+            None => fragment,
+        }
+    }
+
     fn fits(self, fragment: &Fragment, result: PlannedImage) -> Result<bool, Error> {
         // wgpu opens separate raw command buffers for pass bodies and barriers.
         // Large multi-pass programs stay phased on workers, not in caller encoders.
@@ -457,12 +414,25 @@ pub(super) fn evaluate_region(
         ));
     }
 
+    if let Some(image) = planning.shared.and_then(|shared| shared.get(node, region)) {
+        if image.region == region {
+            return Ok(image);
+        }
+        let output = fragment.image(node.domain(), region);
+        Sampled::raster(fragment, image).materialize(fragment, output)?;
+        return Ok(output);
+    }
     if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
         let output = node.output(region)?;
         if let Some(image) = stored.raster(fragment, node.domain, region, output.identity()) {
             return Ok(image);
         }
-        let output = value::image_resource(fragment, node, region, planning.scope.is_some());
+        let output = value::image_resource(
+            fragment,
+            node,
+            region,
+            planning.scope.is_some() && node.source().is_none(),
+        );
         stored.sample(fragment).materialize(fragment, output)?;
         return Ok(output);
     }
@@ -631,6 +601,9 @@ pub(super) fn sample_region(
             "sample demand outside declared domain",
         ));
     }
+    if let Some(image) = planning.shared.and_then(|shared| shared.get(node, region)) {
+        return Ok(Sampled::raster(fragment, image));
+    }
     if let Some(stored) = Stored::find(planning.scope, planning.supplied, node, region)? {
         return Ok(stored.sample(fragment));
     }
@@ -656,7 +629,7 @@ fn sample_unstored_region(
         let image = node.request(region)?;
         // The worker assembles the exact read. Retain it as an ordinary image
         // in composed evaluation, so warm readers needn't assemble it again.
-        let discover = policy == Policy::Composed && scope.is_some();
+        let discover = policy == Policy::Composed && scope.is_some() && node.source().is_none();
         let output = value::image_resource(fragment, &image, region, discover);
         fragment.work.push(Work::Produce { image, output });
         return Ok(Sampled::raster(fragment, output));

@@ -104,6 +104,7 @@ fn check(root: Value, targets: Vec<(Value, Rect)>) -> bool {
             supplied: &[],
             tile: [1, 1],
             limits: None,
+            shared: None,
         },
     )
     .unwrap()

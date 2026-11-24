@@ -55,8 +55,7 @@ pub(super) fn record(
                     .inputs
                     .get(read.input)
                     .ok_or(Error::InvalidParameter("read references an unknown input"))?;
-                let mut source =
-                    Fragment::with_programs(planning.scope.map(|scope| scope.programs().clone()));
+                let mut source = planning.operand();
                 let callable = planning.policy == Policy::Composed
                     && compiled.is_some_and(|kernel| {
                         phase.inputs.iter().enumerate().all(|(slot, value)| {
@@ -72,7 +71,11 @@ pub(super) fn record(
                 let mut resources = Vec::new();
                 // The source is complete before it joins the unit's not-yet-written state.
                 // Its own admission must not inspect those unfinished resources.
-                for storage in &source.resources {
+                let shared = planning
+                    .shared
+                    .map_or(0, |shared| shared.fragment.resources.len());
+                resources.extend((0..shared).map(Resource));
+                for storage in &source.resources[shared..] {
                     resources.push(fragment.resource(storage.clone()));
                 }
                 let result = match sample {

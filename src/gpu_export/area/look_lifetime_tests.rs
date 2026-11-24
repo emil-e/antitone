@@ -12,7 +12,8 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         .materializations()
         .set_test_pressure(crate::sys::MemoryPressure::Warning);
     let fixture = crate::dng_fixture::Fixture {
-        side: 896,
+        // Cross the source acquisition lattice as well as destination blocks.
+        side: 1248,
         ramp: true,
         ..Default::default()
     }

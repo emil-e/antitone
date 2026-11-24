@@ -3,7 +3,7 @@ use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::gaussian;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-mod prefetch;
+mod acquisition;
 
 struct Plane(Arc<AtomicUsize>);
 impl Source for Plane {
@@ -61,7 +61,7 @@ impl Operation for Combine {
 }
 
 fn computes(preparation: &Preparation) -> usize {
-    let own = match &preparation.work {
+    match &preparation.work {
         PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan
             .tiles
             .iter()
@@ -69,8 +69,7 @@ fn computes(preparation: &Preparation) -> usize {
             .filter(|work| matches!(work, Work::Compute { .. }))
             .count(),
         _ => 0,
-    };
-    own + preparation.dependencies.iter().map(computes).sum::<usize>()
+    }
 }
 
 #[test]
@@ -124,13 +123,11 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
             )
             .unwrap()
             .without_retention();
-        let ordinary = context.prepare_base(evaluation.clone()).unwrap();
         let shared = context.prepare_image(evaluation).unwrap();
-        assert_eq!(shared.dependencies.len(), 1);
         assert_eq!(
-            computes(&ordinary) - computes(&shared),
-            2,
-            "two separable blurs need four Gaussian passes, not six"
+            computes(&shared),
+            5,
+            "two separable blurs need four Gaussian passes and a combination"
         );
         assert_eq!(shared.can_record(), resident);
         let pixels = if resident {
@@ -182,6 +179,104 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
     }
 }
 
+struct Quadratic;
+impl Source for Quadratic {
+    fn domain(&self) -> Domain {
+        Domain {
+            bounds: Some([0, 0, 64, 64].into()),
+            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        }
+    }
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new("quadratic plan fixture"))
+    }
+    fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        Ok((region.y..region.bottom())
+            .flat_map(|y| {
+                (region.x..region.right())
+                    .map(move |x| [(x * x) as f32 / 4096., (y * y) as f32 / 4096., -2., 8.])
+            })
+            .collect())
+    }
+}
+
+struct SumBlurs;
+impl Operation for SumBlurs {
+    fn key(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new("sum three blur levels"))
+    }
+    fn reads(&self, region: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok((0..3).map(|index| Read::new(index, region)).collect())
+    }
+    fn calculation(
+        self: Arc<Self>,
+        inputs: &[Value],
+        domain: Domain,
+        region: CellRegion,
+        _: Tiling,
+    ) -> Result<Option<value::Calculation>, Error> {
+        let inputs = value::Calculation::references(inputs)
+            .iter()
+            .map(|value| value.request(region))
+            .collect::<Result<Vec<_>, _>>()?;
+        value::Calculation::new(domain, region, inputs, value::Operation::new(
+            "sum three blur levels", (),
+            "fn pixel(p:vec2i,position:vec2f,a:vec4f,b:vec4f,c:vec4f)->vec4f {return vec4f(a.rgb+b.rgb+c.rgb,a.w);}",
+            "pixel", value::Access::Pointwise,
+        )).map(Some)
+    }
+}
+
+#[test]
+fn nested_shared_reads_compile_dependency_first_in_either_operand_order() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let a = gaussian::blur(source(Arc::new(Quadratic)), 1.).unwrap();
+    let b = gaussian::blur(a.clone(), 1.).unwrap();
+    let c = gaussian::blur(b.clone(), 1.).unwrap();
+    let region: CellRegion = [24, 20, 8, 8].into();
+    let weight = |x: i32| (-0.5 * f64::from(x * x)).exp();
+    let variance = (-4..=4).map(|x| weight(x) * f64::from(x * x)).sum::<f64>()
+        / (-4..=4).map(weight).sum::<f64>();
+    for inputs in [
+        [b.clone(), c.clone(), a.clone()],
+        [a.clone(), b.clone(), c.clone()],
+    ] {
+        let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+        let root = Value::from_operation(a.domain(), inputs, SumBlurs);
+        let evaluation = context
+            .request(
+                root,
+                Region {
+                    bounds: region,
+                    grid: a.domain().grid,
+                },
+                Tiling { tile: [8, 8] },
+            )
+            .unwrap();
+        let prepared = context.prepare_image(evaluation).unwrap();
+        assert_eq!(
+            computes(&prepared),
+            7,
+            "three distinct blurs, two passes each, and the sum"
+        );
+        let image = context
+            .produce_prepared(&queue, prepared, || false)
+            .unwrap();
+        let pixels =
+            super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+        for (index, pixel) in pixels.iter().enumerate() {
+            let x = region.x + (index % 8) as i32;
+            let y = region.y + (index / 8) as i32;
+            // Each symmetric normalized blur adds its variance to a quadratic.
+            let expected = [x, y].map(|v| (3. * f64::from(v * v) + 6. * variance) / 4096.);
+            for (actual, expected) in pixel[..2].iter().zip(expected) {
+                assert!((f64::from(*actual) - expected).abs() < 2e-5);
+            }
+            assert_eq!(pixel[2..], [-6., 8.]);
+        }
+    }
+}
+
 #[test]
 fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
@@ -206,10 +301,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
         )
         .unwrap()
         .without_retention();
-    let ordinary = context.prepare_base(evaluation.clone()).unwrap();
     let shared = context.prepare_image(evaluation).unwrap();
-    assert_eq!(shared.dependencies.len(), 1);
-    assert_eq!(computes(&ordinary) - computes(&shared), 2);
     assert_eq!(
         computes(&shared),
         5,
@@ -304,10 +396,7 @@ fn shared_values_remain_recordable_without_a_speculative_working_reserve() {
         .without_retention();
     let work = context.prepare_image(request).unwrap();
     assert!(work.can_record());
-    assert!(
-        !work.dependencies.is_empty(),
-        "the shared value must actually be prepared"
-    );
+
     let recorded = work.record(&context).unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
     recorded
@@ -369,7 +458,8 @@ fn recorded_dependencies_enter_the_cache_only_after_submission() {
             .unwrap(),
     )
     .unwrap();
-    let first = gaussian::blur(input, 1.).unwrap();
+    let first = gaussian::blur(input, 1.).unwrap().for_reuse();
+    let identity = first.identity().unwrap().clone();
     let second = gaussian::blur(first.clone(), 1.5).unwrap();
     let root = Value::from_operation(first.domain(), [first, second], Combine);
     let region = CellRegion::new([24, 20], [8, 8]);
@@ -385,15 +475,6 @@ fn recorded_dependencies_enter_the_cache_only_after_submission() {
         .unwrap()
         .without_retention();
     let prepared = context.prepare_image(request.clone()).unwrap();
-    let dependency = &prepared.dependencies[0].evaluation;
-    let identity = dependency
-        .job
-        .image()
-        .output(dependency.job.region())
-        .unwrap()
-        .identity()
-        .unwrap()
-        .clone();
     let recorded = prepared.record(&context).unwrap();
     assert!(
         context
@@ -499,7 +580,6 @@ fn reusable_boundary_can_record_and_only_publishes_after_submit() {
             prepared.can_record(),
             "resident inputs can use the drawing path"
         );
-        assert!(prepared.dependencies.is_empty());
         let recorded = prepared.record(&context).unwrap();
         let commands = recorded.commands.as_ref().unwrap();
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -526,15 +606,15 @@ fn reusable_boundary_can_record_and_only_publishes_after_submit() {
 
 #[test]
 fn worker_retains_a_declared_reusable_single_unit() {
-    check_projection_reuse([16, 16], [2., 2.], false);
+    check_projection_reuse([16, 16], [2., 2.]);
 }
 
 #[test]
 fn worker_assembles_a_declared_reusable_tiled_read() {
-    check_projection_reuse([320, 16], [0.125, 2.], true);
+    check_projection_reuse([320, 16], [0.125, 2.]);
 }
 
-fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2], prefetch: bool) {
+fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2]) {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -581,13 +661,7 @@ fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2], prefetch: bool) {
         "preparation only describes source demand"
     );
     assert!(!work.can_record());
-    assert_eq!(work.dependencies.is_empty(), !prefetch);
-    assert!(
-        work.dependencies
-            .iter()
-            .all(|dependency| dependency.kind == DependencyKind::SourceSlice),
-        "only source acquisition is prepared; the worker produces the declared result"
-    );
+
     let image = pollster::block_on(
         context
             .produce_images(&queue, vec![work])
@@ -622,10 +696,6 @@ fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2], prefetch: bool) {
     let before = reads.load(Ordering::Relaxed);
     assert!(before > 0);
     let next = context.prepare_image(request(scale(3.))).unwrap();
-    assert!(
-        next.dependencies.is_empty(),
-        "a completed projection does not become another source job"
-    );
     assert!(next.can_record());
     {
         let recorded = next.record(&context).unwrap();
@@ -663,13 +733,4 @@ fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2], prefetch: bool) {
             .collect::<Vec<_>>()
     );
     assert!(reads.load(Ordering::Relaxed) > before);
-}
-
-#[test]
-fn regional_sharing_does_not_fill_holes_between_requested_rectangles() {
-    let a = CellRegion::new([0, 0], [4, 4]);
-    assert_eq!(joined(a, [1, 1, 2, 2].into()), Some(a));
-    assert_eq!(joined(a, [4, 0, 4, 4].into()), Some([0, 0, 8, 4].into()));
-    assert_eq!(joined(a, [2, 2, 4, 4].into()), None);
-    assert_eq!(joined(a, [8, 0, 4, 4].into()), None);
 }

@@ -123,7 +123,13 @@ impl GpuExecution {
             let input = Worker { ..*worker };
             let query = input.query(upstream.clone(), read.region)?;
             let image = input.materialize_image(&query, layout, counts)?;
-            if let Some(identity) = output.identity() {
+            // Fully tiled sources publish their acquisition units; this phase read
+            // can instead be a transient assembly across several of them.
+            if upstream
+                .source()
+                .is_none_or(|source| source.acquisition_tile().is_none())
+                && let Some(identity) = output.identity()
+            {
                 worker.scope.submitted_image(&Image {
                     identity: identity.clone(),
                     descriptor: Arc::new(layout),

@@ -93,6 +93,14 @@ impl Operation for SourceOp {
         Ok(Vec::new())
     }
 
+    fn work_units(&self, demand: Rect, _: Tiling) -> Result<WorkUnits, Error> {
+        demand.validate()?;
+        match self.0.acquisition_tile() {
+            Some(tile) => super::unit::aligned_units(self.0.domain().finite()?, demand, tile),
+            None => Ok(Box::new(std::iter::once(demand))),
+        }
+    }
+
     fn calculation(
         self: std::sync::Arc<Self>,
         _: &[crate::gpu::evaluation::value::Value],

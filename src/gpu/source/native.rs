@@ -23,6 +23,10 @@ impl std::fmt::Debug for NativeIdentity {
 }
 
 impl Source for Native {
+    fn acquisition_tile(&self) -> Option<[u32; 2]> {
+        Some([1024, 1024])
+    }
+
     fn storage_format(&self) -> ImageFormat {
         self.format
     }

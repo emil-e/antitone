@@ -169,6 +169,40 @@ pub(super) fn can_inline(
     }
 }
 
+pub(super) fn aligned_units(
+    bounds: CellRegion,
+    demand: CellRegion,
+    size: [u32; 2],
+) -> Result<WorkUnits, Error> {
+    if size.contains(&0) || !bounds.contains_region(demand) {
+        return Err(Error::InvalidParameter("invalid aligned source demand"));
+    }
+    let first = |origin: i32, start: i32, step: u32| {
+        let offset = i64::from(start) - i64::from(origin);
+        i64::from(origin) + offset.div_euclid(i64::from(step)) * i64::from(step)
+    };
+    let x0 = first(bounds.x, demand.x, size[0]);
+    let y0 = first(bounds.y, demand.y, size[1]);
+    let width = |start, end, step| i64::from(step).min(i64::from(end) - start) as u32;
+    Ok(Box::new(
+        (y0..i64::from(demand.bottom()))
+            .step_by(size[1] as usize)
+            .flat_map(move |y| {
+                (x0..i64::from(demand.right()))
+                    .step_by(size[0] as usize)
+                    .map(move |x| {
+                        CellRegion::new(
+                            [x as i32, y as i32],
+                            [
+                                width(x, bounds.right(), size[0]),
+                                width(y, bounds.bottom(), size[1]),
+                            ],
+                        )
+                    })
+            }),
+    ))
+}
+
 pub fn tiled_units(region: CellRegion, size: [u32; 2]) -> Result<WorkUnits, Error> {
     region.validate()?;
     if size.contains(&0) {

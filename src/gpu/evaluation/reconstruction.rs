@@ -570,13 +570,7 @@ impl Operation for Reconstruction {
                     "reconstruction exceeds the input-slice capacity",
                 ));
             }
-            reads.push(
-                if region.width > MAX_UNIT_SIDE || region.height > MAX_UNIT_SIDE {
-                    Read::source_slice(0, slice)
-                } else {
-                    Read::new(0, slice)
-                },
-            );
+            reads.push(Read::new(0, slice));
         }
         Ok(reads)
     }

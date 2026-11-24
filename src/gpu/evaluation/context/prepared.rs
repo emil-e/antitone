@@ -2,25 +2,12 @@
 use super::*;
 use crate::gpu::allocation::DeviceAllocationExt;
 
-mod sharing;
 #[cfg(test)]
 mod tests;
 
 pub(crate) struct Preparation {
     evaluation: Evaluation,
     work: PreparedWork,
-    destination: Option<BufferImage>,
-    dependencies: Vec<Preparation>,
-    kind: DependencyKind,
-    // Keep discovered physical versions available until execution takes over their leases.
-    captured_inputs: Vec<Arc<ImageValue>>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DependencyKind {
-    Shared,
-    // Acquisition storage belongs to execution, not to the independently completed output.
-    SourceSlice,
 }
 
 enum PreparedWork {
@@ -37,30 +24,16 @@ pub(crate) struct RecordedImage {
 
 impl Preparation {
     fn new(evaluation: Evaluation, work: PreparedWork) -> Self {
-        Self {
-            evaluation,
-            work,
-            destination: None,
-            dependencies: Vec::new(),
-            kind: DependencyKind::Shared,
-            captured_inputs: Vec::new(),
-        }
+        Self { evaluation, work }
     }
 
     fn recording_passes(&self) -> Option<usize> {
-        let own = match &self.work {
+        let passes = match &self.work {
             PreparedWork::Cached(_) => 0,
             PreparedWork::Gpu(plan) => plan.recording_passes(),
             PreparedWork::Produce(_) | PreparedWork::Units => return None,
         };
-        self.dependencies
-            .iter()
-            .try_fold(own, |passes, dependency| {
-                dependency
-                    .recording_passes()
-                    .map(|additional| passes + additional)
-            })
-            .filter(|passes| *passes <= Plan::MAX_RECORDING_PASSES)
+        (passes <= Plan::MAX_RECORDING_PASSES).then_some(passes)
     }
 
     pub(crate) fn can_record(&self) -> bool {
@@ -74,11 +47,6 @@ impl Preparation {
             ));
         }
 
-        let prerequisites = self
-            .dependencies
-            .into_iter()
-            .map(|work| work.record(context))
-            .collect::<Result<Vec<_>, _>>()?;
         match self.work {
             PreparedWork::Cached(image) => Ok(RecordedImage {
                 pixels: image.try_into()?,
@@ -90,12 +58,8 @@ impl Preparation {
                 let commands = context
                     .executor()
                     .prepare(context.device(), plan)?
-                    .with_request(root, region)
-                    .with_prerequisites(prerequisites);
-                let pixels = match self.destination {
-                    Some(pixels) => pixels,
-                    None => BufferImage::recorded(root, region, output_buffer(context, region)?)?,
-                };
+                    .with_request(root, region);
+                let pixels = BufferImage::recorded(root, region, output_buffer(context, region)?)?;
                 #[cfg(test)]
                 if let BufferImage::Produced(image) = &pixels {
                     image.image.observe_inputs(commands.image_inputs());
@@ -112,58 +76,10 @@ impl Preparation {
     }
 
     fn produce(self, worker: &Worker<'_>, layout: ImageLayout) -> Result<Arc<ImageValue>, Error> {
-        // Keep prepared bindings available until the consumer's execution takes over.
-        let _captured_inputs = self.captured_inputs;
-        let mut execution_inputs = Vec::new();
-        #[cfg(test)]
-        let mut observed = Vec::new();
-        for dependency in self.dependencies {
-            #[cfg(test)]
-            let kind = dependency.kind;
-            let definition = dependency.evaluation.job.image().clone();
-            let region = dependency.evaluation.job.region();
-            let layout = ImageLayout {
-                domain: definition.domain(),
-                region,
-                format: ImageFormat::Rgba32Float,
-                backing: ImageBacking::Buffer,
-            };
-            let own = Worker { ..*worker };
-            let image = dependency.produce(&own, layout)?;
-            #[cfg(test)]
-            if kind != DependencyKind::SourceSlice {
-                observed.push(image.clone());
-            }
-            if let Some(identity) = definition.output(region)?.identity() {
-                worker.scope.publish(
-                    &Image {
-                        identity: identity.clone(),
-                        descriptor: Arc::new(layout),
-                        image: image.clone(),
-                    },
-                    true,
-                );
-            }
-            execution_inputs.push(image);
-        }
         let plan = match self.work {
             PreparedWork::Cached(image) => return Ok(image.image),
             PreparedWork::Gpu(plan) | PreparedWork::Produce(plan) => plan,
             PreparedWork::Units => {
-                let worker = Worker { ..*worker };
-                if let Some(destination) = self.destination {
-                    let image = match destination {
-                        BufferImage::Produced(image) => image.image,
-                        BufferImage::Submitted(pixels) => ImageValue::new(pixels),
-                    };
-                    Production {
-                        worker,
-                        layout,
-                        pixels: image.as_buffer().expect("prepared buffer destination"),
-                    }
-                    .produce(&self.evaluation)?;
-                    return Ok(image);
-                }
                 return worker.materialize_image(
                     &self.evaluation,
                     layout,
@@ -172,20 +88,14 @@ impl Preparation {
             }
         };
         worker.working.admit_gpu(worker.context.device())?;
-        let image = match self.destination {
-            Some(BufferImage::Produced(image)) => image.image,
-            Some(BufferImage::Submitted(pixels)) => ImageValue::new(pixels),
-            None => ImageValue::new(output_buffer(worker.context, layout.region)?),
-        };
+        let pixels = output_buffer(worker.context, layout.region)?;
         Production {
             worker: *worker,
             layout,
-            pixels: image.as_buffer().expect("prepared buffer destination"),
+            pixels: &pixels,
         }
         .deliver(&mut worker.executor(), plan)?;
-        #[cfg(test)]
-        image.observe_inputs(&observed);
-        Ok(image)
+        Ok(ImageValue::new(pixels))
     }
 }
 
@@ -211,20 +121,6 @@ impl Context {
         self.prepare_image(evaluation)
     }
 
-    pub(crate) fn prepare_image(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
-        let root = evaluation.job.image();
-        let region = evaluation.job.region();
-        let cached = root.output(region)?.identity().is_some_and(|key| {
-            self.products.ready::<ImageLayout>(key).iter().any(|image| {
-                image.descriptor.domain == root.domain() && image.descriptor.region == region
-            })
-        });
-        if !cached && let Some(prepared) = self.prepare_dependencies(&evaluation)? {
-            return Ok(prepared);
-        }
-        self.prepare_base(evaluation)
-    }
-
     fn prepared_layout(&self, evaluation: &Evaluation) -> Result<ImageLayout, Error> {
         let layout = ImageLayout {
             domain: evaluation.job.image().domain(),
@@ -241,7 +137,7 @@ impl Context {
         Ok(layout)
     }
 
-    fn prepare_base(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
+    pub(crate) fn prepare_image(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
         let evaluation = evaluation.with_materializations(self.materializations());
         let root = evaluation.job.image();
         let region = evaluation.job.region();
@@ -387,11 +283,7 @@ impl Context {
                 let working = RunWorkingSet::default();
                 let cancelled = || stop.is_cancelled();
                 let progress = || wake.wake();
-                if missing.len() > 1
-                    && missing
-                        .iter()
-                        .all(|index| prepared[*index].dependencies.is_empty())
-                {
+                if missing.len() > 1 {
                     let jobs = missing
                         .iter()
                         .map(|index| {
