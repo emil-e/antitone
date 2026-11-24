@@ -32,7 +32,7 @@ fn complete(
     key: ImageKey,
 ) -> Result<Arc<Product>, String> {
     let id = key.source.id;
-    thumbnails.protect_images(vec![key.clone()]);
+    thumbnails.processed.protect_images(vec![key.clone()]);
     let job = tests::service_job(
         thumbnails,
         key.clone(),
@@ -42,7 +42,12 @@ fn complete(
         true,
     );
     tests::complete_service_request(thumbnails, document, job);
-    thumbnails.cache.get(&key).expect("current result").clone()
+    thumbnails
+        .processed
+        .cache
+        .get(&key)
+        .expect("current result")
+        .clone()
 }
 
 #[test]
@@ -79,7 +84,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     );
     assert!(plain_key.current_recipe(&document));
     let neutral = plain.positive.as_ref().unwrap().product().unwrap().clone();
-    thumbnails.protect_images(vec![plain_key.clone()]);
+    thumbnails.processed.protect_images(vec![plain_key.clone()]);
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
@@ -136,9 +141,11 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         graded_key.estimated_product_bytes().unwrap()
             >= graded.byte_len() + graded_key.retained_bytes()
     );
-    thumbnails.protect_images(vec![graded_key.clone()]);
+    thumbnails
+        .processed
+        .protect_images(vec![graded_key.clone()]);
     assert!(
-        !thumbnails.cache.contains(&plain_key),
+        !thumbnails.processed.cache.contains(&plain_key),
         "replacement completion must retire the carried old card at zero optional retention"
     );
     document
@@ -153,13 +160,16 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         .photo
         .exposure = 1.;
     let failed_key = tests::key(&document, id);
-    thumbnails.protect_images(vec![failed_key.clone()]);
     thumbnails
+        .processed
+        .protect_images(vec![failed_key.clone()]);
+    thumbnails
+        .processed
         .cache
         .insert(failed_key.clone(), Err("grade range rejection".into()));
-    thumbnails.protect_images(vec![failed_key]);
+    thumbnails.processed.protect_images(vec![failed_key]);
     assert!(
-        thumbnails.cache.contains(&graded_key),
+        thumbnails.processed.cache.contains(&graded_key),
         "a failed downstream grade must not discard compatible visible neutral content"
     );
     document
@@ -264,7 +274,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
             [-64, 0],
         )
         .unwrap();
-    thumbnails.cache.retain(|_, _| false);
+    thumbnails.processed.cache.retain(|_, _| false);
     let card = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
         card.positive.is_some(),
@@ -360,11 +370,11 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let id = document.project.order[0];
     let initial_key = tests::key(&document, id);
     complete(&mut thumbnails, &document, initial_key).unwrap();
-    let Some(Services::Production(worker)) = thumbnails.services.clone() else {
+    let Some(Services::Production(worker)) = thumbnails.processed.services.clone() else {
         panic!("fixture requires the production thumbnail worker");
     };
     let (commands, requests) = mpsc::channel();
-    thumbnails.services = Some(Services::Controlled(commands));
+    thumbnails.processed.services = Some(Services::Controlled(commands));
     let mut editor = Editor::state();
     editor.presentation = Ok(presentation);
     editor.document = document;
@@ -459,12 +469,12 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
             assert!(submission.reply.send(outcome).is_ok());
             let key = app.read(|editor| tests::key(&editor.document, id));
             app.run_until(Duration::from_secs(10), |editor| {
-                editor.document.thumbnails.cache.contains(&key)
-                    && !editor.document.thumbnail_work.pending()
+                editor.document.thumbnails.processed.cache.contains(&key)
+                    && !editor.document.thumbnails.processed.work.pending()
             });
             app.read(|editor| {
                 assert_eq!(
-                    editor.document.thumbnails.cache.entries.len(),
+                    editor.document.thumbnails.processed.cache.entries.len(),
                     1,
                     "superseded grades must not compete with other roll photos for retention"
                 )
@@ -495,10 +505,15 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
                 .photo
                 .exposure = 1.25;
             let key = tests::key(&editor.document, id);
-            editor.document.thumbnails.protect_images(vec![key.clone()]);
             editor
                 .document
                 .thumbnails
+                .processed
+                .protect_images(vec![key.clone()]);
+            editor
+                .document
+                .thumbnails
+                .processed
                 .cache
                 .insert(key, Err("render rejected".into()));
         });
@@ -547,11 +562,17 @@ fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
         .exposure = 0.5;
     let replacement = tests::key(&document, first);
     complete(&mut thumbnails, &document, replacement.clone()).unwrap();
-    assert!(!thumbnails.cache.contains(&first_key));
-    assert!(thumbnails.cache.contains(&replacement));
+    assert!(!thumbnails.processed.cache.contains(&first_key));
+    assert!(thumbnails.processed.cache.contains(&replacement));
     assert!(
         Arc::ptr_eq(
-            thumbnails.cache.get(&other_key).unwrap().as_ref().unwrap(),
+            thumbnails
+                .processed
+                .cache
+                .get(&other_key)
+                .unwrap()
+                .as_ref()
+                .unwrap(),
             &other_product
         ),
         "replacing one photo's grade must preserve another photo's ready pixels"
@@ -702,8 +723,8 @@ fn assert_document_cards_finish(show_selected: bool) {
             editor.advance_thumbnail_demand(cx);
         });
         app.run_until(Duration::from_secs(10), |editor| {
-            editor.document.thumbnails.attempted_sources.len() == 3
-                && editor.document.thumbnails.pending.is_none()
+            editor.document.thumbnails.processed.attempted_sources.len() == 3
+                && editor.document.thumbnails.processed.pending.is_none()
         });
         app.read(|editor| {
             assert_eq!(
@@ -718,15 +739,19 @@ fn assert_document_cards_finish(show_selected: bool) {
                 editor
                     .document
                     .thumbnails
+                    .processed
                     .cache
                     .contains(&tests::key(&editor.document, selected))
             );
         });
         app.read(|editor| {
             assert!(!editor.document.visit.working_view.idle());
-            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
+            assert_eq!(
+                editor.document.thumbnails.processed.attempted_sources.len(),
+                3
+            );
             assert!(
-                !editor.document.thumbnail_work.pending(),
+                !editor.document.thumbnails.processed.work.pending(),
                 "completed eager cards must not loop back into preparation"
             );
         });
@@ -787,8 +812,8 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
     println!(
         "positive_roll ready={} entries={} charged_bytes={}",
         thumbnails.ready_count(&document, OutputTarget::DisplayP3),
-        thumbnails.cache.entries.len(),
-        thumbnails.cache.measured_bytes()
+        thumbnails.processed.cache.entries.len(),
+        thumbnails.processed.cache.measured_bytes()
     );
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
@@ -797,7 +822,7 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
     let mut next_target = tests::key(&document, document.project.order[0]);
     next_target.target = OutputTarget::Srgb;
     assert!(
-        thumbnails.can_retain(&next_target),
+        thumbnails.processed.can_retain(&next_target),
         "eager admission must not reserve another copy of an already-live LUT"
     );
     for &id in document
@@ -808,23 +833,24 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         .chain(document.project.order.iter())
     {
         let key = tests::key(&document, id);
-        thumbnails.protect_images(vec![key.clone()]);
+        thumbnails.processed.protect_images(vec![key.clone()]);
         assert!(
             thumbnails
+                .processed
                 .cache
                 .get(&key)
                 .is_some_and(|entry| entry.is_ok()),
             "a developed roll card was evicted despite sufficient room for the actual shared resources"
         );
     }
-    thumbnails.protect_images(Vec::new());
+    thumbnails.processed.protect_images(Vec::new());
     thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 0,
     });
-    assert!(thumbnails.cache.entries.is_empty());
+    assert!(thumbnails.processed.cache.entries.is_empty());
     assert_eq!(
-        thumbnails.cache.measured_bytes(),
+        thumbnails.processed.cache.measured_bytes(),
         0,
         "shared charges must retire with their cache owners"
     );

@@ -187,7 +187,10 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         let seed = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
         thumbnails.seed_at_path(source, &path, thumbnails::FileKey::new(&path), seed.clone());
         assert!(
-            !thumbnails.attempted_sources.contains(&image_key.source),
+            !thumbnails
+                .processed
+                .attempted_sources
+                .contains(&image_key.source),
             "a seed is not yet a durable completed attempt"
         );
         thumbnails.release_selected();
@@ -200,14 +203,19 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             false,
         );
         tests::complete_service_request(&mut thumbnails, &document, job);
-        assert!(thumbnails.pending.is_none());
-        assert!(thumbnails.attempted_sources.contains(&image_key.source));
-        assert!(thumbnails.cache.entries.is_empty());
+        assert!(thumbnails.processed.pending.is_none());
+        assert!(
+            thumbnails
+                .processed
+                .attempted_sources
+                .contains(&image_key.source)
+        );
+        assert!(thumbnails.processed.cache.entries.is_empty());
         assert_eq!(document.cache.charges().retained, 0);
         assert_eq!(document.cache.protected_bytes(), 0);
         assert!(disk.load(&image_key.source).unwrap().is_some());
         drop(seed);
-        thumbnails.cache.protect(vec![image_key.clone()]);
+        thumbnails.processed.cache.protect(vec![image_key.clone()]);
         document.cache.protect_proxies(vec![key(&document)]);
         let job = tests::service_job(
             &thumbnails,
@@ -218,8 +226,8 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             true,
         );
         tests::complete_service_request(&mut thumbnails, &document, job);
-        assert!(thumbnails.pending.is_none());
-        assert!(thumbnails.cache.get(&image_key).unwrap().is_ok());
+        assert!(thumbnails.processed.pending.is_none());
+        assert!(thumbnails.processed.cache.get(&image_key).unwrap().is_ok());
         assert_eq!(document.cache.charges().retained, 0);
         assert!(document.cache.protected_bytes() > 0);
     });
@@ -338,7 +346,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                 );
                 std::thread::yield_now();
             }
-            thumbnails.cancel();
+            thumbnails.processed.cancel();
             let cache = &document.cache;
             let file = document.file_key(&path);
             let white_balance = wb(&document);
@@ -477,7 +485,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
                 );
                 std::thread::yield_now();
             }
-            thumbnails.cancel();
+            thumbnails.processed.cancel();
             let job = tests::service_job(
                 &thumbnails,
                 image_key(1),

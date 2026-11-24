@@ -98,12 +98,15 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, vec![first]));
-        assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
+        assert!(app.read(|editor| editor.document.thumbnails.processed.work.pending()));
         app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
+            assert_eq!(
+                editor.document.thumbnails.processed.attempted_sources.len(),
+                3
+            );
             assert_eq!(
                 editor
                     .document
@@ -111,7 +114,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
                     .ready_count(&editor.document, editor.document.target()),
                 1
             );
-            assert!(editor.document.thumbnails.pending.is_none());
+            assert!(editor.document.thumbnails.processed.pending.is_none());
             assert_eq!(editor.document.cache.charges().retained, 0);
             for id in &editor.document.state.project.order {
                 let key = tests::key(&editor.document, *id);
@@ -156,13 +159,13 @@ fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest
         app.enter(|editor, access| {
             editor.set_gamma(0.75);
             editor.schedule_thumbnail(access, now, false);
-            assert!(!editor.document.thumbnail_work.pending());
+            assert!(!editor.document.thumbnails.processed.work.pending());
 
             // A different control produces another key and supersedes the waiting recipe.
             editor.document.state.project.roll.exposure = 0.5;
             editor.schedule_thumbnail(access, changed_again, false);
             editor.schedule_thumbnail(access, first_deadline, false);
-            assert!(!editor.document.thumbnail_work.pending());
+            assert!(!editor.document.thumbnails.processed.work.pending());
             assert_eq!(ready_count(editor), 0);
             for id in &visible {
                 let source = editor.document.state.project.source(*id).unwrap();
@@ -172,13 +175,14 @@ fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest
                     editor
                         .document
                         .thumbnails
+                        .processed
                         .previous_product(&wanted)
                         .is_some()
                 );
             }
 
             editor.schedule_thumbnail(access, changed_again + REFRESH_QUIET_PERIOD, false);
-            assert!(editor.document.thumbnail_work.pending());
+            assert!(editor.document.thumbnails.processed.work.pending());
         });
 
         // Completion can drive the rest of the roll without more paints or quiet periods.
@@ -220,13 +224,13 @@ fn composed_modal_keeps_processed_card_demand_at_normal_and_narrow_sizes() {
                 };
             for _ in 0..4 {
                 frame(app, vec![]);
-                if app.read(|editor| editor.document.thumbnail_work.pending()) {
+                if app.read(|editor| editor.document.thumbnails.processed.work.pending()) {
                     break;
                 }
             }
-            assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
+            assert!(app.read(|editor| editor.document.thumbnails.processed.work.pending()));
             app.run_until(Duration::from_secs(30), |editor| {
-                !editor.document.thumbnail_work.pending()
+                !editor.document.thumbnails.processed.work.pending()
                     && !editor.document.thumbnails.embedded.pending()
             });
             app.read(|editor| {
@@ -293,24 +297,25 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = editor(document, disk.path(), scheduler.clone());
     let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    editor.document.thumbnails.processed.services = Some(Services::Controlled(commands));
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, ids[..2].to_vec()));
         app.pump();
         let submission = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(submission);
         app.run_until(Duration::from_secs(5), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
-            assert!(editor.document.thumbnails.services.is_none());
-            assert!(editor.document.thumbnails.pending.is_none());
+            assert!(editor.document.thumbnails.processed.services.is_none());
+            assert!(editor.document.thumbnails.processed.pending.is_none());
             for id in &ids[..2] {
                 let key = tests::key(&editor.document, *id);
                 assert!(
                     editor
                         .document
                         .thumbnails
+                        .processed
                         .cache
                         .entries
                         .iter()
@@ -329,6 +334,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
                 editor
                     .document
                     .thumbnails
+                    .processed
                     .cache
                     .entries
                     .iter()
@@ -337,8 +343,8 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
                             .as_ref()
                             .is_err_and(|error| error.contains("worker stopped")))
             );
-            assert!(editor.document.thumbnails.pending.is_none());
-            assert!(!editor.document.thumbnail_work.pending());
+            assert!(editor.document.thumbnails.processed.pending.is_none());
+            assert!(!editor.document.thumbnails.processed.work.pending());
         });
         assert!(
             requests.try_recv().is_err(),
@@ -357,11 +363,22 @@ fn zero_retention_prepares_offscreen_cpu_disk_work_without_gpu_residency_or_pain
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Vec::new()));
         app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
-            assert!(editor.document.thumbnails.cache.entries.is_empty());
+            assert_eq!(
+                editor.document.thumbnails.processed.attempted_sources.len(),
+                3
+            );
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .cache
+                    .entries
+                    .is_empty()
+            );
             assert_eq!(editor.document.cache.charges().retained, 0);
             for id in &editor.document.state.project.order {
                 let key = tests::key(&editor.document, *id);
@@ -397,14 +414,14 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
             std::thread::yield_now();
         }
         app.update(|editor| {
-            editor.document.thumbnails.cancel();
+            editor.document.thumbnails.processed.cancel();
             editor.document.thumbnails.visible = Vec::new();
             editor.document.thumbnails.refresh_hidden_memory();
         });
-        assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
+        assert!(app.read(|editor| editor.document.thumbnails.processed.work.pending()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
             let key = tests::key(&editor.document, first);
@@ -412,10 +429,19 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
                 editor
                     .document
                     .thumbnails
+                    .processed
                     .attempted_sources
                     .contains(&key.source)
             );
-            assert!(editor.document.thumbnails.cache.entries.is_empty());
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .cache
+                    .entries
+                    .is_empty()
+            );
             assert!(
                 disk::DiskCache::at(disk.path().to_owned())
                     .load(&key.source)
@@ -460,12 +486,12 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
             let current = tests::key(&editor.document, editor.document.state.project.order[0]);
             assert_eq!(
-                editor.document.thumbnails.attempted_sources,
+                editor.document.thumbnails.processed.attempted_sources,
                 vec![current.source.clone()]
             );
             assert!(
@@ -474,7 +500,15 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
                     .unwrap()
                     .is_some()
             );
-            assert!(editor.document.thumbnails.cache.entries.is_empty());
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .cache
+                    .entries
+                    .is_empty()
+            );
         });
         assert!(
             disk::DiskCache::at(disk.path().to_owned())
@@ -560,7 +594,16 @@ fn application_retirement_drops_waiters_but_running_native_work_finishes_before_
         }
         app.close_execution();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
-        app.read(|editor| assert!(editor.document.thumbnails.attempted_sources.is_empty()));
+        app.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .attempted_sources
+                    .is_empty()
+            )
+        });
     });
     assert!(store.upgrade().is_none());
     release.send(()).unwrap();

@@ -11,7 +11,8 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_display
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let renderers = Arc::new(DisplayFixture::for_device(&device));
     let mut editor = Editor::state();
-    editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
+    editor.document.thumbnails.processed.gpu =
+        Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
     editor.source_services = Some(crate::editor::source::Services::fixture(
         source_loading::SourceLoader::new(),
         &device,
@@ -77,7 +78,8 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
         let renderers = Arc::new(DisplayFixture::for_device(&device));
         let mut editor = Editor::state();
         *editor.document = super::tests::fixture();
-        editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
+        editor.document.thumbnails.processed.gpu =
+            Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
         editor.source_services = Some(crate::editor::source::Services::fixture(
             source_loading::SourceLoader::new(),
             &device,
@@ -141,10 +143,11 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
         editor
             .document
             .thumbnails
+            .processed
             .cache
             .insert(card_key, Ok(Product::camera(image.clone())));
         editor.apply_cache_budgets();
-        let card_bytes = editor.document.thumbnails.cache.measured_bytes() as u64;
+        let card_bytes = editor.document.thumbnails.processed.cache.measured_bytes() as u64;
         assert!(card_bytes >= 256 * 256 * 8 && card_bytes < limits.gpu_bytes);
         assert_eq!(
             renderer.evaluation.cache_policy().generated_bytes + card_bytes,
@@ -164,9 +167,17 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
             "an oversized calculation survives only while a consumer owns it"
         );
 
-        editor.document.thumbnails.cache.retain(|_, _| false);
+        editor
+            .document
+            .thumbnails
+            .processed
+            .cache
+            .retain(|_, _| false);
         editor.apply_cache_budgets();
-        assert_eq!(editor.document.thumbnails.cache.measured_bytes(), 0);
+        assert_eq!(
+            editor.document.thumbnails.processed.cache.measured_bytes(),
+            0
+        );
         assert_eq!(
             renderer.evaluation.cache_policy().generated_bytes,
             limits.gpu_bytes
@@ -197,10 +208,8 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
             .await
             .unwrap();
         let renderers = Arc::new(DisplayFixture::for_device(&device));
-        let mut thumbnails = Thumbnails {
-            gpu: Some(ThumbnailGpu::fixture(&device, &queue, &renderers)),
-            ..Default::default()
-        };
+        let mut thumbnails = Thumbnails::default();
+        thumbnails.processed.gpu = Some(ThumbnailGpu::fixture(&device, &queue, &renderers));
         let limits = cache_limits::CacheLimits {
             cpu_bytes: 0,
             gpu_bytes: 8 << 20,

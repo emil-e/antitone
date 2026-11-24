@@ -208,6 +208,8 @@ Optional reuse of immutable full-resolution developments, uncorrected proxies an
 
 Two [native owners](../src/source/loader.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
 
+[Processed thumbnails](../src/thumbnails.rs) own the worker and processed image cache. The [editor thumbnail coordinator](../src/editor/thumbnails.rs) authors requests from the live document and shares its retention budget with camera previews. The filmstrip looks up images for visible cards during paint, then publishes those requests together; captions and tool annotations stay with the filmstrip.
+
 Thumbnail and camera-preview work follows all document photos, including those never painted. Visible cards take priority; filmstrip visibility and workspace activity do not suspend preparation. Offscreen rendering uses available optional retention; CPU/disk work can finish without room. Camera-preview entries retain completion and measured image size after pixel eviction, avoiding extraction loops and permitting rewarming when room returns. Retiring a thumbnail GPU ticket preserves useful document-owned CPU/disk completion. [Architecture](architecture.md#source-acquisition-and-retention) describes their asynchronous acquisition and scoped publication.
 
 
@@ -294,6 +296,6 @@ Colour expresses interaction state, not feature ownership. The shared UI theme i
 
 ## Working on this area
 
-Start with [editor orchestration](../src/editor.rs), [Photo-stage composition](../src/editor/photo_ui.rs), [control updates and mutation authority](../src/editor/editing.rs) and [tool ownership and replacement](../src/editor/tool.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [measurement](../src/editor/measurement.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
+Start with [editor orchestration](../src/editor.rs), [Photo-stage composition](../src/editor/photo_ui.rs), [control updates and mutation authority](../src/editor/editing.rs) and [tool ownership and replacement](../src/editor/tool.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [measurement](../src/editor/measurement.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [filmstrip](../src/editor/filmstrip.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
 
 Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks).

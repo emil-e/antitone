@@ -1,70 +1,27 @@
-use super::ui::ContactSheetLayout;
 use super::*;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::{evaluation, lut3d::Looks, parameters::ProcessingParameters, submission::Queue};
+#[cfg(test)]
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
-#[cfg(test)]
-use crate::source::FileRevision;
 use crate::source::SourceKey as NativeKey;
-mod disk;
-mod lru;
-use lru::Cache;
+use crate::thumbnails::{
+    FieldKey, ImageKey, Outcome, Processed, Services, SourceKey, ThumbnailGpu, Worker, disk,
+};
+#[cfg(test)]
+use crate::thumbnails::{
+    Job, Product, REFRESH_QUIET_PERIOD, Stopped, Submission, ThumbnailMetrics, lru::Cache,
+    shared_look_bytes,
+};
 mod embedded;
 #[cfg(test)]
 mod worker_tests;
 #[cfg(test)]
 mod workflow_tests;
-const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
-const REFRESH_QUIET_PERIOD: Duration = Duration::from_millis(150);
-
-#[derive(Clone, Debug, PartialEq)]
-struct SourceKey {
-    id: SourceId,
-    file: FileKey,
-    source: SourceDevelopment,
-    development: crate::development_metadata::Development,
-}
+pub(super) use crate::scan::CameraPixels as Proxy;
 
 impl SourceKey {
-    fn store_key_at(&self, path: &std::path::Path) -> Option<NativeKey> {
-        NativeKey::from_revision(path, self.file.clone(), self.development.resolved().ok()?)
-    }
-
-    fn store_key(&self) -> Option<NativeKey> {
-        self.store_key_at(&self.file.path)
-    }
-
-    fn same_pixels(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.file == other.file
-            && self.source.decode.backend_version == other.source.decode.backend_version
-            && self
-                .development
-                .resolved()
-                .ok()
-                .zip(other.development.resolved().ok())
-                .is_some_and(|(a, b)| a.same_processing(b))
-    }
-
-    #[cfg(test)]
-    fn metadata_record(&self, path: &std::path::Path) -> Source {
-        Source {
-            capture_time: None,
-            development_mode: self.development.mode(),
-            id: self.id,
-            path: path.to_path_buf(),
-            development: self.development.resolved().unwrap_or(&self.source).clone(),
-            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
-                Default::default(),
-            )),
-            repairs: Default::default(),
-            orientation: Default::default(),
-            crop: None,
-        }
-    }
-
     fn for_document(source: &Source, file: FileKey, document: &Document) -> Self {
         Self::new(source, file).with_development(
             document
@@ -74,162 +31,9 @@ impl SourceKey {
                 .expect("photo development"),
         )
     }
-
-    fn with_development(mut self, development: crate::development_metadata::Development) -> Self {
-        if let Ok(resolved) = development.resolved() {
-            self.source = resolved.for_runtime();
-        }
-        self.development = development;
-        self
-    }
-
-    fn new(source: &Source, file: FileKey) -> Self {
-        let input = if source.development_mode == crate::project::DevelopmentMode::Unity {
-            Default::default()
-        } else {
-            InputSettings::Digital
-        };
-        let development = crate::development_metadata::Development::captured(
-            source,
-            &file.path,
-            input,
-            &Default::default(),
-        );
-        Self {
-            id: source.id,
-            file,
-            source: source.development.for_runtime(),
-            development,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct FieldKey(Arc<crate::flat_field::FlatField>);
-
-impl PartialEq for FieldKey {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct ImageKey {
-    source: SourceKey,
-    target: OutputTarget,
-    field: Option<FieldKey>,
-    recipe: Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String>,
-}
-
-struct Product {
-    image: Arc<GpuImage>,
-    positive: Option<Arc<crate::gpu::view::RenderedView>>,
-}
-
-impl std::ops::Deref for Product {
-    type Target = GpuImage;
-
-    fn deref(&self) -> &Self::Target {
-        &self.image
-    }
-}
-
-impl Product {
-    fn camera(image: Arc<GpuImage>) -> Arc<Self> {
-        Arc::new(Self {
-            image,
-            positive: None,
-        })
-    }
-
-    fn overhead(positive: bool) -> usize {
-        std::mem::size_of::<Self>()
-            + std::mem::size_of::<GpuImage>()
-            + 1024
-            + if positive {
-                std::mem::size_of::<crate::gpu::view::ViewImage>()
-                    + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::photograph::request::PhotographRequest>()
-            } else {
-                0
-            }
-    }
-
-    fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
-        self.positive
-            .as_ref()
-            .map_or_else(|| self.image.look_resources(), |view| view.look_resources())
-    }
-
-    fn byte_len(&self) -> usize {
-        let (source, working) = self.image.processing_byte_len();
-        let image =
-            u64::from(self.image.linear.width()) * u64::from(self.image.linear.height()) * 16;
-        let positive = self
-            .positive
-            .as_ref()
-            .map_or(0, |view| view.photographic_bytes());
-        (source + working + image + positive) as usize + Self::overhead(self.positive.is_some())
-    }
 }
 
 impl ImageKey {
-    fn luts(&self) -> crate::looks::LutChain {
-        self.recipe
-            .as_ref()
-            .ok()
-            .and_then(Option::as_ref)
-            .map_or_else(Default::default, |recipe| recipe.luts.clone())
-    }
-
-    fn retained_bytes(&self) -> usize {
-        let development = &self.source.source.decode;
-        std::mem::size_of::<Self>()
-            + self.source.file.path.capacity()
-            + self.source.source.camera_model.capacity()
-            + development.version().len()
-            + self
-                .field
-                .as_ref()
-                .map_or(0, |field| field.0.retained_bytes())
-            + match &self.recipe {
-                Ok(Some(recipe)) => recipe.retained_bytes(),
-                Err(reason) => reason.capacity(),
-                Ok(None) => 0,
-            }
-    }
-
-    fn same_presentation(&self, other: &Self) -> bool {
-        self.source.same_pixels(&other.source)
-            && self.field == other.field
-            && self.target == other.target
-            && matches!((&self.recipe, &other.recipe), (Ok(Some(a)), Ok(Some(b)))
-                if a.composition == b.composition)
-    }
-
-    fn estimated_product_bytes(&self) -> Option<usize> {
-        let positive = matches!(&self.recipe, Ok(Some(_)));
-        let mut bytes =
-            256_u64 * 256 * if positive { 64 } else { 48 } + Product::overhead(positive) as u64;
-        if let Ok(Some(recipe)) = &self.recipe {
-            if recipe.grain.enabled {
-                bytes = bytes.checked_add(256 * 256 * 16)?;
-            }
-            for look in recipe.luts.assets() {
-                bytes = bytes
-                    .checked_add(256 * 256 * 16)?
-                    .checked_add(look.gpu_bytes())?;
-            }
-            bytes = bytes.checked_add(
-                2 * (crate::gpu::grading::Grading::byte_len_for(&recipe.grade)
-                    + recipe.grade.retained_bytes() as u64),
-            )?;
-        }
-        usize::try_from(bytes)
-            .ok()?
-            .checked_add(self.retained_bytes())
-    }
-
     fn current_recipe(&self, document: &Document) -> bool {
         match &self.recipe {
             Ok(None) => true,
@@ -240,33 +44,6 @@ impl ImageKey {
                 .image_recipe(self.source.id)
                 .is_err_and(|error| error.to_string() == *reason),
         }
-    }
-}
-
-pub(super) use crate::scan::CameraPixels as Proxy;
-
-impl Proxy {
-    pub(super) async fn image(
-        &self,
-        evaluation: crate::gpu::evaluation::Context,
-        looks: Arc<crate::gpu::lut3d::Looks>,
-        transform: &crate::gpu::drt::Target,
-        area: [u32; 4],
-    ) -> Result<Arc<GpuImage>, Error> {
-        let image = GpuImage::new_continuous_shared(
-            evaluation,
-            looks,
-            transform,
-            [self.width, self.height],
-            &self.pixels,
-            self.matrix,
-            Some(crate::gpu::source::SourceGeometry::new(
-                area,
-                [self.width, self.height],
-            )?),
-        )
-        .await?;
-        Ok(Arc::new(image))
     }
 }
 
@@ -293,65 +70,11 @@ impl SelectedPreview {
     }
 }
 
-struct Job {
-    cancelled: crate::cancellation::Cancellation,
-    reference: Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>>,
-    ticket: u64,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    key: ImageKey,
-    physical: crate::source::Input,
-    correction: super::correction::Resources,
-    render: bool,
-    priority: source_loading::Priority,
-    previous: Option<Arc<Product>>,
-}
-
-struct Outcome {
-    proxy: Option<Arc<Proxy>>,
-    ticket: u64,
-    key: ImageKey,
-    image: Result<Option<Arc<Product>>, String>,
-    proper: bool,
-}
-
-type CachedProduct = Result<Arc<Product>, String>;
-
-fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProduct)>) -> usize {
-    let mut cpu = std::collections::HashSet::new();
-    let mut gpu = std::collections::HashSet::new();
-    let mut bytes = 0;
-    for (key, product) in entries {
-        for asset in key.luts().assets() {
-            if cpu.insert(asset.allocation()) {
-                bytes += asset.numeric_bytes();
-            }
-        }
-        if let Ok(product) = product {
-            for lut in product.look_resources() {
-                if gpu.insert(Arc::as_ptr(&lut)) {
-                    bytes += lut.byte_len() as usize;
-                }
-            }
-        }
-    }
-    bytes
-}
-
 /// Filmstrip inputs captured by its caller for the current presentation.
 #[derive(Default)]
 pub(super) struct Preview {
     pub compositions: Vec<(SourceId, Composition)>,
-    pub warnings: Vec<(SourceId, String)>,
     pub sources: Vec<(SourceId, Result<ProcessingParameters, String>)>,
-    pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
-}
-
-#[derive(Clone)]
-struct ThumbnailGpu {
-    evaluation: evaluation::Context,
-    queue: Queue,
-    looks: Arc<Looks>,
-    display: Arc<super::display::Warmup>,
 }
 
 #[cfg(test)]
@@ -381,23 +104,16 @@ impl ThumbnailGpu {
 }
 
 pub(super) struct Thumbnails {
-    cache: Cache<ImageKey, CachedProduct>,
+    pub(super) processed: Processed,
     pub(super) sources: Arc<crate::source::SourceCache>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
-    // CPU/disk completion history; an admissible GPU miss still needs rendering.
-    attempted_sources: Vec<SourceKey>,
     budgets: memory::CacheBudgets,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
     embedded: embedded::EmbeddedPreviews,
-    gpu: Option<ThumbnailGpu>,
-    services: Option<Services>,
     backend: Option<Arc<dyn crate::source::SourceProvider>>,
     visible: Vec<SourceId>,
     preview: Preview,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    pending: Option<(u64, ImageKey)>,
-    refresh: Option<(ImageKey, std::time::Instant)>,
 }
 
 impl Default for Thumbnails {
@@ -410,42 +126,18 @@ impl Default for Thumbnails {
         #[cfg(test)]
         let limits = cache_limits::Hardware::current(None).defaults();
         let budgets = memory::CacheBudgets::new(limits, memory::Pressure::Normal);
+        let repaint: Arc<std::sync::OnceLock<egui::Context>> = Arc::default();
         Self {
-            cache: Cache::new(budgets.images, |key: &ImageKey, value: &CachedProduct| {
-                key.retained_bytes()
-                    - key
-                        .luts()
-                        .assets()
-                        .map(|asset| asset.numeric_bytes())
-                        .sum::<usize>()
-                    + match value {
-                        Ok(product) => {
-                            product.byte_len()
-                                - product
-                                    .look_resources()
-                                    .iter()
-                                    .map(|lut| lut.byte_len() as usize)
-                                    .sum::<usize>()
-                        }
-                        Err(reason) => 1024 + reason.capacity(),
-                    }
-            })
-            .with_shared_weight(shared_look_bytes),
+            processed: Processed::new(budgets.images, repaint.clone()),
             sources: Arc::new(crate::source::SourceCache::new(budgets.sources as u64)),
             selected_key: None,
             visible_keys: Vec::new(),
-            attempted_sources: Vec::new(),
             budgets,
-            repaint: Arc::default(),
+            repaint,
             embedded: Default::default(),
-            gpu: None,
-            services: None,
             backend: None,
             visible: Vec::new(),
             preview: Preview::default(),
-            generation: Arc::default(),
-            pending: None,
-            refresh: None,
         }
     }
 }
@@ -480,7 +172,7 @@ impl Thumbnails {
         if !document.project.input.is_negative() && document.reference_exposure(source).is_none() {
             return Ok(None);
         }
-        let Some(gpu) = &self.gpu else {
+        let Some(gpu) = &self.processed.gpu else {
             return Ok(None);
         };
         let targets = gpu.display.ready()?;
@@ -553,7 +245,7 @@ impl Thumbnails {
 
     pub(super) fn refresh_hidden_memory(&mut self) {
         self.embedded.request_visible(&[]);
-        self.cache.protect(Vec::new());
+        self.processed.protect_images(Vec::new());
         self.visible_keys.clear();
         self.protect_cpu();
     }
@@ -581,8 +273,7 @@ impl Thumbnails {
     pub(super) fn for_document(&self, sources: Arc<crate::source::SourceCache>) -> Self {
         let mut next = Self {
             sources,
-            gpu: self.gpu.clone(),
-            services: self.services.clone(),
+            processed: self.processed.for_document(self.budgets.images),
             backend: self.backend.clone(),
             repaint: self.repaint.clone(),
             embedded: self.embedded.for_document(),
@@ -600,8 +291,13 @@ impl Thumbnails {
 
     #[cfg(test)]
     pub(super) fn default_limits(&self) -> cache_limits::CacheLimits {
-        cache_limits::Hardware::current(self.gpu.as_ref().map(|gpu| gpu.evaluation.device()))
-            .defaults()
+        cache_limits::Hardware::current(
+            self.processed
+                .gpu
+                .as_ref()
+                .map(|gpu| gpu.evaluation.device()),
+        )
+        .defaults()
     }
 
     #[cfg(test)]
@@ -612,7 +308,11 @@ impl Thumbnails {
     #[cfg(test)]
     fn apply_test_budgets(&mut self, budgets: memory::CacheBudgets) {
         let sources = self.sources.clone();
-        let evaluation = self.gpu.as_ref().map(|gpu| gpu.evaluation.clone());
+        let evaluation = self
+            .processed
+            .gpu
+            .as_ref()
+            .map(|gpu| gpu.evaluation.clone());
         memory::apply_budgets(budgets, &sources, self, evaluation.as_ref());
     }
 
@@ -620,82 +320,16 @@ impl Thumbnails {
         if budgets.pressure == memory::Pressure::Critical
             && self.budgets.pressure != memory::Pressure::Critical
         {
-            self.cancel();
+            self.processed.cancel();
             self.embedded.cancel();
         }
         self.budgets = budgets;
         self.embedded.set_budget(budgets.images.min(16 << 20));
-        self.cache
-            .set_budget(budgets.images.saturating_sub(self.embedded.byte_len()));
-        self.embedded
-            .byte_len()
-            .saturating_add(self.cache.measured_bytes())
-    }
-
-    fn can_retain(&self, key: &ImageKey) -> bool {
-        let Some(mut extra) = key.estimated_product_bytes() else {
-            return false;
-        };
-        for look in key.luts().assets() {
-            if self.cache.entries.iter().any(|(old, _)| {
-                old.luts()
-                    .assets()
-                    .any(|old| old.allocation() == look.allocation())
-            }) {
-                extra -= look.numeric_bytes();
-            }
-            if self.cache.entries.iter().any(|(_, product)| {
-                product.as_ref().ok().is_some_and(|product| {
-                    product
-                        .look_resources()
-                        .iter()
-                        .any(|old| old.id() == look.id())
-                })
-            }) {
-                // The renderer reuses a live immutable GPU LUT by content identity.
-                extra -= look.gpu_bytes() as usize;
-            }
-        }
-        self.cache.can_retain(extra)
-    }
-
-    fn source_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
-        if !matches!(&key.recipe, Ok(Some(_))) {
-            return None;
-        }
-        self.cache.entries.iter().rev().find_map(|(old, product)| {
-            let product = product.as_ref().ok()?;
-            (key.source.same_pixels(&old.source) && product.positive.is_some())
-                .then_some((old, product))
-        })
-    }
-
-    fn previous_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
-        self.cache.entries.iter().rev().find_map(|(old, product)| {
-            key.same_presentation(old)
-                .then(|| product.as_ref().ok().map(|product| (old, product)))
-                .flatten()
-        })
-    }
-
-    fn protect_images(&mut self, mut wanted: Vec<ImageKey>) {
-        let previous = wanted
-            .iter()
-            .filter(|key| {
-                !self
-                    .cache
-                    .entries
-                    .iter()
-                    .any(|(old, product)| old == *key && product.is_ok())
-            })
-            .filter_map(|key| {
-                self.previous_product(key)
-                    .or_else(|| self.source_product(key))
-                    .map(|(old, _)| old.clone())
-            })
-            .collect::<Vec<_>>();
-        wanted.extend(previous);
-        self.cache.protect(wanted);
+        let embedded = self.embedded.byte_len();
+        let processed = self
+            .processed
+            .set_budget(budgets.images.saturating_sub(embedded));
+        embedded.saturating_add(processed)
     }
 
     pub fn new(
@@ -719,7 +353,7 @@ impl Thumbnails {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn without_disk(&self, developments: source_loading::SourceLoader) -> Self {
-        let gpu = self.gpu.clone().expect("thumbnail GPU resources");
+        let gpu = self.processed.gpu.clone().expect("thumbnail GPU resources");
         Self::with_gpu(gpu, None, developments)
     }
 
@@ -768,15 +402,13 @@ impl Thumbnails {
         disk: Option<disk::DiskCache>,
         developments: source_loading::SourceLoader,
     ) -> Self {
-        let mut state = Self {
-            gpu: Some(gpu.clone()),
-            ..Default::default()
-        };
+        let mut state = Self::default();
+        state.processed.gpu = Some(gpu.clone());
         #[cfg(test)]
         state.set_limits(state.default_limits());
         state.embedded = embedded::EmbeddedPreviews::new();
         state.backend = Some(Arc::new(developments));
-        state.services = Some(Services::Production(Worker::new(
+        state.processed.services = Some(Services::Production(Worker::new(
             gpu,
             disk,
             state.repaint.clone(),
@@ -786,7 +418,8 @@ impl Thumbnails {
 
     #[cfg(test)]
     pub(super) fn ready_count(&self, document: &Document, target: OutputTarget) -> usize {
-        self.cache
+        self.processed
+            .cache
             .entries
             .iter()
             .filter(|(key, value)| {
@@ -816,20 +449,7 @@ impl Thumbnails {
             .count()
     }
 
-    fn cancel(&mut self) {
-        self.pending = None;
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
     fn complete(&mut self, outcome: Outcome, document: &Document) -> bool {
-        let matching = self
-            .pending
-            .as_ref()
-            .is_some_and(|(ticket, _)| *ticket == outcome.ticket);
-        if matching {
-            self.pending = None;
-        }
         let source_current = document
             .project
             .source(outcome.key.source.id)
@@ -841,109 +461,12 @@ impl Thumbnails {
                     document,
                 ) == outcome.key.source
             });
-        // CPU/disk completion belongs to the document even when its GPU ticket retired.
-        if source_current
-            && (outcome.proper || (matching && outcome.image.is_err()))
-            && !self.attempted_sources.contains(&outcome.key.source)
-        {
-            self.attempted_sources.push(outcome.key.source.clone());
-        }
-        if matching
-            && source_current
-            && self.generation.load(std::sync::atomic::Ordering::Relaxed) == outcome.ticket
-            && outcome.key.current_recipe(document)
-            && outcome.key.field.as_ref().map(|f| &f.0)
-                == document.project.active_flat_field().map(|f| &f.map)
-        {
-            let rendered = match outcome.image {
-                Ok(Some(image)) => {
-                    // A new version replaces this source's old outputs, not another photo.
-                    self.cache.retain(|key, _| key.source != outcome.key.source);
-                    self.cache.insert(outcome.key, Ok(image));
-                    true
-                }
-                Err(error) => {
-                    self.cache.insert(outcome.key, Err(error));
-                    false
-                }
-                Ok(None) => false,
-            };
-            return rendered;
-        }
-        false
+        self.processed.complete(outcome, source_current, |key| {
+            key.current_recipe(document)
+                && key.field.as_ref().map(|f| &f.0)
+                    == document.project.active_flat_field().map(|f| &f.map)
+        })
     }
-
-    fn defer_refresh(&mut self, key: &ImageKey, now: std::time::Instant) -> bool {
-        let Some(repaint) = self.repaint.get() else {
-            return false;
-        };
-        if self
-            .refresh
-            .as_ref()
-            .is_none_or(|(waiting, _)| waiting != key)
-        {
-            self.refresh = Some((key.clone(), now + REFRESH_QUIET_PERIOD));
-        }
-        let remaining = self
-            .refresh
-            .as_ref()
-            .unwrap()
-            .1
-            .saturating_duration_since(now);
-        if remaining.is_zero() {
-            return false;
-        }
-        repaint.request_repaint_after(remaining);
-        true
-    }
-
-    fn stopped(&mut self, ticket: u64, key: ImageKey) {
-        self.services = None;
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|(pending, _)| *pending == ticket)
-        {
-            self.pending = None;
-            self.cache
-                .insert(key, Err("Thumbnail worker stopped".into()));
-        }
-    }
-}
-
-#[derive(Default, Debug)]
-struct ThumbnailMetrics {
-    disk_hit: bool,
-    camera_reused: bool,
-    calculation_seconds: f64,
-    disk_seconds: f64,
-    development_seconds: f64,
-    renderer_seconds: f64,
-    image_seconds: f64,
-}
-
-fn make_image(
-    gpu: &ThumbnailGpu,
-    job: &Job,
-    proxy: &Proxy,
-    active: &impl Fn() -> bool,
-    metrics: &mut ThumbnailMetrics,
-) -> Result<Option<Arc<Product>>, Error> {
-    if !active() {
-        return Ok(None);
-    }
-    let tick = std::time::Instant::now();
-    let targets = gpu.display.ready()?;
-    metrics.renderer_seconds = tick.elapsed().as_secs_f64();
-    let tick = std::time::Instant::now();
-    let image = pollster::block_on(proxy.image(
-        gpu.evaluation.clone(),
-        gpu.looks.clone(),
-        targets.get(job.key.target),
-        job.key.source.source.active_area,
-    ))?;
-    metrics.image_seconds = tick.elapsed().as_secs_f64();
-    Ok(active().then(|| Product::camera(image)))
 }
 
 impl Editor {
@@ -1067,605 +590,186 @@ impl Editor {
             )
             .map_err(|error| error.to_string())
     }
+}
 
-    pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
-        self.document
-            .thumbnails
-            .repaint
-            .get_or_init(|| ui.ctx().clone());
-        self.document.thumbnails.visible.clear();
-        self.document.thumbnails.refresh_hidden_memory();
-        self.apply_cache_budgets();
-        self.advance_thumbnail_demand(cx);
-        if self.document.thumbnails.pending.is_some() {
-            ui.ctx().request_repaint_after(Duration::from_millis(50));
+pub(super) fn prepare_filmstrip_images(
+    editor: &mut Editor,
+    preview: Preview,
+    context: &egui::Context,
+) {
+    let thumbnails = &mut editor.document.thumbnails;
+    thumbnails.preview = preview;
+    thumbnails.repaint.get_or_init(|| context.clone());
+    editor.apply_cache_budgets();
+    if editor.document.visit.canvas.ready.is_none()
+        && editor.document.visit.pending_preview.is_none()
+    {
+        editor.document.thumbnails.release_selected();
+    }
+
+    let field = editor.correction().map().cloned().map(FieldKey);
+    editor.document.thumbnails.processed.retain_field(field);
+}
+
+#[derive(Default)]
+pub(super) struct ThumbnailProvider {
+    visible: Vec<SourceId>,
+    protected: Vec<ImageKey>,
+    camera_wanted: Vec<(usize, ImageKey, PathBuf)>,
+    awaiting_correction: bool,
+}
+
+pub(super) struct NavigationImage<'a> {
+    pub photograph: Option<Result<NavigationPhotograph<'a>, String>>,
+    pub camera: Option<&'a egui::TextureHandle>,
+    pub updating: bool,
+}
+
+pub(super) struct NavigationPhotograph<'a> {
+    image: Arc<GpuImage>,
+    parameters: Option<crate::gpu::photograph::request::PhotographRequest>,
+    pub composition: Composition,
+    correction: correction::Resources,
+    presentation: &'a Result<Presentation, Error>,
+}
+
+impl NavigationPhotograph<'_> {
+    pub(super) fn paint(
+        self,
+        mapping: crate::geometry::TextureMapping,
+    ) -> Result<Option<ImagePaint>, String> {
+        if self.parameters.is_some() && self.correction.pending() {
+            return Ok(None);
         }
+        let field = match self.parameters.as_ref() {
+            Some(request) if request.is_inspection() && self.correction.error().is_some() => {
+                Ok(None)
+            }
+            Some(_) => self.correction.gpu(),
+            None => Ok(None),
+        }
+        .map_err(|error| error.to_string())?;
+        let presentation = self.presentation.as_ref().map_err(ToString::to_string)?;
+        processing::image_paint(presentation, self.image, self.parameters, field, mapping)
+            .map(Some)
+            .map_err(|error| error.to_string())
     }
+}
 
-    pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.filmstrip_preview(ui, Preview::default(), cx);
-    }
-
-    pub(super) fn filmstrip_preview(
+impl ThumbnailProvider {
+    pub(super) fn lookup<'a>(
         &mut self,
-        ui: &mut egui::Ui,
-        preview: Preview,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if let Some((index, modifiers)) = self.filmstrip_presentation(ui, preview, cx) {
-            self.select_roll_photo(index, modifiers, cx);
+        editor: &'a Editor,
+        source: &Source,
+        path: &std::path::Path,
+    ) -> NavigationImage<'a> {
+        self.visible.push(source.id);
+        let Some(key) = editor.thumbnail_key(source, path) else {
+            return NavigationImage {
+                photograph: None,
+                camera: None,
+                updating: false,
+            };
+        };
+        let thumbnails = &editor.document.thumbnails;
+        let camera = thumbnails.embedded.get(&key.source);
+        let thumbnail = thumbnails.processed.image(&key);
+        let updating = camera.is_none()
+            && match &thumbnail {
+                Some(Ok(thumbnail)) => !thumbnail.current,
+                Some(Err(_)) => false,
+                None => true,
+            };
+        if thumbnail.is_none() {
+            self.camera_wanted
+                .push((self.visible.len() - 1, key.clone(), path.to_owned()));
         }
-    }
+        self.protected.push(key);
 
-    pub(super) fn filmstrip_presentation(
-        &mut self,
-        ui: &mut egui::Ui,
-        preview: Preview,
-        cx: &UiContext<'_, Self>,
-    ) -> Option<(usize, egui::Modifiers)> {
-        self.document.thumbnails.preview = preview;
-        self.document
-            .thumbnails
-            .repaint
-            .get_or_init(|| ui.ctx().clone());
-        self.apply_cache_budgets();
-        self.filmstrip_contents(ui, cx)
-    }
-
-    fn filmstrip_contents(
-        &mut self,
-        ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
-    ) -> Option<(usize, egui::Modifiers)> {
-        if self.document.visit.canvas.ready.is_none()
-            && self.document.visit.pending_preview.is_none()
-        {
-            self.document.thumbnails.release_selected();
-        }
-        let field = self.correction().map().cloned().map(FieldKey);
-        self.document
-            .thumbnails
-            .cache
-            .retain(|key, _| key.field == field);
-        let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
-        let mut protected = Vec::new();
-        let mut camera_wanted = Vec::new();
-        let mut visible = Vec::new();
-        let mut select = None;
-        let mut remove = false;
-        let mut drop_slot = None;
-        let height = self
-            .preferences
-            .filmstrip_height
-            .min(max_height)
-            .min(ui.available_height());
-        let panel_id = egui::Id::new("thumbnail-filmstrip");
-        if let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id) {
-            // Window constraints must not replace the user's preferred height.
-            state.outer_rect.min.y = state.outer_rect.max.y - height;
-            ui.ctx()
-                .data_mut(|data| data.insert_persisted(panel_id, state));
-        }
-        let panel = egui::Panel::bottom("thumbnail-filmstrip")
-            .resizable(true)
-            .default_size(height)
-            .min_size(52.)
-            .max_size(max_height)
-            .frame(
-                egui::Frame::side_top_panel(ui.style())
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .fill(egui::Color32::from_gray(22)),
-            );
-        let strip = panel.show(ui, |ui| {
-            ui.take_available_height();
-            let layout = ContactSheetLayout::new(ui.available_height(), height < 90.);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                let has_capture_time = self
-                    .document
-                    .project
-                    .sources
-                    .iter()
-                    .any(|source| source.capture_time.is_some());
-                self.document.roll_order.control(ui, has_capture_time);
-                ui.add(egui::Separator::default().spacing(1.));
-                let project = self.document.state.project.clone();
-                let order = self.document.roll_order.sort.ids(&project);
-                let can_drag = ui.is_enabled() && order.len() > 1 && self.reorder_available();
-                if !can_drag
-                    || self
-                        .document
-                        .roll_order
-                        .drag
-                        .as_ref()
-                        .is_some_and(|drag| !drag.current(&order))
-                {
-                    self.document.roll_order.drag = None;
-                }
-                let pitch = layout.pitch();
-                let count = order.len();
-                egui::ScrollArea::horizontal()
-                    .animated(false)
-                    .show_viewport(ui, |ui, viewport| {
-                        let width = (count as f32 * pitch).max(ui.available_width());
-                        let (content, _) = ui.allocate_exact_size(
-                            egui::vec2(width, layout.size().y),
-                            egui::Sense::hover(),
-                        );
-                        let first = (viewport.min.x / pitch).floor().max(0.) as usize;
-                        let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
-                        let last = last.min(count);
-                        for (index, &id) in order.iter().enumerate().take(last).skip(first) {
-                            visible.push(id);
-                            let source = self
-                                .document
-                                .state
-                                .project
-                                .source(id)
-                                .expect("filmstrip source");
-                            let path = self.document.source_path(id).expect("filmstrip locator");
-                            let active = self.document.visit.current_source == Some(id);
-                            let selected = active || self.document.roll_selection.contains(id);
-                            let response_id = ui.id().with(id.0);
-                            let card = layout.begin(
-                                ui,
-                                content.min + egui::vec2(index as f32 * pitch, 0.),
-                                response_id,
-                                selected,
-                                active,
-                                ui.is_enabled().then(|| {
-                                    if can_drag {
-                                        egui::Sense::click_and_drag()
-                                    } else {
-                                        egui::Sense::click()
-                                    }
-                                }),
-                            );
-                            let image_rect = card.image_rect;
-                            let key = self.thumbnail_key(source, &path);
-                            if let Some(key) = &key {
-                                protected.push(key.clone());
-                            }
-                            let current = key
-                                .as_ref()
-                                .and_then(|key| self.document.thumbnails.cache.get(key))
-                                .cloned();
-                            let mut pending = current.is_none() && key.is_some();
-                            // Keep the previous accepted grade visible until its replacement is ready.
-                            // Exact-key failures still take precedence over navigation feedback.
-                            let entry = current.or_else(|| {
-                                key.as_ref().and_then(|key| {
-                                    self.document
-                                        .thumbnails
-                                        .previous_product(key)
-                                        .map(|(_, product)| Ok(product.clone()))
-                                        .or_else(|| {
-                                            self.document
-                                                .thumbnails
-                                                .cache
-                                                .entries
-                                                .iter()
-                                                .rev()
-                                                .find_map(|(old, value)| {
-                                                    (key.same_presentation(old) && value.is_err())
-                                                        .then(|| value.clone())
-                                                })
-                                        })
-                                })
-                            });
-                            let previous = pending && entry.as_ref().is_some_and(Result::is_ok);
-                            let mut available = false;
-                            let camera_preview = key.as_ref().is_some_and(|key| {
-                                self.document.thumbnails.embedded.get(&key.source).is_some()
-                            });
-                            let parameters = if entry
-                                .as_ref()
-                                .and_then(|entry| entry.as_ref().ok())
-                                .is_some_and(|product| product.positive.is_none())
-                            {
-                                self.thumbnail_request(source).map(Some)
-                            } else {
-                                Ok(None)
-                            };
-                            let correction = self.correction();
-                            let awaiting_correction =
-                                parameters.as_ref().is_ok_and(Option::is_some)
-                                    && correction.pending();
-                            if awaiting_correction {
-                                self.document.correction.observe(cx);
-                                pending = true;
-                            }
-                            let mut error = None;
-                            match (entry, parameters) {
-                                (Some(Ok(image)), Ok(parameters)) => {
-                                    available = true;
-                                    let composition = self.thumbnail_composition(source);
-                                    let dimensions = composition.size();
-                                    let aspect = dimensions[0] as f32 / dimensions[1] as f32;
-                                    let size = egui::vec2(
-                                        (image_rect.height() * aspect).min(image_rect.width()),
-                                        (image_rect.width() / aspect).min(image_rect.height()),
-                                    );
-                                    let full =
-                                        egui::Rect::from_center_size(image_rect.center(), size);
-                                    let draw = full.intersect(ui.clip_rect());
-                                    // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds instead of squeezing the whole image.
-                                    let scale = ui.ctx().pixels_per_point();
-                                    let min = (full.min.to_vec2() * scale).round();
-                                    let extent = (full.max.to_vec2() * scale).round() - min;
-                                    let draw_min = (draw.min.to_vec2() * scale).round();
-                                    let draw_max = (draw.max.to_vec2() * scale).round();
-                                    if draw_max.x > draw_min.x && draw_max.y > draw_min.y {
-                                        let frame_point = |point: egui::Vec2| {
-                                            let fraction = (point - min) / extent;
-                                            crate::geometry::FramePoint([
-                                                f64::from(fraction.x) * f64::from(dimensions[0]),
-                                                f64::from(fraction.y) * f64::from(dimensions[1]),
-                                            ])
-                                        };
-                                        let mapping = composition.texture_mapping(
-                                            frame_point(draw_min),
-                                            frame_point(draw_max),
-                                            composition.area(),
-                                        );
-                                        if !awaiting_correction {
-                                            let field = match parameters.as_ref() {
-                                                Some(request)
-                                                    if request.is_inspection()
-                                                        && correction.error().is_some() =>
-                                                {
-                                                    Ok(None)
-                                                }
-                                                Some(_) => correction.gpu(),
-                                                None => Ok(None),
-                                            };
-                                            match field.and_then(|field| {
-                                                processing::image_paint(
-                                                    self.presentation
-                                                        .as_ref()
-                                                        .map_err(Clone::clone)?,
-                                                    image.image.clone(),
-                                                    parameters,
-                                                    field,
-                                                    mapping,
-                                                )
-                                            }) {
-                                                Ok(paint) => {
-                                                    ui.painter().with_clip_rect(draw).add(
-                                                        egui_wgpu::Callback::new_paint_callback(
-                                                            draw, paint,
-                                                        ),
-                                                    );
-                                                }
-                                                Err(message) => {
-                                                    error = Some(message.to_string());
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if let Some((_, q)) = self
-                                        .document
-                                        .thumbnails
-                                        .preview
-                                        .outlines
-                                        .iter()
-                                        .find(|(source, _)| *source == id)
-                                    {
-                                        let a = source.development.active_area;
-                                        let points = q.map(|p| {
-                                            full.min
-                                                + egui::vec2(
-                                                    ((p[0] - f64::from(a[0])) / f64::from(a[2]))
-                                                        as f32
-                                                        * full.width(),
-                                                    ((p[1] - f64::from(a[1])) / f64::from(a[3]))
-                                                        as f32
-                                                        * full.height(),
-                                                )
-                                        });
-                                        ui.painter().with_clip_rect(draw).add(
-                                            egui::Shape::closed_line(
-                                                points.to_vec(),
-                                                ui.visuals().selection.stroke,
-                                            ),
-                                        );
-                                    }
-                                }
-                                (Some(Err(message)), _) => {
-                                    error = Some(message);
-                                }
-                                (_, Err(message)) => {
-                                    error = Some(message.to_string());
-                                }
-                                (None, Ok(_)) => {
-                                    if let Some(key) = &key {
-                                        if let Some(texture) =
-                                            self.document.thumbnails.embedded.get(&key.source)
-                                        {
-                                            available = true;
-                                            let dimensions = texture.size_vec2();
-                                            let scale = (image_rect.width() / dimensions.x)
-                                                .min(image_rect.height() / dimensions.y);
-                                            let rect = egui::Rect::from_center_size(
-                                                image_rect.center(),
-                                                dimensions * scale,
-                                            );
-                                            let painter = ui.painter().with_clip_rect(
-                                                image_rect.intersect(ui.clip_rect()),
-                                            );
-                                            painter.image(
-                                                texture.id(),
-                                                rect,
-                                                egui::Rect::from_min_max(
-                                                    egui::Pos2::ZERO,
-                                                    egui::pos2(1., 1.),
-                                                ),
-                                                egui::Color32::WHITE,
-                                            );
-                                            card.camera_badge(ui);
-                                        } else {
-                                            card.loading(ui);
-                                        }
-                                        camera_wanted.push((index, key.clone(), path.clone()));
-                                    }
-                                }
-                            }
-                            if error.is_some() {
-                                card.error(ui);
-                            }
-                            let name = path.file_name().unwrap_or_default().to_string_lossy();
-                            card.caption(ui, &name);
-                            use ui::{ContextualStatus, StatusLevel};
-                            let mut status = if let Some(error) = &error {
-                                Some(ContextualStatus::new(
-                                    StatusLevel::Error,
-                                    format!("Thumbnail unavailable: {error}"),
-                                ))
-                            } else if pending && !camera_preview && (!available || previous) {
-                                Some(ContextualStatus::new(
-                                    StatusLevel::Activity,
-                                    "Preparing thumbnail; navigation preview may differ.",
-                                ))
-                            } else {
-                                None
-                            };
-                            if let Some(reason) = self
-                                .document
-                                .thumbnails
-                                .preview
-                                .warnings
-                                .iter()
-                                .find(|(source, _)| *source == id)
-                                .map(|(_, reason)| reason.clone())
-                                .or_else(|| self.source_tool_warning(id))
-                            {
-                                let warning = ContextualStatus::new(StatusLevel::Warning, reason);
-                                status = Some(
-                                    status
-                                        .map_or(warning.clone(), |status| status.combine(warning)),
-                                );
-                            }
-                            if let Some(status) = status {
-                                card.status(ui, &status);
-                            }
-                            if can_drag
-                                && card.response.drag_started_by(egui::PointerButton::Primary)
-                            {
-                                let preview = key
-                                    .as_ref()
-                                    .and_then(|key| {
-                                        self.document.thumbnails.embedded.get(&key.source)
-                                    })
-                                    .cloned();
-                                self.document.roll_order.drag = Some(super::roll_order::Drag::new(
-                                    order.to_vec(),
-                                    id,
-                                    &self.document.roll_selection,
-                                    name.into_owned(),
-                                    preview,
-                                ));
-                            } else if card.response.clicked()
-                                && self.document.roll_order.drag.is_none()
-                            {
-                                select = Some((index, ui.input(|input| input.modifiers)));
-                            }
-                            if self
-                                .document
-                                .roll_order
-                                .drag
-                                .as_ref()
-                                .is_some_and(|drag| drag.contains(id))
-                            {
-                                ui.painter().rect_filled(
-                                    card.response.rect,
-                                    4.,
-                                    egui::Color32::from_black_alpha(100),
-                                );
-                            }
-                            if self.document.roll_order.drag.is_none()
-                                && card.response.secondary_clicked()
-                                && !selected
-                            {
-                                select = Some((index, egui::Modifiers::NONE));
-                            }
-                            if self.document.roll_order.drag.is_none()
-                                && card.response.enabled()
-                                && card.response.has_focus()
-                                && !egui::Popup::is_any_open(ui.ctx())
-                            {
-                                self.select_active_shortcut(ui.ctx());
-                                if !self.editing()
-                                    && ui.input_mut(|input| {
-                                        input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                                            || input.consume_key(
-                                                egui::Modifiers::NONE,
-                                                egui::Key::Backspace,
-                                            )
-                                    })
-                                {
-                                    remove = true;
-                                }
-                            }
-                            card.response.context_menu(|ui| {
-                                // Popup UIs do not inherit the card's disabled parent.
-                                if !card.response.enabled()
-                                    || self.document.roll_order.drag.is_some()
-                                {
-                                    ui.disable();
-                                }
-                                if ui
-                                    .add_enabled(
-                                        auto_crop::review_available(self) && selected,
-                                        egui::Button::new("Auto-crop selected photos"),
-                                    )
-                                    .clicked()
-                                {
-                                    let photos = self
-                                        .document
-                                        .project
-                                        .order
-                                        .iter()
-                                        .copied()
-                                        .filter(|id| self.document.roll_selection.contains(*id))
-                                        .collect();
-                                    auto_crop::start_review(self, photos, "Entry selection", cx);
-                                    ui.close();
-                                }
-                                if ui
-                                    .add_enabled(
-                                        !self.editing() && selected,
-                                        egui::Button::new("Remove selected photos…"),
-                                    )
-                                    .clicked()
-                                {
-                                    remove = true;
-                                    ui.close();
-                                }
-                            });
-                            if self.document.roll_order.drag.is_none() {
-                                let help = error.unwrap_or_else(|| path.display().to_string());
-                                card.response
-                                    .on_hover_text(&help)
-                                    .on_disabled_hover_text(help);
-                            }
-                        }
-                        if let Some(drag) = &self.document.roll_order.drag {
-                            let (focused, released, held) = ui.input(|input| {
-                                (
-                                    input.focused,
-                                    input.pointer.button_released(egui::PointerButton::Primary),
-                                    input.pointer.primary_down(),
-                                )
-                            });
-                            if focused
-                                && (released || held)
-                                && let Some(slot) = drag.position(ui, content, pitch)
-                            {
-                                if released {
-                                    drop_slot = Some(slot);
-                                } else {
-                                    drag.paint(
-                                        ui,
-                                        content,
-                                        pitch,
-                                        slot,
-                                        self.document.roll_order.sort,
-                                    );
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                                }
-                            }
-                            if drop_slot.is_none() && (!held || !focused) {
-                                self.document.roll_order.drag = None;
-                            }
-                        }
-                    });
-            });
+        let photograph = thumbnail.map(|result| {
+            let thumbnail = result?;
+            let correction = editor.correction();
+            let parameters = if thumbnail.graded {
+                None
+            } else {
+                let request = editor.thumbnail_request(source)?;
+                self.awaiting_correction |= correction.pending();
+                Some(request)
+            };
+            Ok(NavigationPhotograph {
+                image: thumbnail.image,
+                parameters,
+                composition: editor.thumbnail_composition(source),
+                correction,
+                presentation: &editor.presentation,
+            })
         });
-        if (strip.response.rect.height() - height).abs() > 0.5 {
-            self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
+        NavigationImage {
+            photograph,
+            camera,
+            updating,
         }
-        if remove {
-            self.request_removal(cx);
+    }
+
+    pub(super) fn publish_demand(
+        self,
+        editor: &mut Editor,
+        context: &egui::Context,
+        cx: &UiContext<'_, Editor>,
+    ) {
+        let Self {
+            visible,
+            protected,
+            camera_wanted,
+            awaiting_correction,
+        } = self;
+        editor
+            .document
+            .thumbnails
+            .processed
+            .touch_visible(&protected);
+        if awaiting_correction {
+            editor.document.correction.observe(cx);
         }
-        if let Some(slot) = drop_slot {
-            self.drop_photo_order(slot);
-            ui.ctx().request_repaint();
-        }
-        self.document.thumbnails.visible = visible;
-        self.document.thumbnails.visible_keys = protected
+
+        let thumbnails = &mut editor.document.thumbnails;
+        thumbnails.visible = visible;
+        thumbnails.visible_keys = protected
             .iter()
             .filter_map(|key| key.source.store_key())
             .collect();
-        self.document.thumbnails.protect_cpu();
-        self.document.thumbnails.protect_images(protected);
-        self.apply_cache_budgets();
-        self.document
+        thumbnails.protect_cpu();
+        thumbnails.processed.protect_images(protected.clone());
+        editor.apply_cache_budgets();
+        editor
+            .document
             .thumbnails
             .embedded
             .request_visible(&camera_wanted);
-        self.apply_cache_budgets();
-        start_next_embedded_preview(self, ui.ctx(), cx);
-        self.advance_thumbnail_demand(cx);
-        if self.document.thumbnails.pending.is_some() || self.document.thumbnails.embedded.pending()
+        editor.apply_cache_budgets();
+        start_next_embedded_preview(editor, context, cx);
+        editor.schedule_with_visible_keys(cx, std::time::Instant::now(), false, protected);
+        if editor.document.thumbnails.processed.has_pending()
+            || editor.document.thumbnails.embedded.pending()
         {
-            ui.ctx().request_repaint_after(Duration::from_millis(50));
-        }
-        select
-    }
-}
-
-#[cfg(test)]
-struct Submission {
-    pub job: Job,
-    pub reply: futures_channel::oneshot::Sender<Outcome>,
-}
-
-#[derive(Clone)]
-enum Services {
-    Production(Arc<Worker>),
-    #[cfg(test)]
-    Controlled(mpsc::Sender<Submission>),
-}
-
-#[derive(Debug)]
-struct Stopped;
-
-impl Services {
-    pub async fn process(
-        self,
-        job: Job,
-        sources: Option<Arc<dyn crate::source::SourceProvider>>,
-    ) -> Result<Outcome, Stopped> {
-        match self {
-            Self::Production(worker) => worker.process(job, sources.ok_or(Stopped)?).await,
-            #[cfg(test)]
-            Self::Controlled(commands) => {
-                let (reply, result) = futures_channel::oneshot::channel();
-                commands
-                    .send(Submission { job, reply })
-                    .map_err(|_| Stopped)?;
-                result.await.map_err(|_| Stopped)
-            }
+            context.request_repaint_after(Duration::from_millis(50));
         }
     }
 }
 
-/// Document-owned continuations include CPU/disk work whose GPU ticket has retired.
-#[derive(Default)]
-pub(super) struct ThumbnailWork {
-    tasks: Vec<Pending>,
-}
-
-struct Pending {
-    ticket: u64,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    _task: async_executor::Task<()>,
-    _retire: crate::cancellation::CancelOnDrop,
-}
-
-impl ThumbnailWork {
-    #[cfg(test)]
-    pub(super) fn pending(&self) -> bool {
-        !self.tasks.is_empty()
+pub(super) fn clear_visible_photos(
+    editor: &mut Editor,
+    context: &egui::Context,
+    cx: &UiContext<'_, Editor>,
+) {
+    let thumbnails = &mut editor.document.thumbnails;
+    thumbnails.repaint.get_or_init(|| context.clone());
+    thumbnails.visible.clear();
+    thumbnails.refresh_hidden_memory();
+    editor.apply_cache_budgets();
+    editor.advance_thumbnail_demand(cx);
+    if editor.document.thumbnails.processed.has_pending() {
+        context.request_repaint_after(Duration::from_millis(50));
     }
 }
 
@@ -1712,102 +816,53 @@ impl Editor {
         priority: source_loading::Priority,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.document.thumbnails.pending.is_some()
-            || self.document.thumbnails.cache.get(&key).is_some()
-        {
-            return;
-        }
-        let Some(services) = self.document.thumbnails.services.clone() else {
-            if self.document.thumbnails.gpu.is_some() {
-                self.document
-                    .thumbnails
-                    .cache
-                    .insert(key, Err("Thumbnail worker stopped".into()));
-            }
-            return;
-        };
-        let generation = self.document.thumbnails.generation.clone();
-        let ticket = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        let previous = render
-            .then(|| {
-                self.document
-                    .thumbnails
-                    .source_product(&key)
-                    .map(|(_, product)| product.clone())
-            })
-            .flatten();
-        let cancelled = crate::cancellation::Cancellation::default();
-        let retire = cancelled.cancel_on_drop();
         let physical = self
             .document
             .source_input(key.source.id)
             .expect("registered thumbnail input");
-        let job = Job {
-            generation: generation.clone(),
-            cancelled,
-            reference: physical.reference_exposure(),
-            ticket,
-            key: key.clone(),
-            physical,
-            correction: self.correction(),
-            render,
-            priority,
-            previous,
-        };
-        self.document.thumbnails.pending = Some((ticket, key.clone()));
-        let fallback_key = key.clone();
-
+        let correction = self.correction();
         let sources = self.document.thumbnails.acquisition();
-        let identity = generation.clone();
-        let Some(task) = cx.spawn(move |cx| async move {
-            let result = services.process(job, sources).await;
+        let processed = &mut self.document.thumbnails.processed;
+        let Some((request, task)) =
+            processed.request(key, physical, correction, render, priority, sources)
+        else {
+            return;
+        };
+        let completion = task.id.clone();
+        let ticket = task.id.ticket;
+        let fallback = task.key.clone();
+        let Some(continuation) = cx.spawn(move |cx| async move {
+            let result = request.await;
             cx.update(|editor| {
-                let Some(index) = editor
-                    .document
-                    .thumbnail_work
-                    .tasks
-                    .iter()
-                    .position(|pending| {
-                        pending.ticket == ticket && Arc::ptr_eq(&pending.generation, &identity)
-                    })
-                else {
+                let Some(pending) = editor.document.thumbnails.processed.take_work(&completion) else {
                     return;
                 };
-                let pending = editor.document.thumbnail_work.tasks.swap_remove(index);
-                let mut rendered = false;
-                if Arc::ptr_eq(&identity, &editor.document.thumbnails.generation) {
-                    editor
-                        .document
-                        .state
-                        .capture_initialization(&editor.document.initialization);
-                    match result {
-                        Ok(mut outcome) => {
-                            if let Some(proxy) = outcome.proxy.take()
-                                && let Some(key) = outcome.key.source.store_key()
-                                && let Err(error) = editor.document.cache.publish_proxy(key, proxy)
-                            {
-                                log::warn!(error = error.to_string().as_str(); "thumbnail_proxy_publication_failed");
-                            }
-                            let current = editor.document.effective_document();
-                            rendered = editor.document.thumbnails.complete(outcome, &current);
+                editor.document.state.capture_initialization(&editor.document.initialization);
+                let rendered = match result {
+                    Ok(mut outcome) => {
+                        if let Some(proxy) = outcome.proxy.take()
+                            && let Some(key) = outcome.key.source.store_key()
+                            && let Err(error) = editor.document.cache.publish_proxy(key, proxy)
+                        {
+                            log::warn!(error = error.to_string().as_str(); "thumbnail_proxy_publication_failed");
                         }
-                        Err(_) => editor.document.thumbnails.stopped(ticket, key),
+                        let current = editor.document.effective_document();
+                        editor.document.thumbnails.complete(outcome, &current)
                     }
-                }
+                    Err(_) => {
+                        editor.document.thumbnails.processed.stopped(ticket, fallback);
+                        false
+                    }
+                };
                 drop(pending);
                 editor.apply_cache_budgets();
                 editor.schedule_thumbnail(&cx, std::time::Instant::now(), rendered);
             });
         }) else {
-            self.document.thumbnails.stopped(ticket, fallback_key);
+            processed.stopped(task.id.ticket, task.key);
             return;
         };
-        self.document.thumbnail_work.tasks.push(Pending {
-            ticket,
-            generation,
-            _task: task,
-            _retire: retire,
-        });
+        processed.track(task, continuation);
     }
 
     pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
@@ -1823,12 +878,8 @@ impl Editor {
         now: std::time::Instant,
         continuing: bool,
     ) {
-        let visible = self.document.thumbnails.visible.clone();
-
-        let pressure = self.document.thumbnails.budgets.pressure;
-        let eager = pressure == memory::Pressure::Normal;
         let mut protected = Vec::new();
-        for id in &visible {
+        for id in &self.document.thumbnails.visible {
             if let Ok(source) = self.document.state.project.source(*id)
                 && let Ok(path) = self.document.source_path(*id)
                 && let Some(key) = self.thumbnail_key(source, &path)
@@ -1836,46 +887,53 @@ impl Editor {
                 protected.push(key);
             }
         }
-        if let Some((_, key)) = &self.document.thumbnails.pending {
+        self.schedule_with_visible_keys(cx, now, continuing, protected);
+    }
+
+    fn schedule_with_visible_keys(
+        &mut self,
+        cx: &UiContext<'_, Self>,
+        now: std::time::Instant,
+        continuing: bool,
+        protected: Vec<ImageKey>,
+    ) {
+        let visible = self.document.thumbnails.visible.clone();
+        let pressure = self.document.thumbnails.budgets.pressure;
+        let eager = pressure == memory::Pressure::Normal;
+        if let Some(key) = self.document.thumbnails.processed.pending_key() {
             let visible = visible.contains(&key.source.id);
-            let expected = self
-                .document
-                .project
-                .source(key.source.id)
-                .ok()
-                .zip(self.document.source_path(key.source.id).ok())
-                .and_then(|(source, path)| self.thumbnail_key(source, &path));
-            if expected.as_ref() != Some(key)
-                || (!visible
-                    && (!eager
-                        || protected
-                            .iter()
-                            .any(|key| !self.document.thumbnails.cache.contains(key))))
-            {
-                self.document.thumbnails.cancel();
-            }
+            let current = if visible {
+                protected.contains(key)
+            } else {
+                self.document
+                    .project
+                    .source(key.source.id)
+                    .ok()
+                    .zip(self.document.source_path(key.source.id).ok())
+                    .and_then(|(source, path)| self.thumbnail_key(source, &path))
+                    .as_ref()
+                    == Some(key)
+            };
+            self.document
+                .thumbnails
+                .processed
+                .reconcile(current, visible, eager, &protected);
         }
         self.document.thumbnails.visible_keys = protected
             .iter()
             .filter_map(|key| key.source.store_key())
             .collect();
         self.document.thumbnails.protect_cpu();
-        self.document.thumbnails.protect_images(protected.clone());
+        self.document
+            .thumbnails
+            .processed
+            .protect_images(protected.clone());
         self.apply_cache_budgets();
-        if self.document.thumbnails.services.is_none() {
-            if self.document.thumbnails.gpu.is_some() {
-                for key in protected {
-                    if !self.document.thumbnails.cache.contains(&key) {
-                        self.document
-                            .thumbnails
-                            .cache
-                            .insert(key, Err("Thumbnail worker stopped".into()));
-                    }
-                }
-            }
-            return;
-        }
-        if pressure == memory::Pressure::Critical || self.document.thumbnails.pending.is_some() {
+        let processed = &mut self.document.thumbnails.processed;
+        if processed.mark_unavailable(&protected)
+            || pressure == memory::Pressure::Critical
+            || processed.has_pending()
+        {
             return;
         }
         let visible_indices: Vec<_> = self
@@ -1892,42 +950,34 @@ impl Editor {
         candidates.sort_by_key(|index| !visible_indices.contains(index));
         for index in candidates {
             let id = self.document.state.project.order[index];
-            let source = self
-                .document
-                .project
-                .source(id)
-                .expect("thumbnail demand source");
-            let path = self
-                .document
-                .source_path(id)
-                .expect("thumbnail demand locator");
             let visible = visible.contains(&id);
-            let Some(key) = self.thumbnail_key(source, &path) else {
+            let key = if visible {
+                protected.iter().find(|key| key.source.id == id).cloned()
+            } else {
+                let source = self
+                    .document
+                    .project
+                    .source(id)
+                    .expect("thumbnail demand source");
+                let path = self
+                    .document
+                    .source_path(id)
+                    .expect("thumbnail demand locator");
+                self.thumbnail_key(source, &path)
+            };
+            let Some(key) = key else {
                 continue;
             };
-            if self.document.thumbnails.cache.contains(&key) {
-                continue;
-            }
-            let render = visible || self.document.thumbnails.can_retain(&key);
-            if !render
-                && self
-                    .document
-                    .thumbnails
-                    .attempted_sources
-                    .contains(&key.source)
+            let render = match self
+                .document
+                .thumbnails
+                .processed
+                .next(&key, visible, continuing, now)
             {
-                continue;
-            }
-            // An existing compatible card can stand in while the next request changes.
-            // Once a current card completes, drain subsequent work without another quiet period.
-            if !continuing
-                && render
-                && self.document.thumbnails.previous_product(&key).is_some()
-                && self.document.thumbnails.defer_refresh(&key, now)
-            {
-                return;
-            }
-            self.document.thumbnails.refresh = None;
+                crate::thumbnails::Demand::Skip => continue,
+                crate::thumbnails::Demand::Wait => return,
+                crate::thumbnails::Demand::Request { render } => render,
+            };
             self.request_thumbnail(
                 key,
                 render,
@@ -1940,475 +990,7 @@ impl Editor {
             );
             return;
         }
-        self.document.thumbnails.refresh = None;
-    }
-}
-
-enum Input {
-    Proxy(Arc<Proxy>),
-    Missing,
-    Positive,
-    Retired,
-}
-
-struct Work {
-    job: Job,
-    input: Result<Input, Error>,
-    started: std::time::Instant,
-    cache_hit: bool,
-    metrics: ThumbnailMetrics,
-    prepared: Option<crate::scan::CameraProxy>,
-}
-
-struct Worker {
-    ready: std::sync::Mutex<ReadyWork>,
-    #[cfg(test)]
-    observe: Option<Arc<dyn Fn(SourceId, bool) + Send + Sync>>,
-    gpu: ThumbnailGpu,
-    disk: Option<disk::DiskCache>,
-    repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
-}
-
-impl Worker {
-    fn active(&self, job: &Job) -> bool {
-        job.generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket
-            && !job.cancelled.is_cancelled()
-    }
-
-    fn begin(&self, job: Job, cached: Option<Arc<Proxy>>) -> Work {
-        let started = std::time::Instant::now();
-        let cache_hit = cached.is_some();
-        let mut metrics = ThumbnailMetrics::default();
-        let input = (|| {
-            if job.cancelled.is_cancelled() {
-                return Ok(Input::Retired);
-            }
-            let positive = job.render && matches!(&job.key.recipe, Ok(Some(_)));
-            if job.render {
-                if let Err(reason) = &job.key.recipe {
-                    return Err(Error::Gpu(reason.clone()));
-                }
-                if positive
-                    && job
-                        .previous
-                        .as_ref()
-                        .is_some_and(|product| product.positive.is_some())
-                {
-                    return Ok(Input::Positive);
-                }
-            }
-            let cached = cached.or_else(|| {
-                let disk = self.disk.as_ref()?;
-                let tick = std::time::Instant::now();
-                let result = disk.load(&job.key.source);
-                metrics.disk_seconds = tick.elapsed().as_secs_f64();
-                match result {
-                    Ok(proxy) => {
-                        metrics.disk_hit = proxy.is_some();
-                        proxy
-                    }
-                    Err(error) => {
-                        log::debug!(
-                            source_id = job.key.source.id.0,
-                            error = error.to_string().as_str();
-                            "thumbnail_disk_cache_miss"
-                        );
-                        None
-                    }
-                }
-            });
-            if let Some(proxy) = cached {
-                return Ok(Input::Proxy(proxy));
-            }
-            if job.cancelled.is_cancelled() {
-                return Ok(Input::Retired);
-            }
-            Ok(Input::Missing)
-        })();
-        Work {
-            job,
-            input,
-            started,
-            cache_hit,
-            metrics,
-            prepared: None,
-        }
-    }
-
-    fn positive(
-        &self,
-        job: &Job,
-        recipe: &Arc<crate::image_recipe::ImageRecipe>,
-        proxy: Option<&crate::scan::CameraProxy>,
-        metrics: &mut ThumbnailMetrics,
-    ) -> Result<Option<Arc<Product>>, Error> {
-        use crate::gpu::view::RenderedView;
-        use crate::gpu::view::ViewImage;
-        use crate::gpu::view::ViewKernels;
-        use crate::gpu::view::request::SourceRequest;
-        if !self.active(job) {
-            return Ok(None);
-        }
-        let mut recipe = recipe.clone();
-        Arc::make_mut(&mut recipe).neutral.source_development =
-            job.physical.development().expect("photo development");
-        let tick = std::time::Instant::now();
-        let targets = self.gpu.display.ready()?;
-        let device = self.gpu.evaluation.device();
-        let transform = targets.get(job.key.target);
-        metrics.renderer_seconds = tick.elapsed().as_secs_f64();
-        let previous = job
-            .previous
-            .as_ref()
-            .and_then(|product| product.positive.as_ref());
-        let tick = std::time::Instant::now();
-        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
-        let view = if let Some(previous) = previous {
-            let source = previous.product().expect("photographic card product");
-            RenderedView::render_from_retained(
-                &self.gpu.queue,
-                source.clone(),
-                capture,
-                job.correction.gpu()?,
-                &self.gpu.looks,
-                transform,
-                &|| !self.active(job),
-            )?
-        } else {
-            let proxy =
-                proxy.ok_or_else(|| Error::Gpu("thumbnail requires a camera proxy".into()))?;
-            let tick = std::time::Instant::now();
-            let mut frame = crate::frame_raster::FrameRaster::full(Composition::new(
-                job.key.source.source.active_area.into(),
-                Default::default(),
-                Default::default(),
-            )?)?;
-            frame.output = proxy.dimensions();
-            let spec = SourceRequest::for_recipe(frame, &recipe)?;
-            let capture =
-                crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
-            let kernels = self
-                .kernels
-                .get_or_init(|| pollster::block_on(ViewKernels::new(device)))
-                .clone()?;
-            let source = ViewImage::camera_preview(
-                self.gpu.evaluation.clone(),
-                &self.gpu.queue,
-                &self.gpu.looks,
-                transform,
-                kernels,
-                proxy,
-                job.correction.gpu()?,
-                spec,
-                &capture,
-                &|| !self.active(job),
-            )?;
-            metrics.calculation_seconds = tick.elapsed().as_secs_f64();
-            RenderedView::from_image(device, source, capture, job.key.target)?
-        };
-        metrics.camera_reused = previous.is_some();
-        view.ensure_submitted(
-            device,
-            &self.gpu.queue,
-            self.repaint.get().unwrap_or(&egui::Context::default()),
-        );
-        while view.in_flight() {
-            device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .map_err(|error| Error::Gpu(error.to_string()))?;
-            if !self.active(job) {
-                return Ok(None);
-            }
-        }
-        metrics.image_seconds = tick.elapsed().as_secs_f64();
-        Ok(self.active(job).then(|| {
-            Arc::new(Product {
-                image: view.image.clone(),
-                positive: Some(view),
-            })
-        }))
-    }
-
-    fn finish(&self, mut work: Work) -> Completion {
-        let mut proper = false;
-        let mut produced = None;
-        let mut captured = None;
-        let job = &work.job;
-        let image = (|| {
-            let proxy = match work.input? {
-                Input::Positive => {
-                    proper = true;
-                    let recipe = job
-                        .key
-                        .recipe
-                        .as_ref()
-                        .map_err(|error| Error::Gpu(error.clone()))?
-                        .as_ref()
-                        .ok_or(Error::Gpu("positive thumbnail requires a recipe".into()))?;
-                    captured = Some(crate::photo_preparation::ready_image(
-                        recipe,
-                        &job.reference,
-                    ));
-                    return self.positive(job, captured.as_ref().unwrap(), None, &mut work.metrics);
-                }
-                Input::Retired => return Ok(None),
-                Input::Proxy(proxy) => proxy,
-                Input::Missing => unreachable!("source acquisition precedes proxy work"),
-            };
-
-            // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
-            if job.cancelled.is_cancelled() {
-                return Ok(None);
-            }
-            produced = Some(proxy.clone());
-            if let Some(disk) = &self.disk
-                && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
-            {
-                log::warn!(
-                    source_id = job.key.source.id.0,
-                    error = error.to_string().as_str();
-                    "thumbnail_disk_cache_write_failed"
-                );
-            }
-            proper = true;
-            if !job.render || !self.active(job) {
-                return Ok(None);
-            }
-            if matches!(&job.key.recipe, Ok(Some(_))) {
-                let prepared = work.prepared.as_ref().ok_or(Error::UnusableSample(
-                    "positive proxy has not been acquired",
-                ))?;
-                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
-                // Acquisition resolved the reference; the recipe's recorded value still wins.
-                let (prepared, recipe) = crate::photo_preparation::proxy_image(
-                    recipe,
-                    &job.reference,
-                    &prepared.data,
-                    Ok(None),
-                );
-                captured = Some(recipe);
-                return self.positive(
-                    job,
-                    captured.as_ref().unwrap(),
-                    Some(&prepared),
-                    &mut work.metrics,
-                );
-            }
-            make_image(
-                &self.gpu,
-                job,
-                &proxy,
-                &|| self.active(job),
-                &mut work.metrics,
-            )
-        })()
-        .map_err(|error: Error| error.to_string());
-        log::debug!(
-            source_id = job.key.source.id.0,
-            target:? = job.key.target,
-            source_cache_hit = work.cache_hit,
-            disk_cache_hit = work.metrics.disk_hit,
-            proper,
-            render = job.render,
-            cancelled = !self.active(job),
-            failed = image.is_err(),
-            seconds = work.started.elapsed().as_secs_f64(),
-            phases:? = work.metrics;
-            "thumbnail"
-        );
-        let mut key = job.key.clone();
-        if let Some(recipe) = captured {
-            key.recipe = Ok(Some(recipe));
-        }
-        Completion {
-            outcome: Outcome {
-                proxy: None,
-                ticket: job.ticket,
-                key,
-                image,
-                proper,
-            },
-            proxy: produced,
-        }
-    }
-}
-
-struct Completion {
-    outcome: Outcome,
-    proxy: Option<Arc<Proxy>>,
-}
-
-#[derive(Default)]
-struct ReadyWork {
-    pending: Vec<(Work, futures_channel::oneshot::Sender<Completion>)>,
-    running: bool,
-}
-
-impl Worker {
-    fn new(
-        gpu: ThumbnailGpu,
-        disk: Option<disk::DiskCache>,
-        repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            gpu,
-            disk,
-            repaint,
-            kernels: Default::default(),
-            ready: Default::default(),
-            #[cfg(test)]
-            observe: None,
-        })
-    }
-
-    async fn process(
-        self: Arc<Self>,
-        mut job: Job,
-        sources: Arc<dyn crate::source::SourceProvider>,
-    ) -> Result<Outcome, Stopped> {
-        let cancelled = job.cancelled.clone();
-        job.key.source = job
-            .key
-            .source
-            .with_development(job.physical.development().expect("photo development"));
-        let cached = job
-            .key
-            .source
-            .store_key_at(job.physical.path())
-            .and_then(|key| sources.available_proxy(&key));
-        let worker = self.clone();
-        let mut work = crate::background::run(move |_| worker.begin(job, cached))
-            .await
-            .map_err(|_| Stopped)?;
-        let positive = work.job.render && matches!(&work.job.key.recipe, Ok(Some(_)));
-        if positive
-            && matches!(
-                &work.input,
-                Ok(Input::Missing | Input::Proxy(_) | Input::Positive)
-            )
-        {
-            let correction = futures_lite::future::or(
-                async {
-                    work.job.cancelled.wait().await;
-                    Ok(None)
-                },
-                async { work.job.correction.clone().acquire().await.map(Some) },
-            )
-            .await;
-            match correction {
-                Ok(Some(correction)) => work.job.correction = correction.into(),
-                Ok(None) => work.input = Ok(Input::Retired),
-                Err(error) => work.input = Err(Error::Gpu(error)),
-            }
-        }
-        if positive && matches!(&work.input, Ok(Input::Missing | Input::Proxy(_))) {
-            let cached = match &work.input {
-                Ok(Input::Proxy(proxy)) => Some(proxy.clone()),
-                _ => None,
-            };
-            let prepared = futures_lite::future::or(
-                async {
-                    work.job.cancelled.wait().await;
-                    Ok(None)
-                },
-                async {
-                    work.job
-                        .physical
-                        .positive_proxy(sources.as_ref(), work.job.priority, cached)
-                        .await
-                        .map(Some)
-                },
-            )
-            .await;
-            work.input = match prepared {
-                Ok(Some(prepared)) => {
-                    let pixels = prepared.data.clone();
-                    work.prepared = Some(prepared);
-                    Ok(Input::Proxy(pixels))
-                }
-                Ok(None) => Ok(Input::Retired),
-                Err(error) => Err(error),
-            };
-        } else if matches!(&work.input, Ok(Input::Missing)) {
-            work.input = futures_lite::future::or(
-                async {
-                    work.job.cancelled.wait().await;
-                    Ok(Input::Retired)
-                },
-                async {
-                    work.job
-                        .physical
-                        .proxy(sources.as_ref(), work.job.priority)
-                        .await
-                        .map(Input::Proxy)
-                },
-            )
-            .await;
-        }
-        work.metrics.development_seconds =
-            work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
-        if let Ok(record) = work.job.physical.record() {
-            work.job.key.source.source = record.development.for_runtime();
-        }
-        let (reply, result) = futures_channel::oneshot::channel();
-        let start = {
-            let mut ready = self.ready.lock().unwrap();
-            ready.pending.push((work, reply));
-            let start = !ready.running;
-            ready.running = true;
-            start
-        };
-        if start {
-            // One pool job drains ready CPU/GPU work; native/preview waits stay in futures.
-            blocking::unblock(move || self.drain()).detach();
-        }
-        let completion = result.await.map_err(|_| Stopped)?;
-        let mut outcome = completion.outcome;
-        if !cancelled.is_cancelled() {
-            outcome.proxy = completion.proxy;
-        }
-        Ok(outcome)
-    }
-
-    fn drain(&self) {
-        loop {
-            let next = {
-                let mut ready = self.ready.lock().unwrap();
-                let index = ready
-                    .pending
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, (work, _))| work.job.priority)
-                    .map(|(index, _)| index);
-                match index {
-                    Some(index) => Some(ready.pending.remove(index)),
-                    None => {
-                        ready.running = false;
-                        None
-                    }
-                }
-            };
-            let Some((work, reply)) = next else {
-                return;
-            };
-            if let Ok(outcome) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                #[cfg(test)]
-                let id = work.job.key.source.id;
-                #[cfg(test)]
-                if let Some(observe) = &self.observe {
-                    observe(id, true);
-                }
-                let outcome = self.finish(work);
-                #[cfg(test)]
-                if let Some(observe) = &self.observe {
-                    observe(id, false);
-                }
-                outcome
-            })) {
-                let _ = reply.send(outcome);
-            }
-        }
+        self.document.thumbnails.processed.clear_refresh();
     }
 }
 

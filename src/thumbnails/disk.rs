@@ -23,14 +23,14 @@ struct Header {
     checksum: String,
 }
 
-pub(super) struct DiskCache {
+pub(crate) struct DiskCache {
     root: PathBuf,
     budget: u64,
 }
 
 impl DiskCache {
     #[cfg(test)]
-    pub(super) fn at(root: PathBuf) -> Self {
+    pub(crate) fn at(root: PathBuf) -> Self {
         Self {
             root,
             budget: LIMIT,

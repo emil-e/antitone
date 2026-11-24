@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-pub(super) struct Cache<K, V> {
+pub(crate) struct Cache<K, V> {
     pub entries: VecDeque<(K, V)>,
     budget: usize,
     bytes: usize,
@@ -34,6 +34,13 @@ impl<K: PartialEq, V> Cache<K, V> {
         let entry = self.entries.remove(index).unwrap();
         self.entries.push_back(entry);
         self.entries.back().map(|(_, value)| value)
+    }
+
+    pub fn peek(&self, key: &K) -> Option<&V> {
+        self.entries
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value)
     }
 
     pub fn can_retain(&self, extra: usize) -> bool {
@@ -73,7 +80,7 @@ impl<K: PartialEq, V> Cache<K, V> {
         self.trim();
     }
 
-    pub(super) fn measured_bytes(&self) -> usize {
+    pub(crate) fn measured_bytes(&self) -> usize {
         self.entries.iter().fold(
             (self.shared_weight)(&self.entries),
             |total, (key, value)| total.saturating_add((self.weight)(key, value)),

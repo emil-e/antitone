@@ -497,12 +497,12 @@ impl tool::Tool for AnalyzeTool {
             editor.filmstrip(ui, cx);
             return;
         };
-        let mut preview = thumbnails::Preview::default();
+        let mut preview = filmstrip::Preview::default();
         for row in &review.approved.entries {
             let Ok(source) = review.document.project.source(row.source) else {
                 continue;
             };
-            preview.compositions.push((
+            preview.images.compositions.push((
                 row.source,
                 Composition::new(
                     source.development.active_area.into(),
@@ -511,7 +511,7 @@ impl tool::Tool for AnalyzeTool {
                 )
                 .expect("review source"),
             ));
-            preview.sources.push((
+            preview.images.sources.push((
                 row.source,
                 editor
                     .source_parameters_for(source, editor.source_exposure)
@@ -528,7 +528,7 @@ impl tool::Tool for AnalyzeTool {
                 preview.warnings.push((row.source, warning.into()));
             }
         }
-        editor.filmstrip_preview(ui, preview, cx);
+        crate::editor::filmstrip::show_preview(editor, ui, preview, cx);
     }
     fn action(&mut self, action: tool::Action, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
         match action {

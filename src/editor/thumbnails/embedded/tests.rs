@@ -301,6 +301,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
     );
     assert!(
         !thumbnails
+            .processed
             .cache
             .can_retain(thumbnails.budgets.images - retained + 1),
         "camera and processed textures must not each spend the full image allowance"
@@ -755,7 +756,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
                     _ => None,
                 })
                 .unwrap();
-            editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(
+            editor.document.thumbnails.processed.gpu = Some(ThumbnailGpu::fixture(
                 &device,
                 &queue,
                 &crate::editor::display::DisplayFixture::for_device(&device),
@@ -763,6 +764,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key, Ok(Product::camera(developed.clone())));
             let after = frame(&mut editor);
@@ -972,6 +974,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor
         .document
         .thumbnails
+        .processed
         .cache
         .insert(image_key.clone(), Ok(Product::camera(Arc::new(proper))));
     assert!(
@@ -994,6 +997,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor
         .document
         .thumbnails
+        .processed
         .cache
         .insert(image_key.clone(), Err("authoritative RAW failure".into()));
     assert!(

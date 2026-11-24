@@ -6,6 +6,9 @@ use glam::{DMat3, DVec3};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+#[cfg(feature = "editor")]
+pub(crate) mod resources;
+
 /// Immutable roll resource; no expanded or corrected full-resolution source is retained.
 pub struct GpuFlatField {
     pub(super) nodes: wgpu::Buffer,
