@@ -489,7 +489,7 @@ impl Editor {
                 .roll_selection
                 .reconcile(&self.document.state.project.order, None);
             self.document.thumbnails.release_selected();
-            self.document.thumbnails.refresh_hidden_memory();
+            self.document.thumbnails.clear_visible();
             self.document.visit.canvas.viewport.fit();
             self.status = "No photos in this roll. Add scans to continue.".into();
             return;
