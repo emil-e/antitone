@@ -103,7 +103,7 @@ fn live_source_materializations_preserve_native_and_continuous_pixels_without_op
         let count = reads.load(Ordering::SeqCst);
         let mut domain = source.domain();
         domain.grid.coverage = 8;
-        let root = reconstruct(source, domain).unwrap();
+        let root = crate::reconstruction::reconstruct(source, domain).unwrap();
         let evaluate = |store: &Materializations| {
             pollster::block_on(
                 context
@@ -216,7 +216,7 @@ fn submitted_consumers_keep_materialized_inputs_after_owner_and_waiter_retire() 
             coverage: 8,
         },
     };
-    let root = reconstruct(source, domain).unwrap();
+    let root = crate::reconstruction::reconstruct(source, domain).unwrap();
     let gate = queue.clone();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();

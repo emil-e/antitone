@@ -103,7 +103,7 @@ fn a_live_containing_region_supplies_an_unbounded_calculation_without_source_io(
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
     let codes = Codes::new(7);
-    let root = reconstruct(
+    let root = crate::reconstruction::reconstruct(
         source(Arc::new(codes.clone())),
         Domain {
             bounds: None,
@@ -185,7 +185,7 @@ fn roundtrip(
             [1.; 2],
         ),
     };
-    let root = super::super::reconstruction::reconstruct(bound, output).unwrap();
+    let root = crate::reconstruction::reconstruct(bound, output).unwrap();
     let evaluation = context
         .request(
             root,
@@ -673,7 +673,7 @@ fn a_larger_stored_extent_supplies_a_smaller_demand_without_source_reads() {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([6., 7.], [1.; 2]),
     };
-    let root = super::super::reconstruction::reconstruct(original, output).unwrap();
+    let root = crate::reconstruction::reconstruct(original, output).unwrap();
     let result = pollster::block_on(
         context
             .materialize(

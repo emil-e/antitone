@@ -295,7 +295,7 @@ impl<'a> RecipeGraph<'a> {
         let source = assembly.interpret_camera(self.codes(), self.camera()?)?;
         let repaired = self.repair(source.unrepaired.clone())?;
         // Repair before filtering. The filtered positive is reusable across grading edits.
-        let neutral = crate::gpu::evaluation::reconstruct_tiled(
+        let neutral = crate::reconstruction::reconstruct_tiled(
             repaired,
             Domain {
                 bounds: None,
@@ -372,7 +372,7 @@ impl Assembly {
         let plan = layout.plan;
         let native = self.source_images(source)?;
         let repaired = self.repair(native.unrepaired.clone())?;
-        let neutral = reconstruct_tiled(
+        let neutral = crate::reconstruction::reconstruct_tiled(
             repaired,
             Domain {
                 bounds: None,
@@ -486,7 +486,7 @@ impl Assembly {
                     "healing requires original neutral cells",
                 ));
             }
-            crate::gpu::evaluation::reconstruct(
+            crate::reconstruction::reconstruct(
                 image,
                 Domain {
                     bounds: Some(region.try_into()?),
@@ -510,7 +510,7 @@ impl Assembly {
         if image.domain() == domain {
             Ok(image)
         } else {
-            crate::gpu::evaluation::reconstruct(image, domain)
+            crate::reconstruction::reconstruct(image, domain)
         }
     }
 

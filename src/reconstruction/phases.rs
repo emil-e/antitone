@@ -1,6 +1,5 @@
 //! Reconstruction authors ordinary contribution/combine/output values; the compiler owns steps.
 use super::*;
-pub(super) const SOURCE_TILE: [u32; 2] = [512, 128];
 
 fn affine_axes(mapping: Mapping, output: Rect) -> Vec<[u32; 4]> {
     // Separate integer position from fractions before narrowing to f32. Each
@@ -183,12 +182,12 @@ impl Reconstruction {
                     }}"
                 );
                 let code = [
-                    include_str!("../reconstruction_geometry.wgsl"),
-                    include_str!("../footprint.wgsl"),
-                    include_str!("../reconstruction_mean.wgsl"),
+                    include_str!("reconstruction_geometry.wgsl"),
+                    include_str!("footprint.wgsl"),
+                    include_str!("reconstruction_mean.wgsl"),
                     "fn reconstruction_sample(p: vec2i) -> vec4f { return input_0(p); }",
                     admitted,
-                    include_str!("../reconstruction_contribution.wgsl"),
+                    include_str!("reconstruction_contribution.wgsl"),
                     axis,
                     affine_body,
                     &endpoint,
@@ -233,7 +232,7 @@ impl Reconstruction {
                             "ordered area combination v1",
                             affected,
                             [
-                                include_str!("../reconstruction_mean.wgsl"),
+                                include_str!("reconstruction_mean.wgsl"),
                                 include_str!("combine.wgsl"),
                             ]
                             .join("\n"),
@@ -248,7 +247,7 @@ impl Reconstruction {
                 first = false;
             }
         }
-        let code=[include_str!("../reconstruction_geometry.wgsl"),include_str!("../footprint.wgsl"),include_str!("../reconstruction_status.wgsl"),include_str!("../reconstruction_flags.wgsl"),
+        let code=[include_str!("reconstruction_geometry.wgsl"),include_str!("footprint.wgsl"),include_str!("reconstruction_status.wgsl"),include_str!("reconstruction_flags.wgsl"),
             "fn pixel(p:vec2i, position:vec2f, value:array<vec4f,2>, geometry:Geometry)->vec4f{return vec4f(value[0].rgb,covered_flags(value[1].x,value[0].w,geometry));}"].join("\n");
         let result = Calculation::new(
             domain,

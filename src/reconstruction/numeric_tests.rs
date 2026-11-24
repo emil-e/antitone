@@ -1,4 +1,3 @@
-use super::CellRegion as Rect;
 use super::*;
 
 struct Chart {
@@ -59,15 +58,15 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
             include_str!("footprint.wgsl")
         );
         let root = pointwise(
-            operators::source(Arc::new(Chart { domain, marker: 0. })),
+            source(Arc::new(Chart { domain, marker: 0. })),
             Function::new(code, "area_control"),
         );
-        let plan = super::tests::make_plan(root, [1, 1]);
+        let plan = make_plan(root, [1, 1]);
         let result = Executor::default()
             .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
-        let actual = execute::read(&device, &queue, &result.pixels)[0];
+        let actual = crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels)[0];
         // The area of the parallelogram is its determinant, independent of translation
         // or how source cells partition it. A sole source cell extends over the full plane.
         let area = 1.1654092_f64 * 0.7458619 - 0.4520193 * (-0.2892923);
@@ -104,7 +103,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
             output.grid.axes = domain.grid.axes.map(|v| v.map(|x| x * 2.));
             output.grid.pitch = domain.grid.pitch.map(|v| v * 2.);
             let root = reconstruct_cells(
-                operators::source(Arc::new(Chart { domain, marker })),
+                source(Arc::new(Chart { domain, marker })),
                 output,
                 [2., 0.],
                 [2.; 2],
@@ -112,12 +111,12 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
             .unwrap();
             let mut results = Vec::new();
             for tile in [[4, 2], [1, 1]] {
-                let plan = super::tests::make_plan(root.clone(), tile);
+                let plan = make_plan(root.clone(), tile);
                 let result = Executor::default()
                     .run(&device, &queue, &plan, || false)
                     .unwrap()
                     .unwrap();
-                let pixels = execute::read(&device, &queue, &result.pixels);
+                let pixels = crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels);
                 results.push(pixels);
             }
             assert_eq!(results[0], results[1]);

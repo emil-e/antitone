@@ -278,7 +278,7 @@ fn failed_edge_repairs_fall_back_inside_rotated_and_exterior_footprints() {
             "the edge cell has no actual polygon weight"
         );
         let reconstruct = |input: Value, frame: FrameRaster| {
-            crate::gpu::evaluation::reconstruct(
+            crate::reconstruction::reconstruct(
                 input.clone(),
                 Domain {
                     bounds: Some(CellRegion::new([0, 0], frame.output)),
@@ -383,7 +383,7 @@ fn failed_donor_is_local_to_its_repair_even_when_an_enclosing_read_covers_it() {
             .rectangle_weight([2., 12.], [1.; 2]),
         0.
     );
-    let root = crate::gpu::evaluation::reconstruct(
+    let root = crate::reconstruction::reconstruct(
         healed,
         Domain {
             bounds: Some([0, 0, 1, 1].into()),
@@ -410,7 +410,7 @@ fn a_required_natural_heal_can_be_hoisted_without_deferring_the_whole_reconstruc
     );
     let healed = compose(base, &[repair]).unwrap();
     let region = CellRegion::new([0, 0], [5, 5]);
-    let root = crate::gpu::evaluation::reconstruct(
+    let root = crate::reconstruction::reconstruct(
         healed,
         Domain {
             bounds: Some(region),

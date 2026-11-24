@@ -376,7 +376,7 @@ For corrected affine reconstruction against scalar coverage:
 
 ```sh
 cargo test --locked --offline --features editor,ocio-reference --lib \
-  --test scopes --test viewer --test affine_resample --test geometry_export
+  --test scopes --test viewer --test geometry_export
 cargo test --locked --offline --release --features editor,ocio-reference --lib \
   corrected_affine_refinement_matches_scalar_coverage -- --ignored --nocapture
 ```

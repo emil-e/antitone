@@ -54,7 +54,7 @@ fn traversal_hints_do_not_change_the_completed_reconstruction_identity() {
         "the first calculation must really use bounded source contributions"
     );
     assert_eq!(
-        super::super::super::super::execute::read(&device, &queue, first.as_buffer().unwrap()),
+        crate::gpu::evaluation::read_buffer(&device, &queue, first.as_buffer().unwrap()),
         vec![[2.5, -1.25, 10_000., 9.]]
     );
     submissions.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -75,7 +75,7 @@ fn traversal_hints_do_not_change_the_completed_reconstruction_identity() {
         "different execution partitions must consume completed pixels without GPU recomputation"
     );
     assert_eq!(
-        super::super::super::super::execute::read(&device, &queue, second.as_buffer().unwrap()),
+        crate::gpu::evaluation::read_buffer(&device, &queue, second.as_buffer().unwrap()),
         vec![[2.5, -1.25, 10_000., 9.]]
     );
     assert_eq!(

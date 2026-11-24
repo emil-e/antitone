@@ -85,7 +85,8 @@ pub(super) fn chain(
     let domain = data.domain();
     let mut node = interpret(device, source(data), matrix()).unwrap();
     if physical {
-        node = reconstruct(node.clone(), reduced(node.domain, [41, 35])).unwrap();
+        node = crate::reconstruction::reconstruct(node.clone(), reduced(node.domain, [41, 35]))
+            .unwrap();
     }
     let (roll, snapshot) = settings(domain.finite().unwrap());
     node = grade(
@@ -109,7 +110,8 @@ pub(super) fn chain(
         node = renderer.drt.get(target).apply(node).unwrap();
     }
     if !physical {
-        node = reconstruct(node.clone(), reduced(node.domain, [41, 35])).unwrap();
+        node = crate::reconstruction::reconstruct(node.clone(), reduced(node.domain, [41, 35]))
+            .unwrap();
     }
     node
 }

@@ -63,4 +63,4 @@ Crop editing has a temporary frame and viewport. Apply accepts the proposed comp
 
 [Geometry](../src/geometry.rs) owns shared mappings; [coverage](../src/coverage.rs) owns actual cell intersection; [viewport](../src/viewport.rs) owns image-to-canvas layout. [Frame rasters](../src/frame_raster.rs), [refinement](../src/refinement.rs) and [export](../src/export.rs) consume those definitions rather than inventing parallel coordinate conventions.
 
-Use asymmetric images and nonzero active-area origins when testing mappings: square, centred fixtures hide mistakes. [Affine reconstruction](../tests/affine_resample.rs), [geometry export](../tests/geometry_export.rs), [viewer](../tests/viewer.rs) and [scope geometry](../tests/scopes/geometry.rs) cover the composed paths.
+Use asymmetric images and nonzero active-area origins when testing mappings: square, centred fixtures hide mistakes. [Affine reconstruction](../src/reconstruction/affine_tests.rs), [geometry export](../tests/geometry_export.rs), [viewer](../tests/viewer.rs) and [scope geometry](../tests/scopes/geometry.rs) cover the composed paths.

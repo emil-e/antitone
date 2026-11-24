@@ -1,5 +1,4 @@
 use super::*;
-mod input_slices;
 mod regional;
 
 #[test]
@@ -33,7 +32,7 @@ fn complete_crop_mask_matches_cell_clipping_across_full_and_partial_rows() {
             },
         )
         .unwrap();
-        let reconstruction = (root.operation.as_ref() as &dyn std::any::Any)
+        let reconstruction = (root.operation().as_ref() as &dyn std::any::Any)
             .downcast_ref::<Reconstruction>()
             .unwrap();
         let mask = reconstruction.support_mask(output, samples).unwrap();
@@ -100,12 +99,12 @@ fn evaluate(
         domain,
     )
     .unwrap();
-    let plan = super::super::tests::make_plan(root, tile);
+    let plan = make_plan(root, tile);
     let result = Executor::default()
         .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
-    super::super::execute::read(&device, &queue, &result.pixels)
+    crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels)
 }
 
 #[test]
@@ -139,13 +138,13 @@ fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tile
     )
     .unwrap();
     for tile in [[2, 1], [1, 1]] {
-        let plan = super::super::tests::make_plan(root.clone(), tile);
+        let plan = make_plan(root.clone(), tile);
         let result = Executor::default()
             .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
         assert_eq!(
-            super::super::execute::read(&device, &queue, &result.pixels),
+            crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels),
             vec![[6., 7., 8., 8.], [10., 11., 12., 8.]]
         );
     }

@@ -2,7 +2,7 @@
 use super::*;
 
 pub(crate) fn supplied_mask(image: &Value, output: Rect, samples: Rect) -> Option<Vec<u32>> {
-    let operation = (image.operation.as_ref() as &dyn std::any::Any)
+    let operation = (image.operation().as_ref() as &dyn std::any::Any)
         .downcast_ref::<Reconstruction>()
         .unwrap();
     let mut fragment = Fragment::default();

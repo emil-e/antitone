@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::reconstruct_tiled as reconstruct;
+use crate::reconstruction::reconstruct_tiled as reconstruct;
 mod quantum;
 mod retention;
 use crate::dust_repair::{RepairId, RepairOrigin};
@@ -271,7 +271,7 @@ fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_option
         grid: Grid::axis_aligned([0.; 2], [2.; 2]),
     };
     let regional = reconstruct(repaired.clone(), domain).unwrap();
-    let direct = crate::gpu::evaluation::reconstruct(repaired, domain).unwrap();
+    let direct = crate::reconstruction::reconstruct(repaired, domain).unwrap();
     let read = |node| {
         let mut pixels = vec![[0.; 4]; 256 * 128];
         context
@@ -453,7 +453,7 @@ fn unbounded_view_regions_with_negative_origins_keep_real_source_edges() {
         grid: Grid::axis_aligned([0.; 2], [2.; 2]),
     };
     let tiled = reconstruct(repaired.clone(), domain).unwrap();
-    let direct = crate::gpu::evaluation::reconstruct(repaired, domain).unwrap();
+    let direct = crate::reconstruction::reconstruct(repaired, domain).unwrap();
     let region: CellRegion = [-7, -5, 151, 83].into();
     let read = |root| {
         let evaluation = context

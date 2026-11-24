@@ -19,8 +19,8 @@ fn verify(frame: FrameRaster, exterior: bool) {
         )),
         grid,
     };
-    let node = reconstruct(super::super::super::super::borrowed_input(input), output).unwrap();
-    let op = (node.operation.as_ref() as &dyn std::any::Any)
+    let node = reconstruct(borrowed_input(input), output).unwrap();
+    let op = (node.operation().as_ref() as &dyn std::any::Any)
         .downcast_ref::<Reconstruction>()
         .unwrap();
     let demand = op.reads(output.finite().unwrap()).unwrap()[0].region;

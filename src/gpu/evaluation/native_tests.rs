@@ -78,7 +78,9 @@ fn case(
     .unwrap();
     node = crate::gpu::gaussian::blur(node, sigma).unwrap();
     node = renderer.drt.get(OutputTarget::Srgb).apply(node).unwrap();
-    node = reconstruct(node.clone(), super::tests::reduced(node.domain, size)).unwrap();
+    node =
+        crate::reconstruction::reconstruct(node.clone(), super::tests::reduced(node.domain, size))
+            .unwrap();
     Case {
         scan,
         node,
