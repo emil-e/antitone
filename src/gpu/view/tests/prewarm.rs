@@ -156,9 +156,9 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 .unwrap();
             let evaluation =
                 ViewImage::evaluation(renderer.evaluation(), endpoint.clone()).unwrap();
-            let work = renderer
+            let recorded = renderer
                 .evaluation()
-                .prepare_supplied(evaluation, vec![source.supplied().unwrap()])
+                .record_supplied(evaluation, vec![source.supplied().unwrap()])
                 .unwrap();
             let spec = capture
                 .planned_request(&device.limits(), source.spec.clone(), plan)
@@ -170,7 +170,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 spec,
                 endpoint,
                 region,
-                work.record(renderer.evaluation()).unwrap(),
+                recorded,
             )
             .unwrap();
             RenderedView::from_image(&device, image, capture, target).unwrap()

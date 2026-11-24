@@ -1,11 +1,11 @@
-//! Actual image demands retain their preparation through recording or missing production.
+//! Drawable image requests resolve together or retain their plans for worker execution.
 use super::*;
 use crate::gpu::allocation::DeviceAllocationExt;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) struct Preparation {
+pub(in crate::gpu::evaluation) struct Preparation {
     evaluation: Evaluation,
     work: PreparedWork,
 }
@@ -22,6 +22,53 @@ pub(crate) struct RecordedImage {
     pub commands: Option<Recorded>,
 }
 
+impl TryFrom<Image<ImageLayout>> for RecordedImage {
+    type Error = Error;
+
+    fn try_from(image: Image<ImageLayout>) -> Result<Self, Error> {
+        Ok(Self {
+            pixels: image.try_into()?,
+            commands: None,
+        })
+    }
+}
+
+pub(crate) enum ImageDelivery {
+    Drawable(Vec<RecordedImage>),
+    Pending(PendingImages),
+}
+
+/// Owns the planned batch. Dropping it without polling `finish` starts no work.
+pub(crate) struct PendingImages {
+    context: Context,
+    plans: Vec<Preparation>,
+}
+
+impl PendingImages {
+    pub(crate) async fn finish(
+        self,
+        queue: &crate::gpu::submission::Queue,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<RecordedImage>, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let images = self.context.produce_images(queue, self.plans)?;
+        let mut images = Box::pin(futures_util::future::try_join_all(images));
+        let completed = futures_util::future::poll_fn(|cx| {
+            if cancelled() {
+                return std::task::Poll::Ready(Err(Error::Cancelled));
+            }
+            images
+                .as_mut()
+                .poll(cx)
+                .map(|result| result.map_err(|error| (*error).clone()))
+        })
+        .await?;
+        completed.into_iter().map(RecordedImage::try_from).collect()
+    }
+}
+
 impl Preparation {
     fn new(evaluation: Evaluation, work: PreparedWork) -> Self {
         Self { evaluation, work }
@@ -36,11 +83,14 @@ impl Preparation {
         (passes <= Plan::MAX_RECORDING_PASSES).then_some(passes)
     }
 
-    pub(crate) fn can_record(&self) -> bool {
+    pub(in crate::gpu::evaluation) fn can_record(&self) -> bool {
         self.recording_passes().is_some()
     }
 
-    pub(crate) fn record(self, context: &Context) -> Result<RecordedImage, Error> {
+    pub(in crate::gpu::evaluation) fn record(
+        self,
+        context: &Context,
+    ) -> Result<RecordedImage, Error> {
         if !self.can_record() {
             return Err(Error::InvalidParameter(
                 "image preparation requires production before recording",
@@ -48,10 +98,7 @@ impl Preparation {
         }
 
         match self.work {
-            PreparedWork::Cached(image) => Ok(RecordedImage {
-                pixels: image.try_into()?,
-                commands: None,
-            }),
+            PreparedWork::Cached(image) => image.try_into(),
             PreparedWork::Gpu(plan) => {
                 let root = self.evaluation.job.image();
                 let region = self.evaluation.job.region();
@@ -111,14 +158,60 @@ fn output_buffer(context: &Context, region: CellRegion) -> Result<wgpu::Buffer, 
 }
 
 impl Context {
+    /// Plan a batch for the next draw. If any image needs a worker, defer the
+    /// whole batch without starting work or recording the resident subset.
+    pub(crate) fn request_images(
+        &self,
+        evaluations: Vec<Evaluation>,
+    ) -> Result<ImageDelivery, Error> {
+        let plans = self.prepare_images(evaluations)?;
+        if plans.iter().all(Preparation::can_record) {
+            let images = plans
+                .into_iter()
+                .map(|plan| plan.record(self))
+                .collect::<Result<_, _>>()?;
+            Ok(ImageDelivery::Drawable(images))
+        } else {
+            Ok(ImageDelivery::Pending(PendingImages {
+                context: self.clone(),
+                plans,
+            }))
+        }
+    }
+
+    /// Resolve an image inline on an existing blocking worker; never queue child work.
+    pub(crate) fn request_image_on_worker(
+        &self,
+        evaluation: Evaluation,
+        queue: &crate::gpu::submission::Queue,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<RecordedImage, Error> {
+        let plan = self.prepare_image(evaluation)?;
+        if plan.can_record() {
+            plan.record(self)
+        } else {
+            self.produce_prepared(queue, plan, cancelled)?.try_into()
+        }
+    }
+
     #[cfg(test)]
-    pub(crate) fn prepare_supplied(
+    pub(crate) fn record_supplied(
         &self,
         mut evaluation: Evaluation,
         supplied: Vec<SuppliedImage>,
-    ) -> Result<Preparation, Error> {
+    ) -> Result<RecordedImage, Error> {
         evaluation.job = evaluation.job.with_supplied(supplied.into());
-        self.prepare_image(evaluation)
+        self.prepare_image(evaluation)?.record(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn produce_image_on_worker(
+        &self,
+        evaluation: Evaluation,
+        queue: &crate::gpu::submission::Queue,
+    ) -> Result<RecordedImage, Error> {
+        self.produce_prepared(queue, self.prepare_image(evaluation)?, || false)?
+            .try_into()
     }
 
     fn prepared_layout(&self, evaluation: &Evaluation) -> Result<ImageLayout, Error> {
@@ -137,7 +230,10 @@ impl Context {
         Ok(layout)
     }
 
-    pub(crate) fn prepare_image(&self, evaluation: Evaluation) -> Result<Preparation, Error> {
+    pub(in crate::gpu::evaluation) fn prepare_image(
+        &self,
+        evaluation: Evaluation,
+    ) -> Result<Preparation, Error> {
         let evaluation = evaluation.with_materializations(self.materializations());
         let root = evaluation.job.image();
         let region = evaluation.job.region();
@@ -182,7 +278,7 @@ impl Context {
         Ok(Preparation::new(evaluation, work))
     }
 
-    pub(crate) fn prepare_images(
+    pub(super) fn prepare_images(
         &self,
         evaluations: Vec<Evaluation>,
     ) -> Result<Vec<Preparation>, Error> {
@@ -194,7 +290,7 @@ impl Context {
 
     /// Fulfil a captured preparation on an existing blocking worker, without queueing child work.
     /// This submits and waits; presentation callbacks must use recording or async production.
-    pub(crate) fn produce_prepared(
+    pub(in crate::gpu::evaluation) fn produce_prepared(
         &self,
         queue: &crate::gpu::submission::Queue,
         preparation: Preparation,
@@ -242,7 +338,7 @@ impl Context {
         Ok(image)
     }
 
-    pub(crate) fn produce_images(
+    pub(in crate::gpu::evaluation) fn produce_images(
         &self,
         queue: &crate::gpu::submission::Queue,
         prepared: Vec<Preparation>,

@@ -60,12 +60,9 @@ fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
             .materializations()
             .set_retention_enabled(false);
         let request = Request::new(
-            Preparation::new(
-                renderer.evaluation().clone(),
-                kernels.clone(),
-                vec![ImageRequest::new(endpoint(input.clone(), delta), spec.clone()).unwrap()],
-            )
-            .unwrap(),
+            renderer.evaluation().clone(),
+            kernels.clone(),
+            vec![ImageRequest::new(endpoint(input.clone(), delta), spec.clone()).unwrap()],
         )
         .unwrap();
         let product = pollster::block_on(request.produce(&queue, || false))
@@ -136,8 +133,8 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         .unwrap(),
     )
     .unwrap();
-    let prepare = |definition| {
-        Preparation::new(
+    let request = |definition| {
+        Request::new(
             context.clone(),
             kernels.clone(),
             vec![ImageRequest::new(definition, SourceRequest::for_frame(frame).unwrap()).unwrap()],
@@ -145,7 +142,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         .unwrap()
     };
 
-    let cold = Request::new(prepare(endpoint(input.clone(), 3.))).unwrap();
+    let cold = request(endpoint(input.clone(), 3.));
     assert!(cold.ready().is_none());
     let first = pollster::block_on(cold.produce(&queue, || false))
         .unwrap()
@@ -164,7 +161,7 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
         .identity()
         .unwrap()
         .clone();
-    let hot = Request::new(prepare(selected.clone())).unwrap();
+    let hot = request(selected.clone());
     let next = hot.ready().unwrap().remove(0);
     assert!(next.definition.same_definition(&selected));
     assert!(

@@ -154,15 +154,11 @@ impl ViewImage {
         gpu: &crate::gpu::submission::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
-        let work = context.prepare_image(Self::evaluation(&context, definition.clone())?)?;
-        let image = if work.can_record() {
-            work.record(&context)?
-        } else {
-            RecordedImage {
-                pixels: context.produce_prepared(gpu, work, cancelled)?.try_into()?,
-                commands: None,
-            }
-        };
+        let image = context.request_image_on_worker(
+            Self::evaluation(&context, definition.clone())?,
+            gpu,
+            cancelled,
+        )?;
         let region = definition.domain().finite()?;
         Self::from_recorded(context, kernels, spec, definition, region, image)
     }

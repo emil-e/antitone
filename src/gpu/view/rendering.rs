@@ -1,6 +1,8 @@
 //! Described image requests become view products through common evaluation.
 use super::*;
-use crate::gpu::evaluation::{Context, Evaluation, Image, ImageLayout, Value};
+use crate::gpu::evaluation::{
+    Context, Evaluation, ImageDelivery, PendingImages, RecordedImage, Value,
+};
 
 #[cfg(test)]
 mod tests;
@@ -41,117 +43,63 @@ impl ImageRequest {
         let region = self.definition.domain().finite()?;
         ViewImage::from_recorded(context, kernels, self.spec, self.definition, region, image)
     }
-
-    pub(crate) fn produced(
-        self,
-        context: Context,
-        kernels: Arc<ViewKernels>,
-        image: Image<ImageLayout>,
-    ) -> Result<Arc<ViewImage>, Error> {
-        self.recorded(
-            context,
-            kernels,
-            crate::gpu::evaluation::RecordedImage {
-                pixels: image.try_into()?,
-                commands: None,
-            },
-        )
-    }
 }
 
-pub(crate) struct Preparation {
-    images: Vec<ImageRequest>,
-    work: Vec<crate::gpu::evaluation::Preparation>,
+fn view_images(
+    context: &Context,
+    kernels: &Arc<ViewKernels>,
+    requests: Vec<ImageRequest>,
+    images: Vec<RecordedImage>,
+) -> Result<Vec<Arc<ViewImage>>, Error> {
+    requests
+        .into_iter()
+        .zip(images)
+        .map(|(request, image)| request.recorded(context.clone(), kernels.clone(), image))
+        .collect()
+}
+
+struct PendingView {
+    job: PendingImages,
+    requests: Vec<ImageRequest>,
     context: Context,
     kernels: Arc<ViewKernels>,
-}
-
-impl Preparation {
-    pub(crate) fn new(
-        context: Context,
-        kernels: Arc<ViewKernels>,
-        images: Vec<ImageRequest>,
-    ) -> Result<Self, Error> {
-        let evaluations = images
-            .iter()
-            .map(|image| image.evaluation(&context))
-            .collect::<Result<Vec<_>, _>>()?;
-        let work = context.prepare_images(evaluations)?;
-        Ok(Self {
-            images,
-            work,
-            context,
-            kernels,
-        })
-    }
-
-    pub(crate) fn can_record(&self) -> bool {
-        self.work.iter().all(|work| work.can_record())
-    }
-
-    pub(crate) fn record(self) -> Result<Vec<Arc<ViewImage>>, Error> {
-        self.images
-            .into_iter()
-            .zip(self.work)
-            .map(|(description, work)| {
-                let image = work.record(&self.context)?;
-                description.recorded(self.context.clone(), self.kernels.clone(), image)
-            })
-            .collect()
-    }
-
-    pub(crate) async fn produce(
-        self,
-        queue: &crate::gpu::submission::Queue,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
-        let values = self.context.produce_images(queue, self.work)?;
-        let mut values = Box::pin(futures_util::future::try_join_all(values));
-        let result = futures_util::future::poll_fn(|cx| {
-            if cancelled() {
-                return std::task::Poll::Ready(None);
-            }
-            std::future::Future::poll(values.as_mut(), cx).map(Some)
-        })
-        .await;
-        let Some(result) = result else {
-            return Ok(None);
-        };
-        let values = match result {
-            Ok(values) => values,
-            Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
-            Err(error) => return Err((*error).clone()),
-        };
-        self.images
-            .into_iter()
-            .zip(values)
-            .map(|(description, image)| {
-                description.produced(self.context.clone(), self.kernels.clone(), image)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
-    }
 }
 
 /// One actual view request may expose a current-image provisional raster while production runs.
 pub(crate) struct Request {
     ready: Mutex<Option<Vec<Arc<ViewImage>>>>,
-    pending: Mutex<Option<Preparation>>,
+    pending: Mutex<Option<PendingView>>,
 }
 
 impl Request {
-    pub(crate) fn new(prepared: Preparation) -> Result<Self, Error> {
-        if prepared.can_record() {
-            Ok(Self {
-                ready: Mutex::new(Some(prepared.record()?)),
-                pending: Mutex::new(None),
-            })
-        } else {
-            Ok(Self {
-                ready: Mutex::new(None),
-                pending: Mutex::new(Some(prepared)),
-            })
-        }
+    fn new(
+        context: Context,
+        kernels: Arc<ViewKernels>,
+        requests: Vec<ImageRequest>,
+    ) -> Result<Self, Error> {
+        let evaluations = requests
+            .iter()
+            .map(|request| request.evaluation(&context))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (ready, pending) = match context.request_images(evaluations)? {
+            ImageDelivery::Drawable(images) => (
+                Some(view_images(&context, &kernels, requests, images)?),
+                None,
+            ),
+            ImageDelivery::Pending(job) => (
+                None,
+                Some(PendingView {
+                    job,
+                    requests,
+                    context,
+                    kernels,
+                }),
+            ),
+        };
+        Ok(Self {
+            ready: Mutex::new(ready),
+            pending: Mutex::new(pending),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -174,11 +122,7 @@ impl Request {
             looks,
             transform,
         )?;
-        Self::new(Preparation::new(
-            context,
-            kernels,
-            vec![ImageRequest::new(definition, spec)?],
-        )?)
+        Self::new(context, kernels, vec![ImageRequest::new(definition, spec)?])
     }
 
     pub(crate) fn photograph(
@@ -207,7 +151,7 @@ impl Request {
             scan.source().identity(),
         ));
         let limits = context.device().limits();
-        let prepare = |spec: SourceRequest| {
+        let request_view = |spec: SourceRequest| {
             let underlay = spec.underlay()?;
             let images = [spec, underlay]
                 .into_iter()
@@ -223,28 +167,21 @@ impl Request {
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Preparation::new(context.clone(), kernels.clone(), images)
+            Self::new(context.clone(), kernels.clone(), images)
         };
-        let prepared = prepare(spec.clone())?;
-        if prepared.can_record() {
-            return Self::new(prepared);
-        }
-        let provisional = previous
-            .filter(|previous| {
+        let mut request = request_view(spec.clone())?;
+        if request.pending.get_mut().unwrap().is_some()
+            && let Some(previous) = previous.filter(|previous| {
                 previous.same_source(&spec)
                     && previous.frame().composition == spec.frame().composition
                     && previous.frame() != spec.frame()
             })
-            .map(|previous| prepare(previous.clone()))
-            .transpose()?;
-        let ready = match provisional {
-            Some(provisional) if provisional.can_record() => Some(provisional.record()?),
-            _ => None,
-        };
-        Ok(Self {
-            ready: Mutex::new(ready),
-            pending: Mutex::new(Some(prepared)),
-        })
+        {
+            // A provisional view is useful only if it can draw without waiting.
+            let provisional = request_view(previous.clone())?;
+            request.ready = provisional.ready;
+        }
+        Ok(request)
     }
 
     pub(crate) fn ready(&self) -> Option<Vec<Arc<ViewImage>>> {
@@ -257,14 +194,22 @@ impl Request {
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
         let pending = self.pending.lock().unwrap().take();
-        let Some(pending) = pending else {
+        let Some(PendingView {
+            job,
+            requests,
+            context,
+            kernels,
+        }) = pending
+        else {
             return Ok(self.ready());
         };
-        let result = pending.produce(queue, cancelled).await?;
-        if let Some(images) = &result {
-            *self.ready.lock().unwrap() = Some(images.clone());
-        }
-        Ok(result)
+        let images = match job.finish(queue, cancelled).await {
+            Ok(images) => view_images(&context, &kernels, requests, images)?,
+            Err(Error::Cancelled) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        *self.ready.lock().unwrap() = Some(images.clone());
+        Ok(Some(images))
     }
 }
 

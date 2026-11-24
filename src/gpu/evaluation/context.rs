@@ -39,7 +39,7 @@ mod materialize;
 #[cfg(feature = "editor")]
 mod prepared;
 #[cfg(feature = "editor")]
-pub(crate) use prepared::{Preparation, RecordedImage};
+pub(crate) use prepared::{ImageDelivery, PendingImages, RecordedImage};
 
 #[derive(Clone)]
 pub struct Context {

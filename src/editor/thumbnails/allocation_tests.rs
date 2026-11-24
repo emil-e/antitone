@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::{BufferImage, RecordedImage};
+use crate::gpu::evaluation::{BufferImage, ImageDelivery};
 use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::{ProcessingSource, SourceGeometry};
 use crate::gpu::view::{RenderedView, ViewImage, ViewKernels, request::SourceRequest};
@@ -70,35 +70,36 @@ fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
                 renderer.drt(OutputTarget::Srgb),
             )
             .unwrap();
-        let work = renderer
-            .evaluation()
-            .prepare_image(
-                ViewImage::evaluation(renderer.evaluation(), definition.clone()).unwrap(),
-            )
-            .unwrap();
+        let context = renderer.evaluation();
+        let evaluation = ViewImage::evaluation(context, definition.clone()).unwrap();
+        crate::gpu::test_support::take_evaluation_buffer_creations();
         let recorded = if produce {
-            RecordedImage {
-                pixels: renderer
-                    .evaluation()
-                    .produce_prepared(&queue, work, || false)
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-                commands: None,
-            }
+            context.produce_image_on_worker(evaluation, &queue).unwrap()
         } else {
-            assert!(work.can_record(), "control: exercise deferred recording");
-            work.record(renderer.evaluation()).unwrap()
+            let ImageDelivery::Drawable(mut images) =
+                context.request_images(vec![evaluation]).unwrap()
+            else {
+                panic!("control: exercise deferred recording");
+            };
+            images.remove(0)
         };
         let BufferImage::Produced(output) = &recorded.pixels else {
             panic!("captured endpoint");
         };
         let final_bytes = output.as_buffer().unwrap().size() + camera.input.size();
         let dependencies = output.image.used_inputs();
-        assert!(
-            !dependencies.is_empty(),
-            "control: real dependencies were prepared"
-        );
+        if produce {
+            let [_, allocated_bytes] = crate::gpu::test_support::take_evaluation_buffer_creations();
+            assert!(
+                allocated_bytes > 0,
+                "control: the worker allocated evaluation scratch"
+            );
+        } else {
+            assert!(
+                !dependencies.is_empty(),
+                "control: recording owns GPU dependencies"
+            );
+        }
         let region = definition.domain().finite().unwrap();
         let image = ViewImage::from_recorded(
             renderer.evaluation().clone(),

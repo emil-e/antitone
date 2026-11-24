@@ -38,7 +38,7 @@ pub use cache::RetainedKey;
 pub(crate) mod numeric_fixture;
 pub use context::{CachePolicy, Context, Evaluation, Production, Region, Worker};
 #[cfg(feature = "editor")]
-pub(crate) use context::{Preparation, RecordedImage};
+pub(crate) use context::{ImageDelivery, PendingImages, RecordedImage};
 pub use execute::{Sink, WorkCounts};
 pub use plan::Tiling;
 

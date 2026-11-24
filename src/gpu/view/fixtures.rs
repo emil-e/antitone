@@ -144,7 +144,7 @@ impl ViewImage {
             spec,
         )?;
         let region = spec.input_region()?;
-        let work = context.prepare_image(context.request(
+        let evaluation = context.request(
             root.clone(),
             e::Region {
                 bounds: region,
@@ -153,8 +153,8 @@ impl ViewImage {
             e::Tiling {
                 tile: [region.width, region.height],
             },
-        )?)?;
-        let image = work.record(&context)?;
+        )?;
+        let image = context.record_supplied(evaluation, Vec::new())?;
         let image =
             Self::from_recorded_fixture(context, display, kernels, spec, root, region, image)?;
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -350,11 +350,10 @@ impl ViewImage {
             }
         }
         let context = &source.context;
-        let work = context.prepare_supplied(
+        let image = context.record_supplied(
             Self::evaluation(context, root.clone())?,
             vec![source.supplied()?],
         )?;
-        let image = work.record(context)?;
         let spec = capture.planned_request(
             &source.context.device().limits(),
             source.spec.clone(),

@@ -195,6 +195,60 @@ impl Operation for Sum {
 }
 
 #[test]
+fn pending_batch_does_not_start_early_or_record_only_the_resident_member() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let source = |identity, reads: &Arc<AtomicUsize>| {
+        super::source(Arc::new(SeparatePixels {
+            reads: reads.clone(),
+            identity,
+        }))
+    };
+    let warm_reads = Arc::new(AtomicUsize::new(0));
+    let cold_reads = Arc::new(AtomicUsize::new(0));
+    let warm = source(0, &warm_reads);
+    let cold = source(1, &cold_reads);
+    let _input = context
+        .produce_image_on_worker(request(&context, warm.clone()), &queue)
+        .unwrap();
+    let warm = request(&context, shifted(warm, 3.));
+    let cold = request(&context, shifted(cold, 7.));
+    let ImageDelivery::Drawable(control) = context.request_images(vec![warm.clone()]).unwrap()
+    else {
+        panic!("resident input must be recordable on its own");
+    };
+    assert!(control[0].commands.is_some());
+    drop(control);
+
+    let pending = || {
+        let ImageDelivery::Pending(batch) = context
+            .request_images(vec![warm.clone(), cold.clone()])
+            .unwrap()
+        else {
+            panic!("one cold member must defer the whole batch");
+        };
+        batch
+    };
+    drop(pending().finish(&queue, || panic!("unpolled job checked cancellation")));
+    assert!(matches!(
+        pollster::block_on(pending().finish(&queue, || true)),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(warm_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(cold_reads.load(Ordering::SeqCst), 0);
+
+    let images = pollster::block_on(pending().finish(&queue, || false)).unwrap();
+    assert_eq!(images.len(), 2);
+    for (image, shift) in images.iter().zip([3., 7.]) {
+        assert!(image.commands.is_none());
+        let pixels = super::super::super::execute::read(&device, &queue, &image.pixels);
+        assert_eq!(pixels[0], [shift, 0., -2., 8.]);
+    }
+    assert_eq!(warm_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(cold_reads.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn multiple_missing_operands_execute_without_completed_source_pins() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
