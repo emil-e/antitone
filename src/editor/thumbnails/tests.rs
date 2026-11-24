@@ -1461,6 +1461,7 @@ fn memory_pressure_suspends_eager_prefetch_without_blocking_visible_work() {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .retain(|key, _| key.source.id != first);
         }
