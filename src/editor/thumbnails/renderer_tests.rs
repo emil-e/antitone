@@ -45,10 +45,13 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_display
         changed.gpu_bytes
     );
     assert!(Arc::ptr_eq(&renderer.drt, &display.ready().unwrap()));
-    for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
+    for (pressure, bytes) in [
+        (memory::Pressure::Warning, changed.gpu_bytes / 2),
+        (memory::Pressure::Critical, 0),
+    ] {
         editor.memory_pressure = pressure;
         editor.apply_cache_budgets();
-        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
+        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, bytes);
         assert_eq!(editor.cache_limits(), changed);
         editor.memory_pressure = memory::Pressure::Normal;
         editor.apply_cache_budgets();
