@@ -78,25 +78,18 @@ fn malformed_geometry_and_unrepresentable_nodes_are_rejected() {
 }
 
 #[test]
-fn global_tint_is_neutralized_in_ap1_while_center_luminance_is_preserved() {
+fn a_spatially_uniform_tinted_reference_needs_no_correction() {
     let camera = DVec3::new(0.11, 0.09, 0.13);
-    let matrix = DMat3::from_diagonal(DVec3::new(1.2, 0.8, 1.4));
     let field = FlatField::estimate(
         [0, 0, 800, 600],
         [21, 17],
         &vec![camera; 21 * 17],
-        matrix,
-        camera,
         [400., 300.],
     )
     .unwrap();
-    let y = (AP1_TO_XYZ * (matrix * camera)).y;
-    for point in [[400., 300.], [0.5, 0.5], [799.5, 599.5]] {
-        let corrected = matrix * (camera * field.gain(point).unwrap());
-        assert!((corrected - DVec3::splat(y)).abs().max_element() < 2e-12);
+    for &gain in field.nodes() {
+        assert!((gain - DVec3::ONE).abs().max_element() < 2e-12);
     }
-    let neutral_camera = matrix.inverse() * DVec3::splat(y);
-    assert_ne!(neutral_camera.x, neutral_camera.y);
     assert_eq!(field.nodes().len(), 21 * 17);
     assert_eq!(field.area(), [0, 0, 800, 600]);
     assert_eq!(field.size(), [21, 17]);
@@ -104,7 +97,7 @@ fn global_tint_is_neutralized_in_ap1_while_center_luminance_is_preserved() {
 
 #[test]
 fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
-    let [w, h] = [81, 61];
+    let [w, h] = [82, 62];
     let area = [50, 70, 1600, 1200];
     let light = |x: f64, y: f64| {
         DVec3::new(
@@ -123,12 +116,11 @@ fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
             })
         })
         .collect();
-    let center = light(0., 0.);
-    let y = (AP1_TO_XYZ * center).y;
-    let field =
-        FlatField::estimate(area, [w, h], &means, DMat3::IDENTITY, center, [850., 670.]).unwrap();
+    let center_light = light(0., 0.);
+    let center = [850., 670.];
+    let field = FlatField::estimate(area, [w, h], &means, center).unwrap();
     assert!(
-        (center * field.gain([850., 670.]).unwrap() - DVec3::splat(y))
+        (field.gain(center).unwrap() - DVec3::ONE)
             .abs()
             .max_element()
             < 2e-12
@@ -146,10 +138,7 @@ fn smooth_nonradial_color_shading_is_removed_including_boundaries() {
         );
         let corrected = source * field.gain(point).unwrap();
         assert!(
-            (corrected / DVec3::splat(y) - DVec3::ONE)
-                .abs()
-                .max_element()
-                < 0.0004,
+            (corrected / center_light - DVec3::ONE).abs().max_element() < 0.0004,
             "point={point:?} corrected={corrected:?}"
         );
     }
@@ -162,24 +151,8 @@ fn isolated_dust_does_not_become_a_local_compensation_spike() {
     let clean = vec![center; 41 * 31];
     let mut dusty = clean.clone();
     dusty[12 * 41 + 9] *= 0.2;
-    let a = FlatField::estimate(
-        [0, 0, 820, 620],
-        size,
-        &clean,
-        DMat3::IDENTITY,
-        center,
-        [410., 310.],
-    )
-    .unwrap();
-    let b = FlatField::estimate(
-        [0, 0, 820, 620],
-        size,
-        &dusty,
-        DMat3::IDENTITY,
-        center,
-        [410., 310.],
-    )
-    .unwrap();
+    let a = FlatField::estimate([0, 0, 820, 620], size, &clean, [410., 310.]).unwrap();
+    let b = FlatField::estimate([0, 0, 820, 620], size, &dusty, [410., 310.]).unwrap();
     for (ga, gb) in a.nodes().iter().zip(b.nodes()) {
         assert!((*ga - *gb).abs().max_element() < 1e-10);
     }
@@ -201,15 +174,7 @@ fn pixel_grid_noise_is_attenuated_instead_of_becoming_gain_texture() {
             })
         })
         .collect();
-    let field = FlatField::estimate(
-        [0, 0, 1220, 820],
-        [w, h],
-        &means,
-        DMat3::IDENTITY,
-        center,
-        [610., 410.],
-    )
-    .unwrap();
+    let field = FlatField::estimate([0, 0, 1220, 820], [w, h], &means, [610., 410.]).unwrap();
     let rms = (field
         .nodes()
         .iter()
@@ -263,18 +228,15 @@ fn measurement_precision_accounts_for_the_largest_gain_and_identity_outside_supp
 #[test]
 fn unusable_reference_inputs_do_not_produce_a_field() {
     let size = [7, 7];
-    let center = DVec3::splat(0.1);
-    let means = vec![center; 49];
-    let generate = |data: &[DVec3], matrix: DMat3, c: DVec3, point: [f64; 2]| {
-        FlatField::estimate([0, 0, 700, 700], size, data, matrix, c, point)
-    };
+    let means = vec![DVec3::splat(0.1); 49];
+    let generate =
+        |data: &[DVec3], point: [f64; 2]| FlatField::estimate([0, 0, 700, 700], size, data, point);
     for bad in [0., -0.1, crate::processing::MAX_SOURCE_GAIN + 1., f64::NAN] {
         let mut data = means.clone();
         data[10].x = bad;
-        assert!(generate(&data, DMat3::IDENTITY, center, [350., 350.]).is_err());
+        assert!(generate(&data, [350., 350.]).is_err());
     }
-    assert!(generate(&means, DMat3::ZERO, center, [350., 350.]).is_err());
-    assert!(generate(&means, DMat3::IDENTITY, center, [750., 350.]).is_err());
-    assert!(generate(&means, DMat3::IDENTITY, DVec3::ZERO, [350., 350.]).is_err());
-    assert!(generate(&means[..48], DMat3::IDENTITY, center, [350., 350.]).is_err());
+    assert!(generate(&means, [750., 350.]).is_err());
+    assert!(generate(&means, [f64::NAN, 350.]).is_err());
+    assert!(generate(&means[..48], [350., 350.]).is_err());
 }

@@ -1,6 +1,6 @@
 //! Bounded camera-RGB flat-field estimation and source-coordinate evaluation.
-use crate::{Error, color::AP1_TO_XYZ};
-use glam::{DMat3, DVec3};
+use crate::Error;
+use glam::DVec3;
 
 const MAXIMUM: usize = 256;
 const SIGMA: f64 = 6.;
@@ -63,14 +63,12 @@ impl FlatField {
         Ok(())
     }
 
-    /// Camera means are full-pixel means of equal-size cells entirely within `area`.
-    /// `center_camera` is the separately measured image-centre patch, not a single pixel.
+    /// Fit a spatial correction from camera RGB means of equal-size cells inside `area`.
+    /// Gains at `center` are unity in each channel, preserving its colour and brightness.
     pub fn estimate(
         area: [u32; 4],
         size: [usize; 2],
         camera_means: &[DVec3],
-        camera_to_ap1: DMat3,
-        center_camera: DVec3,
         center: [f64; 2],
     ) -> Result<Self, Error> {
         check_area(area)?;
@@ -79,34 +77,21 @@ impl FlatField {
                 "flat-field estimation requires a bounded grid of at least 7 by 7 cells",
             ));
         }
-        if camera_means
-            .iter()
-            .chain(std::iter::once(&center_camera))
-            .any(|p| {
-                !p.is_finite()
-                    || p.min_element() <= 0.
-                    || p.max_element() > crate::processing::MAX_SOURCE_GAIN
-            })
-        {
+        if camera_means.iter().any(|p| {
+            !p.is_finite()
+                || p.min_element() <= 0.
+                || p.max_element() > crate::processing::MAX_SOURCE_GAIN
+        }) {
             return Err(Error::UnusableSample(
                 "flat-field camera means exceed the positive developed-source domain",
             ));
-        }
-        if !camera_to_ap1.is_finite() || camera_to_ap1.determinant().abs() < 1e-8 {
-            return Err(Error::InvalidParameter("invalid flat-field camera matrix"));
         }
         if center.iter().any(|v| !v.is_finite()) || !contains(area, center) {
             return Err(Error::InvalidParameter(
                 "flat-field support must contain the image centre",
             ));
         }
-        let luminance = (AP1_TO_XYZ * (camera_to_ap1 * center_camera)).y;
-        let target = camera_to_ap1.inverse() * DVec3::splat(luminance);
-        if !target.is_finite() || target.min_element() <= 0. {
-            return Err(Error::UnusableSample(
-                "flat-field neutral target is not positive in camera RGB",
-            ));
-        }
+
         let [w, h] = size;
         let mut smooth = Vec::new();
         for channel in 0..3 {
@@ -124,16 +109,18 @@ impl FlatField {
                     sample(&smooth[1], w, h, xx, yy).exp(),
                     sample(&smooth[2], w, h, xx, yy).exp(),
                 );
-                gains.push(target / light);
+                gains.push(light.recip());
             }
         }
-        let mut field = Self::from_nodes(area, size, gains)?;
-        // Normalize the actual bilinear evaluator, not merely one estimation-grid node.
-        let normalization = (target / center_camera) / field.gain(center)?;
-        for g in &mut field.gains {
-            *g *= normalization;
+
+        let mut field = Self { area, size, gains };
+        // The centre can lie between nodes, so normalize against the interpolated gain.
+        let center_gain = field.gain(center)?;
+        for gain in &mut field.gains {
+            *gain /= center_gain;
         }
-        Self::from_nodes(area, size, field.gains)
+        field.validate()?;
+        Ok(field)
     }
 
     pub fn area(&self) -> [u32; 4] {

@@ -1,8 +1,6 @@
 #![cfg(all(feature = "raw", target_os = "macos"))]
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use antitone::{
-    color::AP1_TO_XYZ, flat_field::FlatField, processing::Calibration, raw::Rect, scan::Scan,
-};
+use antitone::{flat_field::FlatField, processing::Calibration, raw::Rect, scan::Scan};
 use glam::DVec3;
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -12,8 +10,7 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn corrected_scan() -> (Scan, Arc<FlatField>, DVec3) {
-    let mut reference = Scan::open(&fixture("bare-light.dng"), None).unwrap();
+fn estimate_map(reference: &mut Scan) -> Arc<FlatField> {
     assert_eq!(reference.dimensions().unwrap(), (384, 320));
     // The proposal's two-pixel cells discard one boundary cell on each side.
     assert_eq!(
@@ -25,18 +22,7 @@ fn corrected_scan() -> (Scan, Arc<FlatField>, DVec3) {
             height: 300
         })
     );
-    let center = reference
-        .reference(Rect {
-            x: 64,
-            y: 32,
-            width: 256,
-            height: 256,
-        })
-        .unwrap();
-    let target = reference.camera_to_ap1.inverse()
-        * DVec3::splat((AP1_TO_XYZ * (reference.camera_to_ap1 * center)).y);
-    let normalization = target / center;
-    let map = Arc::new(
+    Arc::new(
         reference
             .estimate_flat_field(Rect {
                 x: 16,
@@ -45,13 +31,12 @@ fn corrected_scan() -> (Scan, Arc<FlatField>, DVec3) {
                 height: 288,
             })
             .unwrap(),
-    );
-    assert!(
-        (map.gain([192., 160.]).unwrap() - normalization)
-            .abs()
-            .max_element()
-            < 2e-12
-    );
+    )
+}
+
+fn corrected_scan() -> (Scan, Arc<FlatField>) {
+    let mut reference = Scan::open(&fixture("bare-light.dng"), None).unwrap();
+    let map = estimate_map(&mut reference);
     let mut scan = Scan::open(
         &fixture("illuminated-patches.dng"),
         Some(reference.white_balance),
@@ -62,7 +47,7 @@ fn corrected_scan() -> (Scan, Arc<FlatField>, DVec3) {
     assert_eq!(scan.camera_model, reference.camera_model);
     assert_eq!(scan.camera_to_ap1, reference.camera_to_ap1);
     scan.set_flat_field(Some(map.clone()));
-    (scan, map, normalization)
+    (scan, map)
 }
 
 fn calibration(scan: &mut Scan) -> Calibration {
@@ -87,10 +72,50 @@ fn calibration(scan: &mut Scan) -> Calibration {
 }
 
 #[test]
+fn authored_bare_light_corrected_by_itself_matches_its_original_center() {
+    let mut reference = Scan::open(&fixture("bare-light.dng"), None).unwrap();
+    // Offset the rectangle so its midpoint is not the image centre.
+    let map = Arc::new(
+        reference
+            .estimate_flat_field(Rect {
+                x: 96,
+                y: 16,
+                width: 264,
+                height: 288,
+            })
+            .unwrap(),
+    );
+    let center = reference.pixel(191, 159).unwrap();
+    let points = [(191, 159), (104, 32), (351, 287)];
+    assert!(
+        (reference.pixel(104, 32).unwrap() - center)
+            .abs()
+            .max_element()
+            > 0.02
+    );
+    assert!(
+        (map.gain([192., 160.]).unwrap() - DVec3::ONE)
+            .abs()
+            .max_element()
+            < 2e-12
+    );
+
+    reference.set_flat_field(Some(map));
+    for (x, y) in points {
+        // Four sensor codes cover the half-pixel centre offset, quantization and fitting.
+        let actual = reference.pixel(x, y).unwrap();
+        assert!(
+            (actual - center).abs().max_element() < 4. / 4031.,
+            "{x},{y}: {actual:?}"
+        );
+    }
+}
+
+#[test]
 fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map() {
     let originals = ["bare-light.dng", "illuminated-patches.dng"]
         .map(|name| (fixture(name), fs::read(fixture(name)).unwrap()));
-    let (mut scan, map, normalization) = corrected_scan();
+    let (mut scan, map) = corrected_scan();
     let plain = Scan::open(
         &fixture("illuminated-patches.dng"),
         Some(scan.white_balance),
@@ -117,15 +142,13 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
             let v = (2. * (point[1] as f64 + 0.5) - 320.) / 320.;
             let illumination =
                 DVec3::ONE + DVec3::new(0.08, -0.05, 0.03) * u + DVec3::new(-0.04, 0.06, 0.08) * v;
-            let relative = map
+            let gain = map
                 .gain([point[0] as f64 + 0.5, point[1] as f64 + 0.5])
-                .unwrap()
-                / normalization;
+                .unwrap();
             // Four authored sensor codes allow quantization/demosaicing and local-fit error.
-            assert!((relative - illumination.recip()).abs().max_element() < 4. / 2400.);
-            let expected =
-                normalization * DVec3::from_array(patches[((y * 6 + x) % 12) as usize]) / 4031.;
-            let allowance = 4. / 4031. * map.bounds().1.max_element() * normalization.max_element();
+            assert!((gain - illumination.recip()).abs().max_element() < 4. / 2400.);
+            let expected = DVec3::from_array(patches[((y * 6 + x) % 12) as usize]) / 4031.;
+            let allowance = 4. / 4031. * map.bounds().1.max_element();
             assert!(
                 (scan.pixel(point[0], point[1]).unwrap() - expected)
                     .abs()
@@ -256,7 +279,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
         profiles,
         rendering::{CpuRenderer, OutputTarget},
     };
-    let (mut scan, _, _) = corrected_scan();
+    let (mut scan, _) = corrected_scan();
     let anchors = calibration(&mut scan);
     let roll = RollSettings::default();
     let input = InputSettings::negative((anchors).validate().unwrap());

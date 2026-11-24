@@ -32,9 +32,9 @@ v = (2*y + 1 - 320) / 320
 RGB light = 1 + (0.08,-0.05,0.03)*u + (-0.04,0.06,0.08)*v
 ```
 
-The recipe evaluates that field as exact integer ratios before rounding to sensor codes. All sites remain above black and below white. Accepted support (16,16,352,288) contains the required 256×256 centre patch.
+The recipe evaluates that field as exact integer ratios before rounding to sensor codes. All sites remain above black and below white. Accepted support (16,16,352,288) contains the image centre, where illumination is unity in all three channels.
 
-[Correction tests](../../raw_flat_field.rs) derive expected gains and patch values from this field, including the estimator's measured centre normalization. Their allowances account for authored sensor quantization and estimation, not captured output baselines.
+[Correction tests](../../raw_flat_field.rs) derive expected gains and patch values from this field. Their allowances account for authored sensor quantization and estimation, not captured output baselines.
 
 ## Analyze roll
 

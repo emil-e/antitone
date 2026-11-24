@@ -406,23 +406,6 @@ impl Scan {
     /// Existing correction is deliberately bypassed when analysing a reference.
     pub fn estimate_flat_field(&mut self, region: Rect) -> Result<FlatField> {
         self.validate_area(region)?;
-        let center = Rect {
-            width: self.area.width.min(256),
-            height: self.area.height.min(256),
-            x: self.area.x + (self.area.width - self.area.width.min(256)) / 2,
-            y: self.area.y + (self.area.height - self.area.height.min(256)) / 2,
-        };
-        if center.x < region.x
-            || center.y < region.y
-            || u64::from(center.x) + u64::from(center.width)
-                > u64::from(region.x) + u64::from(region.width)
-            || u64::from(center.y) + u64::from(center.height)
-                > u64::from(region.y) + u64::from(region.height)
-        {
-            return Err(Error::UnusableSample(
-                "flat-field support must contain the image-centre patch",
-            ));
-        }
         let maximum = region.width.max(region.height) as f64;
         let size = [
             (region.width as f64 / maximum * 256.).round() as usize,
@@ -431,8 +414,8 @@ impl Scan {
         if size.iter().any(|n| *n < 7) {
             return Err(Error::UnusableSample("flat-field support is too narrow"));
         }
+
         let image = self.source.camera_image()?;
-        let center_camera = image.sample_mean(center, DMat3::IDENTITY)?;
         let mut means = Vec::with_capacity(size[0] * size[1]);
         for gy in 0..size[1] {
             for gx in 0..size[0] {
@@ -458,8 +441,6 @@ impl Scan {
             [region.x, region.y, region.width, region.height],
             size,
             &means,
-            self.camera_to_ap1,
-            center_camera,
             [
                 self.area.x as f64 + self.area.width as f64 / 2.,
                 self.area.y as f64 + self.area.height as f64 / 2.,
