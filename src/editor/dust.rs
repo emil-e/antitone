@@ -825,19 +825,6 @@ impl tool::Tool for DustTool {
         )
     }
 
-    fn shortcuts(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
-        if ui.is_enabled()
-            && !editor.interaction_blocked()
-            && ui.input_mut(|input| {
-                let delete = input.consume_key(egui::Modifiers::NONE, egui::Key::Delete);
-                let backspace = input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace);
-                delete || backspace
-            })
-        {
-            self.delete_selected_dust_repair(editor);
-        }
-    }
-
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         if matches!(action, tool::Action::Dismiss) && !editor.interaction_blocked() {
             if !self.interaction.searches.borrow().is_empty() {
@@ -936,6 +923,7 @@ impl DustTool {
                 && !self.dust_donor_dragging()
                 && let Some(point) = start.filter(|p| geometry.image.contains(*p))
             {
+                response.request_focus();
                 if modifies.alt || modifies.shift {
                     if let Some(id) = editor.selected_dust_repair() {
                         self.begin_dust_mask(editor, Some(id));
@@ -971,6 +959,9 @@ impl DustTool {
             self.end_dust_stroke();
             self.end_dust_donor_drag(editor);
             self.commit_dust_mask(editor, cx);
+        }
+        if allowed && ui::focused_delete(response) {
+            self.delete_selected_dust_repair(editor);
         }
     }
 

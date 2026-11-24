@@ -77,7 +77,6 @@ fn apply_drop(editor: &mut Editor, key: OrderKey, position: DropPosition) {
 #[derive(Default)]
 pub(super) struct AdjustmentLayerEditor {
     selected: Cell<Option<(SourceId, AdjustmentLayerId)>>,
-    owns_delete: bool,
     rename: Option<(SourceId, AdjustmentLayerId, String)>,
     reorder: LayerReorder,
 
@@ -197,7 +196,6 @@ impl Editor {
             return;
         }
 
-        self.document.visit.adjustment_layers.owns_delete = true;
         let selected = match target {
             Target::None => None,
             Target::Layer(id) => self
@@ -366,18 +364,6 @@ impl Editor {
         };
         if let Err(error) = result {
             self.status = format!("Adjustment edit rejected: {error}");
-        }
-    }
-
-    pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
-        self.tab == 1
-            && self.document.visit.adjustment_layers.owns_delete
-            && matches!(self.adjustment_layer_target(), Target::Layer(_))
-    }
-
-    pub(super) fn delete_selected_adjustment_layer(&mut self, cx: &UiContext<'_, Self>) {
-        if let Target::Layer(id) = self.adjustment_layer_target() {
-            self.apply_adjustment_layer_action(Action::Delete(id), cx);
         }
     }
 
@@ -751,7 +737,7 @@ impl Editor {
                             ui.weak("Add a layer to adjust this photo.");
                         }
                         for record in records.iter().rev() {
-                            ui.push_id(record.id, |ui| {
+                            ui.push_id((self.document.visit.current_source, record.id), |ui| {
                                 if let Some((source, id, text)) =
                                     &mut self.document.visit.adjustment_layers.rename
                                     && Some(*source) == self.document.visit.current_source
@@ -865,7 +851,13 @@ impl Editor {
                                     } else if row.double_clicked() {
                                         action = Some(Action::RenameStart(record.id));
                                     } else if row.clicked() {
+                                        row.request_focus();
                                         action = Some(Action::Select(Target::Layer(record.id)));
+                                    } else if target == Target::Layer(record.id)
+                                        && self.document.visit.adjustment_layers.reorder.0.is_none()
+                                        && ui::focused_delete(&row)
+                                    {
+                                        action = Some(Action::Delete(record.id));
                                     }
                                 }
                             });
@@ -923,7 +915,12 @@ impl Editor {
         }).inner;
         self.document.visit.adjustment_layers.panel_collapsed = !panel_expanded;
 
-        if action.is_some() || rename_finish.is_some() || creation.is_some() || start_drag.is_some()
+        if action
+            .as_ref()
+            .is_some_and(|action| !matches!(action, Action::Select(_)))
+            || rename_finish.is_some()
+            || creation.is_some()
+            || start_drag.is_some()
         {
             ui.ctx().memory_mut(|memory| {
                 if let Some(id) = memory.focused() {

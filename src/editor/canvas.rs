@@ -8,6 +8,7 @@ mod tests;
 
 #[derive(Default)]
 pub(super) struct Frame {
+    pub input_id: Option<egui::Id>,
     pub layout: Option<(CanvasLayout, f32)>,
     pub displayed: Option<canvas_view::Displayed>,
     original_requested: bool,
@@ -62,6 +63,7 @@ impl Viewer<'_> {
                 (editor.normal_canvas_composition(area), proxy, pending)
             });
             let enabled = editor.canvas_input_allowed(ui, rect);
+            editor.canvas_frame.input_id = enabled.then_some(response.id);
             let layout = ui
                 .add_enabled_ui(enabled, |ui| {
                     paint(
@@ -729,6 +731,7 @@ impl Editor {
         let selected = self.selected_view();
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
+        self.canvas_frame.input_id = canvas_input.then_some(response.id);
         let composition = selected
             .as_ref()
             .map(|(area, _, _)| self.normal_canvas_composition(*area));

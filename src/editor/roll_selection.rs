@@ -1,5 +1,24 @@
 use super::*;
 
+pub(super) fn take_navigation_step(context: &egui::Context) -> Option<isize> {
+    let step = context.input_mut(|input| {
+        let previous = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
+        let next = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+        if previous {
+            Some(-1)
+        } else if next {
+            Some(1)
+        } else {
+            None
+        }
+    });
+    if step.is_some() {
+        // egui queued spatial focus navigation before these presses were consumed.
+        context.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+    }
+    step
+}
+
 #[derive(Default)]
 pub(super) struct RollSelection {
     ids: Vec<SourceId>,
@@ -93,6 +112,20 @@ impl Editor {
             id
         };
         self.browse_photo(active, cx);
+    }
+
+    pub(super) fn browse_adjacent_roll_photo(&mut self, step: isize, cx: &UiContext<'_, Self>) {
+        let order = self.document.displayed_order();
+        let active = order
+            .iter()
+            .position(|id| Some(*id) == self.document.visit.current_source)
+            .unwrap_or(0);
+        if let Some(index) = active
+            .checked_add_signed(step)
+            .filter(|&index| index < order.len())
+        {
+            self.select_roll_photo(index, egui::Modifiers::NONE, cx);
+        }
     }
 
     pub(super) fn select_active_photo_only(&mut self) {

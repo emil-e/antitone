@@ -54,7 +54,7 @@ The [batch tool](../src/editor/auto_crop.rs) owns its preparation waiter and dra
 
 ### Provisional dust cleanup
 
-Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodified click or stroke on free image content creates a source-pixel mask; release starts its donor search. Clicking an existing support or outline selects it; Shift adds, Option removes, Delete deletes that repair rather than removing the photo. Dragging a donor adjusts its stored offset; ordinary wheel input resizes the brush while Cmd/Ctrl-wheel zooms.
+Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodified click or stroke on free image content creates a source-pixel mask; release starts its donor search. Clicking an existing support or outline selects it and focuses the canvas. Shift adds to the mask, Option removes from it, and Delete/Backspace deletes the selected repair while the canvas has focus. Dragging a donor adjusts its stored offset; ordinary wheel input resizes the brush while Cmd/Ctrl-wheel zooms.
 
 Mask admission is based on marked pixels and a bounded processing area, not a fixed side length. If a held stroke exceeds the budget, the draft and brush turn red and release discards the whole rejected stroke, preserving existing repairs rather than committing a truncated prefix.
 
@@ -145,7 +145,7 @@ The creation icons and each gradient row's pencil enter the same photo-owned [ma
 
 The tool reads accepted geometry from the layer and retains only an unfinished gesture and its original target mask. Preview and release use current layer values; release changes only the target geometry, preserving later grading. Escape discards an unfinished refinement; Escape while idle or **Done** ends editing without undoing accepted changes. Changing the selected layer, leaving the photo or replacing the tool retires unfinished geometry. Handles and coverage follow tool activation, independently of Layers expansion or value adjustment. Drags outside handles navigate.
 
-Rows drag to reorder with an insertion line. A drop moves the dragged layer relative to the target row in the current stack, preserving intervening edits. Double-click starts inline rename; Enter or focus loss commits it, and Escape cancels. Layers retains its selection and inline text independently of image-tool replacement. Delete/Backspace on the Photo stage requests stale-safe layer deletion, with text editing and active-tool shortcuts taking precedence.
+Rows drag to reorder with an insertion line. A drop moves the dragged layer relative to the target row in the current stack, preserving intervening edits. Double-click starts inline rename; Enter or focus loss commits it, and Escape cancels. Layers retains its selection and inline text independently of image-tool replacement. Click a layer row to select and focus it. Delete/Backspace requests deletion while the selected row has focus.
 
 ## A stable working view while grading
 
@@ -197,7 +197,7 @@ A drag moves the selected photos as a block if it starts on a selected card, or 
 
 Browsing replaces the visit only when the active photo changes. Selecting the active photo preserves its interaction and acquisition, including when source loading is pending or has failed. Adding scans to an existing roll preserves the active visit and selected input interpretation.
 
-**Remove selected photos…** (a selected card's context menu, or Delete/Backspace outside text editing) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old displayed index in the shortened roll rather than the next surviving identity. Cancel preserves surviving drafts; confirmation retires the removed photo's work through its visit. Document-wide reviews retain their owners and validate current targets on Apply.
+**Remove selected photos…** (a selected card's context menu, or Delete/Backspace with a filmstrip card focused) requires confirmation and participates in undo. It deletes each selected photo's source record and analysis support; RAW files stay on disk and project calibration and output remain. Undo restores the removed records. The next active position is the old displayed index in the shortened roll rather than the next surviving identity. Cancel preserves surviving drafts; confirmation retires the removed photo's work through its visit. Document-wide reviews retain their owners and validate current targets on Apply.
 
 ## Responsiveness and optional caches
 

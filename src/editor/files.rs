@@ -17,7 +17,6 @@ pub(super) enum FileAction {
     New,
     Open,
     Add,
-    Remove,
     Save,
     SaveAs,
     Close,
@@ -373,7 +372,6 @@ impl Editor {
                     self.add_raws(paths, cx);
                 }
             }
-            FileAction::Remove => self.request_removal(cx),
             FileAction::Save | FileAction::SaveAs => unreachable!(),
         }
     }

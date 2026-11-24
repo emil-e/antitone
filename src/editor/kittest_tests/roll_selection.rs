@@ -377,12 +377,14 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
             .all(|menus| menus.iter().all(|(_, entries)| !offers_removal(entries))),
             "removal is not a File-menu action"
         );
+        harness.get_by_label("patches.dng").click();
+        harness.step();
         harness.key_press(egui::Key::Delete);
         harness.step();
         harness.read(|editor| {
             assert!(
                 editor.dialogs.is_open(),
-                "Delete reopens removal after a cancelled one"
+                "Delete on the card reopens removal after a cancelled one"
             )
         });
         let reopened =
@@ -422,6 +424,8 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.update(|editor| editor.begin_crop());
+        harness.step();
+        harness.get_by_label("patches.dng").click();
         harness.step();
         harness.key_press(egui::Key::Delete);
         harness.step();

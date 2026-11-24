@@ -3,8 +3,9 @@ mod image;
 use super::{
     Editor, SourceId, UiContext, auto_crop,
     roll_order::{Drag, View},
+    roll_selection::take_navigation_step,
     thumbnails,
-    ui::ContactSheetLayout,
+    ui::{ContactSheetLayout, focused_delete},
 };
 use std::ops::Range;
 
@@ -56,12 +57,15 @@ pub(super) fn show_preview(
     thumbnails.publish_demand(editor, ui.ctx(), cx);
     if let Some((index, modifiers)) = actions.select {
         editor.select_roll_photo(index, modifiers, cx);
+    } else if let Some(step) = actions.step {
+        editor.browse_adjacent_roll_photo(step, cx);
     }
 }
 
 #[derive(Default)]
 struct Actions {
     select: Option<(usize, egui::Modifiers)>,
+    step: Option<isize>,
     remove: bool,
     auto_crop: bool,
     drop_slot: Option<usize>,
@@ -149,6 +153,7 @@ fn show_cards(
                     ));
                 } else if drag.is_none() {
                     if response.clicked() {
+                        response.request_focus();
                         actions.select = Some((index, ui.input(|input| input.modifiers)));
                     }
                     if response.secondary_clicked() && !selected {
@@ -170,8 +175,10 @@ fn show_cards(
                     && !egui::Popup::is_any_open(ui.ctx())
                 {
                     editor.select_active_shortcut(ui.ctx());
-                    if !editor.editing() && removal_shortcut(ui) {
+                    if !editor.editing() && focused_delete(&response) {
                         actions.remove = true;
+                    } else if actions.select.is_none() {
+                        actions.step = take_navigation_step(ui.ctx());
                     }
                 }
                 let menu = card_menu(&response, dragging, selected, || {
@@ -313,11 +320,4 @@ fn card_menu(
         }
     });
     action
-}
-
-fn removal_shortcut(ui: &egui::Ui) -> bool {
-    ui.input_mut(|input| {
-        input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-            || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-    })
 }

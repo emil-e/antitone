@@ -592,44 +592,55 @@ fn starting_crop_commits_layer_rename_through_ordinary_focus_loss() {
 }
 
 #[test]
-fn dust_consumes_delete_before_the_retained_layer_selection() {
-    let toggle_dust = |harness: &mut Harness<'_, Editor>| {
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
-            .scroll_to_me();
-        harness.try_run_realtime().unwrap();
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
-            .click();
-        harness.step();
-        harness.try_run_realtime().unwrap();
-    };
+fn delete_follows_layer_and_filmstrip_focus() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(install_layers);
         harness.step();
         show_layers(&mut harness);
-        click(&mut harness, "Sky");
-        let before = harness.read(|editor| editor.document.state.project.clone());
-
-        toggle_dust(&mut harness);
-        harness.read(|editor| {
-            assert!(editor.dusting());
-            assert!(editor.adjustment_layer_owns_delete());
+        let photo = harness.read(|editor| {
+            let source = editor.document.visit.current_source.unwrap();
+            editor
+                .document
+                .source_path(source)
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
         });
+        click(&mut harness, "Sky");
+        let (before, layer) = harness.read(|editor| {
+            (
+                editor.document.state.project.clone(),
+                editor.adjustment_layer_target(),
+            )
+        });
+
+        harness.key_press(egui::Key::Backspace);
+        harness.step();
+        harness.get_by_label("Delete layer");
+        click(&mut harness, "Cancel");
+
+        click(&mut harness, "Sky");
+        assert!(harness.get_by_label("Sky").is_focused());
+        harness.get_by_label(&photo).click();
+        harness.step();
+        assert!(harness.get_by_label(&photo).is_focused());
+        harness.key_press(egui::Key::Delete);
+        harness.step();
+        harness.get_by_label("Remove photos");
+        click(&mut harness, "Cancel");
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(!harness.ctx.egui_wants_keyboard_input());
         harness.key_press(egui::Key::Delete);
         harness.step();
         harness.read(|editor| {
             assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.adjustment_layer_target(), layer);
             assert_eq!(editor.document.state.project, before);
         });
-
-        toggle_dust(&mut harness);
-        harness.read(|editor| assert!(!editor.dusting()));
-        harness.key_press(egui::Key::Delete);
-        harness.step();
-        harness.get_by_label("Delete layer");
-        click(&mut harness, "Cancel");
-        harness.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 

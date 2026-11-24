@@ -88,6 +88,47 @@ fn key(h: &mut Harness<'_, Editor>, key: egui::Key) {
 }
 
 #[test]
+fn delete_targets_the_focused_canvas_or_filmstrip() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        let (source, name) = h.read(|editor| {
+            let id = editor.document.visit.current_source.unwrap();
+            let path = editor.document.source_path(id).unwrap();
+            (id, path.file_name().unwrap().to_string_lossy().into_owned())
+        });
+        let point = egui::pos2(96., 32.);
+        click(&mut h, point, egui::Modifiers::NONE);
+        ready(&mut h, 1);
+        click(&mut h, point, egui::Modifiers::NONE);
+        let repair = h.read(|editor| editor.selected_dust_repair().unwrap());
+
+        h.get_by_label(&name).click();
+        h.step();
+        assert!(h.get_by_label(&name).is_focused());
+        key(&mut h, egui::Key::Delete);
+        h.get_by_label("Remove photos");
+        key(&mut h, egui::Key::Escape);
+        h.read(|editor| {
+            assert!(editor.dusting());
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.selected_dust_repair(), Some(repair));
+            assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1);
+        });
+
+        click(&mut h, point, egui::Modifiers::NONE);
+        key(&mut h, egui::Key::Backspace);
+        h.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            let photo = editor.document.state.project.source(source).unwrap();
+            assert!(photo.repairs.repairs().is_empty());
+        });
+    });
+}
+
+#[test]
 fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigation() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Photo");

@@ -1583,7 +1583,7 @@ impl Editor {
         self.receive_frame();
         self.update_fullscreen(ui.ctx());
         let mut actions = self.application_actions(ui);
-        self.frame_shortcuts(ui, cx, &mut actions.file, tool_escape_available);
+        self.frame_shortcuts(ui, cx, tool_escape_available, self.canvas_frame.input_id);
 
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);

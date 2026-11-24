@@ -1,8 +1,5 @@
 use super::*;
-use crate::editor::{
-    files::FileAction,
-    tests::{accepted_input, authored_fixture},
-};
+use crate::editor::tests::{accepted_input, authored_fixture};
 use crate::processing::InputSettings;
 
 fn photos() -> (Editor, tempfile::TempDir, PathBuf) {
@@ -138,7 +135,7 @@ fn cancelled_removal_keeps_the_search_but_confirmation_retires_it_and_late_resul
         });
         let call = gate.next(app);
         let before = app.read(|editor| editor.document.state.project.clone());
-        app.enter(|editor, cx| editor.file_action(FileAction::Remove, cx));
+        app.enter(|editor, cx| editor.request_removal(cx));
         app.read(|editor| assert!(editor.dialogs.is_open() && editor.dust_search_pending()));
         app.update(|editor| editor.dialogs.answer_for_test("Cancel"));
         app.pump();
