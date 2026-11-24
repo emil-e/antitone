@@ -1,13 +1,14 @@
 //! Halation composes positive light, the shared Gaussian and signed recombination.
 
-use super::{
+use super::HalationParameters;
+use crate::Error;
+use crate::gpu::{
     evaluation::{
         CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value,
         value::{self, Access, Calculation},
     },
     gaussian,
 };
-use crate::{Error, halation::HalationParameters};
 use std::sync::Arc;
 
 impl HalationParameters {

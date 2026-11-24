@@ -6,7 +6,6 @@ const N: usize = 96;
 
 mod cache;
 mod model;
-mod numerical;
 mod order;
 mod reference;
 
@@ -18,7 +17,7 @@ pub(super) fn cached_field(
         .unwrap()
         .recording()
         .as_ref()?
-        .cached_image_for_operation(crate::gpu::grain::is_field_key)
+        .cached_image_for_operation(crate::photographic::stages::grain::operation::is_field_key)
         .cloned()
 }
 

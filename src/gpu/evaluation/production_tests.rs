@@ -134,7 +134,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     );
     let mut input = AuthoredPhotograph::from(pipeline).with_definition(
         crate::photographic::graph::assembly::Assembly::emulation(
-            crate::grain::GrainSettings {
+            crate::photographic::stages::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
                 image_sigma: 0.1,

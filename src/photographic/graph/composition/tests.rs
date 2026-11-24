@@ -371,7 +371,7 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
         },
     ));
     project.roll.exposure = 0.3;
-    project.output.grain = crate::grain::GrainSettings {
+    project.output.grain = crate::photographic::stages::grain::GrainSettings {
         enabled: true,
         size: 0.1,
         image_sigma: 0.1,

@@ -78,10 +78,11 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
                 e.document.source = false;
                 e.document.set_target(OutputTarget::Srgb);
                 e.document.project.output.grain = GrainSettings::default();
-                e.document.project.output.halation = crate::halation::HalationSettings {
-                    enabled: true,
-                    ..Default::default()
-                };
+                e.document.project.output.halation =
+                    crate::photographic::stages::halation::HalationSettings {
+                        enabled: true,
+                        ..Default::default()
+                    };
             });
             stage(&mut h, "Rendering");
             painted(&mut h);

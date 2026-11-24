@@ -35,7 +35,7 @@ fn grain_gpu_matches_the_scan_cohorts_spatial_and_rgb_direction() {
                 ProbeConfig {
                     side,
                     // This envelope describes a1.8px field, not the profile's Size value.
-                    scale: 1.8 / crate::grain::GRAIN_SCALE,
+                    scale: 1.8 / crate::photographic::stages::grain::GRAIN_SCALE,
                     colour: 0.5,
                     ..Default::default()
                 },

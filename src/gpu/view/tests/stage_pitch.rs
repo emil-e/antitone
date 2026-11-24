@@ -33,7 +33,7 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
     ] {
         let frame = rotated_frame(pitch);
         let stages = {
-            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2. };
             let pitch = [Some(mtf.sigma / 0.6)]
                 .into_iter()
                 .flatten()
@@ -59,7 +59,8 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
         let raster = crate::gpu::raster::Raster::planned(&plan);
         assert_eq!(raster.pitch(), pitch.map(|v| v as f32));
         assert_eq!(plan.output_offset(), Some(radius));
-        let prepared = crate::gpu::image_mtf::Parameters::new(raster, 2.);
+        let prepared =
+            crate::photographic::stages::image_mtf::shader_fixture::Parameters::new(raster, 2.);
         assert_eq!(&prepared.radii[..2], &radius);
     }
 }
@@ -82,7 +83,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         ))
         .with_definition(
             crate::photographic::graph::assembly::Assembly::emulation(
-                crate::grain::GrainSettings {
+                crate::photographic::stages::grain::GrainSettings {
                     enabled: true,
                     size: 0.1,
                     image_sigma: 0.1,

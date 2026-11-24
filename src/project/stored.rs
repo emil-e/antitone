@@ -1,5 +1,6 @@
 //! Persisted records establish data integrity; execution admission belongs to consumers.
 use super::*;
+use crate::photographic::stages::{grain::GrainSettings, halation::HalationSettings};
 use crate::processing::exposure_multiplier;
 
 // Format identifiers have no editable runtime value; parsing admits only this contract.
@@ -71,16 +72,10 @@ struct SourceRecord {
 struct OutputRecord {
     contract: OutputContract,
     display_target: crate::color::OutputTarget,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::grain::GrainSettings::is_default"
-    )]
-    grain: crate::grain::GrainSettings,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::halation::HalationSettings::is_default"
-    )]
-    halation: crate::halation::HalationSettings,
+    #[serde(default, skip_serializing_if = "GrainSettings::is_default")]
+    grain: GrainSettings,
+    #[serde(default, skip_serializing_if = "HalationSettings::is_default")]
+    halation: HalationSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lut: Option<std::sync::Arc<crate::looks::LookAsset>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -4,6 +4,7 @@ mod acescct;
 mod contrast;
 #[cfg(feature = "gpu")]
 pub mod graph;
+pub mod stages;
 mod tonal_ranges;
 
 pub(crate) use tonal_ranges::MAX_EV as MAX_TONAL_EV;

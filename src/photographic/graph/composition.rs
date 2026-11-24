@@ -537,7 +537,10 @@ impl Assembly {
             return author(image, output);
         }
         if let Some(film) = self.grain {
-            image = crate::gpu::gaussian::blur(image, film.image_mtf_sigma)?;
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters {
+                sigma: film.image_mtf_sigma,
+            };
+            image = mtf.compose(image)?;
         }
         if let Some(halation) = self.halation {
             image = halation.compose(image)?;

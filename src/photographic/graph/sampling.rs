@@ -178,8 +178,8 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{Composition, FramePoint},
-        image_mtf::ImageMtfParameters,
         photographic::graph::assembly::Assembly,
+        photographic::stages::image_mtf::ImageMtfParameters,
     };
 
     fn frame(side: u32, output: [u32; 2]) -> FrameRaster {

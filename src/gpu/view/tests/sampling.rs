@@ -3,8 +3,8 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::view_source::SourceRequest;
 
 use crate::{
-    halation::HalationParameters, image_mtf::ImageMtfParameters,
-    photographic::graph::assembly::Assembly,
+    photographic::graph::assembly::Assembly, photographic::stages::halation::HalationParameters,
+    photographic::stages::image_mtf::ImageMtfParameters,
 };
 
 // The control uses identical operations without acquisition refinement.
@@ -217,7 +217,7 @@ fn refined_views_preserve_grain_pixels_when_field_retention_is_unavailable() {
         [64; 2],
     )
     .unwrap();
-    let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
+    let film = crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings();
     let pipeline = |amount, colour, strength| {
         Assembly::emulation(
             GrainSettings {
@@ -225,7 +225,7 @@ fn refined_views_preserve_grain_pixels_when_field_retention_is_unavailable() {
                 colour,
                 ..film
             },
-            crate::halation::HalationSettings {
+            crate::photographic::stages::halation::HalationSettings {
                 enabled: true,
                 strength,
                 ..Default::default()
@@ -387,7 +387,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 amount: 0.,
                 ..Default::default()
             },
-            crate::halation::HalationSettings {
+            crate::photographic::stages::halation::HalationSettings {
                 enabled: true,
                 ..Default::default()
             },

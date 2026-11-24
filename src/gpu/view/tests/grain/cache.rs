@@ -78,7 +78,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
                         image_sigma: 2. / 6000. * 100.,
                         ..Default::default()
                     },
-                    crate::halation::HalationSettings {
+                    crate::photographic::stages::halation::HalationSettings {
                         enabled: true,
                         size: 0.02,
                         strength,

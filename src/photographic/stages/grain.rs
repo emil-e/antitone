@@ -7,6 +7,8 @@ pub struct GrainBasis {
     pub factor: [[f64; 3]; 3],
 }
 
+#[cfg(feature = "gpu")]
+pub(crate) mod operation;
 mod settings;
 pub use settings::{
     CONTRACT, DEFAULT_AMOUNT, DEFAULT_COLOUR, DEFAULT_IMAGE_SIGMA, DEFAULT_SIZE, GRAIN_SCALE,
@@ -14,6 +16,8 @@ pub use settings::{
     MIN_COLOUR, MIN_SIZE, MTF_SIGMA,
 };
 
+#[cfg(all(test, feature = "editor"))]
+mod numerical_tests;
 #[cfg(test)]
 mod tests;
 

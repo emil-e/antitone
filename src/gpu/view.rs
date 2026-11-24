@@ -7,9 +7,9 @@ use crate::gpu::flat::GpuFlatField;
 use crate::gpu::source::ProcessingSource;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-#[cfg(test)]
-use crate::grain::GrainSettings;
 use crate::photographic::graph::request::PhotographRequest;
+#[cfg(test)]
+use crate::photographic::stages::grain::GrainSettings;
 #[cfg(test)]
 use crate::scan::Scan;
 use crate::{
@@ -437,9 +437,6 @@ impl RenderedView {
         composite::mapping(self.spec.frame(), frame)
     }
 }
-
-#[cfg(test)]
-use crate::gpu::view::storage::float_buffer;
 
 #[cfg(test)]
 mod tests;

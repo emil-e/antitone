@@ -145,7 +145,9 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                     first
                         .clone()
                         .with_definition({
-                            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+                            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters {
+                                sigma: 2.,
+                            };
                             let pitch = [Some(mtf.sigma / 0.6)]
                                 .into_iter()
                                 .flatten()

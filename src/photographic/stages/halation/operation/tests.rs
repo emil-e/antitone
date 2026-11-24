@@ -2,7 +2,7 @@ use super::*;
 use crate::gpu::evaluation::{
     CellRegion as Rect, Executor, Grid, Plan, Policy, Source, raster_input, source,
 };
-use crate::halation::reference;
+use crate::photographic::stages::halation::reference;
 use wgpu::util::DeviceExt;
 
 #[derive(Clone)]
@@ -147,7 +147,7 @@ fn tuned_default_impulse_matches_oracle_across_tile_boundaries() {
     let mut pixels = vec![[0.; 4]; 41 * 41];
     pixels[20 * 41 + 20] = [2.88, 2.88, 2.88, 7.];
     let data = fixture(size, [1.; 2], 0, pixels);
-    let parameters = crate::halation::HalationSettings {
+    let parameters = crate::photographic::stages::halation::HalationSettings {
         enabled: true,
         ..Default::default()
     }
@@ -178,13 +178,13 @@ fn completed_signed_mtf_precedes_positive_light_extraction() {
         .collect();
     let data = fixture(size, [1.; 2], 0, pixels);
     let frame = [3840, 2160];
-    let mtf_sigma = crate::grain::GrainPreset::ThirtyFiveMm
+    let mtf_sigma = crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm
         .settings()
         .parameters(frame)
         .unwrap()
         .unwrap()
         .image_mtf_sigma;
-    let parameters = crate::halation::HalationSettings {
+    let parameters = crate::photographic::stages::halation::HalationSettings {
         enabled: true,
         ..Default::default()
     }

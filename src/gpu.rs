@@ -13,7 +13,6 @@ pub(crate) mod execution;
 pub mod flat;
 pub mod gaussian;
 pub mod grading;
-mod halation;
 pub mod interpretation;
 pub mod lut3d;
 #[cfg(all(
@@ -28,9 +27,6 @@ pub(crate) mod rgb16;
 #[cfg(all(test, feature = "render"))]
 pub(crate) mod test_support;
 
-pub(crate) mod grain;
-#[cfg(test)]
-pub(crate) mod image_mtf;
 pub(crate) mod raster;
 #[cfg(any(
     feature = "editor",

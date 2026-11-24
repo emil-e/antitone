@@ -126,8 +126,8 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
     editor.document.project.output.grain = GrainSettings {
         enabled: true,
         amount: 0.,
-        size: crate::grain::MAX_SIZE,
-        image_sigma: crate::grain::MAX_SIZE,
+        size: crate::photographic::stages::grain::MAX_SIZE,
+        image_sigma: crate::photographic::stages::grain::MAX_SIZE,
         ..Default::default()
     };
     assert!(

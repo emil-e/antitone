@@ -3,6 +3,10 @@
 //! Coupled image-MTF and grain stages execute after the complete photographic grade,
 //! before the separate creative look and output transform.
 
+use super::super::halation::{self, HalationSettings};
+#[cfg(test)]
+use super::GRAIN_BASIS;
+use super::GrainParameters;
 use crate::Error;
 
 pub const DEFAULT_SIZE: f64 = 0.040;
@@ -17,8 +21,6 @@ pub const DEFAULT_COLOUR: f64 = 0.5;
 pub const MIN_COLOUR: f64 = 0.;
 pub const MAX_COLOUR: f64 = 1.;
 
-#[cfg(test)]
-use crate::grain::GRAIN_BASIS;
 /// 35mm reference image sigma per grain-basis Size unit; authored sigma is independent.
 pub const MTF_SIGMA: f64 = 1.0;
 /// Current grain spectrum scale relative to Size; both lengths follow the same adjustment.
@@ -139,14 +141,14 @@ impl GrainPreset {
         }
     }
 
-    pub fn halation(self) -> crate::halation::HalationSettings {
-        crate::halation::HalationSettings {
-            size: crate::halation::DEFAULT_SIZE * self.spatial_scale(),
+    pub fn halation(self) -> HalationSettings {
+        HalationSettings {
+            size: halation::DEFAULT_SIZE * self.spatial_scale(),
             ..Default::default()
         }
     }
 
-    pub fn matches(self, texture: GrainSettings, halo: crate::halation::HalationSettings) -> bool {
+    pub fn matches(self, texture: GrainSettings, halo: HalationSettings) -> bool {
         let reference = self.settings();
         let reference_halo = self.halation();
         texture.amount == reference.amount
@@ -169,8 +171,8 @@ pub struct GrainResponse {
 }
 
 impl GrainResponse {
-    pub(crate) fn grain(self) -> crate::grain::GrainParameters {
-        crate::grain::GrainParameters {
+    pub(crate) fn grain(self) -> GrainParameters {
+        GrainParameters {
             grain_size: self.grain_size,
             amplitude: self.amplitude,
             colour: self.colour,

@@ -1,12 +1,12 @@
 use super::*;
-use crate::{crop::Crop, geometry::Composition, grain::GrainParameters};
+use crate::{crop::Crop, geometry::Composition, photographic::stages::grain::GrainParameters};
 
 #[test]
 fn kernel_neighbourhoods_use_the_declared_pitch_while_grain_needs_no_neighbours() {
-    let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1.5 };
+    let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1.5 };
     assert_eq!(mtf.support([1.; 2]), Support([6; 2]));
     assert_eq!(mtf.support([1.5, 3.]), Support([4, 2]));
-    let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2.25 };
+    let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2.25 };
     assert_eq!(mtf.support([1.; 2]), Support([9; 2]));
     assert_eq!(mtf.support([1.5, 3.]), Support([6, 3]));
     let grain = GrainParameters {

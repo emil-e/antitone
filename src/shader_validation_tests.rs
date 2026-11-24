@@ -94,8 +94,12 @@ fn composed_working_view_validates() {
     );
     validate(
         "image response",
-        &gpu::image_mtf::shader(),
+        &crate::photographic::stages::image_mtf::shader_fixture::shader(),
         &["horizontal", "vertical"],
     );
-    validate("grain", &gpu::grain::shader(), &["field", "apply"]);
+    validate(
+        "grain",
+        &crate::photographic::stages::grain::operation::shader(),
+        &["field", "apply"],
+    );
 }

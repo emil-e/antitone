@@ -35,7 +35,8 @@ fn independent_embedded_slots_survive_save_as_without_catalogue_or_source_files(
     assert_eq!(serde_json::from_value::<Project>(default).unwrap(), project);
     project.output.lut = Some(lut(LookOrigin::Imported));
     project.output.film_and_paper = Some(material());
-    project.output.grain = antitone::grain::GrainPreset::MediumFormat.settings();
+    project.output.grain =
+        antitone::photographic::stages::grain::GrainPreset::MediumFormat.settings();
     let directory = tempfile::tempdir().unwrap();
     let original = directory.path().join("original.antitone");
     project.save(&original, Save::New).unwrap();

@@ -37,11 +37,11 @@ fn case(
             },
         )])
         .unwrap();
-    let film = crate::grain::GrainSettings {
+    let film = crate::photographic::stages::grain::GrainSettings {
         enabled: true,
         amount: 0.,
-        size: crate::grain::MAX_SIZE,
-        image_sigma: crate::grain::MAX_SIZE,
+        size: crate::photographic::stages::grain::MAX_SIZE,
+        image_sigma: crate::photographic::stages::grain::MAX_SIZE,
         ..Default::default()
     };
     let sigma = film

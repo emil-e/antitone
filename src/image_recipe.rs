@@ -29,8 +29,8 @@ pub struct ImageRecipe {
     pub roll: RollSettings,
     pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
-    pub grain: crate::grain::GrainSettings,
-    pub halation: crate::halation::HalationSettings,
+    pub grain: crate::photographic::stages::grain::GrainSettings,
+    pub halation: crate::photographic::stages::halation::HalationSettings,
     pub luts: crate::looks::LutChain,
     pub repairs: Vec<Repair>,
 }
