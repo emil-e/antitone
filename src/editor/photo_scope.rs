@@ -10,17 +10,10 @@ pub(super) struct PhotoScope {
     pub current_source: Option<super::SourceId>,
     pub adjustment_layers: super::AdjustmentLayerEditor,
     pub canvas: super::canvas_view::CanvasView,
-    input: PhotoInput,
-}
-
-/// Captured-source consumers retire together when a visit's interpretation changes.
-#[derive(Default)]
-pub(super) struct PhotoInput {
     pub project_preview: super::editing::Preview<crate::project::Project>,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
     pub masks: super::mask_editor::MaskEditor,
-    pub layer_order_drag: Option<super::adjustment_layers::OrderDrag>,
     pub working_view: WorkingView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
     pub return_notice: Option<String>,
@@ -35,57 +28,36 @@ pub(super) struct PhotoInput {
     pub source: super::source::State,
 }
 
-impl std::ops::Deref for PhotoScope {
-    type Target = PhotoInput;
-    fn deref(&self) -> &Self::Target {
-        &self.input
-    }
-}
-impl std::ops::DerefMut for PhotoScope {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.input
-    }
-}
-
 impl Editor {
     #[cfg(test)]
     pub(super) fn visit_lifetime(&self) -> std::sync::Weak<()> {
-        std::sync::Arc::downgrade(&self.document.visit.input.lifetime)
+        std::sync::Arc::downgrade(&self.document.visit.lifetime)
     }
 
     pub(super) fn reinterpret_photo(&mut self) {
-        self.canvas_frame = Default::default();
-        let working_view = self.document.visit.working_view.for_visit();
-        self.document.visit.input = PhotoInput {
-            working_view,
-            ..Default::default()
-        };
-        self.document.visit.canvas.retire_input();
+        self.reset_photo_scope(self.document.visit.current_source);
     }
 
     pub(super) fn replace_photo_scope(&mut self, source: Option<super::SourceId>) {
-        self.canvas_frame = Default::default();
+        let visit = &self.document.visit;
+        let viewport = visit.canvas.viewport;
+        // Temporary reference views retire gestures, not the selected layer's identity.
+        let layers =
+            (visit.current_source == source).then(|| visit.adjustment_layers.selection_only());
 
-        let layers = if self.document.visit.current_source == source {
-            self.document.visit.adjustment_layers.selection_only()
-        } else {
-            super::AdjustmentLayerEditor::default()
-        };
-        let working_view = self.document.visit.working_view.for_visit();
-        // Replacing the owner drops its task handles, images and transient tools.
+        self.reset_photo_scope(source);
+        self.document.visit.canvas.viewport = viewport;
+        if let Some(layers) = layers {
+            self.document.visit.adjustment_layers = layers;
+        }
+    }
+
+    fn reset_photo_scope(&mut self, source: Option<super::SourceId>) {
+        self.canvas_frame = Default::default();
         self.document.visit = PhotoScope {
-            input: PhotoInput {
-                working_view,
-                ..Default::default()
-            },
-            canvas: super::canvas_view::CanvasView {
-                viewport: self.document.visit.canvas.viewport,
-                ..Default::default()
-            },
+            working_view: self.document.visit.working_view.for_visit(),
             current_source: source,
             ..Default::default()
         };
-        // Temporary reference views retire gestures, not the selected layer's identity.
-        self.document.visit.adjustment_layers = layers;
     }
 }

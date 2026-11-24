@@ -55,7 +55,7 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
             assert_eq!(editor.document.project.sources, before.sources);
             assert_eq!(editor.document.project.roll, before.roll);
             assert_eq!(editor.document.visit.current_source, Some(selected));
-            assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(2.25));
+            assert!(editor.document.visit.canvas.viewport.zoom.is_none());
             assert!(editor.document.project.flat_field.is_none());
             assert!(!editor.editing());
             assert_eq!(
@@ -83,18 +83,24 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.document.visit.source.pending()
         });
-        app.enter(|editor, cx| editor.restore_history(history::Direction::Undo, cx));
+        app.enter(|editor, cx| {
+            editor.document.visit.canvas.viewport.zoom = Some(3.);
+            editor.restore_history(history::Direction::Undo, cx);
+        });
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project, before);
             assert_eq!(editor.document.visit.current_source, Some(selected));
-            assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(2.25));
+            assert!(editor.document.visit.canvas.viewport.zoom.is_none());
             assert!(!editor.document.dirty());
             assert!(editor.history_label(history::Direction::Undo).is_none());
         });
-        app.enter(|editor, cx| editor.restore_history(history::Direction::Redo, cx));
+        app.enter(|editor, cx| {
+            editor.document.visit.canvas.viewport.zoom = Some(3.);
+            editor.restore_history(history::Direction::Redo, cx);
+        });
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.document.visit.source.pending()
         });
@@ -102,6 +108,7 @@ fn missing_photos_do_not_gate_input_intent_save_or_undo_without_services_or_gpu(
             assert_eq!(editor.document.project.input, InputSettings::Digital);
             assert_eq!(editor.document.project.sources, before.sources);
             assert_eq!(editor.document.visit.current_source, Some(selected));
+            assert!(editor.document.visit.canvas.viewport.zoom.is_none());
         });
     });
 }

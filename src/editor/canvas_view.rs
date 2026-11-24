@@ -179,12 +179,6 @@ pub(super) struct CanvasInput {
     pub original: OriginalView,
 }
 
-impl CanvasView {
-    pub fn retire_input(&mut self) {
-        self.input = Default::default();
-    }
-}
-
 impl std::ops::Deref for CanvasView {
     type Target = CanvasInput;
     fn deref(&self) -> &Self::Target {
