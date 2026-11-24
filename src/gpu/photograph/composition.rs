@@ -294,7 +294,7 @@ impl<'a> RecipeGraph<'a> {
         let plan = layout.plan;
         let source = assembly.interpret_camera(self.codes(), self.camera()?)?;
         let repaired = self.repair(source.unrepaired.clone())?;
-        // Repair original working positives, then filter before the view's nonlinear grade.
+        // Repair before filtering. The filtered positive is reusable across grading edits.
         let neutral = crate::gpu::evaluation::reconstruct_tiled(
             repaired,
             Domain {
@@ -304,7 +304,8 @@ impl<'a> RecipeGraph<'a> {
                     ..Grid::from_frame(plan.output())
                 },
             },
-        )?;
+        )?
+        .for_reuse();
         let output = ViewOutput::new(layout.presentation, plan.output(), 8);
         Ok((
             assembly.finish(neutral, Some(output))?.with_source(source),
@@ -380,7 +381,8 @@ impl Assembly {
                     ..Grid::from_frame(plan.output())
                 },
             },
-        )?;
+        )?
+        .for_reuse();
         self.grading = self.grading.map(|grading| grading.for_grid(8));
         let output = ViewOutput::new(layout.presentation, plan.output(), 8);
         Ok((
@@ -755,7 +757,7 @@ impl PhotographGraph {
     ) -> Result<Value, Error> {
         let output = view_domain(presentation, neutral.domain().grid.coverage);
         window(
-            crate::gpu::interpretation::inspect_filtered(neutral, parameters)?,
+            crate::gpu::interpretation::inspect_filtered(neutral.for_reuse(), parameters)?,
             output.finite()?,
         )
     }

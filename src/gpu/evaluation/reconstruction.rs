@@ -100,14 +100,6 @@ pub(crate) fn accumulate_supplied(
     operation.accumulate(fragment, input, (samples, affected), output, metadata)
 }
 
-pub(super) fn is_projection(value: &Value) -> bool {
-    (value.operation.as_ref() as &dyn std::any::Any).is::<Reconstruction>()
-        && value
-            .inputs()
-            .iter()
-            .any(|input| !input.domain().same_grid(value.domain()))
-}
-
 pub(crate) fn reconstruct(input: Value, output: Domain) -> Result<Value, Error> {
     reconstructed(input, output, false, false)
 }

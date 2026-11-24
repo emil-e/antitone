@@ -438,8 +438,103 @@ fn recorded_dependencies_enter_the_cache_only_after_submission() {
     );
 }
 
+fn scale_plane(input: Value, factor: f32) -> Value {
+    let gain = value::Operation::new(
+        "plane gain",
+        NumericKey(factor),
+        "struct Parameters { factor:vec4f }
+         fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f {
+             return vec4f(a.rgb*v.factor.x,a.w);
+         }",
+        "pixel",
+        value::Access::Pointwise,
+    )
+    .with_uniform("Parameters", &[factor, 0., 0., 0.]);
+    value::pointwise(input, gain).unwrap()
+}
+
 #[test]
-fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
+fn reusable_boundary_can_record_and_only_publishes_after_submit() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy::default());
+    let scope = context.materializations();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let source = source(Arc::new(Plane(reads.clone())));
+    let region = [4, 8, 8, 8].into();
+    let request = |image: Value| {
+        let grid = image.domain().grid;
+        context
+            .request(
+                image,
+                Region {
+                    bounds: region,
+                    grid,
+                },
+                Tiling { tile: [8, 8] },
+            )
+            .unwrap()
+    };
+    let _source = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &scope,
+                request(source.clone()).without_retention(),
+                ImageFormat::Rgba32Float,
+                ImageBacking::Buffer,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let before = reads.load(Ordering::Relaxed);
+    assert!(before > 0);
+
+    let reusable = scale_plane(source, 2.).for_reuse();
+    let output = reusable.output(region).unwrap();
+    let key = output.identity().unwrap();
+    let root = request(scale_plane(reusable, 3.)).without_retention();
+    for submit in [false, true] {
+        let prepared = context.prepare_image(root.clone()).unwrap();
+        assert!(
+            prepared.can_record(),
+            "resident inputs can use the drawing path"
+        );
+        assert!(prepared.dependencies.is_empty());
+        let recorded = prepared.record(&context).unwrap();
+        let commands = recorded.commands.as_ref().unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        commands
+            .encode_result(&device, &mut encoder, &recorded.pixels)
+            .unwrap();
+        assert!(scope.ready::<ImageLayout>(key).is_empty());
+        if submit {
+            queue.submit([encoder.finish()]);
+            commands.submitted();
+            let pixels =
+                super::super::super::super::execute::read(&device, &queue, &recorded.pixels);
+            assert_eq!(pixels[0], [-15., 24., -12., 8.]);
+            assert!(
+                scope
+                    .ready::<ImageLayout>(key)
+                    .iter()
+                    .any(|image| image.descriptor.region == region)
+            );
+        }
+    }
+    assert_eq!(reads.load(Ordering::Relaxed), before);
+}
+
+#[test]
+fn worker_retains_a_declared_reusable_single_unit() {
+    check_projection_reuse([16, 16], [2., 2.], false);
+}
+
+#[test]
+fn worker_assembles_a_declared_reusable_tiled_read() {
+    check_projection_reuse([320, 16], [0.125, 2.], true);
+}
+
+fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2], prefetch: bool) {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(
         &device,
@@ -452,20 +547,20 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
     let reads = Arc::new(AtomicUsize::new(0));
     let input = source(Arc::new(Plane(reads.clone())));
     let domain = Domain {
-        bounds: Some([0, 0, 16, 16].into()),
+        bounds: Some(CellRegion::new([0, 0], extent)),
         grid: Grid {
             coverage: 8,
-            ..Grid::axis_aligned([0.; 2], [2.; 2])
+            ..Grid::axis_aligned([0.; 2], pitch)
         },
     };
-    let projected = reconstruct_tiled(input, domain).unwrap();
-    let scale = |factor: f32| {
-        value::pointwise(projected.clone(), value::Operation::new(
-        "projected plane gain", NumericKey(factor),
-        "struct Parameters { factor:vec4f } fn pixel(p:vec2i,position:vec2f,a:vec4f,v:Parameters)->vec4f {return vec4f(a.rgb*v.factor.x,a.w);}",
-        "pixel", value::Access::Pointwise,
-    ).with_uniform("Parameters", &[factor, 0., 0., 0.])).unwrap()
-    };
+    let projection = reconstruct_tiled(input, domain).unwrap();
+    let projected = projection.clone().for_reuse();
+    let region = domain.finite().unwrap();
+    assert_eq!(
+        projection.output(region).unwrap().identity(),
+        projected.output(region).unwrap().identity()
+    );
+    let scale = |factor| scale_plane(projected.clone(), factor);
     let request = |root| {
         context
             .request(
@@ -474,7 +569,7 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
                     bounds: domain.finite().unwrap(),
                     grid: domain.grid,
                 },
-                Tiling { tile: [16, 16] },
+                Tiling { tile: extent },
             )
             .unwrap()
             .without_retention()
@@ -485,17 +580,13 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
         0,
         "preparation only describes source demand"
     );
-    assert_eq!(work.dependencies.len(), 1);
     assert!(!work.can_record());
-    let PreparedWork::Gpu(plan) = &work.work else {
-        panic!("the consumer is prepared against its explicit projected input");
-    };
+    assert_eq!(work.dependencies.is_empty(), !prefetch);
     assert!(
-        !plan
-            .tiles
+        work.dependencies
             .iter()
-            .flat_map(|tile| &tile.fragment.work)
-            .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }))
+            .all(|dependency| dependency.kind == DependencyKind::SourceSlice),
+        "only source acquisition is prepared; the worker produces the declared result"
     );
     let image = pollster::block_on(
         context
@@ -506,9 +597,11 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
     .unwrap();
     let pixels =
         super::super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+    let width = extent[0] as usize;
     for (index, pixel) in pixels.iter().enumerate() {
-        let x = (index % 16) as f32 * 2. + 0.5;
-        let y = (index / 16) as f32 * 2. + 0.5;
+        let x = (index % width) as f32 * pitch[0] as f32;
+        let x = if pitch[0] < 1. { x.floor() } else { x + 0.5 };
+        let y = (index / width) as f32 * 2. + 0.5;
         let expected = [2. * (x / 8. - 3.), 2. * (y / 4. + 2.), -4., 8.];
         for (actual, expected) in pixel.iter().zip(expected) {
             assert!(
@@ -522,7 +615,7 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
         .ready::<ImageLayout>(key.identity().unwrap())
         .into_iter()
         .find(|image| image.descriptor.region == domain.finite().unwrap())
-        .expect("projection prepared for the requested window");
+        .expect("exact projection ready for the requested window");
     let projection = Arc::downgrade(&retained.image);
     drop(retained);
 
@@ -534,7 +627,19 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
         "a completed projection does not become another source job"
     );
     assert!(next.can_record());
-    next.record(&context).unwrap();
+    {
+        let recorded = next.record(&context).unwrap();
+        let cached = projection.upgrade().unwrap();
+        assert!(
+            recorded
+                .commands
+                .as_ref()
+                .unwrap()
+                .image_inputs()
+                .any(|input| Arc::ptr_eq(input, &cached)),
+            "the warm plan binds the exact previously assembled buffer"
+        );
+    }
     assert_eq!(reads.load(Ordering::Relaxed), before);
 
     store.evict_optional();
@@ -547,6 +652,17 @@ fn prepared_projection_reuse_ends_when_the_cache_evicts_it() {
     );
     let miss = context.prepare_image(request(scale(4.))).unwrap();
     assert!(!miss.can_record());
+    let rebuilt = context.produce_prepared(&queue, miss, || false).unwrap();
+    let rebuilt =
+        super::super::super::super::execute::read(&device, &queue, rebuilt.as_buffer().unwrap());
+    assert_eq!(
+        rebuilt,
+        pixels
+            .iter()
+            .map(|p| [2. * p[0], 2. * p[1], 2. * p[2], p[3]])
+            .collect::<Vec<_>>()
+    );
+    assert!(reads.load(Ordering::Relaxed) > before);
 }
 
 #[test]

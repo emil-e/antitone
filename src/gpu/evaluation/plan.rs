@@ -468,11 +468,12 @@ pub(super) fn evaluate_region(
     }
 
     let original = node.request(region)?;
+    let reuse = scope.is_some() && original.reuse;
     let tiling = Tiling {
         tile: planning.tile,
     };
     if !unit::single_unit(node, region, tiling)? {
-        let output = value::image_resource(fragment, node, region, false);
+        let output = value::image_resource(fragment, &original, region, reuse);
         fragment.work.push(Work::Produce {
             image: original,
             output,
@@ -482,7 +483,7 @@ pub(super) fn evaluate_region(
     let calculation = match unit::calculation_with_limits(node, region, tiling, planning.limits) {
         Ok(calculation) => calculation,
         Err(Error::EvaluationLimit(_)) => {
-            let output = value::image_resource(fragment, node, region, false);
+            let output = value::image_resource(fragment, &original, region, reuse);
             fragment.work.push(Work::Produce {
                 image: original,
                 output,
@@ -492,7 +493,7 @@ pub(super) fn evaluate_region(
         Err(error) => return Err(error),
     };
     let node = calculation.clone();
-    let discover = planning.scope.is_some() && value::pixel_materialization(&node);
+    let discover = reuse || (scope.is_some() && value::pixel_materialization(&node));
 
     if policy == Policy::Composed
         && let Some(graph) = value::FunctionGraph::new(&node)?
@@ -526,7 +527,7 @@ pub(super) fn evaluate_region(
         }
         fragment.resources.truncate(checkpoint.0);
         fragment.work.truncate(checkpoint.1);
-        let output = value::image_resource(fragment, &original, region, false);
+        let output = value::image_resource(fragment, &original, region, reuse);
         fragment.work.push(Work::Produce {
             image: original,
             output,
@@ -554,7 +555,9 @@ pub(super) fn evaluate_region(
         && value::sampler(&node)
             .is_some_and(|producer| matches!(producer.access(), Access::Callable))
     {
-        let sample = sample_region(&original, region, fragment, planning)?;
+        // This call is already materializing the result; only its own inputs
+        // need to consider whether to stop fusion at a reusable boundary.
+        let sample = sample_unstored_region(&original, region, fragment, planning)?;
         let output = value::image_resource(fragment, &original, region, discover);
         sample.materialize(fragment, output)?;
         if productions_are_required(&original, region, &fragment.work[checkpoint.1..], planning)?
@@ -623,15 +626,28 @@ pub(super) fn sample_region(
     fragment: &mut Fragment,
     planning: Planning<'_>,
 ) -> Result<Sampled, Error> {
-    let Planning { policy, scope, .. } = planning;
     if !node.domain.contains_region(region) {
         return Err(Error::InvalidParameter(
             "sample demand outside declared domain",
         ));
     }
-    if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
+    if let Some(stored) = Stored::find(planning.scope, planning.supplied, node, region)? {
         return Ok(stored.sample(fragment));
     }
+    if node.reuse && planning.scope.is_some() {
+        let image = evaluate_region(node, region, fragment, planning)?;
+        return Ok(Sampled::raster(fragment, image));
+    }
+    sample_unstored_region(node, region, fragment, planning)
+}
+
+fn sample_unstored_region(
+    node: &value::Value,
+    region: Rect,
+    fragment: &mut Fragment,
+    planning: Planning<'_>,
+) -> Result<Sampled, Error> {
+    let Planning { policy, scope, .. } = planning;
     let tiling = Tiling {
         tile: planning.tile,
     };

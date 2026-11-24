@@ -35,7 +35,7 @@ pub(super) fn record(
         fragment,
         &original.request(region)?,
         region,
-        planning.scope.is_some() && value::pixel_materialization(calculation),
+        planning.scope.is_some() && (original.reuse || value::pixel_materialization(calculation)),
     );
     let state = work
         .state
