@@ -153,6 +153,45 @@ fn every_hoisted_unit_must_be_required_not_only_the_first() {
         vec![(a, [0, 0, 1, 1].into()), (b, [0, 0, 1, 1].into())]
     ));
 }
+struct Split;
+
+impl Operation for Split {
+    fn work_units(&self, region: Rect, _: Tiling) -> Result<WorkUnits, Error> {
+        tiled_units(region, [2, 1])
+    }
+}
+
+#[test]
+fn a_declared_read_can_span_units_but_cannot_widen_or_join_reads() {
+    let input = Value::from_operation(domain(), [], Split);
+    let demand: Rect = [2, 0, 4, 1].into();
+    let root = |reads| {
+        Value::from_operation(
+            domain(),
+            [input.clone()],
+            Reads {
+                reads,
+                calls: Default::default(),
+            },
+        )
+    };
+    assert!(check(
+        root(vec![Read::new(0, demand)]),
+        vec![(input.clone(), demand)],
+    ));
+    assert!(!check(
+        root(vec![Read::new(0, demand)]),
+        vec![(input.clone(), [1, 0, 6, 1].into())],
+    ));
+    assert!(!check(
+        root(vec![
+            Read::new(0, [2, 0, 2, 1].into()),
+            Read::new(0, [4, 0, 2, 1].into()),
+        ]),
+        vec![(input, demand)],
+    ));
+}
+
 #[test]
 fn repeated_parent_reads_keep_separate_regions_and_equivalent_definitions_match() {
     let actual = Value::from_operation(domain(), [], Leaf(1));

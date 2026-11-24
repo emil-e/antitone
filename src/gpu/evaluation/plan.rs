@@ -433,6 +433,15 @@ fn bindings_fit(work: &Work, limits: &wgpu::Limits) -> bool {
         .all(|(used, maximum)| used <= maximum)
 }
 
+fn check_raster_addressing(region: Rect) -> Result<(), Error> {
+    if region.width.checked_mul(region.height).is_none() {
+        return Err(Error::InvalidParameter(
+            "evaluation raster exceeds GPU cell addressing",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn evaluate_region(
     node: &value::Value,
     region: Rect,
@@ -440,11 +449,7 @@ pub(super) fn evaluate_region(
     planning: Planning<'_>,
 ) -> Result<PlannedImage, Error> {
     let Planning { policy, scope, .. } = planning;
-    if region.width.checked_mul(region.height).is_none() {
-        return Err(Error::InvalidParameter(
-            "evaluation raster exceeds GPU cell addressing",
-        ));
-    }
+    check_raster_addressing(region)?;
     let checkpoint = (fragment.resources.len(), fragment.work.len());
     if !node.domain.contains_region(region) {
         return Err(Error::InvalidParameter(
@@ -631,8 +636,14 @@ pub(super) fn sample_region(
         tile: planning.tile,
     };
     if !unit::single_unit(node, region, tiling)? {
-        let input = evaluate_region(node, region, fragment, planning)?;
-        return Ok(Sampled::raster(fragment, input));
+        check_raster_addressing(region)?;
+        let image = node.request(region)?;
+        // The worker assembles the exact read. Retain it as an ordinary image
+        // in composed evaluation, so warm readers needn't assemble it again.
+        let discover = policy == Policy::Composed && scope.is_some();
+        let output = value::image_resource(fragment, &image, region, discover);
+        fragment.work.push(Work::Produce { image, output });
+        return Ok(Sampled::raster(fragment, output));
     }
     let original = node;
     let calculation = match unit::calculation_with_limits(node, region, tiling, planning.limits) {
