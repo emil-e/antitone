@@ -1,4 +1,12 @@
-use egui::{Key, Modifiers, Response, Ui};
+use egui::{Context, Key, Modifiers, Response, Ui};
+
+pub(in crate::editor) fn surrender_keyboard_focus(context: &Context) {
+    context.memory_mut(|memory| {
+        if let Some(id) = memory.focused() {
+            memory.surrender_focus(id);
+        }
+    });
+}
 
 pub(in crate::editor) fn focused_delete(response: &Response) -> bool {
     if !response.enabled() || !response.has_focus() || egui::Popup::is_any_open(&response.ctx) {

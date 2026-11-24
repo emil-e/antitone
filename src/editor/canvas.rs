@@ -290,6 +290,14 @@ fn preview_mapping(image: egui::Rect, draw: egui::Rect) -> crate::geometry::Text
 }
 
 impl Editor {
+    pub(super) fn refresh_canvas_preview(&mut self) {
+        if self.document.visit.canvas.ready.is_none() {
+            self.document.visit.working_view.clear();
+        }
+        self.seed_thumbnail();
+        self.validate_pending_preview();
+    }
+
     pub(super) fn show_viewer(
         &mut self,
         ui: &mut egui::Ui,

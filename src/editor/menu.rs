@@ -20,6 +20,18 @@ pub(super) struct Panel {
     workspace: workspace_input::WorkspaceBlock,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Command {
+    pub action: Action,
+    file: Option<FileAction>,
+}
+
+impl Command {
+    pub fn is_file(self) -> bool {
+        self.file.is_some()
+    }
+}
+
 impl Editor {
     fn open_application_panel(&mut self, kind: ui::AppPanel) {
         self.menus.panel = Some(Panel {
@@ -147,7 +159,80 @@ impl Editor {
         state
     }
 
-    pub(super) fn menu_shortcut(&self, ui: &egui::Ui) -> Option<Action> {
+    pub(super) fn take_menu_command(&mut self, ui: &mut egui::Ui) -> Option<Command> {
+        let state = self.application_menu_state();
+        let text_input_pending = self.menus.text_focused
+            && ui.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Key { pressed: true, .. }
+                    )
+                })
+            });
+        let requested = self
+            .menus
+            .pending
+            .pop_front()
+            .or_else(|| self.menu_shortcut(ui));
+        let mut menu = requested.filter(|&action| {
+            state.enabled(action) && self.history_menu_input_available(action, ui.ctx())
+        });
+        if !self.allow_close && ui.input(|input| input.viewport().close_requested()) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if state.enabled(Action::Close) {
+                menu = Some(Action::Close);
+            } else if !self.document.files.pending() {
+                self.status =
+                    "Finish or cancel the current edit or modal operation before closing".into();
+            }
+        }
+        // Text input must reach its focused control before a later menu command
+        // surrenders focus to commit it. This also orders Paste → Save/Enter.
+        if text_input_pending && let Some(action) = menu.take() {
+            self.menus.pending.push_front(action);
+        }
+        if !self.menus.pending.is_empty() {
+            ui.ctx().request_repaint();
+        }
+        let action = menu?;
+        if !self.menu_targets_text(action) {
+            ui::surrender_keyboard_focus(ui.ctx());
+        }
+        Some(Command {
+            action,
+            file: self.menu_file_action(action),
+        })
+    }
+
+    pub(super) fn menu_command_available(&self, command: Command) -> bool {
+        self.menu_targets_text(command.action)
+            || self.application_menu_state().enabled(command.action)
+    }
+
+    pub(super) fn run_menu_command(
+        &mut self,
+        command: Command,
+        context: &egui::Context,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if let Some(file) = command.file {
+            self.file_action(file, cx);
+        } else if self.menu_targets_text(command.action) {
+            // Menu clicks arrive after text widgets have rendered.
+            self.menus.pending.push_front(command.action);
+            context.request_repaint();
+        } else {
+            self.apply_menu_action(command.action, context, cx);
+        }
+    }
+
+    fn menu_shortcut(&self, ui: &egui::Ui) -> Option<Action> {
         if self.menus.native {
             return None;
         }
@@ -177,7 +262,7 @@ impl Editor {
         })
     }
 
-    pub(super) fn menu_file_action(&self, action: Action) -> Option<FileAction> {
+    fn menu_file_action(&self, action: Action) -> Option<FileAction> {
         Some(match action {
             Action::New => FileAction::New,
             Action::Open => FileAction::Open,
@@ -237,7 +322,7 @@ impl Editor {
         events
     }
 
-    pub(super) fn apply_menu_action(
+    fn apply_menu_action(
         &mut self,
         action: Action,
         context: &egui::Context,
@@ -260,6 +345,7 @@ impl Editor {
                 self.menus.panel = None;
                 self.menus.pending.push_front(Quit);
             }
+            Export => return self.open_export_dialog(),
             Fit => self.with_tool_viewport(Viewport::fit),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;
