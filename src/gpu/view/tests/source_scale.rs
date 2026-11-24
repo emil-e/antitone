@@ -118,10 +118,9 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                     )
                     .unwrap()
                     .without_retention();
-                let prepared = renderer.evaluation().prepare_image(evaluation).unwrap();
-                let pixels = renderer
-                    .evaluation()
-                    .produce_images(&queue, vec![prepared])
+                let context = renderer.evaluation();
+                let pixels = context
+                    .materialize_many(&queue, &context.materializations(), vec![evaluation])
                     .unwrap()
                     .remove(0)
                     .await

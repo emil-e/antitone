@@ -28,18 +28,15 @@ fn worker_production_preserves_memory_failure_without_publishing_a_view() {
     )
     .unwrap();
     let request = Request::new(
-        Preparation::new(
-            renderer.evaluation().clone(),
-            kernels,
-            vec![
-                ImageRequest::new(
-                    endpoint(e::source(Arc::new(FailedAllocation)), 3.),
-                    SourceRequest::for_frame(frame).unwrap(),
-                )
-                .unwrap(),
-            ],
-        )
-        .unwrap(),
+        renderer.evaluation().clone(),
+        kernels,
+        vec![
+            ImageRequest::new(
+                endpoint(e::source(Arc::new(FailedAllocation)), 3.),
+                SourceRequest::for_frame(frame).unwrap(),
+            )
+            .unwrap(),
+        ],
     )
     .unwrap();
     assert!(request.ready().is_none());
